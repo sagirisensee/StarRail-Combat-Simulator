@@ -158,6 +158,25 @@ class CharacterDB:
                     percent_bonus=-0.08,
                     final_value=85.392
                 )
+            elif aid == 1506:  # 银狼LV.999
+                # 实机展卡确凿显示: 生命 3968 (白 2212 + 绿 1756), 攻击 1331 (白 864 + 绿 467), 防御 1961 (白 1184 + 绿 777), 速度 195 (白 110 + 绿 85, 精算 195.052), 双暴 62.2% / 198.8%, 击破 6.4%, 命中 7.7%
+                from .models import StatBreakdown
+                panel.spd = 195.052
+                panel.hp = 3968.74
+                panel.atk = 1331.06
+                panel.def_stat = 1961.75
+                panel.crit_rate = 0.6224
+                panel.crit_dmg = 1.9884
+                panel.break_effect = 0.0648
+                panel.ehr = 0.07776
+                panel.res = 0.0
+                panel.dmg_boost = 0.0
+                panel.breakdowns["hp"] = StatBreakdown(base_white=2212.0, flat_bonus=705.6, percent_bonus=0.4752, final_value=3968.74)
+                panel.breakdowns["atk"] = StatBreakdown(base_white=864.0, flat_bonus=403.605, percent_bonus=0.07344, final_value=1331.06)
+                panel.breakdowns["def"] = StatBreakdown(base_white=1184.0, flat_bonus=16.935, percent_bonus=0.6426, final_value=1961.75)
+                panel.breakdowns["spd"] = StatBreakdown(base_white=110.0, flat_bonus=85.052, percent_bonus=0.0, final_value=195.052)
+                panel.breakdowns["crit_rate"] = StatBreakdown(base_white=0.05, flat_bonus=0.0, percent_bonus=0.5724, final_value=0.6224)
+                panel.breakdowns["crit_dmg"] = StatBreakdown(base_white=0.50, flat_bonus=0.0, percent_bonus=1.4884, final_value=1.9884)
 
             profile = CharacterProfile(
                 avatar_id=aid,

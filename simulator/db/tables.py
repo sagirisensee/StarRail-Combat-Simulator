@@ -235,9 +235,9 @@ AVATAR_STATS: Dict[int, Dict[str, Any]] = {
         "traces": {"crit_dmg": 0.24, "crit_rate": 0.12, "hp_pct": 0.18}
     },
     1506: {
-        "name": "银狼Lv999", "element": "Quantum", "path": "Warlock",
-        "base_hp": 1047.8, "base_atk": 640.33, "base_def": 460.85, "base_spd": 107.0, "max_sp": 80,
-        "traces": {"ehr": 0.18, "atk_pct": 0.28, "quantum_dmg": 0.144}
+        "name": "银狼LV.999", "element": "Imaginary", "path": "Elation",
+        "base_hp": 1153.6, "base_atk": 440.6, "base_def": 654.8, "base_spd": 110.0, "max_sp": 60,
+        "traces": {"spd": 30.0, "crit_rate": 0.187}
     },
     1508: {
         "name": "远坂凛", "element": "Quantum", "path": "Mage",
@@ -309,7 +309,7 @@ LIGHTCONE_STATS: Dict[int, Dict[str, Any]] = {
     23046: {"name": "唯有香如故", "path": "Priest", "base_hp": 1058.4, "base_atk": 529.2, "base_def": 529.2, "passive_stats": {"break_effect": 0.60}},
     23052: {"name": "忍法帖·缭乱破魔", "path": "Mage", "base_hp": 1058.4, "base_atk": 582.1, "base_def": 463.1, "passive_stats": {"break_effect": 0.60}},
     23053: {"name": "遐蝶专属光锥", "path": "Remembrance", "base_hp": 1164.2, "base_atk": 582.1, "base_def": 463.1, "passive_stats": {"crit_dmg": 0.32, "hp_pct": 0.18}},
-    23057: {"name": "银狼999专属光锥", "path": "Warlock", "base_hp": 1058.4, "base_atk": 582.1, "base_def": 463.1, "passive_stats": {"ehr": 0.36}},
+    23057: {"name": "欢迎来到银河城", "path": "Elation", "base_hp": 1058.4, "base_atk": 423.4, "base_def": 529.2, "passive_stats": {}},
     23058: {"name": "依万妮西亚专属光锥", "path": "Remembrance", "base_hp": 1164.2, "base_atk": 582.1, "base_def": 463.1, "passive_stats": {"crit_dmg": 0.32}},
     23065: {"name": "姬子新星专属光锥", "path": "Mage", "base_hp": 1058.4, "base_atk": 635.0, "base_def": 396.9, "passive_stats": {"crit_rate": 0.18}},
     24001: {"name": "纯粹思维的洗礼", "path": "Rogue", "base_hp": 952.6, "base_atk": 582.1, "base_def": 529.2, "passive_stats": {"crit_dmg": 0.20}},
