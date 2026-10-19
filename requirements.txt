@@ -1,0 +1,4 @@
+# Honkai: Star Rail Combat Simulator
+# Built entirely on Python standard library (dataclasses, typing, enum, math, json).
+# Zero external runtime dependencies required.
+pytest>=7.0.0
