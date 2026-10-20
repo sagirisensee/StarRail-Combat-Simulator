@@ -22,6 +22,13 @@ from .characters.bailu import BailuKit
 from .characters.lynx import LynxKit
 from .characters.natasha import NatashaKit
 
+# 砺烁新辉官方加强重做英雄 (Resplendent Radiance Reworked Characters)
+from .characters.silver_wolf import SilverWolfKit
+from .characters.kafka import KafkaKit
+from .characters.seele import SeeleKit
+from .characters.blade import BladeKit
+from .characters.welt import WeltKit
+
 
 # 角色 ID / 规范角色名 -> KitHandler 类
 _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
@@ -114,6 +121,32 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     "1105": NatashaKit,
     "娜塔莎": NatashaKit,
     "natasha": NatashaKit,
+
+    # 银狼 (Silver Wolf - 3.4 砺烁新辉加强版)
+    "1006": SilverWolfKit,
+    "银狼": SilverWolfKit,
+    "silver wolf": SilverWolfKit,
+    "silverwolf": SilverWolfKit,
+
+    # 卡芙卡 (Kafka - 3.4 砺烁新辉加强版)
+    "1005": KafkaKit,
+    "卡芙卡": KafkaKit,
+    "kafka": KafkaKit,
+
+    # 希儿 (Seele - 4.2 砺烁新辉加强版)
+    "1102": SeeleKit,
+    "希儿": SeeleKit,
+    "seele": SeeleKit,
+
+    # 刃 (Blade - 3.4 砺烁新辉加强版)
+    "1205": BladeKit,
+    "刃": BladeKit,
+    "blade": BladeKit,
+
+    # 瓦尔特 (Welt - 4.2 砺烁新辉加强版)
+    "1004": WeltKit,
+    "瓦尔特": WeltKit,
+    "welt": WeltKit,
 
     # 欢愉阿哈四人组 (Elation Quartet)
     "1503": ElationKit,

@@ -185,17 +185,24 @@ class SparkleKit(KitHandler):
             ))
 
     def on_event(self, event: Any) -> None:
-        """监听 SP 消耗事件，触发天赋【叙述性诡计】与 E2 减防叠加。"""
-        # 检查是否为 SP 消耗事件
-        if hasattr(event, "amount") and event.amount < 0:
-            spent = abs(event.amount)
+        """监听 SP 消耗事件，触发天赋【叙述性诡计】加强效果：
+        1. 队友消耗 SP 时，为花火自身额外恢复能量；
+        2. 全体敌方受到伤害提高 (易伤加成)；
+        3. 叠加 E2 无视防御。
+        """
+        delta = getattr(event, "delta", getattr(event, "amount", 0))
+        if delta < 0:
+            spent = abs(delta)
+            # 官方「砺烁新辉」加强：队友耗点为花火自身回能
+            self.port.gain_energy(self.owner_id, 3.0 * spent)
             self.talent_stacks = min(self.max_talent_stacks, self.talent_stacks + spent)
             self._sync_talent_buffs()
 
     def _sync_talent_buffs(self) -> None:
-        """同步全队受到的天赋增伤与 E2 减防。"""
-        dmg_pct = self.talent_stacks * 0.04 # 每层 4% 受到伤害提高
+        """同步全队受到的天赋增伤与敌方全体易伤/减防。"""
+        dmg_pct = self.talent_stacks * 0.06 # 每层 6% 全队增伤
         shred_pct = self.talent_stacks * 0.10 if self.eidolon >= 2 else 0.0 # E2 每层 10% 减防
+        vuln_pct = self.talent_stacks * 0.04 # 官方加强：敌方受到伤害提高
 
         for ally in self.port.allies(self.owner_id):
             mods = [Modifier(StatType.DMG_BOOST, ModifierOp.ADD, dmg_pct)]
@@ -204,9 +211,20 @@ class SparkleKit(KitHandler):
 
             self.port.upsert_status(BuffSpec(
                 key=self.TALENT_BUFF,
-                name="幻相 (花火天赋)",
+                name="幻相 (花火天赋全队增伤与减防)",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=tuple(mods),
-                duration=None # 常驻，随层数实时刷新
+                duration=None
+            ))
+
+        # 官方加强：为敌方全体施加易伤
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Sparkle_Enemy_Vuln",
+                name="叙述诡计 (敌方受伤害提高)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, vuln_pct),),
+                duration=None
             ))

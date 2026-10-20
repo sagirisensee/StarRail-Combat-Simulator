@@ -109,7 +109,22 @@ class FireflyKit(KitHandler):
 
     def _execute_enhanced_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        # 强化战技削韧 45 点 (算上击破效率加成可达 67.5 点)
+        # 官方「砺烁新辉」加强：强化战技对敌方全体/受击目标统一植入火属性弱点与扩散高额削韧
+        enemies = self.port.enemies(self.owner_id)
+        for enemy in enemies:
+            # 植入火属性弱点 Debuff
+            self.port.upsert_status(BuffSpec(
+                key=f"Firefly_Weakness_{enemy}",
+                name="火弱点植入 (流萤强化战技)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
+        # 主目标削韧 45 点，超击破伤害
         self.port.attack(
             self.owner_id,
             target_id,

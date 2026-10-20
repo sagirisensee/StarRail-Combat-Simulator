@@ -122,6 +122,16 @@ class SimulatorCombatPort:
     def dispel(self, target_id: str, is_debuff: bool = True) -> None:
         pass
 
+    def max_energy(self, entity_id: str) -> float:
+        ent = self._get_entity(entity_id)
+        return ent.max_energy if ent else 120.0
+
+    def hp_ratio(self, entity_id: str) -> float:
+        ent = self._get_entity(entity_id)
+        if ent and getattr(ent, "max_hp", 0) > 0:
+            return ent.current_hp / ent.max_hp
+        return 1.0
+
     def attack(
         self,
         source_id: str,

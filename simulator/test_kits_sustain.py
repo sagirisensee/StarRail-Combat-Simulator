@@ -73,29 +73,40 @@ class TestSustainKits(unittest.TestCase):
         self.assertLess(ally.shield, orig_shield)
 
     def test_03_huohuo_heal_and_recharge(self):
-        """验证藿藿单体治疗、禳命 E1 提速 12% 与大招全队回能。"""
+        """验证藿藿 4.2 砺烁新辉全套加强：开局自带30能量与禳命、E1持续4回合提速12%、残血定向急救、大招高能量特化加攻。"""
         hh_prof = self.db.get("藿藿")
         huohuo = self.db.to_combat_entity(hh_prof)
-        ally = Entity(name="断能主C", base_speed=100.0, energy=0.0, max_energy=120.0, current_hp=2000.0, max_hp=5000.0)
+        ally = Entity(name="常规主C", base_speed=100.0, energy=0.0, max_energy=120.0, current_hp=2000.0, max_hp=5000.0)
+        high_energy_ally = Entity(name="流萤C位", base_speed=110.0, energy=0.0, max_energy=240.0, current_hp=4000.0, max_hp=5000.0)
 
-        sim = TurnSimulator(entities=[huohuo, ally])
+        # 1. 验证开局自启动：自带 30 点能量，且全队开局直接激活【禳命】
+        sim = TurnSimulator(entities=[huohuo, ally, high_energy_ally])
+        self.assertEqual(huohuo.energy, 30.0, "行迹「不敢自专」应在开局提供 30 点能量")
+        self.assertTrue(sim.status_mgr.has_status(ally.name, "Huohuo_Divine_Provision"), "开局应直接自启动【禳命】")
 
-        # 战技治疗与禳命
-        huohuo.kit.execute(ActionContext("hh_skill", huohuo.name, ActionKind.SKILL, target_ids=(ally.name,)))
+        # 2. 战技治疗：验证单体治疗 + 残血额外定向急救
+        huohuo.kit.execute(ActionContext("hh_skill", huohuo.name, ActionKind.SKILL, target_ids=(high_energy_ally.name,)))
         sim.resolver.resolve_all()
-
+        # ally 原本 2000/5000 (40% < 50%)，应被定向急救触发治疗
         self.assertGreater(ally.current_hp, 2000.0)
-        # E1 禳命提速 12% 且持续时间加强为 4 回合
+
+        # 3. 验证 E1 持续时间为 4 回合，全队提速 12%
         if huohuo.eidolon >= 1:
             self.assertAlmostEqual(ally.speed, 112.0, places=1)
             statuses = sim.status_mgr.get_statuses(ally.name)
             provision_status = next(s for s in statuses if s.id == "Huohuo_Divine_Provision")
             self.assertEqual(provision_status.duration, 4, "藿藿E1最新加强后禳命持续时间应为4回合")
 
-        # 终结技全队回能 20%
+        # 4. 终结技：高能量目标获得 64% 攻击力，常规目标获得 40% 攻击力，且大招刷新禳命
         huohuo.kit.execute(ActionContext("hh_ult", huohuo.name, ActionKind.ULTIMATE, target_ids=()))
         sim.resolver.resolve_all()
-        self.assertGreater(ally.energy, 20.0)
+
+        self.assertGreater(high_energy_ally.energy, 40.0) # 240 * 0.20 = 48 点能量
+        high_energy_buff = next(s for s in sim.status_mgr.get_statuses(high_energy_ally.name) if s.id == "Huohuo_Ult_Atk")
+        self.assertEqual(high_energy_buff.modifiers[0].value, 0.64, "高能量(>=160)目标大招攻击力加成应为特化 64%")
+
+        normal_buff = next(s for s in sim.status_mgr.get_statuses(ally.name) if s.id == "Huohuo_Ult_Atk")
+        self.assertEqual(normal_buff.modifiers[0].value, 0.40, "常规能量目标大招攻击力加成应为 40%")
 
     def test_04_luocha_field(self):
         """验证罗刹白花之刻与结界展开。"""
