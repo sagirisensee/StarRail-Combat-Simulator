@@ -31,7 +31,7 @@ class BailuKit(KitHandler):
         skill_levels: Optional[dict] = None
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
-        self.revive_used: bool = False
+        self.revives_remaining: int = 2 if eidolon >= 6 else 1
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -84,12 +84,26 @@ class BailuKit(KitHandler):
         # 单体治疗 + 弹射治疗
         for ally in allies:
             self.port.heal(self.owner_id, ally, 1500.0)
+            # E4: 受治疗者伤害提高 10% (最高 30%)
+            if self.eidolon >= 4:
+                self.port.upsert_status(BuffSpec(
+                    key="Bailu_E4_DmgBuff",
+                    name="外障辟除 (白露E4受治疗增伤10%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.10),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    stack_policy=StackPolicy.STACK,
+                    skip_current_clock=True
+                ))
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         allies = self.port.allies(self.owner_id)
+        heal_val = 2400.0 * (1.15 if self.eidolon >= 2 else 1.0) # E2: 治疗量提高 15%
         for ally in allies:
-            self.port.heal(self.owner_id, ally, 2400.0)
+            self.port.heal(self.owner_id, ally, heal_val)
             self.port.upsert_status(BuffSpec(
                 key=self.INVIGORATION_BUFF,
                 name="生息 (白露受击自动回血状态)",
@@ -100,4 +114,8 @@ class BailuKit(KitHandler):
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True
             ))
+            # E1: 若满血，回能 8 点
+            if self.eidolon >= 1 and self.port.hp_ratio(ally) >= 0.99:
+                self.port.gain_energy(ally, 8.0)
+
         self.port.gain_energy(self.owner_id, 5.0)

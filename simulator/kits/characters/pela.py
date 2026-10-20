@@ -66,27 +66,61 @@ class PelaKit(KitHandler):
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        
+        # E6: 攻击负面敌人额外造成 40% 附加伤害
+        mult = 1.40 if self.eidolon >= 6 else 1.0
         self.port.attack(
             self.owner_id,
             target_id,
             element="Ice",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
-        # 普攻回能 20 + 天赋额外回能 10 点
-        self.port.gain_energy(self.owner_id, 30.0)
+        # 普攻回能 20 + 天赋额外回能 10 点 (+ E1 潜在回能 5 点)
+        base_energy = 30.0 + (5.0 if self.eidolon >= 1 else 0.0)
+        self.port.gain_energy(self.owner_id, base_energy)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        
+        # E6: 额外伤害
+        mult = 2.50 if self.eidolon >= 6 else 2.10
         self.port.attack(
             self.owner_id,
             target_id,
             element="Ice",
-            atk_multiplier=2.1,
+            atk_multiplier=mult,
             toughness_damage=20.0,
             damage_tag="Skill"
         )
+
+        # E2: 解除增益提速 10%
+        if self.eidolon >= 2:
+            self.port.upsert_status(BuffSpec(
+                key="Pela_E2_Speed",
+                name="疾驰制敌 (佩拉E2提速10%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.10),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
+        # E4: 敌方冰抗降低 12%
+        if self.eidolon >= 4:
+            self.port.upsert_status(BuffSpec(
+                key="Pela_E4_IceResShred",
+                name="完全剖析 (佩拉E4减冰抗12%)",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.12),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
         self.port.gain_energy(self.owner_id, 40.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:

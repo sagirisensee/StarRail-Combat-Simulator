@@ -128,6 +128,19 @@ class SilverWolfKit(KitHandler):
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        # E6: 重叠网络 (敌方每有1个负面，银狼造成的伤害提高20%，最多100%)
+        if self.eidolon >= 6:
+            self.port.upsert_status(BuffSpec(
+                key="SilverWolf_E6_DmgBoost",
+                name="重叠网络 (银狼E6伤害提高100%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 1.00),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
         enemies = self.port.enemies(self.owner_id)
         for enemy in enemies:
             # 官方最新加强：群体量子伤害 220%，削韧 20 点
@@ -139,6 +152,18 @@ class SilverWolfKit(KitHandler):
                 toughness_damage=20.0,
                 damage_tag="Ultimate"
             )
+
+            # E4: 反弹攻击 (额外造成最高 100% 量子属性附加伤害)
+            if self.eidolon >= 4:
+                self.port.attack(
+                    self.owner_id,
+                    enemy,
+                    element="Quantum",
+                    atk_multiplier=1.0,
+                    toughness_damage=0.0,
+                    damage_tag="AdditionalDamage"
+                )
+
             # 全体 45% 减防
             self.port.upsert_status(BuffSpec(
                 key=self.DEF_SHRED_DEBUFF,

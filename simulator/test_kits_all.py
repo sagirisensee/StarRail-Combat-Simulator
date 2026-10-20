@@ -13,12 +13,23 @@ class TestCharacterKitsComprehensive(unittest.TestCase):
         cls.db = get_character_db("data/character_db_export.json")
 
     def test_01_all_62_characters_have_kits(self):
-        """验证数据库内全量 62 位角色均能无缝转换为 Combat Entity 且已装配 Kit。"""
+        """验证数据库内全量 62 位角色均能无缝转换为 Combat Entity 且已装配专用 KitHandler 与星魂。"""
+        from simulator.kits.registry import GenericKit
         all_profiles = self.db.list_all()
         self.assertEqual(len(all_profiles), 62, "数据库应包含 62 位角色档案")
         for p in all_profiles:
             ent = self.db.to_combat_entity(p)
             self.assertIsNotNone(ent.kit, f"角色 {p.name} 应装配有 KitHandler")
+            self.assertNotIsInstance(ent.kit, GenericKit, f"角色 {p.name} 应装配专属 KitHandler 而非 GenericKit 保底")
+            self.assertEqual(ent.kit.eidolon, p.eidolon, f"角色 {p.name} 的 Kit 星魂必须与导入档案 E{p.eidolon} 严格一致")
+            
+            # 验证普攻、战技、终结技均定义完整
+            basic_def = ent.kit.definition(ActionKind.BASIC)
+            skill_def = ent.kit.definition(ActionKind.SKILL)
+            ult_def = ent.kit.definition(ActionKind.ULTIMATE)
+            self.assertIsNotNone(basic_def)
+            self.assertIsNotNone(skill_def)
+            self.assertIsNotNone(ult_def)
 
     def test_02_sparkle_kit(self):
         """验证花火核心技能与星魂机制。"""

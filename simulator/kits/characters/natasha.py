@@ -65,11 +65,13 @@ class NatashaKit(KitHandler):
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        # E6: 普攻额外附加 40% 生命上限伤害 (总倍率约 1.8x)
+        mult = 1.80 if self.eidolon >= 6 else 1.0
         self.port.attack(
             self.owner_id,
             target_id,
             element="Physical",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
@@ -102,4 +104,17 @@ class NatashaKit(KitHandler):
         allies = self.port.allies(self.owner_id)
         for ally in allies:
             self.port.heal(self.owner_id, ally, 2500.0)
+            # E2: 生命 <= 30% 目标获得持续治疗
+            if self.eidolon >= 2 and self.port.hp_ratio(ally) <= 0.30:
+                self.port.upsert_status(BuffSpec(
+                    key=self.HOT_BUFF,
+                    name="抚慰 (娜塔莎E2急救持续治疗)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(),
+                    duration=1,
+                    timing=DurationTiming.TARGET_TURN_START,
+                    skip_current_clock=True
+                ))
+
         self.port.gain_energy(self.owner_id, 5.0)

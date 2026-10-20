@@ -149,3 +149,29 @@ class RobinKit(KitHandler):
                     timing=DurationTiming.CASTER_TURN_END,
                     skip_current_clock=True
                 ))
+
+            # E4: 协奏期间全队效果抵抗提高 50%
+            if self.eidolon >= 4:
+                self.port.upsert_status(BuffSpec(
+                    key="Robin_E4_EffectRes",
+                    name="雨滴之匙 (知更鸟E4抵抗50%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.50),),
+                    duration=3,
+                    timing=DurationTiming.CASTER_TURN_END,
+                    skip_current_clock=True
+                ))
+
+            # E6: 协奏附加伤害暴伤提升 450%
+            if self.eidolon >= 6:
+                self.port.upsert_status(BuffSpec(
+                    key="Robin_E6_CritDmg",
+                    name="无月之夜 (知更鸟E6暴伤450%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 4.50),),
+                    duration=3,
+                    timing=DurationTiming.CASTER_TURN_END,
+                    skip_current_clock=True
+                ))

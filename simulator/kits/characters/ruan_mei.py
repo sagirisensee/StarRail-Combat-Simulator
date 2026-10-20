@@ -113,6 +113,7 @@ class RuanMeiKit(KitHandler):
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        ult_duration = 3 if self.eidolon >= 6 else 2
         allies = self.port.allies(self.owner_id)
         for ally in allies:
             # 全属性抗性穿透提高 25%
@@ -122,7 +123,7 @@ class RuanMeiKit(KitHandler):
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.25),),
-                duration=2,
+                duration=ult_duration,
                 timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True
             ))
@@ -135,7 +136,33 @@ class RuanMeiKit(KitHandler):
                     source_id=self.owner_id,
                     target_id=ally,
                     modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.20),),
-                    duration=2,
+                    duration=ult_duration,
+                    timing=DurationTiming.CASTER_TURN_END,
+                    skip_current_clock=True
+                ))
+
+            # E2: 攻击力提高 40%
+            if self.eidolon >= 2:
+                self.port.upsert_status(BuffSpec(
+                    key="RuanMei_E2_Atk",
+                    name="芦风漫卷 (阮•梅E2破韧增攻40%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.40),),
+                    duration=ult_duration,
+                    timing=DurationTiming.CASTER_TURN_END,
+                    skip_current_clock=True
+                ))
+
+            # E4: 击破特攻提升 100%
+            if self.eidolon >= 4:
+                self.port.upsert_status(BuffSpec(
+                    key="RuanMei_E4_Break",
+                    name="寻神访仙 (阮•梅E4击破特攻100%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.BREAK_EFFECT, ModifierOp.ADD, 1.00),),
+                    duration=ult_duration,
                     timing=DurationTiming.CASTER_TURN_END,
                     skip_current_clock=True
                 ))

@@ -91,13 +91,20 @@ class TingyunKit(KitHandler):
             allies = [a for a in self.port.allies(self.owner_id) if a != self.owner_id]
             target_id = allies[0] if allies else self.owner_id
 
-        # 赐福：攻击力提升 50%
+        # 赐福：基础攻击力提升 50%，E4 额外提升 20% (总计 70% 攻击力)
+        atk_buff = 0.70 if self.eidolon >= 4 else 0.50
+        mods = [Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, atk_buff)]
+
+        # E1: 得到赐福的队友施放终结技后，速度提高 20%
+        if self.eidolon >= 1:
+            mods.append(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.20))
+
         self.port.upsert_status(BuffSpec(
             key=self.SKILL_BENEDICTION_BUFF,
-            name="赐福 (停云战技攻击力提高)",
+            name="赐福 (停云战技攻击力提高与E1加速)",
             source_id=self.owner_id,
             target_id=target_id,
-            modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.50),),
+            modifiers=tuple(mods),
             duration=3,
             timing=DurationTiming.TARGET_TURN_END,
             skip_current_clock=True
@@ -130,3 +137,8 @@ class TingyunKit(KitHandler):
             skip_current_clock=True
         ))
         self.port.gain_energy(self.owner_id, 5.0)
+
+    def on_kill_by_blessed_ally(self, ally_id: str) -> None:
+        """E2: 君子惠泽 (得到赐福的队友消灭敌方时恢复 5 点能量)。"""
+        if self.eidolon >= 2:
+            self.port.gain_energy(ally_id, 5.0)

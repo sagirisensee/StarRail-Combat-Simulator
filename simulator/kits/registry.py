@@ -28,6 +28,45 @@ from .characters.kafka import KafkaKit
 from .characters.seele import SeeleKit
 from .characters.blade import BladeKit
 from .characters.welt import WeltKit
+from .characters.black_swan import BlackSwanKit
+from .characters.jingliu import JingliuKit
+
+# 核心主力输出与追击体系 (Carry Archetypes)
+from .characters.clara import ClaraKit
+from .characters.yunli import YunliKit
+from .characters.ratio import RatioKit
+from .characters.topaz import TopazKit
+from .characters.acheron import AcheronKit
+from .characters.herta import HertaKit
+from .characters.himeko import HimekoKit
+from .characters.qingque import QingqueKit
+
+# 击破与同谐辅助扩展体系 (Break & Harmony / Nihility Archetypes)
+from .characters.trailblazer_harmony import TrailblazerHarmonyKit
+from .characters.fugue import FugueKit
+from .characters.sunday import SundayKit
+from .characters.march7th_hunt import March7thHuntKit
+from .characters.moze import MozeKit
+from .characters.xueyi import XueyiKit
+from .characters.guinaifen import GuinaifenKit
+from .characters.sampo import SampoKit
+from .characters.luka import LukaKit
+from .characters.asta import AstaKit
+from .characters.hanya import HanyaKit
+from .characters.yukong import YukongKit
+from .characters.serval import ServalKit
+
+# 巡猎、毁灭与联动全量角色扩展 (Full Roster Expansion & Collab)
+from .characters.yanqing import YanqingKit
+from .characters.sushang import SushangKit
+from .characters.danheng import DanHengKit
+from .characters.hook import HookKit
+from .characters.arlan import ArlanKit
+from .characters.misha import MishaKit
+from .characters.collab_and_future import (
+    TohsakaRinKit, ArcherKit, XilianKit, DanHengTenghuangKit,
+    ChangyeyueKit, KelydraKit, FengjinKit, XiadieKit, TibaoKit, DahliaKit
+)
 
 
 # 角色 ID / 规范角色名 -> KitHandler 类
@@ -147,6 +186,202 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     "1004": WeltKit,
     "瓦尔特": WeltKit,
     "welt": WeltKit,
+
+    # 黑天鹅 (Black Swan - 4.0 砺烁新辉加强版)
+    "1307": BlackSwanKit,
+    "黑天鹅": BlackSwanKit,
+    "black swan": BlackSwanKit,
+    "blackswan": BlackSwanKit,
+
+    # 镜流 (Jingliu - 3.4 砺烁新辉加强版)
+    "1212": JingliuKit,
+    "镜流": JingliuKit,
+    "jingliu": JingliuKit,
+
+    # 克拉拉 (Clara)
+    "1107": ClaraKit,
+    "克拉拉": ClaraKit,
+    "clara": ClaraKit,
+
+    # 云璃 (Yunli)
+    "1221": YunliKit,
+    "云璃": YunliKit,
+    "yunli": YunliKit,
+
+    # 真理医生 (Dr. Ratio)
+    "1305": RatioKit,
+    "真理医生": RatioKit,
+    "ratio": RatioKit,
+    "dr. ratio": RatioKit,
+
+    # 托帕&账账 (Topaz & Numby)
+    "1112": TopazKit,
+    "托帕": TopazKit,
+    "托帕&账账": TopazKit,
+    "topaz": TopazKit,
+
+    # 黄泉 (Acheron)
+    "1308": AcheronKit,
+    "黄泉": AcheronKit,
+    "acheron": AcheronKit,
+
+    # 黑塔 (Herta)
+    "1013": HertaKit,
+    "黑塔": HertaKit,
+    "herta": HertaKit,
+
+    # 姬子 (Himeko)
+    "1003": HimekoKit,
+    "姬子": HimekoKit,
+    "himeko": HimekoKit,
+
+    # 青雀 (Qingque)
+    "1201": QingqueKit,
+    "青雀": QingqueKit,
+    "qingque": QingqueKit,
+
+    # 开拓者•同谐 (Harmony Trailblazer)
+    "8006": TrailblazerHarmonyKit,
+    "开拓者": TrailblazerHarmonyKit,
+    "trailblazer": TrailblazerHarmonyKit,
+
+    # 忘归人 (Tingyun • Fugue)
+    "1225": FugueKit,
+    "忘归人": FugueKit,
+    "fugue": FugueKit,
+
+    # 星期日 (Sunday)
+    "1313": SundayKit,
+    "星期日": SundayKit,
+    "sunday": SundayKit,
+
+    # 三月七•巡猎 (March 7th • The Hunt)
+    "1224": March7thHuntKit,
+    "三月七": March7thHuntKit,
+    "三月七•巡猎": March7thHuntKit,
+    "march 7th": March7thHuntKit,
+    "march7th": March7thHuntKit,
+
+    # 貊泽 (Moze)
+    "1223": MozeKit,
+    "貊泽": MozeKit,
+    "moze": MozeKit,
+
+    # 雪衣 (Xueyi)
+    "1214": XueyiKit,
+    "雪衣": XueyiKit,
+    "xueyi": XueyiKit,
+
+    # 桂乃芬 (Guinaifen)
+    "1210": GuinaifenKit,
+    "桂乃芬": GuinaifenKit,
+    "guinaifen": GuinaifenKit,
+
+    # 桑博 (Sampo)
+    "1108": SampoKit,
+    "桑博": SampoKit,
+    "sampo": SampoKit,
+
+    # 卢卡 (Luka)
+    "1111": LukaKit,
+    "卢卡": LukaKit,
+    "luka": LukaKit,
+
+    # 艾丝妲 (Asta)
+    "1009": AstaKit,
+    "艾丝妲": AstaKit,
+    "asta": AstaKit,
+
+    # 寒鸦 (Hanya)
+    "1215": HanyaKit,
+    "寒鸦": HanyaKit,
+    "hanya": HanyaKit,
+
+    # 驭空 (Yukong)
+    "1207": YukongKit,
+    "驭空": YukongKit,
+    "yukong": YukongKit,
+
+    # 希露瓦 (Serval)
+    "1103": ServalKit,
+    "希露瓦": ServalKit,
+    "serval": ServalKit,
+
+    # 彦卿 (Yanqing)
+    "1209": YanqingKit,
+    "彦卿": YanqingKit,
+    "yanqing": YanqingKit,
+
+    # 素裳 (Sushang)
+    "1206": SushangKit,
+    "素裳": SushangKit,
+    "sushang": SushangKit,
+
+    # 丹恒 (Dan Heng)
+    "1002": DanHengKit,
+    "丹恒": DanHengKit,
+    "dan heng": DanHengKit,
+    "danheng": DanHengKit,
+
+    # 虎克 (Hook)
+    "1109": HookKit,
+    "虎克": HookKit,
+    "hook": HookKit,
+
+    # 阿兰 (Arlan)
+    "1008": ArlanKit,
+    "阿兰": ArlanKit,
+    "arlan": ArlanKit,
+
+    # 米沙 (Misha)
+    "1312": MishaKit,
+    "米沙": MishaKit,
+    "misha": MishaKit,
+
+    # 远坂凛 (Tohsaka Rin)
+    "1508": TohsakaRinKit,
+    "远坂凛": TohsakaRinKit,
+    "tohsaka rin": TohsakaRinKit,
+    "rin": TohsakaRinKit,
+
+    # Archer
+    "1015": ArcherKit,
+    "archer": ArcherKit,
+
+    # 昔涟
+    "1415": XilianKit,
+    "昔涟": XilianKit,
+
+    # 丹恒•腾荒
+    "1414": DanHengTenghuangKit,
+    "丹恒•腾荒": DanHengTenghuangKit,
+    "丹恒腾荒": DanHengTenghuangKit,
+
+    # 长夜月
+    "1413": ChangyeyueKit,
+    "长夜月": ChangyeyueKit,
+
+    # 刻律德菈
+    "1412": KelydraKit,
+    "刻律德菈": KelydraKit,
+
+    # 风堇
+    "1409": FengjinKit,
+    "风堇": FengjinKit,
+
+    # 遐蝶
+    "1407": XiadieKit,
+    "遐蝶": XiadieKit,
+
+    # 缇宝 (Tribbie)
+    "1403": TibaoKit,
+    "缇宝": TibaoKit,
+    "tribbie": TibaoKit,
+
+    # 大丽花 (Dahlia)
+    "1321": DahliaKit,
+    "大丽花": DahliaKit,
+    "dahlia": DahliaKit,
 
     # 欢愉阿哈四人组 (Elation Quartet)
     "1503": ElationKit,

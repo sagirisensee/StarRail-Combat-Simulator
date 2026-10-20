@@ -174,3 +174,32 @@ class FireflyKit(KitHandler):
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True
             ))
+
+        # 4. E4: 效果抵抗提高 50%
+        if self.eidolon >= 4:
+            self.port.upsert_status(BuffSpec(
+                key="Firefly_E4_EffectRes",
+                name="明耀萤火 (流萤E4效果抵抗50%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.50),),
+                duration=4,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
+        # 5. E6: 火属性抗性穿透提高 20%，击破效率额外提高 50%
+        if self.eidolon >= 6:
+            self.port.upsert_status(BuffSpec(
+                key="Firefly_E6_ResPen",
+                name="绽放终见 (流萤E6抗穿20%与击破效率)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(
+                    Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.20),
+                    Modifier(StatType.BREAK_EFFICIENCY, ModifierOp.PERCENT, 0.50),
+                ),
+                duration=4,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))

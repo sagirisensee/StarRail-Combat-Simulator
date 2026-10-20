@@ -77,6 +77,20 @@ class GepardKit(KitHandler):
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
+    def on_battle_start(self) -> None:
+        """E4: 精诚笃挚 (杰帕德在场时，我方全体效果抵抗提高 20%)。"""
+        if self.eidolon >= 4:
+            for ally in self.port.allies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key="Gepard_E4_EffectRes",
+                    name="精诚笃挚 (杰帕德E4全队效果抵抗20%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.20),),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END
+                ))
+
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
         self.port.attack(
@@ -87,6 +101,19 @@ class GepardKit(KitHandler):
             toughness_damage=20.0,
             damage_tag="Skill"
         )
+        # E2: 解除冻结后速度降低 20%
+        if self.eidolon >= 2:
+            self.port.upsert_status(BuffSpec(
+                key="Gepard_E2_Slow",
+                name="余寒 (杰帕德E2减速20%)",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.20),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:

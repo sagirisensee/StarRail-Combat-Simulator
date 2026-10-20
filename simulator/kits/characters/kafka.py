@@ -137,6 +137,10 @@ class KafkaKit(KitHandler):
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         enemies = self.port.enemies(self.owner_id)
+        # E6: 叹息，为了这泣下无声 (触电倍率提升 156%，持续时间延长 1 回合)
+        shock_duration = 3 if self.eidolon >= 6 else 2
+        detonate_mult = 3.72 if self.eidolon >= 6 else 2.16
+
         for enemy in enemies:
             self.port.attack(
                 self.owner_id,
@@ -153,7 +157,7 @@ class KafkaKit(KitHandler):
                 source_id=self.owner_id,
                 target_id=enemy,
                 modifiers=(),
-                duration=2,
+                duration=shock_duration,
                 timing=DurationTiming.TARGET_TURN_START,
                 skip_current_clock=True
             ))
@@ -162,8 +166,11 @@ class KafkaKit(KitHandler):
                 self.owner_id,
                 enemy,
                 element="Lightning",
-                atk_multiplier=2.16,
+                atk_multiplier=detonate_mult,
                 toughness_damage=0.0,
                 damage_tag="DoT_Detonation"
             )
-        self.port.gain_energy(self.owner_id, 5.0)
+
+        # E4: 敌方受到触电结算时，卡芙卡恢复能量 (每个敌人 2 点，群体大招约 6~10 点)
+        e4_energy = 2.0 * len(enemies) if self.eidolon >= 4 else 0.0
+        self.port.gain_energy(self.owner_id, 5.0 + e4_energy)

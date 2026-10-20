@@ -40,6 +40,7 @@ class FuXuanKit(KitHandler):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.hp_reversals: int = 1
         self.max_reversals: int = 2
+        self.e2_revives: int = 1 if eidolon >= 2 else 0
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -120,16 +121,19 @@ class FuXuanKit(KitHandler):
                 timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True
             ))
-        self.port.gain_energy(self.owner_id, 30.0)
+        # E4: 格泽机制预备与释放回能
+        extra_e4 = 5.0 if self.eidolon >= 4 else 0.0
+        self.port.gain_energy(self.owner_id, 30.0 + extra_e4)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        mult = 3.0 if self.eidolon >= 6 else 1.0 # E6: 累计扣血追加 200% 高额大招伤害
         enemies = self.port.enemies(self.owner_id)
         for enemy in enemies:
             self.port.attack(
                 self.owner_id,
                 enemy,
                 element="Quantum",
-                atk_multiplier=1.0,
+                atk_multiplier=mult,
                 toughness_damage=20.0,
                 damage_tag="Ultimate"
             )

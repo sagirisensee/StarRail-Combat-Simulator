@@ -167,4 +167,20 @@ class SeeleKit(KitHandler):
             toughness_damage=30.0,
             damage_tag="Ultimate"
         )
-        self.port.gain_energy(self.owner_id, 5.0)
+
+        # E6: 离析 (使目标陷入乱蝶状态，受到攻击时受到终结技伤害 15% 的量子附加伤害)
+        if self.eidolon >= 6:
+            self.port.upsert_status(BuffSpec(
+                key="Seele_E6_ButterflyFlurry",
+                name="离析 (希儿E6乱蝶附加伤害)",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
+                duration=1,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
+        # E4: 掠影 (消灭敌方恢复 15 点能量)
+        extra_energy = 15.0 if (self.eidolon >= 4 and self.port.hp_ratio(target_id) <= 0.0) else 0.0
+        self.port.gain_energy(self.owner_id, 5.0 + extra_energy)

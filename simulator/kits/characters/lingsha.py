@@ -80,6 +80,19 @@ class LingshaKit(KitHandler):
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
+    def on_battle_start(self) -> None:
+        """E1: 触芳自及 (击破效率提高 50%)。"""
+        if self.eidolon >= 1:
+            self.port.upsert_status(BuffSpec(
+                key="Lingsha_E1_BreakEff",
+                name="触芳自及 (灵砂E1击破效率提高50%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.BREAK_EFFICIENCY, ModifierOp.PERCENT, 0.50),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END
+            ))
+
     def _execute_skill(self, ctx: ActionContext) -> None:
         allies = self.port.allies(self.owner_id)
         for ally in allies:
@@ -95,7 +108,25 @@ class LingshaKit(KitHandler):
                 toughness_damage=10.0,
                 damage_tag="Skill"
             )
+            # E1: 弱点被击破时防御力降低 20%
+            if self.eidolon >= 1:
+                self.port.upsert_status(BuffSpec(
+                    key="Lingsha_E1_DefShred",
+                    name="触芳自及 (灵砂E1减防20%)",
+                    source_id=self.owner_id,
+                    target_id=enemy,
+                    modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.20),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
+
         self.fuyuan_count += 3
+        # E4: 浮元急救回复
+        if self.eidolon >= 4:
+            lowest_ally = min(allies, key=lambda a: self.port.hp_ratio(a))
+            self.port.heal(self.owner_id, lowest_ally, 1200.0)
+
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
@@ -121,8 +152,33 @@ class LingshaKit(KitHandler):
                 skip_current_clock=True
             ))
 
+            # E6: 敌方全体全属性抗性降低 20%
+            if self.eidolon >= 6:
+                self.port.upsert_status(BuffSpec(
+                    key="Lingsha_E6_ResShred",
+                    name="晓极归暮 (灵砂E6全属性减抗20%)",
+                    source_id=self.owner_id,
+                    target_id=enemy,
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.20),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
+
         allies = self.port.allies(self.owner_id)
         for ally in allies:
             self.port.heal(self.owner_id, ally, 2200.0)
+            # E2: 全队击破特攻提高 40%
+            if self.eidolon >= 2:
+                self.port.upsert_status(BuffSpec(
+                    key="Lingsha_E2_BreakEffect",
+                    name="垂叶落蕊 (灵砂E2全队击破特攻40%)",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.BREAK_EFFECT, ModifierOp.ADD, 0.40),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
 
         self.port.gain_energy(self.owner_id, 5.0)

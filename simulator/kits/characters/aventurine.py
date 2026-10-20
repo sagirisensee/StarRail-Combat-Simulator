@@ -74,14 +74,35 @@ class AventurineKit(KitHandler):
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        
+        # E6: 每有1个持有护盾的队友，砂金造成伤害提高 50%，最多 150%
+        mult = 1.0
+        if self.eidolon >= 6:
+            shielded_count = sum(1 for a in self.port.allies(self.owner_id) if self.port.has_status(a, self.SHIELD_BUFF))
+            mult *= (1.0 + min(1.50, shielded_count * 0.50))
+
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
+
+        # E2: 施放普攻使目标全属性抗性降低 12%，持续 3 回合
+        if self.eidolon >= 2:
+            self.port.upsert_status(BuffSpec(
+                key="Aventurine_E2_ResShred",
+                name="有限理性 (砂金E2全属性减抗12%)",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.12),),
+                duration=3,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
         self.port.gain_energy(self.owner_id, 20.0)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
@@ -108,11 +129,18 @@ class AventurineKit(KitHandler):
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+
+        # E6: 增伤最高 150%
+        base_mult = 2.7
+        if self.eidolon >= 6:
+            shielded_count = sum(1 for a in self.port.allies(self.owner_id) if self.port.has_status(a, self.SHIELD_BUFF))
+            base_mult *= (1.0 + min(1.50, shielded_count * 0.50))
+
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=2.7,
+            atk_multiplier=base_mult,
             toughness_damage=30.0,
             damage_tag="Ultimate"
         )
@@ -134,4 +162,44 @@ class AventurineKit(KitHandler):
             for ally in allies:
                 self.port.add_shield(self.owner_id, ally, 1600.0, duration=3)
 
+        # 触发天赋追击 (随机获得 1~7 点盲注，达到 7 点即触发)
+        self.blind_bet += 7
+        if self.blind_bet >= 7:
+            self._trigger_follow_up()
+
         self.port.gain_energy(self.owner_id, 5.0)
+
+    def _trigger_follow_up(self) -> None:
+        """天赋追击：E4 触发前防御提升 40%，且弹射段数由 7 段增至 10 段。"""
+        self.blind_bet = 0
+        if self.eidolon >= 4:
+            self.port.upsert_status(BuffSpec(
+                key="Aventurine_E4_Def",
+                name="意外绞刑 (砂金E4防御力提高40%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.DEF_PERCENT, ModifierOp.ADD, 0.40),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
+        hits = 10 if self.eidolon >= 4 else 7
+        dmg_per_hit = 0.25
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            for _ in range(hits):
+                import random
+                target = random.choice(enemies)
+                self.port.attack(
+                    self.owner_id,
+                    target,
+                    element="Imaginary",
+                    atk_multiplier=dmg_per_hit,
+                    toughness_damage=5.0,
+                    damage_tag="TalentFollowUp"
+                )
+        # 刷新全队护盾
+        allies = self.port.allies(self.owner_id)
+        for ally in allies:
+            self.port.add_shield(self.owner_id, ally, 800.0, duration=3)

@@ -90,6 +90,10 @@ class StatusManager:
     def get_statuses(self, entity_name: str) -> List[StatusInstance]:
         return self.statuses.get(entity_name, [])
 
+    def get_status(self, entity_name: str, status_id: str) -> Optional[StatusInstance]:
+        """获取目标指定 ID 的状态实例。"""
+        return next((s for s in self.get_statuses(entity_name) if s.id == status_id), None)
+
     def add_status(self, status: StatusInstance):
         """向目标添加状态（严格执行 REPLACE/STACK 策略与数值更新）。"""
         target_name = status.target.name

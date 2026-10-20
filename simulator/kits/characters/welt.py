@@ -83,32 +83,54 @@ class WeltKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        # 弹射 3 段虚数伤害
+        # 弹射虚数伤害 (E6 额外增加 1 段，倍率提升至 2.88)
+        mult = 2.88 if self.eidolon >= 6 else 2.16
+        tough = 40.0 if self.eidolon >= 6 else 30.0
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=2.16,
-            toughness_damage=30.0,
+            atk_multiplier=mult,
+            toughness_damage=tough,
             damage_tag="Skill"
         )
         # 官方最新加强：施加【失重】(防御力降低 20%，速度降低 15%)
+        # E4: 战技使目标受到的伤害提高 12%
+        mods = [
+            Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.20),
+            Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.15),
+        ]
+        if self.eidolon >= 4:
+            mods.append(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.12))
+
         self.port.upsert_status(BuffSpec(
             key=self.WEIGHTLESS_DEBUFF,
-            name="失重 (瓦尔特减防减速与受击推条)",
+            name="失重 (瓦尔特减防减速与E4易伤)",
             source_id=self.owner_id,
             target_id=target_id,
-            modifiers=(
-                Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.20),
-                Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.15),
-            ),
+            modifiers=tuple(mods),
             duration=2,
             timing=DurationTiming.TARGET_TURN_END,
             skip_current_clock=True
         ))
-        self.port.gain_energy(self.owner_id, 30.0)
+        # E2: 触发天赋时恢复 3 点能量
+        extra_energy = 3.0 if self.eidolon >= 2 else 0.0
+        self.port.gain_energy(self.owner_id, 30.0 + extra_energy)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        # E1: 施放终结技后，瓦尔特获得强化 (伤害提升 40%)
+        if self.eidolon >= 1:
+            self.port.upsert_status(BuffSpec(
+                key="Welt_E1_Empower",
+                name="名的继承 (瓦尔特E1终结技强化40%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.40),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
         enemies = self.port.enemies(self.owner_id)
         for enemy in enemies:
             self.port.attack(

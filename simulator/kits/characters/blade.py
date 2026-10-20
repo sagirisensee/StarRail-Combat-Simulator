@@ -102,13 +102,19 @@ class BladeKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         self.is_enhanced_basic = True
-        # 进入【地狱变】：增伤 40%，嘲讽度大幅提升，持续 3 回合
+        # 进入【地狱变】：增伤 40%，嘲讽度大幅提升，持续 3 回合 (E2 暴击率提高 15%)
+        mods = [Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.40)]
+        if self.eidolon >= 2:
+            mods.append(Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.15))
+        if self.eidolon >= 4:
+            mods.append(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, 0.40))
+
         self.port.upsert_status(BuffSpec(
             key=self.HELLSCAPE_BUFF,
             name="地狱变 (刃增伤与嘲讽提升)",
             source_id=self.owner_id,
             target_id=self.owner_id,
-            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.40),),
+            modifiers=tuple(mods),
             duration=3,
             timing=DurationTiming.CASTER_TURN_END,
             skip_current_clock=True
@@ -119,13 +125,14 @@ class BladeKit(KitHandler):
         self.charge_stacks += 1
         if self.charge_stacks >= self.max_charge_stacks:
             self.charge_stacks = 0
-            # 满层触发全体追加攻击！
+            # 满层触发全体追加攻击！(E6 充能 4 层触发且倍率提升)
+            fu_mult = 2.0 if self.eidolon >= 6 else 1.4
             for enemy in self.port.enemies(self.owner_id):
                 self.port.attack(
                     self.owner_id,
                     enemy,
                     element="Wind",
-                    atk_multiplier=1.4,
+                    atk_multiplier=fu_mult,
                     toughness_damage=10.0,
                     damage_tag="TalentFollowUp"
                 )
@@ -134,12 +141,13 @@ class BladeKit(KitHandler):
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        # 终结技：高额扩散风伤，削韧 20 点
+        # 终结技：高额扩散风伤，削韧 20 点 (E1 额外提高 150% 累计损失血量伤害)
+        ult_mult = 4.7 if self.eidolon >= 1 else 3.2
         self.port.attack(
             self.owner_id,
             target_id,
             element="Wind",
-            atk_multiplier=3.2,
+            atk_multiplier=ult_mult,
             toughness_damage=20.0,
             damage_tag="Ultimate"
         )

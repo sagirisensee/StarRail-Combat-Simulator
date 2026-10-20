@@ -105,12 +105,60 @@ class GallagherKit(KitHandler):
             )
             self.port.gain_energy(self.owner_id, 20.0)
 
+    def on_battle_start(self) -> None:
+        """E1: 盐与犬 (进入战斗回能 20 点，效果抵抗提高 50%)。"""
+        if self.eidolon >= 1:
+            self.port.gain_energy(self.owner_id, 20.0)
+            self.port.upsert_status(BuffSpec(
+                key="Gallagher_E1_EffectRes",
+                name="盐与犬 (加拉赫E1效果抵抗50%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.50),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END
+            ))
+
+        # E6: 击破特攻提高 20%，弱点击破效率提高 20%
+        if self.eidolon >= 6:
+            self.port.upsert_status(BuffSpec(
+                key="Gallagher_E6_Break",
+                name="血与沙 (加拉赫E6击破效率与击破特攻)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(
+                    Modifier(StatType.BREAK_EFFECT, ModifierOp.ADD, 0.20),
+                    Modifier(StatType.BREAK_EFFICIENCY, ModifierOp.PERCENT, 0.20),
+                ),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END
+            ))
+
     def _execute_skill(self, ctx: ActionContext) -> None:
-        # 单体治疗 (回能 30 点)
+        target_id = ctx.target_ids[0] if ctx.target_ids else self.owner_id
+        # 单体治疗 1600 点
+        self.port.heal(self.owner_id, target_id, 1600.0)
+
+        # E2: 解除负面且效果抵抗提高 30% 持续 2 回合
+        if self.eidolon >= 2:
+            self.port.upsert_status(BuffSpec(
+                key="Gallagher_E2_Res",
+                name="狮尾 (加拉赫E2效果抵抗30%)",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.30),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
+
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         enemies = self.port.enemies(self.owner_id)
+        # E4: 酩酊状态持续时间延长 1 回合 (普通 2 回合，E4 延长至 3 回合)
+        besotted_duration = 3 if self.eidolon >= 4 else 2
+
         for enemy in enemies:
             self.port.attack(
                 self.owner_id,
@@ -127,7 +175,7 @@ class GallagherKit(KitHandler):
                 source_id=self.owner_id,
                 target_id=enemy,
                 modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.12),),
-                duration=2,
+                duration=besotted_duration,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True
             ))

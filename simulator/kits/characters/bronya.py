@@ -158,3 +158,16 @@ class BronyaKit(KitHandler):
                 skip_current_clock=True
             ))
         self.port.gain_energy(self.owner_id, 5.0)
+
+    def trigger_e4_followup(self, target_id: str) -> None:
+        """E4: 攻其不备 (我方普攻命中风弱点目标时，布洛妮娅发动追击造成 80% 普攻伤害)。"""
+        if self.eidolon >= 4:
+            self.port.attack(
+                self.owner_id,
+                target_id,
+                element="Wind",
+                atk_multiplier=0.80,
+                toughness_damage=10.0,
+                damage_tag="TalentFollowUp"
+            )
+            self.port.gain_energy(self.owner_id, 5.0)

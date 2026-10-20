@@ -77,8 +77,9 @@ class SparkleKit(KitHandler):
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
-        """战斗开始：扩展 SP 上限至 7 点，若为 E1 则开局触发提速 15%！"""
-        self.port.set_sp_cap(7)
+        """战斗开始：扩展 SP 上限 (E4 提升至 8 点，普通 7 点)，若为 E1 则开局触发提速 15%！"""
+        sp_cap = 8 if self.eidolon >= 4 else 7
+        self.port.set_sp_cap(sp_cap)
         self.talent_stacks = 0
 
         # E1: 战斗开始时花火速度提高 15%，持续 2 回合
@@ -127,21 +128,29 @@ class SparkleKit(KitHandler):
             allies = [a for a in self.port.allies(self.owner_id) if a != self.owner_id]
             target_id = allies[0] if allies else self.owner_id
 
-        # 2. 动态采样花火当前暴伤 (Lv.12: 花火暴伤 * 26.4% + 48.6%)
+        # 2. 动态采样花火当前暴伤 (Lv.12: 花火暴伤 * 26.4% + 48.6%，E6 额外 +30% 花火暴伤)
         sparkle_cd = self.port.stat(self.owner_id, StatType.CRIT_DMG)
-        bonus_cd = sparkle_cd * 0.264 + 0.486
+        cd_ratio = 0.264 + (0.30 if self.eidolon >= 6 else 0.0)
+        bonus_cd = sparkle_cd * cd_ratio + 0.486
 
-        # 3. 施加暴伤增益 (REPLACE 策略，覆盖旧数值)
-        self.port.upsert_status(BuffSpec(
-            key=self.SKILL_CD_BUFF,
-            name="梦游 (花火战技暴伤)",
-            source_id=self.owner_id,
-            target_id=target_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, bonus_cd),),
-            duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
-            skip_current_clock=True
-        ))
+        # 3. 施加暴伤增益 (REPLACE 策略，E6 扩散至全队持有谜诡目标)
+        targets = [target_id]
+        if self.eidolon >= 6:
+            for ally in self.port.allies(self.owner_id):
+                if self.port.has_status(ally, self.ULT_CIPHER_BUFF) and ally not in targets:
+                    targets.append(ally)
+
+        for tgt in targets:
+            self.port.upsert_status(BuffSpec(
+                key=self.SKILL_CD_BUFF,
+                name="梦游 (花火战技暴伤)",
+                source_id=self.owner_id,
+                target_id=tgt,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, bonus_cd),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
         # 4. 行动提前 50% (若对自身施放，则不触发拉条)
         if target_id != self.owner_id:

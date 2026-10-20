@@ -88,16 +88,35 @@ class LuochaKit(KitHandler):
             self.abyss_flower = 0
             allies = self.port.allies(self.owner_id)
             for ally in allies:
+                mods = []
+                # E1: 结界生效时我方全体攻击力提高 20%
+                if self.eidolon >= 1:
+                    mods.append(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.20))
+
                 self.port.upsert_status(BuffSpec(
                     key=self.FIELD_BUFF,
-                    name="生息结界 (罗刹攻击回血结界)",
+                    name="生息结界 (罗刹攻击回血结界与E1增攻)",
                     source_id=self.owner_id,
                     target_id=ally,
-                    modifiers=(),
+                    modifiers=tuple(mods),
                     duration=2,
                     timing=DurationTiming.CASTER_TURN_END,
                     skip_current_clock=True
                 ))
+
+            # E4: 结界生效时敌方伤害降低 12%
+            if self.eidolon >= 4:
+                for enemy in self.port.enemies(self.owner_id):
+                    self.port.upsert_status(BuffSpec(
+                        key="Luocha_E4_Weaken",
+                        name="荆棘审判 (罗刹E4敌人伤害降低12%)",
+                        source_id=self.owner_id,
+                        target_id=enemy,
+                        modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, -0.12),),
+                        duration=2,
+                        timing=DurationTiming.CASTER_TURN_END,
+                        skip_current_clock=True
+                    ))
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = None
@@ -109,7 +128,16 @@ class LuochaKit(KitHandler):
             allies = self.port.allies(self.owner_id)
             target_id = allies[0] if allies else self.owner_id
 
-        self.port.heal(self.owner_id, target_id, 3000.0)
+        # E2: 若目标生命值 < 50%，治疗量提升 30%；若 >= 50%，提供 1200 点护盾
+        heal_val = 3000.0
+        hp_ratio = self.port.hp_ratio(target_id)
+        if self.eidolon >= 2:
+            if hp_ratio < 0.50:
+                heal_val *= 1.30
+            else:
+                self.port.add_shield(self.owner_id, target_id, 1200.0, duration=2)
+
+        self.port.heal(self.owner_id, target_id, heal_val)
         self.abyss_flower += 1
         self._check_field_trigger()
         self.port.gain_energy(self.owner_id, 30.0)
@@ -125,6 +153,18 @@ class LuochaKit(KitHandler):
                 toughness_damage=20.0,
                 damage_tag="Ultimate"
             )
+            # E6: 敌方全属性抗性降低 20%
+            if self.eidolon >= 6:
+                self.port.upsert_status(BuffSpec(
+                    key="Luocha_E6_ResShred",
+                    name="皆归尘土 (罗刹E6全属性减抗20%)",
+                    source_id=self.owner_id,
+                    target_id=enemy,
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.20),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
         self.abyss_flower += 1
         self._check_field_trigger()
         self.port.gain_energy(self.owner_id, 5.0)

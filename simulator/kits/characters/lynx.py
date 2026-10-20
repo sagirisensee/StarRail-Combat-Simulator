@@ -87,14 +87,30 @@ class LynxKit(KitHandler):
             allies = self.port.allies(self.owner_id)
             target_id = allies[0] if allies else self.owner_id
 
-        self.port.heal(self.owner_id, target_id, 2000.0)
-        # 求生反应：生命上限提高 10%
+        # 治疗：E1 在生命 <= 50% 时治疗量提升 20%
+        heal_val = 2000.0
+        if self.eidolon >= 1 and self.port.hp_ratio(target_id) <= 0.50:
+            heal_val *= 1.20
+        self.port.heal(self.owner_id, target_id, heal_val)
+
+        # 求生反应：生命上限提高 10% (E6 为 16%)
+        hp_boost = 0.16 if self.eidolon >= 6 else 0.10
+        mods = [Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_boost)]
+
+        # E4: 额外提升攻击力 (约 15% 攻击力)
+        if self.eidolon >= 4:
+            mods.append(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.15))
+
+        # E6: 效果抵抗提高 30%
+        if self.eidolon >= 6:
+            mods.append(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.30))
+
         self.port.upsert_status(BuffSpec(
             key=self.SURVIVAL_RESPONSE_BUFF,
             name="求生反应 (玲可生命上限与受击率加成)",
             source_id=self.owner_id,
             target_id=target_id,
-            modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, 0.10),),
+            modifiers=tuple(mods),
             duration=2,
             timing=DurationTiming.TARGET_TURN_END,
             skip_current_clock=True

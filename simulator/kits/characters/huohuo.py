@@ -31,6 +31,7 @@ class HuohuoKit(KitHandler):
     PROVISION_BUFF = "Huohuo_Divine_Provision"
     ULT_ATK_BUFF = "Huohuo_Ult_Atk"
     ULT_HIGH_ENERGY_BUFF = "Huohuo_Ult_HighEnergy_Atk"
+    E6_DMG_BUFF = "Huohuo_E6_DmgBuff"
 
     def __init__(
         self,
@@ -41,6 +42,7 @@ class HuohuoKit(KitHandler):
         skill_levels: Optional[dict] = None
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
+        self.e2_revive_count: int = 2 if eidolon >= 2 else 0
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -115,15 +117,43 @@ class HuohuoKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.owner_id
-        # 1. 基础单体治疗 (E1 额外提高 20% 治疗量)
-        heal_val = 3000.0 if self.eidolon >= 1 else 2500.0
-        self.port.heal(self.owner_id, target_id, heal_val)
+        # 1. 基础单体治疗 (E1: +20% 治疗量, E4: 目标血量越低额外获得最高 80% 治疗加成)
+        base_heal = 3000.0 if self.eidolon >= 1 else 2500.0
+        if self.eidolon >= 4:
+            lost_ratio = max(0.0, 1.0 - self.port.hp_ratio(target_id))
+            base_heal *= (1.0 + lost_ratio * 0.80)
+
+        self.port.heal(self.owner_id, target_id, base_heal)
+
+        # E6: 治疗目标时，使目标造成的伤害提高 50%，持续 2 回合
+        if self.eidolon >= 6:
+            self.port.upsert_status(BuffSpec(
+                key=self.E6_DMG_BUFF,
+                name="同气连枝 (藿藿E6治疗增伤50%)",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
         # 2. 定向残血急救机制：若存在生命值 < 50% 的队友，额外定向治疗
         allies = self.port.allies(self.owner_id)
         for ally in allies:
             if self.port.hp_ratio(ally) < 0.50:
                 self.port.heal(self.owner_id, ally, 1500.0)
+                if self.eidolon >= 6:
+                    self.port.upsert_status(BuffSpec(
+                        key=self.E6_DMG_BUFF,
+                        name="同气连枝 (藿藿E6治疗增伤50%)",
+                        source_id=self.owner_id,
+                        target_id=ally,
+                        modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
+                        duration=2,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        skip_current_clock=True
+                    ))
 
         # 3. 激活/刷新【禳命】
         self._apply_divine_provision()
