@@ -85,9 +85,12 @@ class TestSustainKits(unittest.TestCase):
         sim.resolver.resolve_all()
 
         self.assertGreater(ally.current_hp, 2000.0)
-        # E1 禳命提速 12%
+        # E1 禳命提速 12% 且持续时间加强为 4 回合
         if huohuo.eidolon >= 1:
             self.assertAlmostEqual(ally.speed, 112.0, places=1)
+            statuses = sim.status_mgr.get_statuses(ally.name)
+            provision_status = next(s for s in statuses if s.id == "Huohuo_Divine_Provision")
+            self.assertEqual(provision_status.duration, 4, "藿藿E1最新加强后禳命持续时间应为4回合")
 
         # 终结技全队回能 20%
         huohuo.kit.execute(ActionContext("hh_ult", huohuo.name, ActionKind.ULTIMATE, target_ids=()))

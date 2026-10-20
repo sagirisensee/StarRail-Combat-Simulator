@@ -1,16 +1,18 @@
 """藿藿 (Huohuo) 战斗技能套件完整实现 (Character Kit).
 
-严格契合实机机制与公式：
+严格契合最新实机机制与版本加强公式：
 1. 普攻【旗令·招风掣电】：基于自身生命造成风伤，恢复 1 点战技点，回能 20 点；
 2. 战技【灵符·保命护身】：
    - 消耗 1 点 SP，治疗目标与相邻队友，解除负面；
-   - 获得【禳命】(Divine Provision) 状态 (持续 2 回合，E1 延长至 3 回合)；
+   - 获得【禳命】(Divine Provision) 状态；
 3. 终结技【尾巴·遣策通灵】：
    - 消耗 140 能量；
    - 为除藿藿以外的我方全体恢复能量 (相当于各自最大能量的 20%)；
    - 我方全体攻击力提高 40%，持续 2 回合；
-4. 【星魂 1 联动】：
-   - 拥有【禳命】时，我方全体速度提高 12%！
+4. 【星魂 1 最新加强联动】：
+   - 拥有【禳命】时，我方全体速度提高 12%；
+   - 【禳命】持续时间最新加强延长至 4 回合 (实现超舒适的 E-A-A-A 4动产点循环)；
+   - 额外提高 20% 治疗量。
 """
 
 from typing import Optional, List, Any
@@ -84,11 +86,12 @@ class HuohuoKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.owner_id
-        # 治疗目标 2500 点生命
-        self.port.heal(self.owner_id, target_id, 2500.0)
+        # 治疗目标 (E1 额外提高 20% 治疗量)
+        heal_val = 3000.0 if self.eidolon >= 1 else 2500.0
+        self.port.heal(self.owner_id, target_id, heal_val)
 
-        # 赋予禳命 (E1 持续 3 回合，E0 为 2 回合)
-        duration = 3 if self.eidolon >= 1 else 2
+        # 赋予禳命 (最新加强：E1 延长至 4 回合，E0 为 3 回合)
+        duration = 4 if self.eidolon >= 1 else 3
         allies = self.port.allies(self.owner_id)
         for ally in allies:
             mods = []
