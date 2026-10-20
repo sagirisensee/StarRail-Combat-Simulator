@@ -1,0 +1,42 @@
+"""Kit 与底层战斗引擎基础设施之间的窄接口契约 (Combat Port)."""
+from dataclasses import dataclass
+from typing import Protocol, Tuple, Optional, Any
+from .status import Modifier, DurationTiming, StatType, StackPolicy, StatusInstance
+
+
+@dataclass(frozen=True)
+class BuffSpec:
+    key: str
+    name: str
+    source_id: str
+    target_id: str
+    modifiers: Tuple[Modifier, ...]
+    duration: Optional[int] = 1
+    timing: DurationTiming = DurationTiming.TARGET_TURN_END
+    stack_policy: StackPolicy = StackPolicy.REPLACE
+    skip_current_clock: bool = False
+
+
+class CombatPort(Protocol):
+    """技能处理器调用的安全基础设施端口契约。"""
+    def allies(self, actor_id: str) -> Tuple[str, ...]: ...
+    def enemies(self, actor_id: str) -> Tuple[str, ...]: ...
+    def stat(self, entity_id: str, stat: StatType) -> float: ...
+    def has_status(self, target_id: str, key: str) -> bool: ...
+    def upsert_status(self, spec: BuffSpec) -> None: ...
+    def remove_status(self, target_id: str, key: str) -> None: ...
+    def advance(self, source_id: str, target_id: str, ratio: float) -> None: ...
+    def delay(self, source_id: str, target_id: str, ratio: float) -> None: ...
+    def change_sp(self, source_id: str, amount: int, reason: str) -> None: ...
+    def set_sp_cap(self, new_cap: int) -> None: ...
+    def gain_energy(self, entity_id: str, amount: float) -> None: ...
+    def attack(
+        self,
+        source_id: str,
+        target_id: str,
+        *,
+        element: str,
+        atk_multiplier: float,
+        toughness_damage: float,
+        damage_tag: str = "direct"
+    ) -> None: ...

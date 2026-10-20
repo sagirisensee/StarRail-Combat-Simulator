@@ -5,11 +5,17 @@ import sys
 # 保证 UTF-8 输出
 sys.stdout.reconfigure(encoding='utf-8')
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from simulator.db import CharacterDB
 from simulator.core import TurnSimulator, Entity
 
 def main():
-    db_path = r"d:\Downloads\ppSR_REL_4.6.5X\misc\freesr-data.json"
+    db_path = os.path.join(PROJECT_ROOT, "data", "character_db_export.json")
+    if not os.path.exists(db_path):
+        db_path = r"d:\Downloads\ppSR_REL_4.6.5X\misc\freesr-data.json"
     if not os.path.exists(db_path):
         db_path = r"d:\Downloads\StarRail_4.6.53\freesr-data.json"
 
@@ -42,12 +48,12 @@ def main():
     # 3. 验证一键转换为战斗模拟器实体
     print("=== 验证战斗模拟器实体对接 ===")
     sparkle_entity = db.to_combat_entity("花火", policy="E")
-    feixiao_entity = db.to_combat_entity("飞霄·巡猎", policy="EAA")
+    feixiao_entity = db.to_combat_entity(1409, policy="EAA")  # ID 1409 (风堇)
     print(f"转换实体成功:")
     print(f"  - {sparkle_entity.name}: 速度={sparkle_entity.base_speed:.1f}, 攻击={sparkle_entity.base_atk:.1f}, 暴伤={sparkle_entity.base_crit_dmg*100:.1f}%")
     print(f"  - {feixiao_entity.name}: 速度={feixiao_entity.base_speed:.1f}, 攻击={feixiao_entity.base_atk:.1f}, 暴击={feixiao_entity.base_crit_rate*100:.1f}%")
 
-    # 4. 组队跑一次快速排轴模拟 (花火 + 飞霄)
+    # 4. 组队跑一次快速排轴模拟 (花火 + 风堇)
     boss = Entity(
         name="测试木桩·卡芙卡",
         base_speed=130.0,
@@ -71,10 +77,7 @@ def main():
     for _ in range(3):
         sim.step()
 
-    # 5. 导出结构化报表
-    out_file = "character_db_export.json"
-    db.export_summary_json(out_file)
-    print(f"\n✅ 全库属性 JSON 报表已成功导出至: {os.path.abspath(out_file)}")
+    print(f"\n✅ 全库属性已验证完毕，共收录 {len(all_profiles)} 位角色档案！")
 
 if __name__ == "__main__":
     main()

@@ -21,6 +21,14 @@ class DurationTiming(Enum):
     CASTER_TURN_END = auto()     # 施法者自身回合结束扣减 (结界时钟)
 
 
+class StackPolicy(Enum):
+    """状态刷新与叠层策略。"""
+    REPLACE = auto()             # 覆盖数值、刷新时长
+    REFRESH = auto()             # 仅刷新持续时间
+    STACK = auto()               # 叠加层数并刷新
+    INDEPENDENT = auto()         # 独立多实例
+
+
 class StatType(Enum):
     """战斗属性枚举。"""
     SPEED = "speed"              # 速度
@@ -31,6 +39,9 @@ class StatType(Enum):
     DMG_BOOST = "dmg_boost"      # 增伤区
     DEF_SHRED = "def_shred"      # 减防区
     RES_PEN = "res_pen"          # 抗性穿透
+    BREAK_EFFECT = "break_effect"# 击破特攻
+    BREAK_EFFICIENCY = "break_eff"# 击破效率
+    ELATION = "elation"          # 欢愉伤害/度
 
 
 class ModifierOp(Enum):
@@ -47,18 +58,22 @@ class Modifier:
 
 @dataclass
 class StatusInstance:
-    id: str                      # 唯一标识符，如 "MatrixOfPrescience"
-    name: str                    # 展示名称，如 "穷观阵"
-    source: Any                  # 施法者 Entity
-    target: Any                  # 承载者 Entity
-    duration: int                # 剩余持续回合数
-    timing: DurationTiming       # 扣减时序
+    id: str                                  # 唯一标识符，如 "MatrixOfPrescience"
+    name: str                                # 展示名称，如 "穷观阵"
+    source: Any                              # 施法者 Entity
+    target: Any                              # 承载者 Entity
+    duration: Optional[int] = 1              # 剩余持续回合数 (None 表示常驻，不自动衰减)
+    timing: DurationTiming = DurationTiming.TARGET_TURN_END # 扣减时序
     modifiers: List[Modifier] = field(default_factory=list)
-    stacks: int = 1              # 当前层数
-    max_stacks: int = 1          # 最大层数
+    stacks: int = 1                          # 当前层数
+    max_stacks: int = 1                      # 最大层数
+    stack_policy: StackPolicy = StackPolicy.REPLACE # 合并策略
+    skip_current_clock: bool = False         # 施加当回合是否豁免扣减
 
     @property
     def is_expired(self) -> bool:
+        if self.duration is None:
+            return False
         return self.duration <= 0
 
 
@@ -73,18 +88,38 @@ class StatusManager:
         return self.statuses.get(entity_name, [])
 
     def add_status(self, status: StatusInstance):
-        """向目标添加状态（处理同名刷新与叠层）。"""
+        """向目标添加状态（严格执行 REPLACE/STACK 策略与数值更新）。"""
         target_name = status.target.name
         if target_name not in self.statuses:
             self.statuses[target_name] = []
 
         existing = next((s for s in self.statuses[target_name] if s.id == status.id), None)
         if existing:
-            # 刷新持续时间与叠层
-            existing.duration = max(existing.duration, status.duration)
-            existing.stacks = min(existing.max_stacks, existing.stacks + status.stacks)
+            # 策略分支
+            if status.stack_policy == StackPolicy.REPLACE:
+                # 覆盖最新数值（如重放战技更新暴伤采样值）
+                existing.modifiers = list(status.modifiers)
+                existing.duration = status.duration if status.duration is not None else existing.duration
+                existing.stacks = min(existing.max_stacks, max(existing.stacks, status.stacks))
+                existing.skip_current_clock = status.skip_current_clock
+            elif status.stack_policy == StackPolicy.STACK:
+                existing.stacks = min(existing.max_stacks, existing.stacks + status.stacks)
+                if status.duration is not None:
+                    existing.duration = max(existing.duration or 0, status.duration)
+            elif status.stack_policy == StackPolicy.REFRESH:
+                if status.duration is not None:
+                    existing.duration = max(existing.duration or 0, status.duration)
         else:
             self.statuses[target_name].append(status)
+
+    def remove_status(self, target_name: str, status_id: str):
+        """显式移除指定状态。"""
+        if target_name in self.statuses:
+            self.statuses[target_name] = [s for s in self.statuses[target_name] if s.id != status_id]
+
+    def has_status(self, target_name: str, status_id: str) -> bool:
+        """检查目标是否持有指定状态。"""
+        return any(s.id == status_id for s in self.get_statuses(target_name))
 
     def tick_on_turn_begin(self, actor: Any):
         """在回合开始时结算 TARGET_TURN_START 类型的状态。"""
@@ -119,17 +154,23 @@ class StatusManager:
             active = []
             for s in status_list:
                 if condition(s):
-                    s.duration -= 1
-                    if s.duration <= 0:
-                        # 状态到期移除
-                        bus.publish(StatusExpireEvent(
-                            av=round(av, 2),
-                            cycle=cycle,
-                            target_name=s.target.name,
-                            status_id=s.id,
-                            status_name=s.name
-                        ))
+                    # 如果标记了跳过当前生效时钟（如本行动刚刚施加的自身速度Buff）
+                    if s.skip_current_clock:
+                        s.skip_current_clock = False
+                        active.append(s)
                         continue
+
+                    if s.duration is not None:
+                        s.duration -= 1
+                        if s.duration <= 0:
+                            bus.publish(StatusExpireEvent(
+                                av=round(av, 2),
+                                cycle=cycle,
+                                target_name=s.target.name,
+                                status_id=s.id,
+                                status_name=s.name
+                            ))
+                            continue
                 active.append(s)
             self.statuses[target_name] = active
 

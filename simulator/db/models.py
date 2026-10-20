@@ -102,6 +102,7 @@ class CharacterPanel:
     ehr: float
     res: float
     dmg_boost: float
+    elation: float = 0.0                 # 欢愉度 (星神阿哈欢愉体系特有属性)
     # 乘区与来源追溯
     breakdowns: Dict[str, StatBreakdown] = field(default_factory=dict)
 
@@ -121,7 +122,7 @@ class CharacterPanel:
         disp_total_spd = math.floor(self.spd)
         disp_g_spd = disp_total_spd - disp_b_spd
 
-        return {
+        res_dict = {
             "生命值 (HP)": math.floor(self.hp),
             "攻击力 (ATK)": math.floor(self.atk),
             "防御力 (DEF)": math.floor(self.def_stat),
@@ -136,6 +137,9 @@ class CharacterPanel:
             "效果抵抗 (RES)": floor_pct(self.res),
             "属性伤害加成 (DMG%)": floor_pct(self.dmg_boost),
         }
+        if self.elation > 0.0:
+            res_dict["欢愉度 (Elation)"] = floor_pct(self.elation)
+        return res_dict
 
 
 @dataclass

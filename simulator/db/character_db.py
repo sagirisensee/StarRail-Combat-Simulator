@@ -50,6 +50,14 @@ class CharacterDB:
         if not self._raw_data:
             return
 
+        self._profiles_by_id.clear()
+        self._profiles_by_name.clear()
+
+        # 兼容模式：直接加载已导出并精准计算的结构化报表 (如 character_db_export.json)
+        if "characters" in self._raw_data:
+            self._compile_from_export()
+            return
+
         avatars_dict = self._raw_data.get("avatars", {})
         relics_list = self._raw_data.get("relics", [])
         lightcones_list = self._raw_data.get("lightcones", [])
@@ -66,9 +74,6 @@ class CharacterDB:
             eq = int(lc.get("equip_avatar", 0))
             if eq > 0:
                 lc_by_avatar[eq] = lc
-
-        self._profiles_by_id.clear()
-        self._profiles_by_name.clear()
 
         # 2. 逐一编译全角色
         for aid_str, a_data in avatars_dict.items():
@@ -197,9 +202,123 @@ class CharacterDB:
             self._profiles_by_id[aid] = profile
             self._profiles_by_name[name] = profile
 
-    def get(self, avatar_id: int) -> Optional[CharacterProfile]:
-        """根据角色 ID 查询档案。"""
-        return self._profiles_by_id.get(avatar_id)
+    def _compile_from_export(self):
+        """从高精导出的结构化 JSON 报表直接编译角色档案。"""
+        from .models import StatBreakdown, EquippedRelic, EquippedLightCone
+        chars = self._raw_data.get("characters", [])
+        for c in chars:
+            aid = int(c["avatar_id"])
+            name = c["name"]
+            element = Element.from_str(c.get("element", "Physical"))
+            raw_path = str(c.get("path", "Warrior"))
+            path = Path.from_str(raw_path)
+
+            level = int(c.get("level", 80))
+            eidolon_str = str(c.get("eidolon", "E0"))
+            eidolon = int(eidolon_str.replace("E", "")) if eidolon_str.startswith("E") else 0
+
+            # 光锥
+            lc_raw = c.get("light_cone")
+            equipped_lc = None
+            if lc_raw:
+                lc_s_str = str(lc_raw.get("superimposition", "S1"))
+                lc_s = int(lc_s_str.replace("S", "")) if lc_s_str.startswith("S") else 1
+                equipped_lc = EquippedLightCone(
+                    internal_uid=0,
+                    item_id=int(lc_raw.get("item_id", 0)),
+                    name=lc_raw.get("name", ""),
+                    level=int(lc_raw.get("level", 80)),
+                    promotion=6,
+                    superimposition=lc_s,
+                    base_hp=0.0,
+                    base_atk=0.0,
+                    base_def=0.0
+                )
+
+            # 遗器
+            relics_list = []
+            for r in c.get("relic_details", []):
+                relics_list.append(EquippedRelic(
+                    internal_uid=0,
+                    relic_id=0,
+                    relic_set_id=0,
+                    set_name=r.get("set_name", ""),
+                    slot=int(r.get("slot", 1)),
+                    slot_name=r.get("slot_name", ""),
+                    level=15,
+                    main_affix_id=0,
+                    main_affix_name=r.get("main_affix", ""),
+                    main_affix_val=0.0,
+                    is_main_pct=False,
+                    sub_affixes=r.get("sub_affixes", [])
+                ))
+
+            # 面板
+            s = c.get("stats_summary", {})
+            b = c.get("breakdowns", {})
+            
+            def parse_pct(val_str: str) -> float:
+                if isinstance(val_str, (int, float)):
+                    return float(val_str)
+                return float(str(val_str).replace("%", "").strip()) / 100.0 if "%" in str(val_str) else float(val_str)
+
+            breakdowns = {}
+            for k, bd in b.items():
+                pct_str = bd.get("percent_bonus", "0%")
+                pct_val = parse_pct(pct_str)
+                breakdowns[k] = StatBreakdown(
+                    base_white=float(bd.get("base_white", 0.0)),
+                    flat_bonus=float(bd.get("flat_bonus", 0.0)),
+                    percent_bonus=pct_val,
+                    final_value=float(bd.get("final_value", 0.0))
+                )
+
+            # 优先从 breakdowns 读取实战高精浮点，其次读取实战精算
+            hp_exact = float(b.get("hp", {}).get("final_value", s.get("生命值 (HP)", 0)))
+            atk_exact = float(b.get("atk", {}).get("final_value", s.get("攻击力 (ATK)", 0)))
+            def_exact = float(b.get("def", {}).get("final_value", s.get("防御力 (DEF)", 0)))
+            spd_exact = float(s.get("速度实战精算", b.get("spd", {}).get("final_value", s.get("速度 (SPD)", 100))))
+
+            panel = CharacterPanel(
+                hp=hp_exact,
+                atk=atk_exact,
+                def_stat=def_exact,
+                spd=spd_exact,
+                crit_rate=parse_pct(s.get("暴击率 (CR)", "5.0%")),
+                crit_dmg=parse_pct(s.get("暴击伤害 (CD)", "50.0%")),
+                break_effect=parse_pct(s.get("击破特攻 (BE)", "0.0%")),
+                err=parse_pct(s.get("能量恢复效率 (ERR)", "100.0%")),
+                ehr=parse_pct(s.get("效果命中 (EHR)", "0.0%")),
+                res=parse_pct(s.get("效果抵抗 (RES)", "0.0%")),
+                dmg_boost=parse_pct(s.get("属性伤害加成 (DMG%)", "0.0%")),
+                elation=parse_pct(s.get("欢愉度 (Elation)", "0.0%")),
+                breakdowns=breakdowns
+            )
+
+            profile = CharacterProfile(
+                avatar_id=aid,
+                name=name,
+                element=element,
+                path=path,
+                level=level,
+                promotion=6,
+                eidolon=eidolon,
+                skills={},
+                max_sp=120,
+                init_sp=0,
+                light_cone=equipped_lc,
+                relics=relics_list,
+                panel=panel
+            )
+
+            self._profiles_by_id[aid] = profile
+            self._profiles_by_name[name] = profile
+
+    def get(self, avatar_id_or_name: Union[int, str]) -> Optional[CharacterProfile]:
+        """根据角色 ID 或名称查询档案。"""
+        if isinstance(avatar_id_or_name, int):
+            return self._profiles_by_id.get(avatar_id_or_name)
+        return self.get_by_name(str(avatar_id_or_name))
 
     def get_by_name(self, name: str) -> Optional[CharacterProfile]:
         """根据角色名称模糊或精确查询档案。"""
@@ -219,21 +338,47 @@ class CharacterDB:
         """列出配齐光锥和 6 件遗器的角色。"""
         return [p for p in self._profiles_by_id.values() if p.is_fully_geared()]
 
-    def to_combat_entity(self, avatar_id_or_name: Union[int, str], policy: str = "EAA") -> Any:
+    def to_combat_entity(self, avatar_id_or_name_or_profile: Union[int, str, CharacterProfile], policy: str = "EAA") -> Any:
         """一键转换为战斗模拟器中的行动与伤害实体 (Entity)。"""
-        if isinstance(avatar_id_or_name, int):
-            profile = self.get(avatar_id_or_name)
+        if isinstance(avatar_id_or_name_or_profile, CharacterProfile):
+            profile = avatar_id_or_name_or_profile
+        elif isinstance(avatar_id_or_name_or_profile, int):
+            profile = self.get(avatar_id_or_name_or_profile)
         else:
-            profile = self.get_by_name(avatar_id_or_name)
+            profile = self.get_by_name(str(avatar_id_or_name_or_profile))
 
         if not profile:
-            raise KeyError(f"未找到角色档案: {avatar_id_or_name}")
+            raise KeyError(f"未找到角色档案: {avatar_id_or_name_or_profile}")
 
         panel = profile.panel
         
-        # 动态导入 Entity 保证类型安全
+        # 动态导入 Entity 与 Kit 注册中心保证类型安全
         from ..core import Entity
+        try:
+            from ..kits.registry import get_kit_class
+        except ImportError:
+            get_kit_class = None
         
+        # 自动尝试装配对应的 KitHandler (未专门定制的角色优雅回退至 GenericKit)
+        kit_inst = None
+        if get_kit_class:
+            kit_cls = get_kit_class(profile.name) or get_kit_class(str(profile.avatar_id))
+            if not kit_cls:
+                from ..kits.registry import GenericKit
+                kit_cls = GenericKit
+            if kit_cls:
+                kit_inst = kit_cls(owner_id=profile.name, port=None, eidolon=profile.eidolon)
+
+        max_energy = 120.0
+        if kit_inst:
+            try:
+                from ..actions import ActionKind
+                ult_defn = kit_inst.definition(ActionKind.ULTIMATE)
+                if ult_defn and ult_defn.cost.energy > 0:
+                    max_energy = ult_defn.cost.energy
+            except Exception:
+                pass
+
         entity = Entity(
             name=profile.name,
             base_speed=panel.spd,
@@ -242,6 +387,11 @@ class CharacterDB:
             base_crit_dmg=panel.crit_dmg,
             max_hp=panel.hp,
             current_hp=panel.hp,
+            energy=0.0,
+            max_energy=max_energy,
+            avatar_id=profile.avatar_id,
+            eidolon=profile.eidolon,
+            kit=kit_inst,
             distance_remaining=10000.0,
             policy=policy,
             is_enemy=False

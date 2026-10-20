@@ -7,7 +7,7 @@
 4. 韧性与击破：削韧清零触发弱点击破，自动执行 25% 推条并消除 10% 减伤；敌方行动后恢复韧性。
 """
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Dict, Any
+from typing import Callable, List, Optional, Dict, Any, Tuple
 
 from .events import (
     EventBus, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, 
@@ -18,7 +18,116 @@ from .effects import (
     InterruptActionEffect, ApplyStatusEffect, ApplyDamageEffect, ReduceToughnessEffect
 )
 from .sp import SkillPointManager
-from .status import StatusManager, StatType
+from .status import StatusManager, StatType, StatusInstance, Modifier, ModifierOp, DurationTiming, StackPolicy
+from .combat_port import CombatPort, BuffSpec
+from .actions import ActionKind, ActionContext, ActionRequest
+
+
+class SimulatorCombatPort:
+    """TurnSimulator 与 KitHandler 之间的基础设施桥接端口。"""
+    def __init__(self, simulator: "TurnSimulator"):
+        self.sim = simulator
+
+    def _get_entity(self, name_or_id: str) -> Optional["Entity"]:
+        for e in self.sim.entities:
+            if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
+                return e
+        return None
+
+    def allies(self, actor_id: str) -> Tuple[str, ...]:
+        actor = self._get_entity(actor_id)
+        if not actor:
+            return ()
+        return tuple(e.name for e in self.sim.entities if e.is_enemy == actor.is_enemy)
+
+    def enemies(self, actor_id: str) -> Tuple[str, ...]:
+        actor = self._get_entity(actor_id)
+        if not actor:
+            return ()
+        return tuple(e.name for e in self.sim.entities if e.is_enemy != actor.is_enemy)
+
+    def stat(self, entity_id: str, stat: StatType) -> float:
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return 0.0
+        base_val = 0.0
+        if stat == StatType.CRIT_DMG:
+            base_val = ent.base_crit_dmg
+        elif stat == StatType.CRIT_RATE:
+            base_val = ent.base_crit_rate
+        elif stat == StatType.SPEED:
+            base_val = ent.base_speed
+        elif stat == StatType.ATK_BASE:
+            base_val = ent.base_atk
+        return self.sim.status_mgr.calculate_stat(ent.name, base_val, stat)
+
+    def has_status(self, target_id: str, key: str) -> bool:
+        ent = self._get_entity(target_id)
+        return self.sim.status_mgr.has_status(ent.name, key) if ent else False
+
+    def upsert_status(self, spec: BuffSpec) -> None:
+        src = self._get_entity(spec.source_id)
+        tgt = self._get_entity(spec.target_id)
+        if not src or not tgt:
+            return
+        status = StatusInstance(
+            id=spec.key,
+            name=spec.name,
+            source=src,
+            target=tgt,
+            duration=spec.duration,
+            timing=spec.timing,
+            modifiers=list(spec.modifiers),
+            stack_policy=spec.stack_policy,
+            skip_current_clock=spec.skip_current_clock
+        )
+        self.sim.status_mgr.add_status(status)
+
+    def remove_status(self, target_id: str, key: str) -> None:
+        ent = self._get_entity(target_id)
+        if ent:
+            self.sim.status_mgr.remove_status(ent.name, key)
+
+    def advance(self, source_id: str, target_id: str, ratio: float) -> None:
+        tgt = self._get_entity(target_id)
+        if tgt:
+            self.sim.resolver.enqueue(AdvanceActionEffect(source_id, tgt, ratio))
+
+    def delay(self, source_id: str, target_id: str, ratio: float) -> None:
+        tgt = self._get_entity(target_id)
+        if tgt:
+            self.sim.resolver.enqueue(DelayActionEffect(source_id, tgt, ratio))
+
+    def change_sp(self, source_id: str, amount: int, reason: str) -> None:
+        self.sim.resolver.enqueue(ModifySPEffect(source_id, amount, reason))
+
+    def set_sp_cap(self, new_cap: int) -> None:
+        self.sim.sp.set_max_sp(new_cap)
+
+    def gain_energy(self, entity_id: str, amount: float) -> None:
+        ent = self._get_entity(entity_id)
+        if ent:
+            ent.energy = min(ent.max_energy, ent.energy + amount)
+
+    def attack(
+        self,
+        source_id: str,
+        target_id: str,
+        *,
+        element: str,
+        atk_multiplier: float,
+        toughness_damage: float,
+        damage_tag: str = "direct"
+    ) -> None:
+        tgt = self._get_entity(target_id)
+        src = self._get_entity(source_id)
+        if not tgt or not src:
+            return
+        from .effects import DamageRequest
+        req = DamageRequest(attacker=src, target=tgt, skill_multiplier=atk_multiplier)
+        self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=toughness_damage, element=element))
+        if toughness_damage > 0:
+            self.sim.resolver.enqueue(ReduceToughnessEffect(src, tgt, toughness_damage, element))
 
 
 @dataclass
@@ -30,6 +139,12 @@ class Entity:
     base_crit_dmg: float = 0.50           # 基础 50% 暴伤
     max_hp: float = 10000.0
     current_hp: float = 10000.0
+    energy: float = 0.0
+    max_energy: float = 120.0
+    avatar_id: int = 0
+    eidolon: int = 0
+    # 关联的技能套件 (Kit)
+    kit: Optional[Any] = None
     # 韧性系统 (仅敌方有)
     max_toughness: float = 0.0
     current_toughness: float = 0.0
@@ -99,14 +214,22 @@ class TurnSimulator:
         self.sp: SkillPointManager = SkillPointManager(initial_sp=initial_sp, max_sp=max_sp)
         self.status_mgr: StatusManager = StatusManager(self)
         self.resolver: EffectResolver = EffectResolver(self)
+        self.port: SimulatorCombatPort = SimulatorCombatPort(self)
 
         if entities:
             for e in entities:
-                self.add_entity(e)
+                self.add_entity(e, trigger_battle_start=False)
+            for e in self.entities:
+                if getattr(e, "kit", None) is not None:
+                    e.kit.on_battle_start()
 
-    def add_entity(self, entity: Entity):
+    def add_entity(self, entity: Entity, trigger_battle_start: bool = True):
         entity.simulator = self
         self.entities.append(entity)
+        if getattr(entity, "kit", None) is not None:
+            entity.kit.port = self.port
+            if trigger_battle_start:
+                entity.kit.on_battle_start()
 
     @property
     def current_cycle(self) -> int:
@@ -144,37 +267,72 @@ class TurnSimulator:
             speed=round(active_entity.speed, 1)
         ))
 
-        # 5. 决定动作意图与战技点处理 (敌方行动不耗己方战技点)
+        # 5. 决定动作意图与执行路径 (优先走 KitHandler 架构)
         intent = active_entity.get_next_action_intent()
-        if not active_entity.is_enemy:
-            if intent == "E":
-                if self.sp.can_consume(1):
-                    actual_action = "Skill"
-                    self.resolver.enqueue(ModifySPEffect(active_entity.name, -1, "施放战技"))
-                else:
-                    actual_action = "BasicAttack (SP不足降级)"
-                    self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "战技点不足，降级普攻"))
+        if getattr(active_entity, "kit", None) is not None:
+            req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
+            defn = active_entity.kit.definition(req_kind)
+
+            # 校验 SP 资源
+            if defn.cost.sp > 0 and not self.sp.can_consume(defn.cost.sp):
+                actual_kind = ActionKind.BASIC
+                defn = active_entity.kit.definition(actual_kind)
+                actual_action = f"{defn.name} (SP不足降级)"
             else:
-                actual_action = "BasicAttack"
-                self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "施放普攻"))
+                actual_kind = req_kind
+                actual_action = defn.name
+
+            # 统一扣除/返还 SP 成本
+            if defn.cost.sp != 0:
+                self.resolver.enqueue(ModifySPEffect(active_entity.name, -defn.cost.sp, f"施放{defn.name}"))
+
+            active_entity.advance_policy()
+
+            self.event_bus.publish(ActionExecuteEvent(
+                av=round(self.current_av, 2),
+                cycle=self.current_cycle,
+                actor_id=active_entity.name,
+                actor_name=active_entity.name,
+                action_type=actual_action,
+                description=f"施放【{defn.name}】"
+            ))
+
+            ctx = ActionContext(
+                action_id=f"{active_entity.name}_{self.current_av:.1f}",
+                actor_id=active_entity.name,
+                kind=actual_kind,
+                target_ids=()
+            )
+            active_entity.kit.execute(ctx)
         else:
-            actual_action = "EnemySkill"
+            # 兼容模式：传统回调执行路径
+            if not active_entity.is_enemy:
+                if intent == "E":
+                    if self.sp.can_consume(1):
+                        actual_action = "Skill"
+                        self.resolver.enqueue(ModifySPEffect(active_entity.name, -1, "施放战技"))
+                    else:
+                        actual_action = "BasicAttack (SP不足降级)"
+                        self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "战技点不足，降级普攻"))
+                else:
+                    actual_action = "BasicAttack"
+                    self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "施放普攻"))
+            else:
+                actual_action = "EnemySkill"
 
-        active_entity.advance_policy()
+            active_entity.advance_policy()
 
-        # 发布【动作执行】事件
-        self.event_bus.publish(ActionExecuteEvent(
-            av=round(self.current_av, 2),
-            cycle=self.current_cycle,
-            actor_id=active_entity.name,
-            actor_name=active_entity.name,
-            action_type=actual_action,
-            description=f"执行 {actual_action}"
-        ))
+            self.event_bus.publish(ActionExecuteEvent(
+                av=round(self.current_av, 2),
+                cycle=self.current_cycle,
+                actor_id=active_entity.name,
+                actor_name=active_entity.name,
+                action_type=actual_action,
+                description=f"执行 {actual_action}"
+            ))
 
-        # 6. 执行技能回调与效果结算
-        if active_entity.action_callback:
-            active_entity.action_callback(active_entity, self.resolver, actual_action)
+            if active_entity.action_callback:
+                active_entity.action_callback(active_entity, self.resolver, actual_action)
 
         self.resolver.resolve_all()
 
