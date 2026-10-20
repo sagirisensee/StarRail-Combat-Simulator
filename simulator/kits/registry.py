@@ -11,6 +11,17 @@ from .characters.pela import PelaKit
 from .characters.gallagher import GallagherKit
 from .characters.elation import ElationKit
 
+# 生存位 (Preservation & Abundance)
+from .characters.fuxuan import FuXuanKit
+from .characters.aventurine import AventurineKit
+from .characters.huohuo import HuohuoKit
+from .characters.lingsha import LingshaKit
+from .characters.luocha import LuochaKit
+from .characters.gepard import GepardKit
+from .characters.bailu import BailuKit
+from .characters.lynx import LynxKit
+from .characters.natasha import NatashaKit
+
 
 # 角色 ID / 规范角色名 -> KitHandler 类
 _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
@@ -58,6 +69,51 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     "1301": GallagherKit,
     "加拉赫": GallagherKit,
     "gallagher": GallagherKit,
+
+    # 符玄 (Fu Xuan)
+    "1208": FuXuanKit,
+    "符玄": FuXuanKit,
+    "fuxuan": FuXuanKit,
+
+    # 砂金 (Aventurine)
+    "1304": AventurineKit,
+    "砂金": AventurineKit,
+    "aventurine": AventurineKit,
+
+    # 藿藿 (Huohuo)
+    "1217": HuohuoKit,
+    "藿藿": HuohuoKit,
+    "huohuo": HuohuoKit,
+
+    # 灵砂 (Lingsha)
+    "1222": LingshaKit,
+    "灵砂": LingshaKit,
+    "lingsha": LingshaKit,
+
+    # 罗刹 (Luocha)
+    "1203": LuochaKit,
+    "罗刹": LuochaKit,
+    "luocha": LuochaKit,
+
+    # 杰帕德 (Gepard)
+    "1104": GepardKit,
+    "杰帕德": GepardKit,
+    "gepard": GepardKit,
+
+    # 白露 (Bailu)
+    "1211": BailuKit,
+    "白露": BailuKit,
+    "bailu": BailuKit,
+
+    # 玲可 (Lynx)
+    "1110": LynxKit,
+    "玲可": LynxKit,
+    "lynx": LynxKit,
+
+    # 娜塔莎 (Natasha)
+    "1105": NatashaKit,
+    "娜塔莎": NatashaKit,
+    "natasha": NatashaKit,
 
     # 欢愉阿哈四人组 (Elation Quartet)
     "1503": ElationKit,

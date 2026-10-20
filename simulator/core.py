@@ -109,6 +109,19 @@ class SimulatorCombatPort:
         if ent:
             ent.energy = min(ent.max_energy, ent.energy + amount)
 
+    def heal(self, source_id: str, target_id: str, amount: float) -> None:
+        tgt = self._get_entity(target_id)
+        if tgt and hasattr(tgt, "current_hp"):
+            tgt.current_hp = min(tgt.max_hp, tgt.current_hp + amount)
+
+    def add_shield(self, source_id: str, target_id: str, amount: float, duration: int = 3) -> None:
+        tgt = self._get_entity(target_id)
+        if tgt and hasattr(tgt, "shield"):
+            tgt.shield = max(tgt.shield, amount)
+
+    def dispel(self, target_id: str, is_debuff: bool = True) -> None:
+        pass
+
     def attack(
         self,
         source_id: str,
@@ -139,6 +152,7 @@ class Entity:
     base_crit_dmg: float = 0.50           # 基础 50% 暴伤
     max_hp: float = 10000.0
     current_hp: float = 10000.0
+    shield: float = 0.0
     energy: float = 0.0
     max_energy: float = 120.0
     avatar_id: int = 0

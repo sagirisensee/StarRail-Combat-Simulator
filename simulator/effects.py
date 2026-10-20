@@ -233,8 +233,29 @@ class EffectResolver:
 
             # 1. 伤害纯计算
             breakdown = DamageCalculator.calculate(effect.request)
+            raw_dmg = breakdown.final_damage
+
+            # 符玄穷观阵分摊检测 (若目标不是符玄自身，且全队存在持有穷观阵的符玄)
+            fuxuan = next((e for e in getattr(self.simulator, "entities", []) if ("符玄" in e.name or e.name == "FuXuan") and not getattr(e, "is_enemy", False)), None)
+            if fuxuan and fuxuan != target and getattr(self.simulator, "status_mgr", None) and self.simulator.status_mgr.has_status(target.name, "FuXuan_Matrix"):
+                shared_dmg = raw_dmg * 0.65
+                raw_dmg = raw_dmg * 0.35
+                fuxuan_absorbed = min(getattr(fuxuan, "shield", 0.0), shared_dmg)
+                fuxuan.shield -= fuxuan_absorbed
+                fuxuan.current_hp = max(0.0, fuxuan.current_hp - (shared_dmg - fuxuan_absorbed))
+                # 符玄半血生命逆转检测
+                if fuxuan.current_hp <= fuxuan.max_hp * 0.50 and getattr(getattr(fuxuan, "kit", None), "hp_reversals", 0) > 0:
+                    fuxuan.kit.hp_reversals -= 1
+                    fuxuan.current_hp = min(fuxuan.max_hp, fuxuan.current_hp + fuxuan.max_hp * 0.85)
+
+            # 护盾优先吸收 (砂金、杰帕德等)
+            if hasattr(target, "shield") and target.shield > 0:
+                absorbed = min(target.shield, raw_dmg)
+                target.shield -= absorbed
+                raw_dmg -= absorbed
+
             if hasattr(target, "current_hp"):
-                target.current_hp = max(0.0, target.current_hp - breakdown.final_damage)
+                target.current_hp = max(0.0, target.current_hp - raw_dmg)
                 hp_left = target.current_hp
             else:
                 hp_left = 0.0
