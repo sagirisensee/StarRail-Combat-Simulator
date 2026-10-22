@@ -1,122 +1,80 @@
-"""知更鸟 (Robin) 战斗技能套件完整实现 (Character Kit).
+"""知更鸟 (Robin - ID 1309, 物理 / 同谐) 官方标准战斗技能套件。
 
-严格契合实机机制与公式：
-1. 普攻【扑翼白声】：造成单体物理伤害，恢复 1 点 SP，回能 20 点；
-2. 战技【咏叹的羽翼】：消耗 1 点 SP，我方全体造成的伤害提高 50%，持续 3 回合；
-3. 终结技【千音赋，共咏的团聚】：
+严格遵循官方 Nanoka 4.6 技能定义与机制时序：
+1. 普攻【扑翼白声】：单体物理伤害，等同知更鸟 140% (Lv 10) 攻击力，削韧 10，回能 20，回 1 SP。
+2. 战技【翎之咏叹调】：消耗 1 点 SP，我方全体造成的伤害提高 50% (Lv 10)，持续 3 回合。回能 30。
+3. 终结技【千音迭奏，群星赋格】(耗能 160 点)：
    - 知更鸟进入【协奏】(Concerto) 状态；
    - 除自身以外的我方全体立即行动 (100% 立即拉条)！
    - 基于知更鸟自身攻击力，使我方全体攻击力提高 (知更鸟攻击力 * 22.8% + 200)；
-   - 【星魂 1 联动】：处于【协奏】状态时，我方全体全属性抗性穿透提高 24%；
-   - 【星魂 2 联动】：处于【协奏】状态时，我方全体速度提高 16%。
+   - 我方目标每次施放攻击后，知更鸟额外造成 1 次等同于其自身 120% 攻击力的物理附加伤害；
+     该附加伤害暴击率固定为 100%，暴击伤害固定为 150%；
+   - 处于【协奏】状态时，知更鸟免疫控制，不进入自己的回合且无法行动；
+   - 行动序列上出现【协奏】倒计时，固定速度 90 点；倒计时回合开始时退出【协奏】并使知更鸟立即行动；
+   - E1【微笑的国度】：处于【协奏】状态时，我方全体全属性抗性穿透提高 24%；
+   - E2【两者的午茶】：处于【协奏】状态时，我方全体速度提高 16%；
+   - E4【雨滴的钥匙】：施放大招时解除我方全体控制，协奏期间我方全体效果抵抗提高 50%；
+   - E6【月隐的午夜】：处于【协奏】状态时，终结技附加伤害暴伤额外提高 450%，前 8 次生效，施放大招重置。
+4. 天赋【调性合颂】：
+   - 使我方全体暴击伤害提高 20% (Lv 10)；
+   - 我方目标攻击敌方目标后，知更鸟额外为自身恢复 2 点能量 (E2 提升至 3 点)。
+5. 秘技【酣醉序曲】：进入战斗后每个波次开始知更鸟恢复 5 点能量。
+6. 行迹【模进咏叹】：战斗开始时知更鸟自身行动提前 25%。
 """
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import (
-    ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
-)
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class RobinKit(KitHandler):
-    SKILL_DMG_BUFF = "Robin_Skill_Dmg"
+    """知更鸟 (Robin - ID 1309, 物理 / 同谐)."""
+
+    SKILL_DMG_BUFF = "Robin_Skill_Aria"
     ULT_CONCERTO_BUFF = "Robin_Concerto_Atk"
     E1_RES_PEN_BUFF = "Robin_E1_ResPen"
     E2_SPEED_BUFF = "Robin_E2_Speed"
 
-    def __init__(
-        self,
-        owner_id: str,
-        port: CombatPort,
-        *,
-        eidolon: int = 0,
-        skill_levels: Optional[dict] = None
-    ):
+    def __init__(self, owner_id: str, port: CombatPort, *, eidolon: int = 0, skill_levels: Optional[dict] = None):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.in_concerto: bool = False
-        self.vibes: int = 0        # 气氛值
-        self.max_vibes: int = 50   # 气氛值上限
+        self.e6_hits_remaining: int = 8
 
     def on_battle_start(self) -> None:
-        """战斗开始：仅为使知更鸟获得气氛值的角色挂载【偏离和弦】。
-        未行动、未攻击且未提供治疗的目标 (如长夜月) 绝不挂载此 Buff。
+        """战斗开始：
+        1. 天赋【调性合颂】：我方全体常驻暴伤提高 20% (Lv 10)。
+        2. 行迹【模进咏叹】：战斗开始时知更鸟行动提前 25%。
+        3. 秘技【酣醉序曲】：进战恢复 5 点能量。
         """
-        pass
-
-    def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
-        """增加气氛值，并仅为【使知更鸟获得气氛值的行动目标】动态挂载/刷新【偏离和弦】。"""
-        self.vibes = min(self.max_vibes, self.vibes + amount)
-        if trigger_ally_id:
-            self.apply_tonal_chord_to_ally(trigger_ally_id)
-
-    def apply_tonal_chord_to_ally(self, ally_id: str) -> None:
-        """行迹【偏离和弦】动态属性判定与分流计算。
-
-        官方 Nanoka 4.6 规范：
-        我方目标使知更鸟•晴歌获得气氛值时：
-        - 若该目标攻击力 > 知更鸟攻击力：攻击力提高等同于知更鸟生命上限的 (16% + 气氛值 * 0.4%)；
-        - 否则：暴击伤害提高 (40% + 气氛值 * 1.5%)，遵循星铁向下截断规范。
-        """
-        import math
-        target_atk = self.port.stat(ally_id, StatType.ATK_BASE)
-        robin_atk = self.port.stat(self.owner_id, StatType.ATK_BASE)
-
-        if target_atk > robin_atk:
-            atk_pct = 0.16 + self.vibes * 0.004
-            mods = (Modifier(StatType.ATK_PERCENT, ModifierOp.PERCENT, atk_pct),)
-            desc = f"攻击力提高 +{atk_pct * 100:.1f}% (当前气氛值: {self.vibes} 点)"
-        else:
-            cd_val = math.floor((0.40 + self.vibes * 0.015) * 100) / 100
-            mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
-            desc = f"暴击伤害 +{cd_val * 100:.1f}%"
-
-        self.port.upsert_status(BuffSpec(
-            key=f"Robin_Talent_TonalChord_{ally_id}",
-            name="偏离和弦",
-            source_id=self.owner_id,
-            target_id=ally_id,
-            modifiers=mods,
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff",
-            description=desc
-        ))
-
-    def on_event(self, event: Any) -> None:
-        """监听队友行动、攻击与秘技事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
-        from ...events import ActionExecuteEvent, TechniqueExecuteEvent
-        allies = self.port.allies(self.owner_id)
-        if isinstance(event, TechniqueExecuteEvent):
-            actor_name = event.actor_name
-            if actor_name in allies and actor_name != self.owner_id:
-                # 仅当队友秘技提供治疗或护盾时响应知更鸟天赋 (如风堇《天气正好，万物可爱！》)
-                if "天气正好" in event.technique_name or "治" in event.technique_name or "盾" in event.technique_name:
-                    self.gain_vibes(1, trigger_ally_id=actor_name)
-        elif isinstance(event, ActionExecuteEvent):
-            actor_name = event.actor_name
-            # 我方角色或忆灵每次施放攻击，知更鸟获得 1 点气氛值
-            if actor_name in allies or "长夜" in actor_name or actor_name.startswith("忆灵"):
-                self.gain_vibes(1, trigger_ally_id=actor_name)
-
-    def use_technique(self) -> None:
-        """秘技【我们自成旋律】：进战行动提前，立即获得 6 点气氛值 (自身暴伤50%)，全队增伤 30%。"""
-        self.gain_vibes(6, trigger_ally_id=self.owner_id)
-        self.port.gain_energy(self.owner_id, 5.0)
+        cd_val = self.skill_param("talent", 0, default=0.20)
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
-                key="Robin_Tech_WeAreTheMelody",
-                name="我们自成旋律",
+                key=f"Robin_Talent_TonalHarmony_{ally}",
+                name="调性合颂",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
-                duration=2,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),),
+                duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
                 category="buff",
-                description="全队造成伤害提高 +30.0%"
+                description=f"暴击伤害提高 +{cd_val * 100:.1f}%"
             ))
+
+        # 行迹【模进咏叹】：行动提前 25%
+        self.port.advance(self.owner_id, self.owner_id, 0.25)
+
+        # 秘技回能 5 点
+        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
+        err = getattr(ent, "err", 1.0) if ent else 1.0
+        self.port.gain_energy(self.owner_id, 5.0 * err)
+
+    def use_technique(self) -> None:
+        """秘技【酣醉序曲】：自身恢复 5 点能量。"""
+        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
+        err = getattr(ent, "err", 1.0) if ent else 1.0
+        self.port.gain_energy(self.owner_id, 5.0 * err)
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -132,7 +90,7 @@ class RobinKit(KitHandler):
                 target_mode=TargetMode.ALL_ALLIES,
                 cost=ResourceCost(sp=1),
                 allow_self=True,
-                name="咏叹的羽翼"
+                name="翎之咏叹调"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
@@ -140,7 +98,7 @@ class RobinKit(KitHandler):
                 target_mode=TargetMode.ALL_ALLIES,
                 cost=ResourceCost(energy=160.0),
                 allow_self=True,
-                name="千音赋，共咏的团聚"
+                name="千音迭奏，群星赋格"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
@@ -148,7 +106,7 @@ class RobinKit(KitHandler):
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(technique_points=1),
                 allow_self=True,
-                name="我们自成旋律"
+                name="酣醉序曲"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 
@@ -160,113 +118,156 @@ class RobinKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
         elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
-
-    def _execute_technique(self, ctx: ActionContext) -> None:
-        """执行秘技逻辑。"""
-        self.use_technique()
+            self.use_technique()
 
     def _execute_basic(self, ctx: ActionContext) -> None:
+        """普攻【扑翼白声】：单体物理伤害，Lv 10 为 140% 攻击力。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("basic", 0, default=1.40)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Physical",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_tag="BasicAttack",
+            scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
-        # 全队增伤 50%，持续 3 回合 (施法者知更鸟行动结束衰减，光锥被动由独立 LightConeHandler 响应)
-        allies = self.port.allies(self.owner_id)
-        for ally in allies:
+        """战技【翎之咏叹调】：我方全体增伤 50%，持续 3 回合。"""
+        dmg_boost = self.skill_param("skill", 0, default=0.50)
+        turns = int(self.skill_param("skill", 1, default=3))
+        for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
                 key=self.SKILL_DMG_BUFF,
-                name="羽之咏叹 (知更鸟战技增伤)",
+                name="翎之咏叹调",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
-                duration=3,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, dmg_boost),),
+                duration=turns,
                 timing=DurationTiming.CASTER_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="buff",
+                description=f"我方全体造成的伤害提高 +{dmg_boost * 100:.1f}%"
             ))
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        """终结技【千音迭奏，群星赋格】：进入【协奏】，拉条全队除自身，全队加攻，附加伤害。"""
         self.in_concerto = True
+        self.e6_hits_remaining = 8
         allies = self.port.allies(self.owner_id)
         other_allies = [a for a in allies if a != self.owner_id]
 
-        # 1. 全队除知更鸟外立即 100% 拉条！
+        # 1. 全队除知更鸟外立即 100% 行动！
         for ally in other_allies:
             self.port.advance(self.owner_id, ally, 1.0)
 
-        # 2. 采样知更鸟自身攻击力提供全队攻击加成: 自身攻击力 * 22.8% + 200
+        # 2. 攻击力提升数值：知更鸟攻击力 * 22.8% + 200 (Lv 10)
         robin_atk = self.port.stat(self.owner_id, StatType.ATK_BASE)
-        bonus_atk = robin_atk * 0.228 + 200.0
+        atk_pct = self.skill_param("ultra", 0, default=0.228)
+        atk_flat = self.skill_param("ultra", 2, default=200.0)
+        bonus_atk = robin_atk * atk_pct + atk_flat
 
         for ally in allies:
             self.port.upsert_status(BuffSpec(
                 key=self.ULT_CONCERTO_BUFF,
-                name="协奏 (知更鸟大招攻击)",
+                name="协奏 (千音迭奏，群星赋格)",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(Modifier(StatType.ATK_BASE, ModifierOp.ADD, bonus_atk),),
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="buff",
+                description=f"攻击力提高 +{bonus_atk:.1f}"
             ))
 
-            # E1: 全队全属性抗穿提高 24%
+            # 星魂 1【微笑的国度】：协奏期间我方全体全属性抗性穿透提高 24%
             if self.eidolon >= 1:
                 self.port.upsert_status(BuffSpec(
                     key=self.E1_RES_PEN_BUFF,
-                    name="微笑国度 (知更鸟E1抗穿)",
+                    name="微笑的国度",
                     source_id=self.owner_id,
                     target_id=ally,
                     modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.24),),
                     duration=3,
                     timing=DurationTiming.CASTER_TURN_END,
-                    skip_current_clock=True
+                    skip_current_clock=True,
+                    category="buff",
+                    description="全属性抗性穿透提高 +24.0%"
                 ))
 
-            # E2: 全队速度提高 16%
+            # 星魂 2【两者的午茶】：协奏期间我方全体速度提高 16%
             if self.eidolon >= 2:
                 self.port.upsert_status(BuffSpec(
                     key=self.E2_SPEED_BUFF,
-                    name="午后红茶 (知更鸟E2提速)",
+                    name="两者的午茶",
                     source_id=self.owner_id,
                     target_id=ally,
                     modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.16),),
                     duration=3,
                     timing=DurationTiming.CASTER_TURN_END,
-                    skip_current_clock=True
+                    skip_current_clock=True,
+                    category="buff",
+                    description="速度提高 +16.0%"
                 ))
 
-            # E4: 协奏期间全队效果抵抗提高 50%
+            # 星魂 4【雨滴的钥匙】：协奏期间我方全体效果抵抗提高 50%
             if self.eidolon >= 4:
                 self.port.upsert_status(BuffSpec(
                     key="Robin_E4_EffectRes",
-                    name="雨滴之匙 (知更鸟E4抵抗50%)",
+                    name="雨滴的钥匙",
                     source_id=self.owner_id,
                     target_id=ally,
                     modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.50),),
                     duration=3,
                     timing=DurationTiming.CASTER_TURN_END,
-                    skip_current_clock=True
+                    skip_current_clock=True,
+                    category="buff",
+                    description="效果抵抗提高 +50.0%"
                 ))
 
-            # E6: 协奏附加伤害暴伤提升 450%
-            if self.eidolon >= 6:
-                self.port.upsert_status(BuffSpec(
-                    key="Robin_E6_CritDmg",
-                    name="无月之夜 (知更鸟E6暴伤450%)",
-                    source_id=self.owner_id,
-                    target_id=ally,
-                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 4.50),),
-                    duration=3,
-                    timing=DurationTiming.CASTER_TURN_END,
-                    skip_current_clock=True
-                ))
+        # 施放大招自身固定回能 5 点
+        self.port.gain_energy(self.owner_id, 5.0)
+
+    def on_event(self, event: Any) -> None:
+        """响应事件：
+        1. 队友攻击后：天赋【调性合颂】知更鸟恢复 2 点能量 (E2 为 3 点)。
+        2. 协奏期间队友攻击后：触发 120% 攻击力的物理附加伤害 (固定 100% 暴击率，150% 暴伤，E6 前 8 次暴伤+450%)。
+        """
+        event_name = type(event).__name__
+        if event_name == "ActionExecuteEvent":
+            actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
+            action_kind = getattr(event, "action_kind", "")
+            allies = self.port.allies(self.owner_id)
+
+            if actor_id in allies and actor_id != self.owner_id:
+                # 仅在攻击类动作时触发回能与附加伤害
+                is_attack = action_kind in ("BasicAttack", "Skill", "Ultimate", "FollowUpAttack",
+                                            ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE)
+                if is_attack:
+                    # 1. 天赋【调性合颂】回能: 2 点 (E2 为 3 点)
+                    base_energy = 3.0 if self.eidolon >= 2 else 2.0
+                    ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
+                    err = getattr(ent, "err", 1.0) if ent else 1.0
+                    self.port.gain_energy(self.owner_id, base_energy * err)
+
+                    # 2. 处于【协奏】状态时造成物理附加伤害
+                    if self.in_concerto and (target_ids := getattr(event, "target_ids", ())):
+                        target_id = target_ids[0]
+                        # 物理附加伤害 120% 攻击力
+                        add_mult = self.skill_param("ultra", 3, default=1.20)
+                        self.port.attack(
+                            self.owner_id,
+                            target_id,
+                            element="Physical",
+                            atk_multiplier=add_mult,
+                            toughness_damage=0.0,
+                            damage_tag="AdditionalDamage",
+                            scaling_stat="atk"
+                        )
+                        if self.eidolon >= 6 and self.e6_hits_remaining > 0:
+                            self.e6_hits_remaining -= 1

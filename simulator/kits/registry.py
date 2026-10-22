@@ -3,6 +3,7 @@ from typing import Dict, Type, Optional, Any
 from .base import KitHandler
 from .characters.sparkle import SparkleKit
 from .characters.robin import RobinKit
+from .characters.robin_sunnysong import RobinSunnySongKit
 from .characters.ruan_mei import RuanMeiKit
 from .characters.bronya import BronyaKit
 from .characters.tingyun import TingyunKit
@@ -84,11 +85,11 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
 
     # 知更鸟 (Robin)
     "1309": RobinKit,
-    "1512": RobinKit,
+    "1512": RobinSunnySongKit,
     "知更鸟": RobinKit,
-    "知更鸟•晴歌": RobinKit,
-    "知更鸟·晴歌": RobinKit,
-    "知更鸟晴歌": RobinKit,
+    "知更鸟•晴歌": RobinSunnySongKit,
+    "知更鸟·晴歌": RobinSunnySongKit,
+    "知更鸟晴歌": RobinSunnySongKit,
     "robin": RobinKit,
 
     # 阮•梅 (Ruan Mei)
