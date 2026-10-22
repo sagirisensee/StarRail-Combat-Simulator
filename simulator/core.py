@@ -160,6 +160,15 @@ class SimulatorCombatPort:
             target_base_res=base_res,
             target_is_broken=tgt.is_broken
         )
+        if damage_tag == "FollowUpAttack":
+            self.sim.event_bus.publish(ActionExecuteEvent(
+                av=round(self.sim.current_av, 2),
+                cycle=self.sim.current_cycle,
+                actor_id=source_id,
+                actor_name=source_id,
+                action_type="FollowUpAttack",
+                description=f"【{source_id}】触发追加攻击"
+            ))
         self.sim.resolver.enqueue(ApplyDamageEffect(
             request=req,
             toughness_reduction=toughness_damage,

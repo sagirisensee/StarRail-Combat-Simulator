@@ -53,10 +53,18 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
             self.port.gain_energy(self.owner_id, 12.0)
             self.apply_oracle_buff()
 
+    def on_action_before(self, ctx: ActionContext) -> None:
+        self._fua_triggered_this_action = False
+
     def on_event(self, event: Any) -> None:
-        """监听可能产生的追击事件，确保触发回能与刷新。"""
-        event_name = type(event).__name__
-        if "FollowUp" in event_name and getattr(event, "actor_id", "") == self.owner_id:
-            if self.port:
-                self.port.gain_energy(self.owner_id, 12.0)
-                self.apply_oracle_buff()
+        """监听可能产生的追击事件，确保每次追击只触发一次回能与刷新。"""
+        if getattr(event, "actor_id", "") == self.owner_id:
+            action_type = getattr(event, "action_type", "")
+            event_name = type(event).__name__
+            if ("FollowUp" in action_type or "FollowUp" in event_name) and not getattr(self, "_fua_triggered_this_action", False):
+                self._fua_triggered_this_action = True
+                if self.port:
+                    ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
+                    err = getattr(ent, "err", 1.0) if ent else 1.0
+                    self.port.gain_energy(self.owner_id, 12.0 * err)
+                    self.apply_oracle_buff()
