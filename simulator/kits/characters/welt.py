@@ -1,17 +1,22 @@
 """瓦尔特 (Welt) 战斗技能套件完整实现 (Character Kit).
 
-严格契合 4.2 版本「砺烁新辉」官方最新重做与加强规范 (https://hsr.nanoka.cc/)：
-1. 【失重 (Weightless) 核心机制重做】：
-   - 官方最新加强：技能施加【失重】状态；
-   - 处于【失重】状态的敌方防御力降低 20%，速度降低 15%；
-   - 处于【失重】状态的目标受击时行动自动额外延后！
-2. 【效果命中转攻击力】：
-   - 官方最新加强：瓦尔特自身的效果命中属性按比例转化为额外攻击力加成；
-3. 【终结技·拟似黑洞】：
-   - 消耗 120 能量，对敌方全体造成虚数伤害，削韧 20 点；
-   - 100% 基础概率使敌方陷入禁锢状态，行动延后 40%，速度降低 10%；
-4. 【战技·虚空断界】：
-   - 消耗 1 点 SP，造成单体及多段弹射虚数伤害，削韧并使目标减速。
+严格契合 Nanoka 4.6 官方底层数据 (Character ID: 1004, 虚无 / 虚数)：
+1. 【普攻·重力压制】(SingleAttack):
+   - 消耗 0 SP (恢复 1 点战技点)，对指定敌方单体造成等同于瓦尔特 140% 攻击力的虚数属性伤害，削韧 10 点，恢复 20 点能量。
+2. 【战技·虚空断界】(Bounce):
+   - 消耗 1 点 SP，对指定敌方单体造成 72% 攻击力的虚数属性伤害，并额外进行 2 次弹射 (星魂 6 额外增加 1 次弹射)；
+   - 每次命中 75% 基础概率使目标速度降低 10%，持续 2 回合，削韧 30 点 (E6 为 40 点)，恢复 30 点能量；
+   - 施加【失重】(防御力降低 20%，速度降低 15%)，星魂 4 赋予额外易伤；
+   - 星魂 2【星的凝聚】：触发天赋时恢复 3 点能量。
+3. 【终结技·拟似黑洞】(AoEAttack):
+   - 消耗 120 点能量，对敌方全体造成等同于瓦尔特 150% 攻击力的虚数属性伤害，削韧 20 点，恢复 5 点能量；
+   - 100% 基础概率使敌方全体陷入【禁锢】状态持续 1 回合；
+   - 禁锢状态下，敌方目标行动延后 40%，速度降低 10%；
+   - 星魂 1【名的传承】：施放终结技后获得强化，普攻与战技造成额外附加伤害。
+4. 【天赋·时空扭曲】(Enhance):
+   - 击中处于减速状态的敌方目标时，额外造成 1 次等同于瓦尔特 60% 攻击力的虚数属性附加伤害。
+5. 【秘技·画地为牢】(Impair):
+   - 制造特殊领域，进战后 100% 基础概率使敌方目标陷入禁锢状态，行动延后 20%，速度降低 10%。
 """
 
 from typing import Optional, List, Any
@@ -32,7 +37,7 @@ class WeltKit(KitHandler):
         owner_id: str,
         port: CombatPort,
         *,
-        eidolon: int = 3,
+        eidolon: int = 0,
         skill_levels: Optional[dict] = None
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
@@ -81,10 +86,10 @@ class WeltKit(KitHandler):
     def _execute_technique(self, ctx: ActionContext) -> None:
         """秘技【画地为牢】：进战使敌方全体速度降低 10%，行动延后 20%。"""
         for enemy in self.port.enemies(self.owner_id):
-            self.port.delay_action(enemy, 0.20)
+            self.port.delay(self.owner_id, enemy, 0.20)
             self.port.upsert_status(BuffSpec(
                 key="Welt_Technique_Slow",
-                name="减速 (瓦尔特秘技)",
+                name="画地为牢 (瓦尔特秘技减速10%)",
                 source_id=self.owner_id,
                 target_id=enemy,
                 modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.10),),
@@ -99,7 +104,7 @@ class WeltKit(KitHandler):
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=1.0,
+            atk_multiplier=1.40,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
@@ -107,7 +112,7 @@ class WeltKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        # 弹射虚数伤害 (E6 额外增加 1 段，倍率提升至 2.88)
+        # 弹射虚数伤害 (3段 72% = 2.16，E6额外多1段 = 4段 2.88)
         mult = 2.88 if self.eidolon >= 6 else 2.16
         tough = 40.0 if self.eidolon >= 6 else 30.0
         self.port.attack(
@@ -118,8 +123,8 @@ class WeltKit(KitHandler):
             toughness_damage=tough,
             damage_tag="Skill"
         )
-        # 官方最新加强：施加【失重】(防御力降低 20%，速度降低 15%)
-        # E4: 战技使目标受到的伤害提高 12%
+
+        # 施加【失重】(防御力降低 20%，速度降低 15%)
         mods = [
             Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.20),
             Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.15),
@@ -137,6 +142,7 @@ class WeltKit(KitHandler):
             timing=DurationTiming.TARGET_TURN_END,
             skip_current_clock=True
         ))
+
         # E2: 触发天赋时恢复 3 点能量
         extra_energy = 3.0 if self.eidolon >= 2 else 0.0
         self.port.gain_energy(self.owner_id, 30.0 + extra_energy)
@@ -146,7 +152,7 @@ class WeltKit(KitHandler):
         if self.eidolon >= 1:
             self.port.upsert_status(BuffSpec(
                 key="Welt_E1_Empower",
-                name="名的继承 (瓦尔特E1终结技强化40%)",
+                name="名的传承 (瓦尔特E1终结技强化40%)",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
                 modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.40),),
@@ -161,7 +167,7 @@ class WeltKit(KitHandler):
                 self.owner_id,
                 enemy,
                 element="Imaginary",
-                atk_multiplier=1.5,
+                atk_multiplier=1.50,
                 toughness_damage=20.0,
                 damage_tag="Ultimate"
             )
@@ -169,7 +175,7 @@ class WeltKit(KitHandler):
             self.port.delay(self.owner_id, enemy, 0.40)
             self.port.upsert_status(BuffSpec(
                 key=self.IMPRISON_DEBUFF,
-                name="禁锢 (瓦尔特大招减速10%)",
+                name="拟似黑洞 (瓦尔特禁锢减速10%)",
                 source_id=self.owner_id,
                 target_id=enemy,
                 modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.10),),

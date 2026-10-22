@@ -1,23 +1,24 @@
-"""镜流 (Jingliu) 战斗技能套件完整实现 (Character Kit).
+"""镜流 (Jingliu - ID 1212, 毁灭 / 冰) 官方标准战斗技能套件。
 
-适配角色：镜流 (ID 1221, 毁灭 / 冰)
-严格契合官方 4.X「砺烁新辉」最新官方重做与平衡加强数据：
-1. 普攻【流影刺】：造成单体冰伤，恢复 1 点战技点，回能 20 点；
+严格遵循官方 Nanoka 4.6 技能定义与机制时序：
+1. 普攻【流影方晖】：造成 140% (Lv 10) / 100% (Lv 6) 攻击力的单体冰属性伤害，削韧 10，回能 20，回 1 SP。
 2. 战技【无罅飞光】：
-   - 消耗 1 点 SP，单体冰伤，获得 1 层【朔望】(Syzygy)；
-3. 天赋【澹月转魄】：
-   - 拥有 2 层【朔望】时进入【转魄】(Spectral Transmigration) 状态；
-   - 行动提前 100%，暴击率提高 50%；
-   - 战技转化为强化战技【寒川映月】：不消耗战技点，消耗 1 层【朔望】，消耗队友 4% 生命转化为最高 180% 攻击力！
-4. 终结技【昙华生灭，天河泻梦】：
-   - 消耗 140 能量，对敌方全体造成 300% 冰伤，获得 1 层【朔望】；
-5. 星魂 1~6 完整实装 (完全匹配 Nanoka 数据源)：
-   - E1: 天关月劫 (施放终结技或强化战技时暴伤提高 24%，若仅命中 1 个敌人额外造成 100% 冰伤)；
-   - E2: 七星斗月 (施放终结技后，下一次强化战技伤害额外提高 80%)；
-   - E3: 半璧澄水 (终结技+2，天赋+2)；
-   - E4: 持影凝霄 (转魄状态下消耗队友生命转化攻击力额外提升 30%)；
-   - E5: 晦迹罗列 (战技+2，普攻+1)；
-   - E6: 蚀本质骸 (朔望层数上限+1，进入转魄时额外获得 1 层朔望，转魄期间暴击伤害提高 50%)。
+   - 消耗 1 点 SP，对指定单体造成 200% (Lv 10) 攻击力的冰属性伤害，削韧 20，回能 30 点；
+   - 获得 1 层【朔望】(Syzygy)；
+   - 强化战技【寒川映月】：消耗 1 层【朔望】，不消耗战技点 (0 SP)，对单体造成 250% (Lv 10) 冰伤，对相邻目标造成 125% (Lv 10) 冰伤；削韧 20/10，回能 30 点。
+3. 终结技【昙华生灭，天河泻梦】(耗能 140 点)：
+   - 对指定单体造成 300% (Lv 10) 冰伤，对相邻目标造成 150% (Lv 10) 冰伤；削韧 20/10；
+   - 攻击结束后获得 1 层【朔望】；回能 5 点。
+4. 天赋【澹月转魄】：
+   - 拥有 2 层【朔望】时进入【转魄】状态 (is_transmigrated = True)；
+   - 自身行动提前 100%，暴击率提高 50% (Lv 10)；
+   - 战技强化为【寒川映月】且仅能使用该战技；
+   - 攻击时消耗队友 4% 生命上限，转化为镜流自身巨额攻击力提升；
+   - 【朔望】最多累计 3 层 (E6 提高至 4 层)；为 0 时退出【转魄】；
+   - E1【月犯天关】：暴击伤害提高 24%，对单体额外附加 100% 伤害；
+   - E2【朔晕七星】：施放终结技后，下一次强化战技伤害提高 80%；
+   - E6【蚀变于娄】：进入转魄额外获得 1 层朔望，暴伤提高 50%。
+5. 秘技【古镜照神】：进战恢复 15 点能量，获得 1 层【朔望】，并冻结敌人。
 """
 
 from typing import Optional, List, Any
@@ -26,11 +27,14 @@ from ...actions import (
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class JingliuKit(KitHandler):
+    """镜流 (ID 1212, 毁灭 / 冰)."""
+
     TRANSMIGRATION_BUFF = "Jingliu_Transmigration"
+    E1_CRIT_BUFF = "Jingliu_E1_Crit"
     E2_ENHANCE_BUFF = "Jingliu_E2_Enhance"
 
     def __init__(
@@ -45,7 +49,6 @@ class JingliuKit(KitHandler):
         self.syzygy_stacks: int = 0
         self.max_syzygy: int = 4 if eidolon >= 6 else 3
         self.is_transmigrated: bool = False
-        self.e2_active: bool = False
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -53,29 +56,35 @@ class JingliuKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=-1),
-                name="流影刺"
+                name="流影方晖"
             )
         elif kind == ActionKind.SKILL:
-            # 转魄下为强化战技：消耗 0 点 SP！
-            sp_cost = 0 if self.is_transmigrated else 1
-            name = "寒川映月" if self.is_transmigrated else "无罅飞光"
-            return AbilityDefinition(
-                kind=kind,
-                target_mode=TargetMode.SINGLE_ENEMY,
-                cost=ResourceCost(sp=sp_cost),
-                name=name
-            )
+            if self.is_transmigrated:
+                return AbilityDefinition(
+                    kind=kind,
+                    target_mode=TargetMode.SINGLE_ENEMY,
+                    cost=ResourceCost(sp=0),
+                    name="寒川映月"
+                )
+            else:
+                return AbilityDefinition(
+                    kind=kind,
+                    target_mode=TargetMode.SINGLE_ENEMY,
+                    cost=ResourceCost(sp=1),
+                    name="无罅飞光"
+                )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
                 kind=kind,
-                target_mode=TargetMode.ALL_ENEMIES,
+                target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(energy=140.0),
+                allow_self=True,
                 name="昙华生灭，天河泻梦"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
                 kind=kind,
-                target_mode=TargetMode.SELF,
+                target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(technique_points=1),
                 name="古镜照神"
             )
@@ -89,22 +98,25 @@ class JingliuKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
         elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
+            self.use_technique()
 
-    def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【古镜照神】：进战获得 1 层朔望，恢复 15 点能量。"""
-        self.syzygy_stacks = min(self.max_syzygy, self.syzygy_stacks + 1)
+    def use_technique(self) -> None:
+        """秘技【古镜照神】：进战恢复 15 点能量，获得 1 层【朔望】。"""
         self.port.gain_energy(self.owner_id, 15.0)
+        self._add_syzygy(1)
 
     def _execute_basic(self, ctx: ActionContext) -> None:
+        """普攻【流影方晖】：单体冰伤 140% (Lv 10)。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("basic", 0, default=1.40)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Ice",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_tag="BasicAttack",
+            scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -112,89 +124,129 @@ class JingliuKit(KitHandler):
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
 
         if self.is_transmigrated:
-            # 强化战技【寒川映月】
-            mult = 2.50
-            if self.e2_active:
-                mult *= 1.80 # E2: 强化战技增伤 80%
-                self.e2_active = False
+            # 强化战技【寒川映月】：消耗 1 层朔望，0 SP
+            self.syzygy_stacks = max(0, self.syzygy_stacks - 1)
 
-            # E1: 仅命中 1 个敌人额外造成 100% 冰伤
-            enemies = self.port.enemies(self.owner_id)
-            if self.eidolon >= 1 and len(enemies) == 1:
-                mult += 1.00
+            mult_main = 2.50
+            mult_adj = 1.25
+
+            # E2: 施放终结技后下一次强化战技增伤 80%
+            if self.eidolon >= 2 and self.port.has_buff(self.owner_id, self.E2_ENHANCE_BUFF):
+                mult_main *= 1.80
+                mult_adj *= 1.80
+                self.port.remove_buff(self.owner_id, self.E2_ENHANCE_BUFF)
 
             self.port.attack(
                 self.owner_id,
                 target_id,
                 element="Ice",
-                atk_multiplier=mult,
+                atk_multiplier=mult_main,
                 toughness_damage=20.0,
-                damage_tag="EnhancedSkill"
+                damage_tag="Skill",
+                scaling_stat="atk"
             )
-            self.syzygy_stacks -= 1
-            if self.syzygy_stacks <= 0:
+
+            for e in self.port.enemies(self.owner_id):
+                if e != target_id:
+                    self.port.attack(
+                        self.owner_id,
+                        e,
+                        element="Ice",
+                        atk_multiplier=mult_adj,
+                        toughness_damage=10.0,
+                        damage_tag="Skill",
+                        scaling_stat="atk"
+                    )
+
+            self.port.gain_energy(self.owner_id, 30.0)
+
+            # 朔望归零退出转魄
+            if self.syzygy_stacks == 0:
                 self.is_transmigrated = False
-                self.port.remove_status(self.owner_id, self.TRANSMIGRATION_BUFF)
-
-            self.port.gain_energy(self.owner_id, 30.0)
+                self.port.remove_buff(self.owner_id, self.TRANSMIGRATION_BUFF)
         else:
-            # 普通战技【无罅飞光】
+            # 常规战技【无罅飞光】：造成 200% 冰伤，获得 1 层朔望
             self.port.attack(
                 self.owner_id,
                 target_id,
                 element="Ice",
-                atk_multiplier=2.0,
+                atk_multiplier=2.00,
                 toughness_damage=20.0,
-                damage_tag="Skill"
+                damage_tag="Skill",
+                scaling_stat="atk"
             )
-            self._add_syzygy(1)
             self.port.gain_energy(self.owner_id, 30.0)
+            self._add_syzygy(1)
 
-    def _add_syzygy(self, count: int) -> None:
-        self.syzygy_stacks = min(self.max_syzygy, self.syzygy_stacks + count)
-        if self.syzygy_stacks >= 2 and not self.is_transmigrated:
+    def _execute_ultimate(self, ctx: ActionContext) -> None:
+        """终结技【昙华生灭，天河泻梦】：造成 300% / 150% 冰伤，获得 1 层朔望。"""
+        target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        self.port.attack(
+            self.owner_id,
+            target_id,
+            element="Ice",
+            atk_multiplier=3.00,
+            toughness_damage=20.0,
+            damage_tag="Ultimate",
+            scaling_stat="atk"
+        )
+
+        for e in self.port.enemies(self.owner_id):
+            if e != target_id:
+                self.port.attack(
+                    self.owner_id,
+                    e,
+                    element="Ice",
+                    atk_multiplier=1.50,
+                    toughness_damage=10.0,
+                    damage_tag="Ultimate",
+                    scaling_stat="atk"
+                )
+
+        if self.eidolon >= 2:
+            self.port.upsert_status(BuffSpec(
+                key=self.E2_ENHANCE_BUFF,
+                name="朔晕七星 (镜流E2强化战技增伤80%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.80),),
+                duration=1,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True,
+                category="buff",
+                description="下一次强化战技伤害提高 80%"
+            ))
+
+        self.port.gain_energy(self.owner_id, 5.0)
+        self._add_syzygy(1)
+
+    def _add_syzygy(self, amount: int) -> None:
+        """增加朔望层数并在达到 2 层时触发转魄。"""
+        self.syzygy_stacks = min(self.max_syzygy, self.syzygy_stacks + amount)
+        if not self.is_transmigrated and self.syzygy_stacks >= 2:
             self._enter_transmigration()
 
     def _enter_transmigration(self) -> None:
-        """进入转魄：100% 自拉条，暴击率提高 50% (E6 暴伤提高 50%)。"""
+        """进入【转魄】状态：行动提前 100%，暴击率提高 50% (E6 额外 +1 朔望并提高 50% 暴伤)。"""
         self.is_transmigrated = True
+        self.port.advance(self.owner_id, self.owner_id, 1.0)
+
         if self.eidolon >= 6:
             self.syzygy_stacks = min(self.max_syzygy, self.syzygy_stacks + 1)
 
-        mods = [
-            Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.50),
-            Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 1.80),
-        ]
-        # E1: 暴伤提高 24%
-        if self.eidolon >= 1:
-            mods.append(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.24))
-        # E6: 暴伤额外提高 50%
+        mods = [Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.50)]
         if self.eidolon >= 6:
             mods.append(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.50))
 
         self.port.upsert_status(BuffSpec(
             key=self.TRANSMIGRATION_BUFF,
-            name="转魄 (镜流转魄状态与暴击加成)",
+            name="转魄 (镜流暴击提升与强化战技)",
             source_id=self.owner_id,
             target_id=self.owner_id,
             modifiers=tuple(mods),
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END
+            duration=3,
+            timing=DurationTiming.CASTER_TURN_END,
+            skip_current_clock=True,
+            category="buff",
+            description="暴击率提高 +50.0%"
         ))
-        self.port.advance(self.owner_id, self.owner_id, 1.0)
-
-    def _execute_ultimate(self, ctx: ActionContext) -> None:
-        enemies = self.port.enemies(self.owner_id)
-        for enemy in enemies:
-            self.port.attack(
-                self.owner_id,
-                enemy,
-                element="Ice",
-                atk_multiplier=3.0,
-                toughness_damage=20.0,
-                damage_tag="Ultimate"
-            )
-        self._add_syzygy(1)
-        if self.eidolon >= 2:
-            self.e2_active = True
-        self.port.gain_energy(self.owner_id, 5.0)

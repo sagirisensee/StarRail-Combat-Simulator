@@ -1,19 +1,22 @@
 """希儿 (Seele) 战斗技能套件完整实现 (Character Kit).
 
-严格契合 4.2 版本「砺烁新辉」官方最新重做与加强规范 (https://hsr.nanoka.cc/)：
-1. 【战技·归刃 自动追击重做】：
-   - 消耗 1 点 SP，造成单体高额量子伤害，削韧 20 点；
-   - 自身速度提升 25%，持续 2 回合 (E2 可叠加至 2 层，提速 50%)；
-   - 官方最新加强：当受击目标生命值低于特定阈值时，希儿自动对其触发 1 次战技追击！
-2. 【天赋·再现与增伤可叠】：
-   - 消灭敌方目标时，立即获得 1 个额外行动回合 (100% 立即行动)；
-   - 官方最新加强：击杀获得的伤害提升效果可以多层叠加！
-3. 【终结技·乱蝶】：
-   - 消耗 120 能量；
-   - 立即进入【增幅】状态 (增伤 60%)；
-   - 造成单体 425% 高额量子爆发，削韧 30 点；
-4. 【星魂 1 斩尽杀绝 重塑】：
-   - 对生命值 <= 80% 的敌人造成伤害时，暴击率提升 15%，且造成的伤害直接无视目标 20% 防御！
+严格契合 Nanoka 4.6 官方底层数据 (Character ID: 1102, 巡猎 / 量子)：
+1. 【普攻·强袭】(SingleAttack):
+   - 消耗 0 SP (恢复 1 点战技点)，造成等同于希儿 140% 攻击力的量子属性伤害，削韧 10 点，恢复 20 点能量。
+2. 【战技·归刃】(SingleAttack):
+   - 消耗 1 点 SP，使希儿速度提高 25%，持续 2 回合 (星魂 2 可叠加至 2 层，提速 50%)；
+   - 对指定敌方单体造成等同于希儿 220% 攻击力的量子属性伤害，削韧 20 点，恢复 30 点能量；
+   - 官方机制加强：若受击目标生命值低于 50%，自动追加 1 次战技攻击！
+   - 星魂 1【斩尽】：对生命值 <= 80% 的敌人造成伤害时，暴击率提高 15%，无视 20% 防御。
+3. 【终结技·乱蝶】(SingleAttack):
+   - 消耗 120 点能量，立即进入【增幅】状态 (增伤 80%，持续 2 回合)；
+   - 对指定敌方单体造成等同于希儿 425% 攻击力的量子属性伤害，削韧 30 点，恢复 5 点能量；
+   - 星魂 6【离析】：受击目标陷入【乱蝶】状态持续 1 回合，受到攻击时产生额外量子附加伤害。
+4. 【天赋·再现】(Enhance):
+   - 消灭敌方目标时立即获得 1 个额外回合并进入【增幅】状态 (伤害提高 80%，持续 1 回合)；
+   - 星魂 4【掠影】：消灭敌方目标时额外恢复 15 点能量。
+5. 【秘技·幻身】(Enhance):
+   - 进战后立即进入【增幅】状态。
 """
 
 from typing import Optional, List, Any
@@ -30,13 +33,14 @@ class SeeleKit(KitHandler):
     AMPLIFY_BUFF = "Seele_Amplify"
     KILL_STACK_BUFF = "Seele_Kill_DmgStack"
     E1_DEF_IGNORE = "Seele_E1_DefIgnore"
+    E6_BUTTERFLY_FLURRY = "Seele_E6_ButterflyFlurry"
 
     def __init__(
         self,
         owner_id: str,
         port: CombatPort,
         *,
-        eidolon: int = 3,
+        eidolon: int = 0,
         skill_levels: Optional[dict] = None
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
@@ -70,7 +74,7 @@ class SeeleKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(technique_points=1),
-                name="幻影"
+                name="幻身"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 
@@ -85,13 +89,13 @@ class SeeleKit(KitHandler):
             self._execute_technique(ctx)
 
     def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【幻影】：进战直接进入增幅状态（增伤 60%）。"""
+        """秘技【幻身】：进战直接进入增幅状态（增伤 80%）。"""
         self.port.upsert_status(BuffSpec(
             key=self.AMPLIFY_BUFF,
-            name="增幅 (希儿秘技增伤60%)",
+            name="增幅 (希儿秘技增伤80%)",
             source_id=self.owner_id,
             target_id=self.owner_id,
-            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.60),),
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.80),),
             duration=1,
             timing=DurationTiming.TARGET_TURN_END,
             skip_current_clock=True
@@ -103,7 +107,7 @@ class SeeleKit(KitHandler):
             self.owner_id,
             target_id,
             element="Quantum",
-            atk_multiplier=1.0,
+            atk_multiplier=1.40,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
@@ -112,7 +116,7 @@ class SeeleKit(KitHandler):
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
 
-        # E1 强化：生命值 <= 80% 时 +15% 暴击率，且无视 20% 防御
+        # E1 斩尽：生命值 <= 80% 时 +15% 暴击率，且无视 20% 防御
         if self.eidolon >= 1 and self.port.hp_ratio(target_id) <= 0.80:
             self.port.upsert_status(BuffSpec(
                 key=self.E1_DEF_IGNORE,
@@ -128,16 +132,6 @@ class SeeleKit(KitHandler):
                 skip_current_clock=True
             ))
 
-        # 造成单体 220% 伤害，削韧 20 点
-        self.port.attack(
-            self.owner_id,
-            target_id,
-            element="Quantum",
-            atk_multiplier=2.20,
-            toughness_damage=20.0,
-            damage_tag="Skill"
-        )
-
         # 战技提速 25% (E2 可叠 2 层即 50%)
         max_speed_stacks = 2 if self.eidolon >= 2 else 1
         self.speed_stacks = min(max_speed_stacks, self.speed_stacks + 1)
@@ -152,7 +146,17 @@ class SeeleKit(KitHandler):
             skip_current_clock=True
         ))
 
-        # 官方最新加强：目标残血时自动追加 1 次战技攻击！
+        # 造成单体 220% 量子属性伤害，削韧 20 点
+        self.port.attack(
+            self.owner_id,
+            target_id,
+            element="Quantum",
+            atk_multiplier=2.20,
+            toughness_damage=20.0,
+            damage_tag="Skill"
+        )
+
+        # 残血自动追加 1 次攻击
         if self.port.hp_ratio(target_id) < 0.50:
             self.port.attack(
                 self.owner_id,
@@ -168,19 +172,19 @@ class SeeleKit(KitHandler):
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
 
-        # 进入增幅状态：增伤 60%
+        # 进入增幅状态：增伤 80% (官方 Lv 10 天赋规范)
         self.port.upsert_status(BuffSpec(
             key=self.AMPLIFY_BUFF,
-            name="增幅 (希儿大招增伤60%)",
+            name="增幅 (希儿大招增伤80%)",
             source_id=self.owner_id,
             target_id=self.owner_id,
-            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.60),),
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.80),),
             duration=2,
             timing=DurationTiming.TARGET_TURN_END,
             skip_current_clock=True
         ))
 
-        # 425% 爆发单体伤害，削韧 30 点
+        # 425% 单体爆发量子伤害，削韧 30 点
         self.port.attack(
             self.owner_id,
             target_id,
@@ -193,7 +197,7 @@ class SeeleKit(KitHandler):
         # E6: 离析 (使目标陷入乱蝶状态，受到攻击时受到终结技伤害 15% 的量子附加伤害)
         if self.eidolon >= 6:
             self.port.upsert_status(BuffSpec(
-                key="Seele_E6_ButterflyFlurry",
+                key=self.E6_BUTTERFLY_FLURRY,
                 name="离析 (希儿E6乱蝶附加伤害)",
                 source_id=self.owner_id,
                 target_id=target_id,

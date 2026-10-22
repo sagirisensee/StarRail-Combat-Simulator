@@ -1,26 +1,25 @@
 """黑天鹅 (Black Swan) 战斗技能套件完整实现 (Character Kit).
 
-适配角色：黑天鹅 (ID 1307, 虚无 / 风)
-严格契合官方 4.X「砺烁新辉」与实机机制：
-1. 普攻【洞见，缄默的黎明】：
-   - 造成单体风伤，65% 基础概率施加 1 层【奥迹】(Arcana)；
-   - 若目标处于风化/裂伤/灼伤/触电状态，分别各以 65% 基础概率额外施加 1 层【奥迹】；
-2. 战技【失序，微乱的信步】：
-   - 消耗 1 点 SP，对目标与相邻敌人造成风属性伤害，施加 1 层【奥迹】；
-   - 使目标与相邻敌人的防御力降低 20.8%，持续 3 回合；
-3. 终结技【沉醉于彼界的沉沦】：
-   - 消耗 120 能量，对敌方全体造成风属性伤害，施加【揭示】(Epiphany) 状态持续 2 回合；
-   - 【揭示】期间敌方在其自身回合内受到的伤害提高 25%，且【奥迹】被视为所有持续伤害类型；
-4. 天赋【命运遍数，皆在掌控】：
-   - 敌方回合开始受到【奥迹】风属性持续伤害 (层数越高伤害越巨额)；
-   - 层数 >= 3 层时造成相邻扩散伤害，层数 >= 7 层时无视 20% 防御；
-5. 星魂 1~6 完整实装：
-   - E1: 七瓣花开 (处于持续伤害状态的敌人对应属性抗性降低 25%)；
-   - E2: 羔羊，请勿为我恸哭 (持有奥迹的敌人被消灭时，100% 基础概率向相邻目标施加 3 层奥迹)；
-   - E3: 万象有常 (战技+2，天赋+2)；
-   - E4: 赠礼，泪水沉淀 (【揭示】状态下敌人效果抵抗降低 10%，黑天鹅在其回合开始或消灭时恢复 8 点能量)；
-   - E5: 候鸟之道 (终结技+2，普攻+1)；
-   - E6: 怜悯世人，拯救凡躯 (队友攻击敌方时 65% 基础概率施加 1 层奥迹；施加奥迹时 50% 固定概率额外增加 1 层)。
+严格契合 Nanoka 4.6 官方底层数据 (Character ID: 1307, 虚无 / 风)：
+1. 【普攻·洞见，缄默的黎明】(SingleAttack):
+   - 消耗 0 SP (恢复 1 点战技点)，对指定敌方单体造成等同于黑天鹅 84% 攻击力的风属性伤害；
+   - 有 65% 基础概率使目标陷入 1 层【奥迹】(持续伤害受体额外概率叠层)，削韧 10 点，恢复 20 点能量。
+2. 【战技·失坠，伪神的黄昏】(Blast):
+   - 消耗 1 点 SP，对指定敌方单体及其相邻目标造成等同于黑天鹅 90% 攻击力的风属性伤害，削韧 20/10 点；
+   - 100% 基础概率使目标与相邻目标陷入 1 层【奥迹】；
+   - 100% 基础概率使目标与相邻目标防御力降低 20.8%，持续 3 回合，恢复 30 点能量。
+3. 【终结技·沉醉于彼界的臂湾】(AoEAttack):
+   - 消耗 120 点能量，使敌方全体陷入【揭露】(Epiphany) 状态持续 2 回合；
+   - 【揭露】期间敌方受到的伤害提高 25%，且【奥迹】视为同时陷入风化/裂伤/灼烧/触电；
+   - 对敌方全体造成等同于黑天鹅 120% 攻击力的风属性伤害，削韧 20 点，恢复 5 点能量；
+   - 星魂 4【泪水，亦是礼物】：揭露状态下敌方效果抵抗降低 10%，黑天鹅恢复 8 点能量。
+4. 【天赋·无端命运的机杼】(Impair):
+   - 敌方回合开始受到等同于黑天鹅 240% 攻击力的风属性持续伤害，每层【奥迹】使伤害倍率提高 12%，最多叠加 50 层；
+   - 达到 3 层以上时造成 180% 相邻扩散风伤；达到 7 层以上时无视 20% 防御。
+5. 【秘技·取此真相，弃舍表征】(Enhance):
+   - 战斗开始时使敌方全体陷入【奥迹】状态。
+6. 【星魂 1·三磅石，七阶柱】：
+   - 黑天鹅处于可战斗状态时，陷入持续伤害的敌方目标对应属性抗性降低 25% (开局自动施加减抗)。
 """
 
 from typing import Optional, List, Any
@@ -36,6 +35,7 @@ class BlackSwanKit(KitHandler):
     EPIPHANY_DEBUFF = "BlackSwan_Epiphany"
     DEF_SHRED_DEBUFF = "BlackSwan_Skill_DefShred"
     ARCANA_STACK_KEY = "BlackSwan_Arcana_Stacks"
+    E1_RES_SHRED = "BlackSwan_E1_ResShred"
 
     def __init__(
         self,
@@ -61,31 +61,31 @@ class BlackSwanKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=1),
-                name="失序，微乱的信步"
+                name="失坠，伪神的黄昏"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(energy=120.0),
-                name="沉醉于彼界的沉沦"
+                name="沉醉于彼界的臂湾"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(technique_points=1),
-                name="取此甄伪"
+                name="取此真相，弃舍表征"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
-        """E1: 七瓣花开 (开战即对全体施加持续伤害对应 25% 属性减抗)。"""
+        """E1 三磅石，七阶柱：开局即对敌方全体施加持续伤害对应 25% 属性减抗。"""
         if self.eidolon >= 1:
             for enemy in self.port.enemies(self.owner_id):
                 self.port.upsert_status(BuffSpec(
-                    key="BlackSwan_E1_ResShred",
-                    name="七瓣花开 (黑天鹅E1全属性持续减抗25%)",
+                    key=self.E1_RES_SHRED,
+                    name="三磅石，七阶柱 (黑天鹅E1全属性持续减抗25%)",
                     source_id=self.owner_id,
                     target_id=enemy,
                     modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.25),),
@@ -114,7 +114,7 @@ class BlackSwanKit(KitHandler):
             self._execute_technique(ctx)
 
     def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【取此甄伪】：进战后使敌方全体陷入【奥迹】状态。"""
+        """秘技【取此真相，弃舍表征】：进战后使敌方全体陷入【奥迹】状态。"""
         for enemy in self.port.enemies(self.owner_id):
             self._add_arcana(enemy, 2)
 
@@ -124,7 +124,7 @@ class BlackSwanKit(KitHandler):
             self.owner_id,
             target_id,
             element="Wind",
-            atk_multiplier=1.0,
+            atk_multiplier=0.84,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
@@ -133,7 +133,6 @@ class BlackSwanKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        # 目标与相邻敌人受到风伤与减防
         enemies = self.port.enemies(self.owner_id)
         targets = [target_id]
         for e in enemies:
@@ -145,7 +144,7 @@ class BlackSwanKit(KitHandler):
                 self.owner_id,
                 tgt,
                 element="Wind",
-                atk_multiplier=1.80 if tgt == target_id else 0.90,
+                atk_multiplier=0.90,
                 toughness_damage=20.0 if tgt == target_id else 10.0,
                 damage_tag="Skill"
             )
@@ -153,7 +152,7 @@ class BlackSwanKit(KitHandler):
             # 降低防御力 20.8%
             self.port.upsert_status(BuffSpec(
                 key=self.DEF_SHRED_DEBUFF,
-                name="失序 (黑天鹅减防20.8%)",
+                name="失坠，伪神的黄昏 (黑天鹅减防20.8%)",
                 source_id=self.owner_id,
                 target_id=tgt,
                 modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.208),),
@@ -176,13 +175,13 @@ class BlackSwanKit(KitHandler):
                 damage_tag="Ultimate"
             )
             mods = [Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.25)]
-            # E4: 揭示状态下效果抵抗降低 10%
+            # E4: 泪水，亦是礼物 (揭露状态下效果抵抗降低 10%)
             if self.eidolon >= 4:
                 mods.append(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, -0.10))
 
             self.port.upsert_status(BuffSpec(
                 key=self.EPIPHANY_DEBUFF,
-                name="揭示 (黑天鹅易伤与奥迹强化)",
+                name="揭露 (黑天鹅易伤与奥迹强化)",
                 source_id=self.owner_id,
                 target_id=enemy,
                 modifiers=tuple(mods),

@@ -1,22 +1,25 @@
 """青雀 (Qingque) 战斗技能套件完整实现 (Character Kit).
 
-适配角色：青雀 (ID 1201, 智识 / 量子, 用户导入 6 魂顶级配置)
-严格契合实机机制与公式：
-1. 普攻【门前清】：造成单体量子伤害，恢复 1 点战技点；
-   - 处于【暗杠】(Hidden Hand) 状态时强化为【杠上开花！】：造成巨额 240% 扩散量子伤害，削韧 20 点；
-   - 【星魂 6 联动】：施放强化普攻后，恢复 1 点战技点！(完美对冲 SP 消耗)；
-2. 战技【海底捞月】：
-   - 消耗 1 点 SP，立即抽取 2 张琼玉牌；
-   - 自身造成的伤害提高 28% (最高叠加 4 层至 112% 增伤)；
-   - 施放战技不结束回合！
-   - 【星魂 4 联动】：施放战技时有 24% 固定概率获得【不求人】状态：施放普攻后立即发动 1 次强化追加攻击！
-3. 终结技【四幺？和了！】：
-   - 消耗 140 能量，对敌方全体造成 200% 量子伤害；
-   - 必定直接凑齐 4 张相同花色琼玉牌，直接进入【暗杠】状态！
-   - 【星魂 1 联动】：终结技造成的伤害额外提高 10%；
-4. 天赋【帝垣琼玉】：
-   - 我方队友行动时摸牌，摸到 4 张同花色牌进入【暗杠】状态，攻击力提高 72%，速度提高 10%；
-   - 【星魂 2 联动】：每次触发摸牌，恢复 1 点能量。
+严格契合 Nanoka 4.6 官方底层数据 (Character ID: 1201, 智识 / 量子)：
+1. 【普攻·门前清】(SingleAttack):
+   - 消耗 0 SP (恢复 1 点战技点)，对指定敌方单体造成等同于青雀 140% 攻击力的量子属性伤害，削韧 10 点，恢复 20 点能量。
+2. 【强化普攻·杠上开花！】(Blast):
+   - 处于【暗杠】状态下施放，消耗 0 SP，不恢复战技点；
+   - 对指定敌方单体造成等同于青雀 336% 攻击力的量子属性伤害，对其相邻目标造成 140% 攻击力的量子属性伤害，削韧 20/10 点，恢复 20 点能量；
+   - 星魂 6【虚心平意候枭卢】：施放强化普攻后，恢复 1 个战技点！
+3. 【战技·海底捞月】(Enhance):
+   - 消耗 1 点 SP，立即抽取 2 张琼玉牌，使自身造成的伤害提高 28%，持续至本回合结束 (最多叠加 4 层至 112%)；
+   - 施放该战技后，本回合不会结束；
+   - 星魂 2【棋枰作枕好入眠】：每次抽牌恢复 1 点能量；
+   - 星魂 4【帝垣翔鳞和绝张】：施放战技后有 24% 固定概率获得【不求人】状态，普攻后触发追加攻击。
+4. 【终结技·四幺暗刻？和！】(AoEAttack):
+   - 消耗 140 点能量，对敌方全体造成等同于青雀 200% 攻击力的量子属性伤害，削韧 20 点，恢复 5 点能量；
+   - 必定获得 4 张相同花色琼玉牌，直接进入【暗杠】状态；
+   - 星魂 1【散勇化骁摸幺鱼】：施放终结技造成的伤害提高 10%。
+5. 【天赋·帝垣琼玉】(Enhance):
+   - 凑齐 4 张同花色牌进入【暗杠】状态，攻击力提高 72%，速度提高 10%，并在施放【杠上开花！】后解除暗杠。
+6. 【秘技·独弈之乐】(Enhance):
+   - 进战后立即抽取 2 张琼玉牌。
 """
 
 from typing import Optional, List, Any
@@ -48,10 +51,11 @@ class QingqueKit(KitHandler):
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
             name = "杠上开花！" if self.is_hidden_hand else "门前清"
+            sp_cost = 0 if self.is_hidden_hand else -1
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
-                cost=ResourceCost(sp=-1),
+                cost=ResourceCost(sp=sp_cost),
                 name=name
             )
         elif kind == ActionKind.SKILL:
@@ -67,7 +71,7 @@ class QingqueKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(energy=140.0),
-                name="四幺？和了！"
+                name="四幺暗刻？和！"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
@@ -92,20 +96,32 @@ class QingqueKit(KitHandler):
         """秘技【独弈之乐】：进战摸牌 2 张。"""
         self.skill_draw_stacks = min(4, self.skill_draw_stacks + 2)
         if self.skill_draw_stacks >= 4:
-            self.is_hidden_hand = True
+            self._enter_hidden_hand()
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
         if self.is_hidden_hand:
-            # 强化普攻【杠上开花！】
+            # 强化普攻【杠上开花！】: 主目标 336%, 扩散 140%
             self.port.attack(
                 self.owner_id,
                 target_id,
                 element="Quantum",
-                atk_multiplier=2.40,
+                atk_multiplier=3.36,
                 toughness_damage=20.0,
                 damage_tag="EnhancedBasic"
             )
+            enemies = self.port.enemies(self.owner_id)
+            for e in enemies:
+                if e != target_id:
+                    self.port.attack(
+                        self.owner_id,
+                        e,
+                        element="Quantum",
+                        atk_multiplier=1.40,
+                        toughness_damage=10.0,
+                        damage_tag="EnhancedBasic_Blast"
+                    )
+
             # E6: 施放强化普攻后恢复 1 点战技点！
             if self.eidolon >= 6:
                 self.port.change_sp(self.owner_id, 1, "青雀E6强化普攻产点")
@@ -117,7 +133,7 @@ class QingqueKit(KitHandler):
                     self.owner_id,
                     target_id,
                     element="Quantum",
-                    atk_multiplier=2.40,
+                    atk_multiplier=3.36,
                     toughness_damage=20.0,
                     damage_tag="AutarkyFollowUp"
                 )
@@ -131,7 +147,7 @@ class QingqueKit(KitHandler):
                 self.owner_id,
                 target_id,
                 element="Quantum",
-                atk_multiplier=1.0,
+                atk_multiplier=1.40,
                 toughness_damage=10.0,
                 damage_tag="BasicAttack"
             )
@@ -161,7 +177,7 @@ class QingqueKit(KitHandler):
         if self.eidolon >= 4 and random.random() < 0.24:
             self.has_autarky = True
 
-        # 摸牌胡牌判定 (模拟 2 次战技必胡暗杠)
+        # 摸牌判定暗杠
         if self.skill_draw_stacks >= 2 or random.random() < 0.50:
             self._enter_hidden_hand()
 
@@ -169,7 +185,7 @@ class QingqueKit(KitHandler):
         self.is_hidden_hand = True
         self.port.upsert_status(BuffSpec(
             key=self.HIDDEN_HAND_BUFF,
-            name="暗杠 (青雀攻击力提高72%与提速10%)",
+            name="帝垣琼玉 (青雀暗杠攻击力提高72%)",
             source_id=self.owner_id,
             target_id=self.owner_id,
             modifiers=(
