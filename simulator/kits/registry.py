@@ -81,6 +81,8 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     "1512": RobinKit,
     "知更鸟": RobinKit,
     "知更鸟•晴歌": RobinKit,
+    "知更鸟·晴歌": RobinKit,
+    "知更鸟晴歌": RobinKit,
     "robin": RobinKit,
 
     # 阮•梅 (Ruan Mei)

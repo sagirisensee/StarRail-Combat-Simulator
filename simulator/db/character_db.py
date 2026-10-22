@@ -321,12 +321,21 @@ class CharacterDB:
         return self.get_by_name(str(avatar_id_or_name))
 
     def get_by_name(self, name: str) -> Optional[CharacterProfile]:
-        """根据角色名称模糊或精确查询档案。"""
+        """根据角色名称模糊或精确查询档案 (忽略中点•、·、空格与大小写差异)。"""
         if name in self._profiles_by_name:
             return self._profiles_by_name[name]
-        # 模糊匹配
+
+        norm = lambda s: str(s).replace("•", "").replace("·", "").replace(".", "").replace(" ", "").lower()
+        target_norm = norm(name)
+
+        # 1. 归一化完全匹配 (如 "知更鸟晴歌" 匹配 "知更鸟•晴歌", "阮梅" 匹配 "阮•梅")
         for cname, p in self._profiles_by_name.items():
-            if name.lower() in cname.lower():
+            if norm(cname) == target_norm:
+                return p
+
+        # 2. 模糊匹配
+        for cname, p in self._profiles_by_name.items():
+            if target_norm in norm(cname) or norm(cname) in target_norm:
                 return p
         return None
 

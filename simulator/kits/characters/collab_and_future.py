@@ -139,12 +139,50 @@ class DanHengTenghuangKit(KitHandler):
 
 class ChangyeyueKit(KitHandler):
     """长夜月 (ID 1413, 冰 / 记忆, E2)."""
+
     def definition(self, kind: ActionKind):
-        return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="长夜之月")
+        if kind == ActionKind.BASIC:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="霜月薄暮")
+        elif kind == ActionKind.SKILL:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1), name="长夜之月")
+        elif kind == ActionKind.ULTIMATE:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(energy=120.0), name="永夜冰华·月影轮转")
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(technique_points=1), name="清辉凝魄")
+        raise ValueError(f"未支持的动作类型: {kind}")
+
     def execute(self, ctx: ActionContext):
+        if ctx.kind == ActionKind.BASIC:
+            target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+            self.port.attack(self.owner_id, target_id, element="Ice", atk_multiplier=1.1, toughness_damage=10.0, damage_tag="BasicAttack")
+            self.port.gain_energy(self.owner_id, 20.0)
+        elif ctx.kind == ActionKind.SKILL:
+            mult = 2.40 if self.eidolon >= 2 else 2.00  # E2 强化战技倍率
+            for e in self.port.enemies(self.owner_id):
+                self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Moonlight")
+            self.port.gain_energy(self.owner_id, 30.0)
+        elif ctx.kind == ActionKind.ULTIMATE:
+            ult_mult = 3.60 if self.eidolon >= 2 else 3.00
+            for e in self.port.enemies(self.owner_id):
+                self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=ult_mult, toughness_damage=30.0, damage_tag="MoonlightUlt")
+                self.port.delay(self.owner_id, e, 0.20)
+            self.port.gain_energy(self.owner_id, 5.0)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self.use_technique()
+
+    def use_technique(self):
+        """秘技【清辉凝魄】：开战时使敌方全体受到伤害提高 15%，持续 2 回合。"""
         for e in self.port.enemies(self.owner_id):
-            self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=2.2, toughness_damage=20.0, damage_tag="Moonlight")
-        self.port.gain_energy(self.owner_id, 30.0)
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_Tech_Vuln",
+                name="清辉易伤 (长夜月秘技易伤15%)",
+                source_id=self.owner_id,
+                target_id=e,
+                modifiers=(Modifier(StatType.DMG_VULNERABILITY, ModifierOp.ADD, 0.15),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
 
 class KelydraKit(KitHandler):
@@ -159,12 +197,61 @@ class KelydraKit(KitHandler):
 
 class FengjinKit(KitHandler):
     """风堇 (ID 1409, 风 / 记忆, E1)."""
+
     def definition(self, kind: ActionKind):
-        return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="堇色狂岚")
+        if kind == ActionKind.BASIC:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="轻风拂野")
+        elif kind == ActionKind.SKILL:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1), name="堇色狂岚")
+        elif kind == ActionKind.ULTIMATE:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(energy=120.0), name="狂岚绝响·千叶飞花")
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(technique_points=1), name="掠影乘风")
+        raise ValueError(f"未支持的动作类型: {kind}")
+
     def execute(self, ctx: ActionContext):
-        for e in self.port.enemies(self.owner_id):
-            self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=2.0, toughness_damage=20.0, damage_tag="Windburst")
-        self.port.gain_energy(self.owner_id, 30.0)
+        if ctx.kind == ActionKind.BASIC:
+            target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+            self.port.attack(self.owner_id, target_id, element="Wind", atk_multiplier=1.0, toughness_damage=10.0, damage_tag="BasicAttack")
+            self.port.gain_energy(self.owner_id, 20.0)
+        elif ctx.kind == ActionKind.SKILL:
+            mult = 2.20 if self.eidolon >= 1 else 1.80  # E1 狂岚增伤
+            for e in self.port.enemies(self.owner_id):
+                self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Windburst")
+            self.port.gain_energy(self.owner_id, 30.0)
+        elif ctx.kind == ActionKind.ULTIMATE:
+            ult_mult = 3.20 if self.eidolon >= 1 else 2.80
+            for e in self.port.enemies(self.owner_id):
+                self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=ult_mult, toughness_damage=30.0, damage_tag="WindUlt")
+            # E1: 为我方全体提供 20% 属性抗性穿透
+            res_pen = 0.20 if self.eidolon >= 1 else 0.12
+            for a in self.port.allies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key="Fengjin_ResPen",
+                    name="千叶穿抗 (风堇大招全队穿透)",
+                    source_id=self.owner_id,
+                    target_id=a,
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, res_pen),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
+            self.port.gain_energy(self.owner_id, 5.0)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self.use_technique()
+
+    def use_technique(self):
+        """秘技【掠影乘风】：进场时自身速度提高 20%，持续 2 回合。"""
+        self.port.upsert_status(BuffSpec(
+            key="Fengjin_Tech_Speed",
+            name="掠影提速 (风堇秘技速度+20%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.20),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True
+        ))
 
 
 class XiadieKit(KitHandler):
@@ -179,24 +266,64 @@ class XiadieKit(KitHandler):
 
 class TibaoKit(KitHandler):
     """缇宝 (Tribbie - ID 1403, 量子 / 同谐, E6)."""
+
     def definition(self, kind: ActionKind):
-        return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="缇宝增幅")
+        if kind == ActionKind.BASIC:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="灵心荧光")
+        elif kind == ActionKind.SKILL:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost(sp=1), name="同频律动·心象跃迁")
+        elif kind == ActionKind.ULTIMATE:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost(energy=120.0), name="星海共鸣·万象璀璨")
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(technique_points=1), name="璀璨序章")
+        raise ValueError(f"未支持的动作类型: {kind}")
+
     def execute(self, ctx: ActionContext):
-        for a in self.port.allies(self.owner_id):
-            self.port.upsert_status(BuffSpec(
-                key="Tribbie_Buff",
-                name="缇宝增益 (攻击力50%与暴伤30%)",
-                source_id=self.owner_id,
-                target_id=a,
-                modifiers=(
-                    Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.50),
-                    Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.30),
-                ),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
-            ))
-        self.port.gain_energy(self.owner_id, 30.0)
+        if ctx.kind == ActionKind.BASIC:
+            target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=1.0, toughness_damage=10.0, damage_tag="BasicAttack")
+            self.port.gain_energy(self.owner_id, 20.0)
+        elif ctx.kind == ActionKind.SKILL:
+            # E6 顶级强化增益: 攻击力+60%, 暴伤+40%
+            atk_boost = 0.60 if self.eidolon >= 6 else 0.45
+            cd_boost = 0.40 if self.eidolon >= 6 else 0.30
+            for a in self.port.allies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key="Tribbie_Skill_Buff",
+                    name="同频律动 (缇宝战技攻击与暴伤)",
+                    source_id=self.owner_id,
+                    target_id=a,
+                    modifiers=(
+                        Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, atk_boost),
+                        Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_boost),
+                    ),
+                    duration=3,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
+            self.port.gain_energy(self.owner_id, 30.0)
+        elif ctx.kind == ActionKind.ULTIMATE:
+            # 大招：全队回能 35 点 (E6)，并为全队提供高额全属性抗穿 24%
+            for a in self.port.allies(self.owner_id):
+                if a != self.owner_id:
+                    self.port.gain_energy(a, 35.0 if self.eidolon >= 6 else 30.0)
+                self.port.upsert_status(BuffSpec(
+                    key="Tribbie_Ult_ResPen",
+                    name="星海璀璨 (缇宝大招全属性抗穿24%)",
+                    source_id=self.owner_id,
+                    target_id=a,
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.24),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
+            self.port.gain_energy(self.owner_id, 5.0)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self.use_technique()
+
+    def use_technique(self):
+        """秘技【璀璨序章】：进入战斗后为我方立即额外恢复 2 点战技点！"""
+        self.port.change_sp(self.owner_id, 2, "缇宝秘技进场额外恢复战技点")
 
 
 class DahliaKit(KitHandler):

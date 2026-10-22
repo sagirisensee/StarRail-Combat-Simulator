@@ -45,35 +45,11 @@ from simulator.kits.registry import get_kit_class
 
 # 预设阵容
 TEAM_PRESETS = {
-    "acheron": {
-        "name": "黄泉量子雷暴队 (Acheron Hypercarry)",
-        "members": ["黄泉", "花火", "银狼", "符玄"],
-        "policies": {"黄泉": "E", "花火": "E", "银狼": "EAA", "符玄": "EAA"},
-        "desc": "花火拉条与暴伤 + 银狼定向减防植入弱点 + 符玄穷观阵护航，黄泉暴力斩击！"
-    },
-    "firefly": {
-        "name": "流萤超击破国家队 (Firefly Super Break)",
-        "members": ["流萤", "阮•梅", "开拓者", "加拉赫"],
-        "policies": {"流萤": "E", "阮•梅": "EAA", "开拓者": "E", "加拉赫": "EAA"},
-        "desc": "阮•梅全队击破效率与提速 + 同谐主伴舞超击破 + 加拉赫酩酊易伤，流萤死星过载狂轰滥炸！"
-    },
-    "dot": {
-        "name": "卡黑持续伤害引爆队 (DoT Explosion)",
-        "members": ["卡芙卡", "黑天鹅", "阮•梅", "藿藿"],
-        "policies": {"卡芙卡": "E", "黑天鹅": "EAA", "阮•梅": "EAA", "藿藿": "EAA"},
-        "desc": "黑天鹅高额奥迹堆叠 + 阮•梅全队抗穿提速 + 藿藿全队回能加攻，卡芙卡疯狂连锁引爆！"
-    },
-    "followup": {
-        "name": "真理托帕追击队 (FUA Synergy)",
-        "members": ["真理医生", "托帕", "知更鸟", "砂金"],
-        "policies": {"真理医生": "E", "托帕": "E", "知更鸟": "EAA", "砂金": "EAA"},
-        "desc": "托帕负债证明 + 知更鸟协奏全队高额附伤与拉条 + 砂金全队护盾，粉笔与账账连环追击！"
-    },
-    "clara": {
-        "name": "克拉拉反击聚仇队 (Clara Counter)",
-        "members": ["克拉拉", "花火", "停云", "符玄"],
-        "policies": {"克拉拉": "E", "花火": "E", "停云": "EAA", "符玄": "EAA"},
-        "desc": "克拉拉聚仇反击 + 停云大额充能与赐福 + 花火战技点支撑，史瓦罗反击横扫千军！"
+    "changyeyue": {
+        "name": "长夜月队 (Evernight Moon Synergy)",
+        "members": ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"],
+        "policies": {"长夜月": "E", "缇宝": "EAA", "知更鸟•晴歌": "EAA", "风堇": "E"},
+        "desc": "长夜月永夜冰华 + 缇宝暴伤抗穿全队回能 + 知更鸟晴歌全队协奏拉条附伤 + 风堇狂岚穿抗，极致爆发！"
     }
 }
 
@@ -571,10 +547,10 @@ def main():
     parser = argparse.ArgumentParser(description="星穹铁道战斗模拟系统测试启动入口")
     parser.add_argument("--interactive", "-i", action="store_true", help="启动手动交互打牌对战模式 (Manual Turn-by-Turn)")
     parser.add_argument("--auto", action="store_true", help="强制自动推演基准测试 (Auto Benchmark)")
-    parser.add_argument("--preset", type=str, choices=list(TEAM_PRESETS.keys()), default=None,
-                        help="选择预设队伍 (acheron / firefly / dot / followup / clara)")
+    parser.add_argument("--preset", type=str, choices=list(TEAM_PRESETS.keys()), default="changyeyue",
+                        help="选择预设队伍 (changyeyue)")
     parser.add_argument("--team", type=str, default="",
-                        help="自定义 4 人编队，逗号分隔，如: '流萤,阮•梅,开拓者,加拉赫'")
+                        help="自定义 4 人编队，逗号分隔，如: '长夜月,缇宝,知更鸟•晴歌,风堇'")
     parser.add_argument("--cycles", type=int, default=3, help="模拟最大轮次 (Cycle)，默认 3 轮")
     parser.add_argument("--turns", type=int, default=40, help="模拟最大行动回合数，默认 40 动")
     parser.add_argument("--no-technique", action="store_true", help="禁用开战前秘技")
@@ -605,29 +581,18 @@ def main():
     if args.team:
         team_members = [t.strip() for t in args.team.split(",") if t.strip()]
         policies = {m: "E" for m in team_members}
-    elif args.preset:
-        preset = TEAM_PRESETS[args.preset]
-        team_members = preset["members"]
-        policies = preset.get("policies", {})
-        print(f"📌 加载指定精选阵容: 【{preset['name']}】")
-        print(f"   说明: {preset['desc']}")
     else:
-        # 终端交互模式且未指定队伍时，提供队伍选择
+        # 终端交互模式且未显式指定自定义队伍时，展示阵容确认
         if interactive_mode and sys.stdin.isatty():
-            print("\n📋 请选择对战阵容预设:")
-            print("  [1] ⚡ 黄泉量子雷暴队 (Acheron Hypercarry) [默认]")
-            print("  [2] 🔥 流萤超击破国家队 (Firefly Super Break)")
-            print("  [3] 🟣 卡黑持续伤害引爆队 (DoT Explosion)")
-            print("  [4] 🎯 真理托帕追击队 (FUA Synergy)")
-            print("  [5] 🤖 克拉拉反击聚仇队 (Clara Counter)")
+            print("\n📋 当前精选阵容预设:")
+            print("  [1] 🌙 长夜月队 (长夜月, 缇宝, 知更鸟•晴歌, 风堇) [默认]")
             try:
-                preset_choice = input("\n请选择队伍 [1-5, 默认 1]: ").strip()
+                preset_choice = input("\n请选择队伍 [1, 默认 1]: ").strip()
             except (EOFError, KeyboardInterrupt):
                 preset_choice = "1"
-            preset_map = {"1": "acheron", "2": "firefly", "3": "dot", "4": "followup", "5": "clara"}
-            selected_preset_key = preset_map.get(preset_choice, "acheron")
+            selected_preset_key = "changyeyue"
         else:
-            selected_preset_key = "acheron"
+            selected_preset_key = args.preset or "changyeyue"
 
         preset = TEAM_PRESETS[selected_preset_key]
         team_members = preset["members"]

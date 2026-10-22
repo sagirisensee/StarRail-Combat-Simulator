@@ -74,10 +74,12 @@ class DamageCalculator:
             dmg_boost = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DMG_BOOST)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
             def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
+            vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY)
         else:
             dmg_boost = 0.0
             res_pen = 0.0
             def_shred = 0.0
+            vuln = 0.0
 
         # 1. 基础伤害区
         base_dmg = atk_stat * req.skill_multiplier + req.flat_damage
@@ -109,8 +111,8 @@ class DamageCalculator:
         eff_res = req.target_base_res - res_pen
         res_mult = max(0.0, min(2.0, 1.0 - eff_res))
 
-        # 6. 易伤区 (这里先按 0 易伤，后续接状态)
-        vuln_mult = 1.0
+        # 6. 易伤区
+        vuln_mult = 1.0 + vuln
 
         # 7. 韧性减伤区 (未破韧固定 0.9，破韧 1.0)
         reduction_mult = 1.0 if req.target_is_broken else 0.9

@@ -48,6 +48,8 @@ class StatType(Enum):
     AGGRO = "aggro"              # 嘲讽/仇恨值
     BREAK_VULN = "break_vuln"    # 击破易伤
     ATK = "atk"                  # 攻击力加成 (同 ATK_PERCENT)
+    VULNERABILITY = "vulnerability" # 受到伤害提高 (易伤区)
+    DMG_VULNERABILITY = "vulnerability" # 易伤区 (兼容别名)
 
 
 class ModifierOp(Enum):
