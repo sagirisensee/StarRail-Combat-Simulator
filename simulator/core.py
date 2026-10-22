@@ -32,6 +32,10 @@ class SimulatorCombatPort:
         for e in self.sim.entities:
             if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
                 return e
+        if name_or_id in ("长夜", "忆灵", "memosprite"):
+            for e in self.sim.entities:
+                if "长夜月" in e.name:
+                    return e
         return None
 
     def allies(self, actor_id: str) -> Tuple[str, ...]:
@@ -390,6 +394,10 @@ class TurnSimulator:
         if entities:
             for e in entities:
                 self.add_entity(e, trigger_battle_start=False)
+                # 角色固有队伍被动（如花火战技点上限提升至7/8点）在战前秘技生效前预初始化
+                if "花火" in e.name or "Sparkle" in e.name:
+                    sp_cap = 8 if getattr(e, "eidolon", 0) >= 4 else 7
+                    self.port.set_sp_cap(sp_cap)
 
             # 1. 战前秘技 (Techniques 在入场前生效)
             if use_techniques:
@@ -450,7 +458,10 @@ class TurnSimulator:
         return None
 
     def _get_entity(self, name_or_id: str) -> Optional[Entity]:
-        return self.get_entity(name_or_id)
+        ent = self.get_entity(name_or_id)
+        if not ent and name_or_id in ("长夜", "忆灵", "memosprite"):
+            return self.get_entity("长夜月")
+        return ent
 
     def use_technique(self, actor_id: str) -> None:
         """在开战前执行指定角色的秘技。"""

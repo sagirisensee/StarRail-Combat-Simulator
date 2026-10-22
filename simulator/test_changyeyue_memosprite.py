@@ -160,5 +160,42 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertTrue(any("至暗之谜" in b for b in buff_names), "长夜月应挂载至暗之谜Buff")
 
 
+    def test_06_memosprite_full_team_panel_verification(self):
+        """验证在实战队伍【长夜月, 缇宝, 知更鸟•晴歌, 风堇】与血噬关卡下，长夜的15项增益、血量与面板全量对账。"""
+        from simulate_battle import STAGE_CONFIG, create_enemy_from_config
+        team = [self.db.to_combat_entity(n) for n in ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]]
+        enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
+        sim = TurnSimulator(entities=team + enemies, use_techniques=True, stage_mechanics=STAGE_CONFIG["mechanics"])
+
+        # 1. 验证队伍中「记忆」命途角色数量为 3 (长夜月, 风堇, 知更鸟•晴歌)
+        cy_kit = team[0].kit
+        self.assertEqual(cy_kit._get_remembrance_count(), 3)
+
+        # 2. 验证知更鸟氛围值：风堇开局1 + 知更鸟晴歌开局6 + 长夜开局1 = 8 点
+        robin = sim.get_entity("知更鸟•晴歌")
+        self.assertEqual(robin.kit.vibes, 8)
+
+        # 3. 验证长夜快照
+        msnap = sim.query_status("长夜")
+        self.assertEqual(msnap["name"], "长夜")
+        self.assertEqual(int(msnap["max_hp"]), 4313)
+        self.assertEqual(int(msnap["current_hp"]), 3122)
+        self.assertEqual(msnap["speed"], 160.0)
+        self.assertEqual(msnap["crit_rate"], 1.036)
+        self.assertEqual(msnap["crit_dmg"], 6.641)
+        self.assertEqual(len(msnap["buffs"]), 15)
+
+        buff_names = [b["name"] for b in msnap["buffs"]]
+        expected_15 = [
+            "冥花", "今夜与我同行", "偏离和弦", "天黑黑月寂寂（爆伤15）",
+            "我们自称旋律", "天亮了雨落了", "白昼悄然离去", "心意相契的安宁",
+            "神启", "谕示", "天气正好万物可爱", "烈阳惊雷的女武神",
+            "听沉眠中的呓语", "天黑黑月寂寂（暴击率35）", "孤独浮游漆黑"
+        ]
+        for name in expected_15:
+            self.assertIn(name, buff_names, f"长夜应包含增益: {name}")
+        self.assertTrue(any("血" in o for o in msnap["other_effects"]))
+
+
 if __name__ == "__main__":
     unittest.main()

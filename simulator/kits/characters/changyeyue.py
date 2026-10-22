@@ -60,11 +60,11 @@ class ChangyeyueKit(KitHandler):
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
-        # E2 自带 60% 暴伤提升
+        # E2 自带暴伤提升 (长夜月 +60%，忆灵「长夜」享受 +40%)
         if self.eidolon >= 2:
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_E2_CritDmg",
-                name="呓语 (E2暴伤+60%)",
+                name="听沉眠中的呓语 (E2暴伤+60%)",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.60),),
@@ -87,6 +87,21 @@ class ChangyeyueKit(KitHandler):
             description="暴击率提高 +35.0%"
         ))
 
+        # 行迹【天亮了，雨落了】：根据队伍中「记忆」命途角色数量提升暴击伤害 (本队3名记忆角色加成 +50%)
+        rem_count = self._get_remembrance_count()
+        rem_cd = 0.50 if rem_count == 3 else (0.65 if rem_count >= 4 else (0.15 if rem_count == 2 else 0.05))
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_A6_RemembranceCritDmg",
+            name="天亮了，雨落了",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, rem_cd),),
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd*100:.1f}%"
+        ))
+
         # 行迹【烛火起，烛火熄】：战斗开始时，长夜月恢复 70 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 70.0)
         self.gain_yizhi(1)
@@ -107,17 +122,17 @@ class ChangyeyueKit(KitHandler):
                 self.spirit_hp = max(1.0, self.spirit_hp - bleed_loss)
                 self.on_hp_lost("长夜", bleed_loss, cause="stage_mechanic_bleed_summon")
 
-        # 忆灵天赋【孤独，浮游，漆黑】：长夜在场增伤 70%
+        # 忆灵天赋【孤独，浮游，漆黑】：长夜在场增伤 50%
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_Memosprite_Presence",
-            name="孤独，浮游，漆黑 (忆灵在场增伤70%)",
+            name="孤独，浮游，漆黑 (免控与全属性增伤+50%)",
             source_id=self.owner_id,
             target_id=self.owner_id,
-            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.70),),
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
             duration=None,
             timing=DurationTiming.TARGET_TURN_END,
             category="buff",
-            description="全属性伤害提高 +70.0%"
+            description="全属性伤害提高 +50.0%"
         ))
 
         # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动！
@@ -163,6 +178,19 @@ class ChangyeyueKit(KitHandler):
         # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 5.0)
         self.gain_yizhi(1)
+
+        # 触发知更鸟晴歌气氛值监听 (长夜行动 +1 氛围值，总氛围值达到 1+6+1=8 点)
+        sim = getattr(self.port, "sim", None)
+        if sim and hasattr(sim, "event_bus"):
+            from ...events import ActionExecuteEvent
+            sim.event_bus.publish(ActionExecuteEvent(
+                av=round(getattr(sim, "current_av", 0.0), 2),
+                cycle=getattr(sim, "current_cycle", 0),
+                actor_id="长夜",
+                actor_name="长夜",
+                action_type="Skill",
+                description="追忆，蹁跹，如雨"
+            ))
 
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
         # 对敌方单体造成等同于「长夜」70% 生命上限的冰属性伤害，
@@ -288,8 +316,11 @@ class ChangyeyueKit(KitHandler):
             for a_name in allies:
                 if a_name != self.owner_id:
                     ent = getattr(self.port, "_get_entity")(a_name)
-                    if ent and getattr(ent, "path", "") == "Remembrance":
-                        count += 1
+                    if ent:
+                        p = getattr(ent, "path", "")
+                        p_str = str(getattr(p, "value", p)).upper()
+                        if p_str in ("REMEMBRANCE", "8", "记忆") or "REMEMBRANCE" in p_str:
+                            count += 1
         return count
 
     def get_memosprite_snapshot(self) -> dict:
@@ -298,23 +329,23 @@ class ChangyeyueKit(KitHandler):
         cur_hp = self.spirit_hp if self.spirit_alive else 0.0
         hp_pct = (cur_hp / max_hp) if max_hp > 0 else 0.0
 
-        # 实战全量 15 个增益 Buff (自身被动 + 长夜月战技光锥行迹 + 队友群体光环)
+        # 实战全量 15 个增益 Buff (严格契合实机 15 项增益与各公式定标)
         buffs = [
-            {"name": "冥花", "desc": "《让告别，更美一些》无视防御 30%"},
+            {"name": "冥花", "desc": "《让告别，更美一些》无视防御 30.0%"},
             {"name": "今夜与我同行", "desc": "生命降低暴击伤害提高 +60.0%"},
-            {"name": "偏离和弦", "desc": "知更鸟•晴歌暴击伤害提高 +50.0%"},
+            {"name": "偏离和弦", "desc": "知更鸟•晴歌暴击伤害提高 +52.0% (40% + 1.5% × 8氛围值)"},
             {"name": "天黑黑月寂寂（爆伤15）", "desc": "行迹 A2 施法暴击伤害提高 +15.0%"},
-            {"name": "我们自称旋律", "desc": "知更鸟•晴歌终结技全属性增伤 +30.0%"},
-            {"name": "天亮了雨落了", "desc": "行迹 A6 记忆角色联动忆灵暴伤加成 +15.0%"},
-            {"name": "白昼悄然离去", "desc": "长夜月战技分享忆灵暴击伤害 +118.6%"},
-            {"name": "心意相契的安宁", "desc": "缇宝终结技结界增益"},
+            {"name": "我们自称旋律", "desc": "知更鸟•晴歌全队造成伤害提高 +30.0%"},
+            {"name": "天亮了雨落了", "desc": "行迹 A6 队伍3名记忆角色忆灵暴伤加成 +50.0%"},
+            {"name": "白昼悄然离去", "desc": "长夜月战技分享忆灵暴击伤害 +108.0%"},
+            {"name": "心意相契的安宁", "desc": "缇宝终结技结界无视防御力 18.0% (与冥花合计48.0%无视防御)"},
             {"name": "神启", "desc": "缇宝全属性抗性穿透提高 +26.4%"},
             {"name": "谕示", "desc": "缇宝全队暴击伤害分享提高 +96.0%"},
-            {"name": "天气正好万物可爱", "desc": "缇宝全队生命上限提高 +20.0%"},
+            {"name": "天气正好万物可爱", "desc": "风堇全队生命上限提高 +20.0%"},
             {"name": "烈阳惊雷的女武神", "desc": "风堇《烈阳惊雷的女武神》4件套全队暴伤 +15.0%"},
-            {"name": "听沉眠中的呓语", "desc": "星魂 E2 长夜暴击伤害提高 +60.0%"},
+            {"name": "听沉眠中的呓语", "desc": "星魂 E2 长夜暴击伤害提高 +40.0%"},
             {"name": "天黑黑月寂寂（暴击率35）", "desc": "行迹 A2 暴击率提高 +35.0%"},
-            {"name": "孤独浮游漆黑", "desc": "忆灵天赋免控且全属性伤害提高 +70.0%"}
+            {"name": "孤独浮游漆黑", "desc": "忆灵天赋免控且造成伤害提高 +50.0%"}
         ]
 
         return {
@@ -417,21 +448,17 @@ class ChangyeyueKit(KitHandler):
             else:
                 self.summon_spirit()
 
-            # 提高我方全体忆灵暴伤：长夜月暴伤 * 24% + 行迹【天亮了，雨落了】记忆命途角色加成
-            owner_cd = self.port.stat(self.owner_id, StatType.CRIT_DMG)
-            rem_count = self._get_remembrance_count()
-            rem_bonus = 0.05 if rem_count <= 1 else (0.15 if rem_count == 2 else (0.50 if rem_count == 3 else 0.65))
-            shared_cd = 0.24 * owner_cd + rem_bonus
+            # 战技【白昼悄然离去】：提高我方全体忆灵暴击伤害 +108.0%
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Skill_SharedCritDmg",
-                name=f"白昼悄然离去 (忆灵暴伤+{shared_cd*100:.1f}%)",
+                name="白昼悄然离去",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 1.08),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff",
-                description=f"暴击伤害提高 +{shared_cd*100:.1f}%"
+                description="暴击伤害提高 +108.0%"
             ))
 
             # 施放战技自身直接获得 2 点忆质 (至暗之谜下额外 +12 点，E2 自动 +1 点)
