@@ -60,9 +60,10 @@ class TibaoKit(KitHandler):
                 description="天赋追加攻击伤害提高 +729.0%"
             ))
 
-        # 天赋标记【好忙好忙的缇宝】
+        # 天赋标记【好忙好忙的缇宝】 (仅角色生效，忆灵/召唤物不挂载)
         for ally in self.port.allies(self.owner_id):
-            if ally != self.owner_id:
+            ally_ent = self.port._get_entity(ally) if hasattr(self.port, "_get_entity") else None
+            if ally != self.owner_id and not getattr(ally_ent, "is_memosprite", False):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_Talent_BusyBusy_{ally}",
                     name="好忙好忙的缇宝",
@@ -235,7 +236,8 @@ class TibaoKit(KitHandler):
         # 2. 为我方全体附加【神启】
         res_pen = self.skill_param("skill", 0, default=0.264)
         for a in self.port.allies(self.owner_id):
-            if a != self.owner_id:
+            ally_ent = self.port._get_entity(a) if hasattr(self.port, "_get_entity") else None
+            if a != self.owner_id and not getattr(ally_ent, "is_memosprite", False):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_Talent_BusyBusy_{a}",
                     name="好忙好忙的缇宝",

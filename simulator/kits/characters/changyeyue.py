@@ -368,7 +368,13 @@ class ChangyeyueKit(KitHandler):
                         name = "烈阳惊雷的女武神"
                     buffs.append({"name": name, "desc": s.description or "局内动态增益"})
                 elif cat == "other":
-                    other_effects.append(s.name)
+                    # 伴生忆灵非角色：排除只属于角色的专属机制标记（如【好忙好忙的缇宝】仅对角色生效，长夜绝不挂载）
+                    if "好忙好忙" in s.name:
+                        continue
+                    name = s.name
+                    if name == "血噬":
+                        name = "血嗜"
+                    other_effects.append(name)
 
         return {
             "name": "长夜",
@@ -390,7 +396,7 @@ class ChangyeyueKit(KitHandler):
             "aggro": 125,
             "buffs_count": len(buffs),
             "buffs": buffs,
-            "other_effects": list(set(other_effects + ["血嗜"])),
+            "other_effects": list(dict.fromkeys(other_effects if other_effects else ["血嗜"])),
             "skills": [
                 "追忆，蹁跹，如雨 (忆灵技 1141301)",
                 "迷梦，流失，如露 (终极爆发 1141307)",

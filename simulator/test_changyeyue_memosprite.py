@@ -199,7 +199,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         ]
         for name in expected_15:
             self.assertTrue(any(name in b for b in buff_names), f"长夜应包含增益: {name}")
-        self.assertTrue(any("血" in o for o in msnap["other_effects"]))
+        # 验证长夜作为伴生忆灵绝不挂载角色专属标记【好忙好忙的缇宝】，其他效果精准仅有关卡环境【血嗜】
+        self.assertFalse(any("好忙好忙" in o for o in msnap["other_effects"]), "长夜作为伴生忆灵不应挂载角色专属标记【好忙好忙的缇宝】")
+        self.assertEqual(msnap["other_effects"], ["血嗜"], "长夜特殊效果应精准仅有【血嗜】")
 
 
 if __name__ == "__main__":
