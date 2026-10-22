@@ -250,6 +250,7 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     "qingque": QingqueKit,
 
     # 开拓者•同谐 (Harmony Trailblazer)
+    "8005": TrailblazerHarmonyKit,
     "8006": TrailblazerHarmonyKit,
     "开拓者": TrailblazerHarmonyKit,
     "trailblazer": TrailblazerHarmonyKit,
