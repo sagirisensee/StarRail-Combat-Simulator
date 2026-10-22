@@ -197,6 +197,13 @@ class Entity:
         return max(1.0, self.base_speed)
 
     @property
+    def atk(self) -> float:
+        """从状态管理器动态计算实时攻击力。"""
+        if self.simulator and hasattr(self.simulator, "status_mgr"):
+            return self.simulator.status_mgr.calculate_stat(self.name, self.base_atk, StatType.ATK_BASE)
+        return self.base_atk
+
+    @property
     def crit_rate(self) -> float:
         """动态计算实时暴击率。"""
         if self.simulator and hasattr(self.simulator, "status_mgr"):

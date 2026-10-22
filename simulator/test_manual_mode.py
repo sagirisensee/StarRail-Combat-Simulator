@@ -91,6 +91,54 @@ class TestManualMode(unittest.TestCase):
         # 花火重置跑道距离
         self.assertEqual(self.sparkle.distance_remaining, 10000.0)
 
+    def test_status_snapshot_and_atk_formula(self):
+        # 验证 StatusManager.get_detailed_snapshot 与攻击力复合聚合公式
+        from simulator.status import StatusInstance, Modifier, ModifierOp, DurationTiming
+
+        # 初始快照
+        snap = self.sim.status_mgr.get_detailed_snapshot(self.acheron)
+        self.assertEqual(snap["name"], "黄泉")
+        self.assertEqual(snap["base_atk"], 2500.0)
+        self.assertEqual(snap["current_atk"], 2500.0)
+        self.assertEqual(snap["atk_gain_pct"], 0.0)
+
+        # 赋予 40% 攻击力 Buff
+        atk_buff = StatusInstance(
+            id="Atk_Buff_Test",
+            name="攻击强化",
+            source=self.sparkle,
+            target=self.acheron,
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            modifiers=[Modifier(StatType.ATK_PERCENT, ModifierOp.PERCENT, 0.40)]
+        )
+        self.sim.status_mgr.add_status(atk_buff)
+
+        # 验证计算后的实时攻击力: 2500 * (1 + 0.40) = 3500.0
+        cur_atk = self.sim.status_mgr.calculate_stat("黄泉", self.acheron.base_atk, StatType.ATK_BASE)
+        self.assertAlmostEqual(cur_atk, 3500.0)
+        self.assertAlmostEqual(self.acheron.atk, 3500.0)
+
+        # 检查快照
+        snap_after = self.sim.status_mgr.get_detailed_snapshot(self.acheron)
+        self.assertAlmostEqual(snap_after["current_atk"], 3500.0)
+        self.assertAlmostEqual(snap_after["atk_gain_pct"], 0.40)
+        self.assertEqual(len(snap_after["buffs"]), 1)
+        self.assertEqual(snap_after["buffs"][0]["name"], "攻击强化")
+
+    def test_infinite_hp_boss(self):
+        # 验证无限木桩首领生命值扣减后依然不倒
+        from simulate_battle import create_boss_entity
+        inf_boss = create_boss_entity("木桩Boss", infinite_hp=True)
+        self.assertEqual(inf_boss.max_hp, float("inf"))
+        self.assertEqual(inf_boss.current_hp, float("inf"))
+        self.assertTrue(inf_boss.is_infinite_hp)
+
+        # 扣减 999999 伤害
+        inf_boss.current_hp -= 999999.0
+        self.assertEqual(inf_boss.current_hp, float("inf"))
+        self.assertFalse(inf_boss.current_hp <= 0)
+
 
 if __name__ == "__main__":
     unittest.main()

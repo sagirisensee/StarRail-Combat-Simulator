@@ -187,17 +187,130 @@ class StatusManager:
             self.statuses[target_name] = active
 
     def calculate_stat(self, entity_name: str, base_val: float, stat_type: StatType) -> float:
-        """动态计算指定属性的加成总值。"""
+        """动态计算指定属性的加成总值。
+        
+        符合星铁官方属性计算公式：
+        - 攻击力 ATK = 基础攻击力 * (1 + 攻击力%总和) + 固定攻击力总和
+        - 速度 SPD   = 基础速度 * (1 + 速度%总和) + 固定速度总和
+        - 防御力 DEF = 基础防御力 * (1 + 防御力%总和) + 固定防御力总和
+        - 暴击/暴伤/增伤/抗穿/易伤 = 基础值 + 加成数值总和
+        """
         flat_sum = 0.0
         pct_sum = 0.0
 
         for status in self.get_statuses(entity_name):
             for mod in status.modifiers:
-                if mod.stat == stat_type:
+                # 攻击力属性统一聚合 (包含 ATK_BASE, ATK_PERCENT, ATK)
+                if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+                    if mod.stat in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+                        total_mod_val = mod.value * status.stacks
+                        if mod.op == ModifierOp.ADD:
+                            if mod.stat in (StatType.ATK_PERCENT, StatType.ATK):
+                                pct_sum += total_mod_val
+                            else:
+                                flat_sum += total_mod_val
+                        elif mod.op == ModifierOp.PERCENT:
+                            pct_sum += total_mod_val
+
+                # 速度属性统一聚合
+                elif stat_type == StatType.SPEED and mod.stat == StatType.SPEED:
                     total_mod_val = mod.value * status.stacks
                     if mod.op == ModifierOp.ADD:
                         flat_sum += total_mod_val
                     elif mod.op == ModifierOp.PERCENT:
                         pct_sum += total_mod_val
 
+                # 防御属性统一聚合
+                elif stat_type in (StatType.DEF_PERCENT,) and mod.stat in (StatType.DEF_PERCENT,):
+                    total_mod_val = mod.value * status.stacks
+                    if mod.op == ModifierOp.ADD:
+                        pct_sum += total_mod_val
+                    elif mod.op == ModifierOp.PERCENT:
+                        pct_sum += total_mod_val
+
+                # 其他属性 (CRIT_RATE, CRIT_DMG, DMG_BOOST, RES_PEN, VULNERABILITY 等)
+                elif mod.stat == stat_type:
+                    total_mod_val = mod.value * status.stacks
+                    if mod.op == ModifierOp.ADD:
+                        flat_sum += total_mod_val
+                    elif mod.op == ModifierOp.PERCENT:
+                        pct_sum += total_mod_val
+
+        if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+            return base_val * (1.0 + pct_sum) + flat_sum
+        elif stat_type == StatType.SPEED:
+            return base_val * (1.0 + pct_sum) + flat_sum
+        elif stat_type in (StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST, StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT, StatType.DEF_SHRED):
+            return base_val + flat_sum
+
         return (base_val + flat_sum) * (1.0 + pct_sum)
+
+    def get_detailed_snapshot(self, entity: Any) -> Dict[str, Any]:
+        """获取指定实体的全部实时动态属性与生效 Buff 详情快照。"""
+        name = entity.name
+        base_atk = getattr(entity, "base_atk", 0.0)
+        base_spd = getattr(entity, "base_speed", 0.0)
+        base_cr = getattr(entity, "base_crit_rate", 0.05)
+        base_cd = getattr(entity, "base_crit_dmg", 0.50)
+
+        # 采样各属性
+        cur_atk = self.calculate_stat(name, base_atk, StatType.ATK_BASE)
+        cur_spd = self.calculate_stat(name, base_spd, StatType.SPEED)
+        cur_cr = self.calculate_stat(name, base_cr, StatType.CRIT_RATE)
+        cur_cd = self.calculate_stat(name, base_cd, StatType.CRIT_DMG)
+        dmg_boost = self.calculate_stat(name, 0.0, StatType.DMG_BOOST)
+        res_pen = self.calculate_stat(name, 0.0, StatType.RES_PEN)
+        vuln = self.calculate_stat(name, 0.0, StatType.VULNERABILITY)
+        def_shred = self.calculate_stat(name, 0.0, StatType.DEF_SHRED)
+        break_eff = self.calculate_stat(name, 0.0, StatType.BREAK_EFFECT)
+
+        # 统计攻击力与速度的具体增量构成
+        atk_pct = (cur_atk - base_atk) / base_atk if base_atk > 0 else 0.0
+        spd_pct = (cur_spd - base_spd) / base_spd if base_spd > 0 else 0.0
+
+        # Buff 详情列表
+        active_buffs = []
+        for s in self.get_statuses(name):
+            mod_strs = []
+            for m in s.modifiers:
+                op_str = "%" if (m.op == ModifierOp.PERCENT or m.stat in (StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST, StatType.VULNERABILITY, StatType.DEF_SHRED)) else ""
+                val_disp = m.value * 100 if op_str == "%" else m.value
+                mod_strs.append(f"{m.stat.name} +{val_disp:.1f}{op_str}")
+
+            source_name = getattr(s.source, "name", str(s.source))
+            active_buffs.append({
+                "id": s.id,
+                "name": s.name,
+                "source": source_name,
+                "duration": s.duration,
+                "timing": s.timing.name,
+                "stacks": s.stacks,
+                "modifiers_desc": ", ".join(mod_strs)
+            })
+
+        return {
+            "name": name,
+            "eidolon": getattr(entity, "eidolon", 0),
+            "current_hp": entity.current_hp,
+            "max_hp": entity.max_hp,
+            "current_energy": getattr(entity, "energy", 0.0),
+            "max_energy": getattr(entity, "max_energy", 0.0),
+            "remaining_av": getattr(entity, "remaining_av", 0.0),
+            "distance_remaining": getattr(entity, "distance_remaining", 0.0),
+            "base_atk": base_atk,
+            "current_atk": cur_atk,
+            "atk_gain_pct": atk_pct,
+            "base_speed": base_spd,
+            "current_speed": cur_spd,
+            "speed_gain_pct": spd_pct,
+            "base_crit_rate": base_cr,
+            "current_crit_rate": cur_cr,
+            "base_crit_dmg": base_cd,
+            "current_crit_dmg": cur_cd,
+            "dmg_boost": dmg_boost,
+            "res_pen": res_pen,
+            "vulnerability": vuln,
+            "def_shred": def_shred,
+            "break_effect": break_eff,
+            "buffs": active_buffs
+        }

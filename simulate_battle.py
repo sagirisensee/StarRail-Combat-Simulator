@@ -63,19 +63,22 @@ TARGET_MODE_NAMES = {
 }
 
 
-def create_boss_entity(name: str = "拟真首领 (混沌12层)", hp: float = 450000.0, toughness: float = 120.0, speed: float = 115.0) -> Entity:
-    """构建高拟真精英/Boss 实体。"""
-    return Entity(
+def create_boss_entity(name: str = "拟真首领 (混沌12层)", hp: float = float("inf"), toughness: float = 120.0, speed: float = 115.0, infinite_hp: bool = True) -> Entity:
+    """构建高拟真精英/Boss 实体 (默认开启无限生命木桩对账模式)。"""
+    eff_hp = float("inf") if infinite_hp else hp
+    boss = Entity(
         name=name,
         base_speed=speed,
         base_atk=1600.0,
-        max_hp=hp,
-        current_hp=hp,
+        max_hp=eff_hp,
+        current_hp=eff_hp,
         max_toughness=toughness,
         current_toughness=toughness,
-        weaknesses=["Quantum", "Lightning", "Fire", "Imaginary"],
+        weaknesses=["Quantum", "Lightning", "Fire", "Imaginary", "Wind", "Ice", "Physical"],
         is_enemy=True
     )
+    boss.is_infinite_hp = infinite_hp
+    return boss
 
 
 class BattleReporter:
@@ -107,9 +110,14 @@ def render_hud(sim: TurnSimulator, boss: Entity, team_members: List[str], curren
     print("─" * 78)
 
     # Boss 状态条
-    hp_pct = max(0.0, (boss.current_hp / boss.max_hp) * 100) if boss.max_hp > 0 else 0.0
-    hp_bars = int(hp_pct // 5)
-    hp_visual = "█" * hp_bars + "░" * (20 - hp_bars)
+    is_inf = getattr(boss, "is_infinite_hp", False) or boss.max_hp == float("inf")
+    if is_inf:
+        hp_line = "生命值: [████████████████████] ∞ / ∞ (无限木桩对账模式)"
+    else:
+        hp_pct = max(0.0, (boss.current_hp / boss.max_hp) * 100) if boss.max_hp > 0 else 0.0
+        hp_bars = int(hp_pct // 5)
+        hp_visual = "█" * hp_bars + "░" * (20 - hp_bars)
+        hp_line = f"生命值: [{hp_visual}] {max(0.0, boss.current_hp):9,.0f} / {boss.max_hp:9,.0f} ({hp_pct:5.1f}%)"
 
     tough_pct = max(0.0, (boss.current_toughness / boss.max_toughness) * 100) if boss.max_toughness > 0 else 0.0
     tough_bars = int(tough_pct // 10)
@@ -117,7 +125,7 @@ def render_hud(sim: TurnSimulator, boss: Entity, team_members: List[str], curren
     broken_tag = " ⚠️【弱点击破中!】" if boss.is_broken else ""
 
     print(f"👾 敌方目标: 【{boss.name}】{broken_tag}")
-    print(f"   生命值: [{hp_visual}] {max(0.0, boss.current_hp):9,.0f} / {boss.max_hp:9,.0f} ({hp_pct:5.1f}%)")
+    print(f"   {hp_line}")
     print(f"   韧性条: [{tough_visual}] {max(0.0, boss.current_toughness):4.0f} / {boss.max_toughness:.0f} │ 弱点: {', '.join(boss.weaknesses)}")
 
     # 获取 Boss 身上的 Debuff
@@ -152,9 +160,73 @@ def render_hud(sim: TurnSimulator, boss: Entity, team_members: List[str], curren
         buffs = [s.name for s in sim.status_mgr.get_statuses(ent.name)]
         buff_summary = f"({buffs[0][:10]}..)" if buffs else ""
 
-        hp_p = (ent.current_hp / ent.max_hp * 100) if ent.max_hp > 0 else 100.0
+        hp_p = (ent.current_hp / ent.max_hp * 100) if (ent.max_hp > 0 and ent.max_hp != float("inf")) else 100.0
         print(f" {is_turn} [{idx+1}] {ent.name:8} (E{ent.eidolon}) │ HP: {ent.current_hp:5.0f}/{ent.max_hp:5.0f} ({hp_p:3.0f}%) │ {energy_str} {ready_tag} │ 距行动: {ent.remaining_av:5.1f} AV {buff_summary}")
     print("═" * 78)
+
+
+def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List[str], current_actor: Optional[Entity] = None):
+    """透析并打印指定角色的实时全量动态属性与所有生效 Buff/Debuff 详情 (对账利器)。"""
+    ent = None
+    target_clean = target_key.strip().lower() if target_key else ""
+    if not target_clean:
+        ent = current_actor or sim.current_turn_entity or sim.get_entity(team_members[0])
+    elif target_clean.isdigit():
+        idx = int(target_clean)
+        if 1 <= idx <= len(team_members):
+            ent = sim.get_entity(team_members[idx - 1])
+    elif target_clean in ("boss", "enemy", "0"):
+        for e in sim.entities:
+            if e.is_enemy:
+                ent = e
+                break
+    else:
+        ent = sim.get_entity(target_key)
+        if not ent:
+            for m in team_members:
+                if target_clean in m.lower():
+                    ent = sim.get_entity(m)
+                    break
+        if not ent:
+            for e in sim.entities:
+                if target_clean in e.name.lower():
+                    ent = e
+                    break
+
+    if not ent:
+        print(f"❌ 未找到指定角色: '{target_key}' (支持输入: 1-{len(team_members)}, 角色名如'长夜月', 或 'boss')")
+        return
+
+    snap = sim.status_mgr.get_detailed_snapshot(ent)
+    print("\n" + "━" * 78)
+    role_tag = "👾 敌方首领" if getattr(ent, "is_enemy", False) else f"👥 队伍成员 (星魂: E{snap['eidolon']})"
+    print(f"🔍 【{snap['name']}】 实时属性与 Buff 全量透析 │ {role_tag}")
+    print("━" * 78)
+    print("📊 实时动态面板 (Dynamic Attributes):")
+    hp_str = f"{snap['current_hp']:,.1f} / {snap['max_hp']:,.1f}" if snap['max_hp'] != float("inf") else "∞ / ∞ (无限生命测试木桩)"
+    print(f"   • 生命值 (HP)       : {hp_str}")
+    print(f"   • 行动速度 (SPD)    : {snap['current_speed']:6.2f} (基础 {snap['base_speed']:6.2f} │ 提速: +{snap['speed_gain_pct']*100:.1f}%) ➔ 距行动: {snap['remaining_av']:5.1f} AV")
+    print(f"   • 实时攻击 (ATK)    : {snap['current_atk']:6.1f} (基础 {snap['base_atk']:6.1f} │ 攻击增量: +{snap['atk_gain_pct']*100:.1f}%)")
+    print(f"   • 暴击率 (CRIT)     : {snap['current_crit_rate']*100:5.1f}% (基础 {snap['base_crit_rate']*100:5.1f}%)")
+    print(f"   • 暴击伤害 (CDMG)   : {snap['current_crit_dmg']*100:5.1f}% (基础 {snap['base_crit_dmg']*100:5.1f}%)")
+    print(f"   • 全属性增伤 (DMG)  : +{snap['dmg_boost']*100:5.1f}%")
+    print(f"   • 属性抗性穿透(PEN) : +{snap['res_pen']*100:5.1f}%")
+    print(f"   • 受到易伤加深(VULN): +{snap['vulnerability']*100:5.1f}%")
+    if snap.get('def_shred', 0.0) > 0:
+        print(f"   • 防御削减 (DEF SHRED): +{snap['def_shred']*100:5.1f}%")
+    print(f"   • 击破特攻 (BE)     : +{snap['break_effect']*100:5.1f}%")
+    print(f"   • 能量状态 (ENERGY) : {snap['current_energy']:.1f} / {snap['max_energy']:.1f}")
+
+    print("\n🔮 当前身上生效 Buff / 状态列表 (Active Statuses):")
+    if not snap["buffs"]:
+        print("   (当前无挂载状态)")
+    else:
+        for idx, b in enumerate(snap["buffs"], 1):
+            dur_str = f"{b['duration']} 回合" if b['duration'] is not None else "常驻"
+            print(f"   [{idx}] 《{b['name']}》 (ID: {b['id']})")
+            print(f"       • 来源: {b['source']} │ 剩余: {dur_str} │ 结算时序: {b['timing']}")
+            print(f"       • 属性效果: {b['modifiers_desc']}")
+    print("━" * 78)
 
 
 def prompt_ally_target(sim: TurnSimulator, actor: Entity, team_members: List[str], action_name: str = "技能") -> Tuple[str, ...]:
@@ -262,7 +334,8 @@ def run_simulation(
 
     def log_damage(e: DamageAppliedEvent):
         crit_mark = "💥 [暴击]" if e.is_crit else "   [命中]"
-        print(f"          ↳ {crit_mark} 对 【{e.target_name}】 造成 {e.damage:10,.1f} 点伤害 (剩余HP: {max(0.0, e.target_hp_left):,.0f})")
+        hp_left_str = "∞ (木桩)" if (e.target_hp_left == float("inf") or getattr(boss, "is_infinite_hp", False)) else f"{max(0.0, e.target_hp_left):,.0f}"
+        print(f"          ↳ {crit_mark} 对 【{e.target_name}】 造成 {e.damage:10,.1f} 点伤害 (剩余HP: {hp_left_str})")
         reporter.on_damage(e)
 
     def log_break(e: WeaknessBreakEvent):
@@ -286,40 +359,56 @@ def run_simulation(
     user_quit = False
 
     # 4.1 开场就绪决策 (Battle Start Decision)
-    # 战斗刚打响、跑道计时启动前，若我方已有充盈终结技，给玩家先手施放机会
+    # 战斗刚打响、跑道计时启动前，展示编队起始状态与可用终结技，提供透析属性与对账窗口
     if interactive:
         while True:
             ready_ults = sim.get_ready_ultimates()
-            if not ready_ults or boss.current_hp <= 0:
+            if boss.current_hp <= 0:
                 break
 
             print("\n" + "═" * 78)
-            print("🚩 【开场就绪决策 (Battle Opening)】 - 战斗正式打响！跑道行进前，我方终结技充盈")
+            print("🚩 【开场就绪决策 (Battle Opening)】 - 战前秘技已就绪，跑道即将起跑")
             print("─" * 78)
-            print(f"当前战技点: {sim.sp.current_sp}/{sim.sp.max_sp} │ 行动值: 0.0 AV")
-            print("🔥【队伍就绪终结技 (可立即先手施放)】:")
-            for i, u in enumerate(ready_ults):
-                u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
-                u_name = u_defn.name if u_defn else "终结技"
-                t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
-                print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
+            print(f"当前战技点: {sim.sp.current_sp}/{sim.sp.max_sp} │ 跑道初始行动值: 0.0 AV")
+            print("👥 我方编队起始状态:")
+            for idx, m_name in enumerate(team_members):
+                m_ent = sim.get_entity(m_name)
+                if m_ent:
+                    buff_cnt = len(sim.status_mgr.get_statuses(m_name))
+                    print(f"   [{idx+1}] 【{m_ent.name}】(E{m_ent.eidolon}) │ 速度: {m_ent.speed:.1f} │ 能量: {m_ent.energy:.0f}/{m_ent.max_energy:.0f} │ 距行动: {m_ent.remaining_av:.1f} AV │ Buff: {buff_cnt}个")
+
+            if ready_ults:
+                print("\n🔥【队伍就绪终结技 (可立即先手施放)】:")
+                for i, u in enumerate(ready_ults):
+                    u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
+                    u_name = u_defn.name if u_defn else "终结技"
+                    t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
+                    e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
             print("\n【可选决策】:")
-            print("  [Enter] 无需开场终结技，开始跑道行动")
-            print("  [U<序号>] 先手抢施对应终结技 (如 U1)")
-            print("  [AA]    开启全自动战斗")
-            print("  [Q]     认输 / 退出模拟")
+            print("  [Enter]    起跑，推进跑道行动")
+            if ready_ults:
+                print("  [U<序号>]  先手抢施对应终结技 (如 U1)")
+            print("  [I <目标>] 透析角色实时属性与生效Buff (如 I 1, I 2, I 长夜月, I boss)")
+            print("  [AA]       开启全自动战斗")
+            print("  [Q]        认输 / 退出模拟")
             print("─" * 78)
 
             try:
-                cmd = input("👉 请输入开场决策指令 [Enter/U1/AA/Q, 默认 Enter]: ").strip().upper()
+                raw_cmd = input("👉 请输入开场决策指令 [Enter/I 1/U1/AA/Q, 默认 Enter]: ").strip()
             except (EOFError, KeyboardInterrupt):
-                cmd = ""
+                raw_cmd = ""
+
+            cmd = raw_cmd.upper()
 
             if not cmd:
                 break
-            elif cmd.startswith("U") or cmd.isdigit():
+            elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
+                target_key = raw_cmd[1:].strip()
+                render_inspect_panel(sim, target_key, team_members)
+                continue
+            elif cmd.startswith("U") or (cmd.isdigit() and ready_ults):
                 idx_str = cmd[1:] if cmd.startswith("U") else cmd
                 if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
                     target_char = ready_ults[int(idx_str) - 1]
@@ -337,6 +426,8 @@ def run_simulation(
             elif cmd == "Q":
                 user_quit = True
                 break
+            else:
+                print("❌ 指令有误，请输入 Enter / I 1 / U1 / AA / Q")
 
     # 4.2 战斗回合主循环 (当跑道有单位到达终点 0.0 AV 时触发决策)
     while turn_count < max_turns and boss.current_hp > 0:
@@ -381,21 +472,29 @@ def run_simulation(
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
                 print("\n【可选决策】:")
-                print("  [Enter] 不抢断，继续敌方行动")
-                print("  [U<序号>] 抢断施放对应终结技 (如 U1)")
-                print("  [AA]    开启全自动战斗")
-                print("  [Q]     认输 / 退出模拟")
+                print("  [Enter]    不抢断，继续敌方行动")
+                if ready_ults:
+                    print("  [U<序号>]  抢断施放对应终结技 (如 U1)")
+                print("  [I <目标>] 透析角色实时属性与Buff (如 I 1, I 长夜月, I boss)")
+                print("  [AA]       开启全自动战斗")
+                print("  [Q]        认输 / 退出模拟")
                 print("─" * 78)
 
                 try:
-                    cmd = input("👉 请输入决策指令 [Enter/U1/AA/Q, 默认 Enter]: ").strip().upper()
+                    raw_cmd = input("👉 请输入决策指令 [Enter/U1/I 1/AA/Q, 默认 Enter]: ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    cmd = ""
+                    raw_cmd = ""
+
+                cmd = raw_cmd.upper()
 
                 if not cmd:
                     sim.execute_current_turn()
                     turn_count += 1
                     break
+                elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
+                    target_key = raw_cmd[1:].strip()
+                    render_inspect_panel(sim, target_key, team_members, current_actor=actor)
+                    continue
                 elif cmd.startswith("U") or cmd.isdigit():
                     idx_str = cmd[1:] if cmd.startswith("U") else cmd
                     if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
@@ -452,16 +551,19 @@ def run_simulation(
                     is_self_tag = " (当前行动者)" if u.name == actor.name else ""
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc}){is_self_tag}")
 
-            print("\n【托管与控制】:")
-            print("  [A]  本回合托管自动 (Auto)")
-            print("  [AA] 开启全自动战斗 (Full Auto)")
-            print("  [Q]  认输 / 退出模拟")
+            print("\n【透析与控制】:")
+            print("  [I <目标>] 透析属性与Buff (直接按 I 查当前角色，或 I 1 / I 2 / I boss)")
+            print("  [A]        本回合托管自动 (Auto)")
+            print("  [AA]       开启全自动战斗 (Full Auto)")
+            print("  [Q]        认输 / 退出模拟")
             print("─" * 78)
 
             try:
-                cmd = input(f"👉 请输入决策指令 [1/2/U1/A/AA/Q, 默认 1]: ").strip().upper()
+                raw_cmd = input(f"👉 请输入决策指令 [1/2/U1/I/A/AA/Q, 默认 1]: ").strip()
             except (EOFError, KeyboardInterrupt):
-                cmd = "Q"
+                raw_cmd = "Q"
+
+            cmd = raw_cmd.upper()
 
             if not cmd:
                 cmd = "1"
@@ -480,6 +582,10 @@ def run_simulation(
                 sim.execute_current_turn(action_override=ActionKind.SKILL, target_ids=target_ids)
                 turn_count += 1
                 break
+            elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
+                target_key = raw_cmd[1:].strip()
+                render_inspect_panel(sim, target_key, team_members, current_actor=actor)
+                continue
             elif cmd.startswith("U") or (cmd.isdigit() and int(cmd) > 2):
                 idx_str = cmd[1:] if cmd.startswith("U") else cmd
                 if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
@@ -508,7 +614,7 @@ def run_simulation(
                 user_quit = True
                 break
             else:
-                print("❌ 指令有误，请输入 1 / 2 / U1 / A / AA / Q")
+                print("❌ 指令有误，请输入 1 / 2 / U1 / I / A / AA / Q")
 
         if user_quit or boss.current_hp <= 0:
             break
@@ -527,7 +633,10 @@ def run_simulation(
 
     print(f"【战斗结果】: {battle_result}")
     print(f"【消耗行动值】: {sim.current_av:.2f} AV  │  【消耗轮次】: {sim.current_cycle} 轮 (Cycle)  │  【总行动数】: {turn_count} 动")
-    print(f"【Boss状态】 : 生命剩余 {max(0.0, boss.current_hp):,.1f} / {boss.max_hp:,.1f} (扣减率: {(1.0 - max(0.0, boss.current_hp)/boss.max_hp)*100:.1f}%)")
+    if getattr(boss, "is_infinite_hp", False) or boss.max_hp == float("inf"):
+        print(f"【Boss状态】 : 生命剩余 ∞ / ∞ (无限生命测试木桩)")
+    else:
+        print(f"【Boss状态】 : 生命剩余 {max(0.0, boss.current_hp):,.1f} / {boss.max_hp:,.1f} (扣减率: {(1.0 - max(0.0, boss.current_hp)/boss.max_hp)*100:.1f}%)")
     print(f"【击破次数】: 共造成 {reporter.break_count} 次弱点击破")
     print(f"【全队总伤害】: {reporter.total_damage:,.1f} 点")
 
