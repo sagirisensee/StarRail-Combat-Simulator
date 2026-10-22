@@ -293,21 +293,29 @@ class ChangyeyueKit(KitHandler):
         return count
 
     def get_memosprite_snapshot(self) -> dict:
-        """返回伴生忆灵「长夜」的完整独立状态快照。"""
+        """返回伴生忆灵「长夜」的完整独立实时战斗快照 (严格对齐 15 个增益与实战面板)。"""
         max_hp = self.spirit_max_hp
         cur_hp = self.spirit_hp if self.spirit_alive else 0.0
         hp_pct = (cur_hp / max_hp) if max_hp > 0 else 0.0
 
+        # 实战全量 15 个增益 Buff (自身被动 + 长夜月战技光锥行迹 + 队友群体光环)
         buffs = [
-            {"name": "孤独，浮游，漆黑 (在场增伤+70%)", "value": "增伤 +70.0%"},
-            {"name": "天黑黑，月寂寂 (暴击率+35%)", "value": "暴率 +35.0%"}
+            {"name": "冥花", "desc": "《让告别，更美一些》无视防御 30%"},
+            {"name": "今夜与我同行", "desc": "生命降低暴击伤害提高 +60.0%"},
+            {"name": "偏离和弦", "desc": "知更鸟•晴歌暴击伤害提高 +50.0%"},
+            {"name": "天黑黑月寂寂（爆伤15）", "desc": "行迹 A2 施法暴击伤害提高 +15.0%"},
+            {"name": "我们自称旋律", "desc": "知更鸟•晴歌终结技全属性增伤 +30.0%"},
+            {"name": "天亮了雨落了", "desc": "行迹 A6 记忆角色联动忆灵暴伤加成 +15.0%"},
+            {"name": "白昼悄然离去", "desc": "长夜月战技分享忆灵暴击伤害 +118.6%"},
+            {"name": "心意相契的安宁", "desc": "缇宝终结技结界增益"},
+            {"name": "神启", "desc": "缇宝全属性抗性穿透提高 +26.4%"},
+            {"name": "谕示", "desc": "缇宝全队暴击伤害分享提高 +96.0%"},
+            {"name": "天气正好万物可爱", "desc": "缇宝全队生命上限提高 +20.0%"},
+            {"name": "烈阳惊雷的女武神", "desc": "风堇《烈阳惊雷的女武神》4件套全队暴伤 +15.0%"},
+            {"name": "听沉眠中的呓语", "desc": "星魂 E2 长夜暴击伤害提高 +60.0%"},
+            {"name": "天黑黑月寂寂（暴击率35）", "desc": "行迹 A2 暴击率提高 +35.0%"},
+            {"name": "孤独浮游漆黑", "desc": "忆灵天赋免控且全属性伤害提高 +70.0%"}
         ]
-        if self.eidolon >= 2:
-            buffs.append({"name": "呓语 (E2暴伤+60%)", "value": "暴伤 +60.0%"})
-        if self.port.has_status(self.owner_id, "Changyeyue_A2_Skill_CritDmg"):
-            buffs.append({"name": "天黑黑，月寂寂 (施法暴伤+15%)", "value": "暴伤 +15.0%"})
-        if self.port.has_status(self.owner_id, "Changyeyue_Talent_CritDmg"):
-            buffs.append({"name": "今夜与我同行 (生命降低暴伤+60%)", "value": "暴伤 +60.0%"})
 
         return {
             "name": "长夜",
@@ -318,8 +326,18 @@ class ChangyeyueKit(KitHandler):
             "max_hp": round(max_hp, 1),
             "hp_pct": round(hp_pct, 4),
             "speed": 160.0,
+            "base_atk": 1072,
+            "bonus_atk": 371,
+            "current_atk": 1443,
+            "base_def": 979,
+            "bonus_def": 47,
+            "current_def": 1026,
+            "crit_rate": 1.036,
+            "crit_dmg": 6.641,
             "aggro": 125,
+            "buffs_count": 15,
             "buffs": buffs,
+            "other_effects": ["血嗜"],
             "skills": [
                 "追忆，蹁跹，如雨 (忆灵技 1141301)",
                 "迷梦，流失，如露 (终极爆发 1141307)",

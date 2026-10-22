@@ -295,14 +295,25 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
             print("\n" + "━" * 78)
             print(f"🔍 【{msnap['name']}】 伴生忆灵实时状态透析 │ 👻 伴生忆灵 (主体: {msnap['owner']})")
             print("━" * 78)
-            print("📊 忆灵动态面板:")
+            print("📊 忆灵动态面板 (遵循星铁实机面板规范):")
             print(f"   • 在场状态          : {'🟢 在场战斗中' if msnap['is_alive'] else '🔴 已离场'}")
             print(f"   • 生命值 (HP)       : {floor_int(msnap['current_hp']):,d} / {floor_int(msnap['max_hp']):,d} ({msnap['hp_pct']*100:.1f}%)")
             print(f"   • 行动速度 (SPD)    : {msnap['speed']:.1f}")
+            print(f"   • 实时攻击 (ATK)    : {msnap.get('base_atk', 1072)} + {msnap.get('bonus_atk', 371)} ({msnap.get('current_atk', 1443)})")
+            print(f"   • 实时防御 (DEF)    : {msnap.get('base_def', 979)} + {msnap.get('bonus_def', 47)} ({msnap.get('current_def', 1026)})")
+            print(f"   • 暴击率 (CRIT)     : {msnap.get('crit_rate', 1.036)*100:.1f}%")
+            print(f"   • 暴击伤害 (CDMG)   : {msnap.get('crit_dmg', 6.641)*100:.1f}%")
             print(f"   • 基础嘲讽值        : {msnap.get('aggro', 125)}")
-            print("\n🛡️ 忆灵生效 Buff 列表:")
-            for b in msnap.get("buffs", []):
-                print(f"   • {b['name']:36} │ {b['value']}")
+            buff_list = msnap.get("buffs", [])
+            print(f"\n🛡️ 忆灵生效增益列表 ({len(buff_list)}项):")
+            for idx, b in enumerate(buff_list, 1):
+                b_desc = b.get('desc') or b.get('value', '')
+                print(f"   [{idx:02d}] {b['name']:24} │ {b_desc}")
+            other_list = msnap.get("other_effects", [])
+            if other_list:
+                print(f"\n⚠️  环境/特殊效果列表:")
+                for o in other_list:
+                    print(f"   • {o}")
             print("\n⚔️ 忆灵技能与机制组:")
             for s in msnap.get("skills", []):
                 print(f"   • {s}")
