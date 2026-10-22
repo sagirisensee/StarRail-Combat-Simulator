@@ -43,6 +43,7 @@ class ChangyeyueKit(KitHandler):
         self.spirit_hp: float = 0.0
         self.threshold_issued: bool = False
         self.bursting: bool = False
+        self.technique_active: bool = False
 
     @property
     def spirit_max_hp(self) -> float:
@@ -108,6 +109,10 @@ class ChangyeyueKit(KitHandler):
 
         # 召唤伴生忆灵「长夜」在场（入场触发【与夜，形影，不离】）
         self.summon_spirit()
+
+        # 若施放了秘技：进战后根据开局结算后的长夜月实时暴伤，动态挂载与战技相同的暴伤分享 (提高数值等同于长夜月暴伤的 24%)
+        if getattr(self, "technique_active", False):
+            self.apply_skill_shared_crit_dmg()
 
     def summon_spirit(self) -> None:
         """召唤忆灵「长夜」，赋予在场 70% 增伤光环，并触发忆灵天赋【与夜，形影，不离】立即行动。"""
@@ -316,6 +321,48 @@ class ChangyeyueKit(KitHandler):
             if ent and getattr(ent, "light_cone", None) and hasattr(ent.light_cone, "trigger_flower_buff"):
                 ent.light_cone.trigger_flower_buff()
 
+    def get_owner_crit_dmg(self) -> float:
+        """动态采样长夜月自身的实时暴击伤害 (排除忆灵专属暴伤加成，防止自循环或属性污染)。"""
+        owner_ent = self.port._get_entity(self.owner_id)
+        base_cd = getattr(owner_ent, "base_crit_dmg", 2.273) if owner_ent else 2.273
+        bonus_cd = 0.0
+        if self.port.sim and hasattr(self.port.sim, "status_mgr"):
+            for s in self.port.sim.status_mgr.get_statuses(self.owner_id):
+                # 排除忆灵专属分享与加成 (白昼悄然离去自身的忆灵分享、天亮了雨落了忆灵暴伤、长夜专属和弦)
+                if s.id in ("Changyeyue_Skill_SharedCritDmg", "Changyeyue_A6_RemembranceCritDmg", "Robin_Talent_TonalChord_长夜"):
+                    continue
+                for m in s.modifiers:
+                    if m.stat == StatType.CRIT_DMG:
+                        bonus_cd += m.value
+        return base_cd + bonus_cd
+
+    def calc_skill_shared_crit_dmg(self) -> float:
+        """动态计算战技/秘技分享给忆灵的暴击伤害加成 (零假数据、零静态硬编码)。
+        公式：提高数值等同于长夜月暴击伤害的 24% (Skill Level 10 官方倍率)。
+        持续 2 回合，长夜月每回合开始时持续回合数减 1。
+        """
+        cd_ratio = self.skill_param("skill", 0, default=0.24)
+        owner_cd = self.get_owner_crit_dmg()
+        if owner_cd <= 0:
+            owner_cd = 4.533
+        return round(owner_cd * cd_ratio, 4)
+
+    def apply_skill_shared_crit_dmg(self) -> float:
+        """动态挂载【白昼悄然离去】增益插件：使我方全体忆灵暴击伤害提高长夜月暴伤的 24%，持续 2 回合。"""
+        shared_cd = self.calc_skill_shared_crit_dmg()
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_Skill_SharedCritDmg",
+            name="白昼悄然离去",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_START,
+            category="buff",
+            description=f"长夜月战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+        ))
+        return shared_cd
+
     def _get_remembrance_count(self) -> int:
         """统计队伍中「记忆」命途角色数量 (供行迹【天亮了，雨落了】结算)。"""
         count = 1  # 长夜月本体
@@ -335,6 +382,9 @@ class ChangyeyueKit(KitHandler):
         """返回伴生忆灵「长夜」的完整独立实时战斗快照。
         100% 动态驱动：属性由实体底模与状态管理器流水线实时采样，Buff 列表全部直接从状态管理器抽取！
         """
+        # 实时根据长夜月最新暴击伤害动态刷新战技分享暴伤 (确保随长夜月实时爆伤变化动态更新，零静态硬编码)
+        if getattr(self, "technique_active", False) or self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
+            self.apply_skill_shared_crit_dmg()
         owner_ent = self.port._get_entity(self.owner_id)
         max_hp = self.spirit_max_hp
         cur_hp = self.spirit_hp if self.spirit_alive else 0.0
@@ -476,18 +526,8 @@ class ChangyeyueKit(KitHandler):
             else:
                 self.summon_spirit()
 
-            # 战技【白昼悄然离去】：提高我方全体忆灵暴击伤害 +108.0%
-            self.port.upsert_status(BuffSpec(
-                key="Changyeyue_Skill_SharedCritDmg",
-                name="白昼悄然离去",
-                source_id=self.owner_id,
-                target_id=self.owner_id,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 1.08),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                category="buff",
-                description="暴击伤害提高 +108.0%"
-            ))
+            # 战技【白昼悄然离去】：消耗长夜月当前 10% 生命值召唤/维持忆灵，并使我方全体忆灵暴伤提高长夜月暴伤的 24% (纯动态计算，零硬编码)
+            self.apply_skill_shared_crit_dmg()
 
             # 施放战技自身直接获得 2 点忆质 (至暗之谜下额外 +12 点，E2 自动 +1 点)
             direct_yizhi = 2 + (12 if self.darkness else 0)
@@ -556,17 +596,8 @@ class ChangyeyueKit(KitHandler):
     def use_technique(self):
         """秘技【愿有冷雨落下】：开战时获得 1 点【忆质】(E2为3点)，并获得与战技相同的提高我方全体忆灵暴击伤害的效果。"""
         self.gain_yizhi(1)
-        self.port.upsert_status(BuffSpec(
-            key="Changyeyue_Skill_SharedCritDmg",
-            name="白昼悄然离去",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 1.08),),
-            duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff",
-            description="长夜月战技分享忆灵暴击伤害 +108.0%"
-        ))
+        self.technique_active = True
+        self.apply_skill_shared_crit_dmg()
 
 
 # 兼容映射
