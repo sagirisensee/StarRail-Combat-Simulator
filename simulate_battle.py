@@ -250,14 +250,12 @@ def render_hud(sim: TurnSimulator, enemies: List[Entity], team_members: List[str
         if not ent:
             continue
 
-        # 能量显示 (特殊处理黄泉残梦)
-        if getattr(ent, "kit", None) and hasattr(ent.kit, "slashed_dream"):
-            stacks = ent.kit.slashed_dream
-            energy_str = f"残梦: {stacks}/9"
-            ready = stacks >= 9
+        # 能量与就绪状态显示 (通过协议解耦)
+        if getattr(ent, "kit", None) and hasattr(ent.kit, "get_energy_display"):
+            energy_str = f"{ent.kit.get_energy_display(ent):>11}"
         else:
             energy_str = f"能量: {ent.energy:3.0f}/{ent.max_energy:3.0f}"
-            ready = ent.max_energy > 0 and ent.energy >= ent.max_energy
+        ready = sim.can_cast_ultimate(ent.name)
 
         ready_tag = " 🔥[READY!]" if ready else "          "
         is_turn = "👉" if ent.name == current_actor.name else "  "
@@ -576,7 +574,7 @@ def run_simulation(
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
                     t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                    e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
             print("\n【可选决策】:")
@@ -695,7 +693,7 @@ def run_simulation(
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
                     t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                    e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
                 print("\n【可选决策】:")
@@ -773,7 +771,7 @@ def run_simulation(
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
                     t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                    e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
                     is_self_tag = " (当前行动者)" if u.name == actor.name else ""
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc}){is_self_tag}")
 

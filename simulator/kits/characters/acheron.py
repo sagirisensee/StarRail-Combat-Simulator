@@ -47,6 +47,21 @@ class AcheronKit(KitHandler):
         self.slashed_dream: int = 0
         self.crimson_knots: dict = {}
 
+    def can_cast_ultimate(self, entity: Any = None) -> bool:
+        """黄泉通过 9 点【残梦】充能激活终结技。"""
+        return self.slashed_dream >= 9
+
+    def consume_ultimate_cost(self, entity: Any = None) -> bool:
+        """施放终结技扣除 9 点残梦。"""
+        if self.slashed_dream < 9:
+            return False
+        self.slashed_dream = 0
+        return True
+
+    def get_energy_display(self, entity: Any = None) -> str:
+        """展示残梦层数而非能量。"""
+        return f"残梦: {self.slashed_dream}/9"
+
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
             return AbilityDefinition(

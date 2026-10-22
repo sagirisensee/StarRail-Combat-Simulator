@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Union, Any
 from .models import (
     CharacterProfile, CharacterPanel, Element, Path
 )
-from .tables import AVATAR_STATS, DEFAULT_5STAR_STATS, DEFAULT_4STAR_STATS
+from .tables import AVATAR_STATS, DEFAULT_5STAR_STATS, DEFAULT_4STAR_STATS, RELIC_SETS
 from .calculator import StatCalculator
 
 # 延迟导入模拟器核心 Entity，避免循环引用
@@ -236,13 +236,27 @@ class CharacterDB:
                 )
 
             # 遗器
+            name_to_set_id: Dict[str, int] = {}
+            for sid_tbl, sinfo in RELIC_SETS.items():
+                name_to_set_id[sinfo.get("name", "")] = sid_tbl
+            for rs in c.get("relic_sets", []):
+                if "(ID " in rs and rs.endswith(")"):
+                    try:
+                        s_name = rs.split(" (ID ")[0].strip()
+                        s_id = int(rs.split(" (ID ")[1][:-1])
+                        name_to_set_id[s_name] = s_id
+                    except Exception:
+                        pass
+
             relics_list = []
             for r in c.get("relic_details", []):
+                r_set_name = r.get("set_name", "")
+                r_set_id = name_to_set_id.get(r_set_name, 0)
                 relics_list.append(EquippedRelic(
                     internal_uid=0,
                     relic_id=0,
-                    relic_set_id=0,
-                    set_name=r.get("set_name", ""),
+                    relic_set_id=r_set_id,
+                    set_name=r_set_name,
                     slot=int(r.get("slot", 1)),
                     slot_name=r.get("slot_name", ""),
                     level=15,
@@ -426,6 +440,37 @@ class CharacterDB:
             except Exception:
                 pass
 
+        # 自动尝试装配对应的独立 RelicSetHandler (若对应套装有战斗运行时则实例化)
+        relic_handlers = []
+        if getattr(profile, "relics", None):
+            try:
+                from ..relics import RelicRegistry
+                set_counts: Dict[str, int] = {}
+                set_keys: Dict[str, Any] = {}
+                for r in profile.relics:
+                    sid = getattr(r, "relic_set_id", 0)
+                    sname = getattr(r, "set_name", "")
+                    key = sname if sname else str(sid)
+                    set_counts[key] = set_counts.get(key, 0) + 1
+                    set_keys[key] = sid if sid > 0 else sname
+
+                for key, cnt in set_counts.items():
+                    lookup_key = set_keys.get(key, key)
+                    if cnt >= 4:
+                        h = RelicRegistry.create(lookup_key, owner_id=profile.name, port=None, pieces=4)
+                        if not h and isinstance(lookup_key, int) and key != str(lookup_key):
+                            h = RelicRegistry.create(key, owner_id=profile.name, port=None, pieces=4)
+                        if h:
+                            relic_handlers.append(h)
+                    elif cnt >= 2:
+                        h = RelicRegistry.create(lookup_key, owner_id=profile.name, port=None, pieces=2)
+                        if not h and isinstance(lookup_key, int) and key != str(lookup_key):
+                            h = RelicRegistry.create(key, owner_id=profile.name, port=None, pieces=2)
+                        if h:
+                            relic_handlers.append(h)
+            except Exception:
+                pass
+
         entity = Entity(
             name=profile.name,
             base_speed=panel.spd,
@@ -449,6 +494,7 @@ class CharacterDB:
             eidolon=profile.eidolon,
             kit=kit_inst,
             light_cone=lc_inst,
+            relic_handlers=relic_handlers,
             distance_remaining=10000.0,
             policy=policy,
             is_enemy=False

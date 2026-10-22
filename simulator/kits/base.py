@@ -61,6 +61,25 @@ class KitHandler(ABC):
         """响应事件总线发布的事件（如友方耗点、击破、回合切换等）。"""
         pass
 
+    def can_cast_ultimate(self, entity: Any) -> bool:
+        """检查是否满足终结技施放条件。通用默认基于能量满槽，特殊机制角色可覆写。"""
+        max_energy = getattr(entity, "max_energy", 120.0)
+        energy = getattr(entity, "energy", 0.0)
+        return max_energy > 0 and energy >= (max_energy - 1e-4)
+
+    def consume_ultimate_cost(self, entity: Any) -> bool:
+        """扣除终结技资源消耗。通用默认清空能量，特殊机制角色可覆写。"""
+        if not self.can_cast_ultimate(entity):
+            return False
+        entity.energy = 0.0
+        return True
+
+    def get_energy_display(self, entity: Any) -> str:
+        """返回终结技充能状态的可读文本（如 '能量: 120/120' 或 '残梦: 9/9'）。"""
+        energy = getattr(entity, "energy", 0.0)
+        max_energy = getattr(entity, "max_energy", 120.0)
+        return f"能量: {energy:.0f}/{max_energy:.0f}"
+
     def get_kit_state(self) -> dict:
         """返回该角色独有的机制层状态字典（如充能层数、印记、协奏状态等）。"""
         excluded = {"owner_id", "port", "skill_levels"}

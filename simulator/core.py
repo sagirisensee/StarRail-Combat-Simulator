@@ -206,6 +206,8 @@ class Entity:
     kit: Optional[Any] = None
     # 关联的光锥独立运行时 (LightConeHandler)
     light_cone: Optional[Any] = None
+    # 关联的遗器独立运行时列表 (List[RelicSetHandler])
+    relic_handlers: List[Any] = field(default_factory=list)
     # 韧性系统 (仅敌方有)
     max_toughness: float = 0.0
     current_toughness: float = 0.0
@@ -309,23 +311,28 @@ class TurnSimulator:
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
 
-        # 注册事件总线转发至各实体挂载的光锥
-        def _forward_event_to_light_cones(evt: BattleEvent):
+        # 注册事件总线转发至各实体挂载的光锥与遗器
+        def _forward_event_to_light_cones_and_relics(evt: BattleEvent):
             for ent in self.entities:
                 if getattr(ent, "light_cone", None) is not None:
                     ent.light_cone.on_event(evt)
-        self.event_bus.subscribe(BattleEvent, _forward_event_to_light_cones)
+                for rh in getattr(ent, "relic_handlers", []):
+                    rh.on_event(evt)
+        self.event_bus.subscribe(BattleEvent, _forward_event_to_light_cones_and_relics)
 
         if entities:
             for e in entities:
                 self.add_entity(e, trigger_battle_start=False)
 
-            # 1. 结算进场常态被动与基础光环 (如花火天赋扩展SP上限至7点、光锥进战回能与谕示)
+            # 1. 结算进场常态被动与基础光环 (如花火天赋扩展SP上限至7点、光锥进战回能与谕示、遗器被动)
             for e in self.entities:
                 if getattr(e, "kit", None) is not None:
                     e.kit.on_battle_start()
                 if getattr(e, "light_cone", None) is not None:
                     e.light_cone.on_battle_start()
+                for rh in getattr(e, "relic_handlers", []):
+                    rh.port = self.port
+                    rh.on_battle_start()
 
             # 2. 结算战前秘技 (Techniques)
             if use_techniques:
@@ -396,6 +403,10 @@ class TurnSimulator:
             entity.light_cone.port = self.port
             if trigger_battle_start:
                 entity.light_cone.on_battle_start()
+        for rh in getattr(entity, "relic_handlers", []):
+            rh.port = self.port
+            if trigger_battle_start:
+                rh.on_battle_start()
 
     @property
     def current_cycle(self) -> int:
@@ -505,9 +516,13 @@ class TurnSimulator:
             )
             if getattr(active_entity, "light_cone", None) is not None:
                 active_entity.light_cone.on_action_before(ctx)
+            for rh in getattr(active_entity, "relic_handlers", []):
+                rh.on_action_before(ctx)
             active_entity.kit.execute(ctx)
             if getattr(active_entity, "light_cone", None) is not None:
                 active_entity.light_cone.on_action_after(ctx)
+            for rh in getattr(active_entity, "relic_handlers", []):
+                rh.on_action_after(ctx)
         else:
             # 兼容模式：传统回调执行路径
             if not active_entity.is_enemy:
@@ -592,12 +607,12 @@ class TurnSimulator:
         return self.execute_current_turn(action_override=action_override, target_ids=target_ids)
 
     def can_cast_ultimate(self, actor_id: str) -> bool:
-        """检查指定角色当前是否满足终结技施放条件 (满能量或满特殊层数)。"""
+        """检查指定角色当前是否满足终结技施放条件 (通过 Kit 协议解耦)。"""
         ent = self.get_entity(actor_id)
         if not ent or getattr(ent, "kit", None) is None:
             return False
-        if hasattr(ent.kit, "slashed_dream"):
-            return getattr(ent.kit, "slashed_dream", 0) >= 9
+        if hasattr(ent.kit, "can_cast_ultimate"):
+            return ent.kit.can_cast_ultimate(ent)
         return ent.max_energy > 0 and ent.energy >= ent.max_energy
 
     def get_ready_ultimates(self) -> List[Entity]:
@@ -619,11 +634,10 @@ class TurnSimulator:
         except Exception:
             return False
 
-        # 校验并消耗能量 / 特殊机制 (如黄泉残梦)
-        if hasattr(ent.kit, "slashed_dream"):
-            if ent.kit.slashed_dream < 9:
+        # 校验并消耗能量 / 特殊机制 (通过 Kit 协议解耦)
+        if hasattr(ent.kit, "consume_ultimate_cost"):
+            if not ent.kit.consume_ultimate_cost(ent):
                 return False
-            ent.kit.slashed_dream = 0
         else:
             if ent.max_energy > 0 and ent.energy < ent.max_energy:
                 return False
@@ -646,9 +660,13 @@ class TurnSimulator:
         )
         if getattr(ent, "light_cone", None) is not None:
             ent.light_cone.on_action_before(ctx)
+        for rh in getattr(ent, "relic_handlers", []):
+            rh.on_action_before(ctx)
         ent.kit.execute(ctx)
         if getattr(ent, "light_cone", None) is not None:
             ent.light_cone.on_action_after(ctx)
+        for rh in getattr(ent, "relic_handlers", []):
+            rh.on_action_after(ctx)
         self.resolver.resolve_all()
         return True
 

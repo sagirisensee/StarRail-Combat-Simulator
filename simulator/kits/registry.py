@@ -63,10 +63,16 @@ from .characters.danheng import DanHengKit
 from .characters.hook import HookKit
 from .characters.arlan import ArlanKit
 from .characters.misha import MishaKit
-from .characters.collab_and_future import (
-    TohsakaRinKit, ArcherKit, XilianKit, DanHengTenghuangKit,
-    ChangyeyueKit, KelydraKit, FengjinKit, XiadieKit, TibaoKit, DahliaKit
-)
+from .characters.tohsaka_rin import TohsakaRinKit
+from .characters.archer import ArcherKit
+from .characters.xilian import XilianKit
+from .characters.danheng_tenghuang import DanHengTenghuangKit
+from .characters.changyeyue import ChangyeyueKit
+from .characters.kelydra import KelydraKit
+from .characters.fengjin import FengjinKit
+from .characters.xiadie import XiadieKit
+from .characters.tibao import TibaoKit
+from .characters.dahlia import DahliaKit
 
 
 # 角色 ID / 规范角色名 -> KitHandler 类
