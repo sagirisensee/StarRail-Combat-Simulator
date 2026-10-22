@@ -911,7 +911,7 @@ def main():
     parser.add_argument("--wave", type=int, choices=[1, 2], default=1,
                         help="选择起始波次 (1: 精英双锋 月夜天马+灯塔, 2: 堕神之血•亚婆离)")
     parser.add_argument("--stage-buff", type=int, choices=[1, 2, 3], default=1,
-                        help="关卡全局祝福选择 (1: 狂喜之夜 [默认/欢愉纯净对账], 2: 领航誓言 [抗穿+50%], 3: 胞吞作用)")
+                        help="关卡全局祝福选择 (1: 狂喜之夜 [默认/欢愉纯净对账], 2: 领航誓言 [抗穿+50%%], 3: 胞吞作用)")
     parser.add_argument("--no-technique", action="store_true", help="禁用开战前秘技")
 
     args = parser.parse_args()
