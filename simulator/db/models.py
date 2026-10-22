@@ -58,14 +58,14 @@ class Path(str, Enum):
     @classmethod
     def from_str(cls, val: str) -> "Path":
         mapping = {
-            "warrior": cls.DESTRUCTION, "destruction": cls.DESTRUCTION,
-            "rogue": cls.HUNT, "hunt": cls.HUNT,
-            "mage": cls.ERUDITION, "erudition": cls.ERUDITION,
-            "shaman": cls.HARMONY, "harmony": cls.HARMONY,
-            "warlock": cls.NIHILITY, "nihility": cls.NIHILITY,
-            "knight": cls.PRESERVATION, "preservation": cls.PRESERVATION,
-            "priest": cls.ABUNDANCE, "abundance": cls.ABUNDANCE,
-            "memory": cls.REMEMBRANCE, "remembrance": cls.REMEMBRANCE,
+            "warrior": cls.DESTRUCTION, "destruction": cls.DESTRUCTION, "1": cls.DESTRUCTION,
+            "rogue": cls.HUNT, "hunt": cls.HUNT, "2": cls.HUNT,
+            "mage": cls.ERUDITION, "erudition": cls.ERUDITION, "3": cls.ERUDITION,
+            "shaman": cls.HARMONY, "harmony": cls.HARMONY, "4": cls.HARMONY,
+            "warlock": cls.NIHILITY, "nihility": cls.NIHILITY, "5": cls.NIHILITY,
+            "knight": cls.PRESERVATION, "preservation": cls.PRESERVATION, "6": cls.PRESERVATION,
+            "priest": cls.ABUNDANCE, "abundance": cls.ABUNDANCE, "7": cls.ABUNDANCE,
+            "memory": cls.REMEMBRANCE, "remembrance": cls.REMEMBRANCE, "8": cls.REMEMBRANCE,
             "elation": cls.ELATION
         }
         return mapping.get(str(val).lower(), cls.DESTRUCTION)
