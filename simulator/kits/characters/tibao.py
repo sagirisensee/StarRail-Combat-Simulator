@@ -74,6 +74,19 @@ class TibaoKit(KitHandler):
                     category="other",
                     description="队友施放终结技后，触发缇宝天赋追加攻击 (可触发)"
                 ))
+            # E4【心意相契的安宁】：进战结界生效时我方全体无视目标 18% 防御
+            if self.eidolon >= 4:
+                self.port.upsert_status(BuffSpec(
+                    key=f"Tribbie_E4_PeaceInConcord_{ally}",
+                    name="心意相契的安宁",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.18),),
+                    duration=3,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    description="结界期间无视目标 18.0% 防御力"
+                ))
 
     def use_technique(self) -> None:
         """秘技【开心你就拍拍手】：进战获得【神启】3 回合。"""

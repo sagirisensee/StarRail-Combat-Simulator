@@ -31,13 +31,15 @@ class MakeFarewellsMoreBeautifulHandler(LightConeHandler):
         def_shred_val = self.scale(self.DEF_IGNORE_VALUES)
         self.port.upsert_status(BuffSpec(
             key="LC_Farewells_FlowerBuff",
-            name=f"冥花 (让告别更美一些S{self.superimposition}无视防御{def_shred_val*100:.0f}%)",
+            name="冥花",
             source_id=self.owner_id,
             target_id=self.owner_id,
             modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, def_shred_val),),
             duration=2,
             timing=DurationTiming.TARGET_TURN_END,
-            skip_current_clock=True
+            skip_current_clock=True,
+            category="buff",
+            description=f"《让告别，更美一些》无视防御 {def_shred_val*100:.1f}%"
         ))
 
     def on_action_after(self, ctx: ActionContext) -> None:

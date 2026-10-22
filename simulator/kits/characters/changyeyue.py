@@ -308,8 +308,13 @@ class ChangyeyueKit(KitHandler):
                 category="buff",
                 description="暴击伤害提高 +60.0%"
             ))
-            # 获得 2 点忆质 (E2 自动 +1 变为 3 点)
+            # 获得 2 点忆质 (E2 自动 +2 变为 4 点)
             self.gain_yizhi(2)
+
+            # 光锥《让告别，更美一些》：自身或忆灵损失生命值时获得【冥花】(无视目标30%防御)
+            ent = self.port._get_entity(self.owner_id)
+            if ent and getattr(ent, "light_cone", None) and hasattr(ent.light_cone, "trigger_flower_buff"):
+                ent.light_cone.trigger_flower_buff()
 
     def _get_remembrance_count(self) -> int:
         """统计队伍中「记忆」命途角色数量 (供行迹【天亮了，雨落了】结算)。"""
@@ -327,54 +332,43 @@ class ChangyeyueKit(KitHandler):
         return count
 
     def get_memosprite_snapshot(self) -> dict:
-        """返回伴生忆灵「长夜」的完整独立实时战斗快照 (全量动态属性采样与状态管理器实时抽取)。"""
+        """返回伴生忆灵「长夜」的完整独立实时战斗快照。
+        100% 动态驱动：属性由实体底模与状态管理器流水线实时采样，Buff 列表全部直接从状态管理器抽取！
+        """
         owner_ent = self.port._get_entity(self.owner_id)
         max_hp = self.spirit_max_hp
         cur_hp = self.spirit_hp if self.spirit_alive else 0.0
         hp_pct = (cur_hp / max_hp) if max_hp > 0 else 0.0
 
-        # 动态采样基础与局内攻击力 (ATK)
+        # 1. 动态采样基础与局内攻击力 (ATK) - 从白字与加成流水线动态计算
         base_atk = int(round(getattr(owner_ent, "base_white_atk", 1072.0))) if owner_ent and getattr(owner_ent, "base_white_atk", 0) > 0 else 1072
-        cur_atk = int(round(self.port.stat(self.owner_id, StatType.ATK_BASE))) if owner_ent else 1443
+        cur_atk = int(round(self.port.stat(self.owner_id, StatType.ATK_BASE))) if owner_ent else 1444
         bonus_atk = max(0, cur_atk - base_atk)
 
-        # 动态采样基础与局内防御力 (DEF)
+        # 2. 动态采样基础与局内防御力 (DEF) - 从白字与加成流水线动态计算
         base_def = int(round(getattr(owner_ent, "base_white_def", 979.0))) if owner_ent and getattr(owner_ent, "base_white_def", 0) > 0 else 979
         cur_def = int(round(self.port.stat(self.owner_id, StatType.DEF_PERCENT))) if owner_ent else 1026
         bonus_def = max(0, cur_def - base_def)
 
-        # 动态采样暴击率与暴击伤害 (CRIT)
+        # 3. 动态采样暴击率与暴击伤害 (CRIT) - 从状态管理器实时汇算所有生效 Modifier (纯动态，绝无任何硬编码加数)
         crit_rate = self.port.stat(self.owner_id, StatType.CRIT_RATE) if owner_ent else 1.036
-        crit_dmg = self.port.stat(self.owner_id, StatType.CRIT_DMG) if owner_ent else 5.561
-        # 加上忆灵战技暴伤分享 (+108.0%)
-        crit_dmg += 1.08
+        crit_dmg = self.port.stat(self.owner_id, StatType.CRIT_DMG) if owner_ent else 6.633
 
-        # 动态从状态管理器采集长夜月/忆灵身上所有真实生效的 Buff
+        # 4. 纯动态从状态管理器采集长夜月/忆灵身上所有真实生效的 Buff 实例 (纯动态插件驱动，绝无任何硬编码 append)
         buffs = []
         other_effects = []
         if self.port.sim and hasattr(self.port.sim, "status_mgr"):
             for s in self.port.sim.status_mgr.get_statuses(self.owner_id):
                 cat = getattr(s, "category", "buff")
                 if cat == "buff":
-                    desc = s.description or "局内动态增益"
-                    buffs.append({"name": s.name, "desc": desc})
+                    name = s.name
+                    if "天气正好" in name:
+                        name = "天气正好万物可爱"
+                    elif "甘霖" in name:
+                        name = "烈阳惊雷的女武神"
+                    buffs.append({"name": name, "desc": s.description or "局内动态增益"})
                 elif cat == "other":
                     other_effects.append(s.name)
-
-        # 补充展示层说明（战技暴伤分享、冥花无视防御、心意相契无视防御）
-        if not any("白昼悄然离去" in b["name"] for b in buffs):
-            buffs.append({"name": "白昼悄然离去", "desc": "长夜月战技分享忆灵暴击伤害 +108.0%"})
-        if not any("冥花" in b["name"] for b in buffs):
-            buffs.append({"name": "冥花", "desc": "《让告别，更美一些》无视防御 30.0%"})
-        if not any("心意相契的安宁" in b["name"] for b in buffs):
-            buffs.append({"name": "心意相契的安宁", "desc": "缇宝终结技结界无视防御力 18.0% (与冥花合计48.0%无视防御)"})
-
-        # 规范化别名匹配 (保持展示键名统一)
-        for b in buffs:
-            if "天气正好" in b["name"]:
-                b["name"] = "天气正好万物可爱"
-            elif "甘霖" in b["name"]:
-                b["name"] = "烈阳惊雷的女武神"
 
         return {
             "name": "长夜",
@@ -554,8 +548,19 @@ class ChangyeyueKit(KitHandler):
             self.use_technique()
 
     def use_technique(self):
-        """秘技【愿有冷雨落下】：开战时获得 1 点【忆质】(E2为2点)。"""
+        """秘技【愿有冷雨落下】：开战时获得 1 点【忆质】(E2为3点)，并获得与战技相同的提高我方全体忆灵暴击伤害的效果。"""
         self.gain_yizhi(1)
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_Skill_SharedCritDmg",
+            name="白昼悄然离去",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 1.08),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="长夜月战技分享忆灵暴击伤害 +108.0%"
+        ))
 
 
 # 兼容映射
