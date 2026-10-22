@@ -1,25 +1,23 @@
-"""托帕&账账 (Topaz & Numby) 战斗技能套件完整实现 (Character Kit).
+"""托帕&账账 (Topaz & Numby - ID 1112, 巡猎 / 火) 官方标准战斗技能套件。
 
-适配角色：托帕&账账 (ID 1112, 巡猎 / 火)
-严格契合实机机制与公式：
-1. 普攻【赤字……】：造成单体火属性伤害，恢复 1 点战技点，回能 20 点；
-2. 战技【困难支付？】：
-   - 消耗 1 点 SP，施加【负债证明】(Proof of Debt)；
-   - 受到追加攻击伤害提高 50%；
-   - 立即指挥账账发动 1 次追加攻击；
-3. 终结技【改亏为赢！】：
-   - 消耗 130 能量；
-   - 账账进入【涨幅惊人！】状态，伤害倍率提高 150%，暴击伤害提高 50%，持续 2 次攻击；
-   - 处于该状态下，我方普攻、战技或终结技命中均可使账账行动提前 50%！
+严格遵循官方 Nanoka 4.6 技能定义与机制时序：
+1. 普攻【赤字…】：造成 140% (Lv 10) / 100% (Lv 6) 攻击力的单体火属性伤害，削韧 10，回能 20，回 1 SP。行迹：普攻视为追加攻击。
+2. 战技【支付困难？】：
+   - 消耗 1 点 SP，使目标陷入【负债证明】状态，受到的追加攻击伤害提高 50% (Lv 10)；
+   - 账账对该目标造成 150% (Lv 10) 攻击力的火属性伤害，视为追加攻击，削韧 20，回能 30 点。
+3. 终结技【扭亏为盈！】(耗能 130 点)：
+   - 账账进入【涨幅惊人！】状态，伤害倍率提高 150% (Lv 10)，暴击伤害提高 25% (Lv 10)；
+   - 敌方陷入【负债证明】的目标受到我方普攻、战技或终结技时，账账行动提前 50%；
+   - 账账施放 2 次攻击后 (E6 为 3 次) 退出该状态；
+   - 回能 5 点。
 4. 天赋【猪市？！】：
-   - 账账拥有独立速度 80，我方目标发动追加攻击使账账行动提前 50%；
-5. 星魂 1~6 完整实装：
-   - E1: 未来的市场 (持有【负债证明】的目标受到追加攻击时叠加【执行】状态，受追加攻击暴伤提高 25%，最多 2 层即 50%)；
-   - E2: 善意收购 (账账自身发动攻击后，托帕恢复 5 点能量)；
-   - E3: 抓大放小 (战技+2，普攻+1)；
-   - E4: 敏捷处理 (账账自身回合结束后，托帕行动提前 20%)；
-   - E5: 需求膨胀 (终结技+2，天赋+2)；
-   - E6: 激励机制 (【涨幅惊人！】攻击次数增加 1 次，账账火属性抗性穿透提高 10%)。
+   - 账账初始拥有 80 点速度，行动时发动追加攻击造成 150% (Lv 10) 攻击力火属性伤害，削韧 20；
+   - 敌方陷入【负债证明】的目标受到我方追加攻击时，账账行动提前 50%；
+   - E1【未来市场】：受到追加攻击时叠加【被执行】状态，受追加攻击暴击伤害提高 25%，最多叠加 2 层 (50%)；
+   - E2【善意收购】：账账发动攻击后，托帕恢复 5 点能量；
+   - E4【敏捷处理】：账账回合开始时，托帕行动提前 20%；
+   - E6【激励机制】：【涨幅惊人！】攻击次数增加 1 次，账账火属性抗性穿透提高 10%。
+5. 秘技【明补】：进战后账账首次攻击后托帕恢复 60 点能量。
 """
 
 from typing import Optional, List, Any
@@ -28,10 +26,12 @@ from ...actions import (
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class TopazKit(KitHandler):
+    """托帕&账账 (ID 1112, 巡猎 / 火)."""
+
     PROOF_OF_DEBT_DEBUFF = "Topaz_Proof_Of_Debt"
     E1_EXEC_DEBUFF = "Topaz_E1_Enforcing"
 
@@ -53,14 +53,14 @@ class TopazKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=-1),
-                name="赤字……"
+                name="赤字…"
             )
         elif kind == ActionKind.SKILL:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=1),
-                name="困难支付？"
+                name="支付困难？"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
@@ -68,14 +68,14 @@ class TopazKit(KitHandler):
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(energy=130.0),
                 allow_self=True,
-                name="改亏为赢！"
+                name="扭亏为盈！"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(technique_points=1),
-                name="明察秋毫！"
+                name="明补"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 
@@ -87,61 +87,95 @@ class TopazKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
         elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
+            self.use_technique()
 
-    def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【明察秋毫！】：进战恢复 60 点能量。"""
+    def use_technique(self) -> None:
+        """秘技【明补】：首次攻击恢复 60 点能量。"""
         self.port.gain_energy(self.owner_id, 60.0)
 
     def _execute_basic(self, ctx: ActionContext) -> None:
+        """普攻【赤字…】：造成 140% (Lv 10) 火属性伤害，视为追加攻击。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("basic", 0, default=1.40)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Fire",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_tag="FollowUpAttack",
+            scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
+        """战技【支付困难？】：施加【负债证明】，账账发动追加攻击造成 150% (Lv 10) 火伤。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
         self.debt_target_id = target_id
 
-        # 施加【负债证明】(追加攻击承伤提高 50%)
-        mods = [Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50)]
-        # E1: 负债证明附加受暴伤提高 50%
-        if self.eidolon >= 1:
-            mods.append(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.50))
-
+        # 施加【负债证明】：追加攻击受到的伤害提高 50%
         self.port.upsert_status(BuffSpec(
-            key=self.PROOF_OF_DEBT_DEBUFF,
-            name="负债证明 (托帕追加攻击受伤害提高50%)",
+            key=f"{self.PROOF_OF_DEBT_DEBUFF}_{target_id}",
+            name="负债证明",
             source_id=self.owner_id,
             target_id=target_id,
-            modifiers=tuple(mods),
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
             duration=None,
-            timing=DurationTiming.TARGET_TURN_END
+            timing=DurationTiming.TARGET_TURN_END,
+            category="debuff",
+            description="受到的追加攻击伤害提高 +50.0%"
         ))
 
-        # 账账发动追击
-        self._trigger_numby(target_id)
+        # E1: 受到追加攻击时叠加【被执行】
+        if self.eidolon >= 1:
+            self.port.upsert_status(BuffSpec(
+                key=f"{self.E1_EXEC_DEBUFF}_{target_id}",
+                name="被执行",
+                source_id=self.owner_id,
+                target_id=target_id,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.25),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END,
+                category="debuff",
+                description="受到的追加攻击暴击伤害提高 +25.0%"
+            ))
+
+        # 账账发动追加攻击
+        self._numby_attack(target_id)
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
-        # E6: 涨幅惊人攻击次数增加 1 次 (2 -> 3 次)
+        """终结技【扭亏为盈！】：账账进入【涨幅惊人！】状态。"""
         self.windfall_count = 3 if self.eidolon >= 6 else 2
+
+        cd_val = 0.25
+        mods = [
+            Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 1.50),
+            Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),
+        ]
+        if self.eidolon >= 6:
+            mods.append(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.10))
+
+        self.port.upsert_status(BuffSpec(
+            key="Topaz_Windfall_Bonanza",
+            name="涨幅惊人！",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=tuple(mods),
+            duration=2,
+            timing=DurationTiming.CASTER_TURN_END,
+            skip_current_clock=True,
+            category="buff",
+            description="账账伤害倍率提高 150%，暴击伤害提高 25%"
+        ))
         self.port.gain_energy(self.owner_id, 5.0)
 
-    def _trigger_numby(self, target_id: str) -> None:
-        """账账攻击处理。"""
-        is_windfall = self.windfall_count > 0
-        if is_windfall:
+    def _numby_attack(self, target_id: str) -> None:
+        """账账发动追加攻击：150% 火属性伤害。"""
+        mult = 1.50
+        if self.windfall_count > 0:
+            mult += 1.50
             self.windfall_count -= 1
-            mult = 3.00 # 涨幅惊人高额倍率
-        else:
-            mult = 1.50 # 基础 150% 倍率
 
         self.port.attack(
             self.owner_id,
@@ -149,13 +183,14 @@ class TopazKit(KitHandler):
             element="Fire",
             atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="NumbyFollowUp"
+            damage_tag="FollowUpAttack",
+            scaling_stat="atk"
         )
 
-        # E2: 账账行动为托帕回能 5 点
+        # E2: 账账行动恢复 5 点能量
         if self.eidolon >= 2:
             self.port.gain_energy(self.owner_id, 5.0)
 
-        # E4: 账账行动使托帕行动提前 20%
+        # E4: 托帕行动提前 20%
         if self.eidolon >= 4:
             self.port.advance(self.owner_id, self.owner_id, 0.20)

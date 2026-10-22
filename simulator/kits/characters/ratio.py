@@ -1,23 +1,22 @@
-"""真理医生 (Dr. Ratio) 战斗技能套件完整实现 (Character Kit).
+"""真理医生 (Dr. Ratio - ID 1305, 巡猎 / 虚数) 官方标准战斗技能套件。
 
-适配角色：真理医生 (ID 1305, 巡猎 / 虚数)
-严格契合实机机制与公式：
-1. 普攻【知识就是力量】：造成单体虚数伤害，恢复 1 点战技点，回能 20 点；
-2. 战技【精神产婆术】：
-   - 消耗 1 点 SP，造成单体虚数伤害；
-   - 概率触发追加攻击【智者的短见】(扔粉笔)：目标每有 1 个负面效果概率提升 20% (3 个负面 100% 触发)；
-   - 追加攻击造成 270% 虚数高额伤害，削韧 10 点；
-3. 终结技【三段论悖论】：
-   - 消耗 140 能量，对敌方单体造成高额虚数伤害，施加【智者的短见】标记 (队友攻击触发粉笔反击，上限 2 次)；
+严格遵循官方 Nanoka 4.6 技能定义与机制时序：
+1. 普攻【知识就是力量】：造成 140% (Lv 10) / 100% (Lv 6) 攻击力的单体虚数伤害，削韧 10，回能 20，回 1 SP。
+2. 战技【精神助产术】：
+   - 消耗 1 点 SP，造成 150% (Lv 10) 攻击力的单体虚数伤害，削韧 20；
+   - 有 40% 固定概率对目标发动追加攻击，目标每持有 1 个负面效果概率提升 20% (3 个负面 100% 触发)；
+   - 追加攻击造成 270% (Lv 10) 攻击力的虚数伤害，削韧 10，回能 5；
+   - 行迹【归纳】：施放战技时，获得 1 层【归纳】，使暴击率提高 2.5%，暴击伤害提高 5%，最多叠加 6 层 (E1 上限提高至 10 层)。
+3. 终结技【三段悖论】(耗能 140 点)：
+   - 对指定单体造成 240% (Lv 10) 攻击力的虚数伤害，削韧 30；
+   - 施加【智者的短见】(Wiseman's Folly)，队友攻击该目标时真理医生对其发动天赋追加攻击，最多触发 2 次 (E6 为 3 次)；
+   - 回能 5 点。
 4. 天赋【我思故我在】：
-   - 释放追加攻击时，叠加暴击率 2.5% 与暴击伤害 5% (上限 6 层，最高 15% 暴击率 / 30% 暴伤)；
-5. 星魂 1~6 完整实装：
-   - E1: 傲慢产生偏见 (天赋上限提高 4 层，开局直接获得 4 层，最高 25% 暴击率 / 50% 暴伤)；
-   - E2: 显微而阐幽 (追加攻击命中时目标每有 1 个负面，额外造成 20% 虚数伤害，最多 80%)；
-   - E3: 认识你自己 (终结技+2，普攻+1)；
-   - E4: 盲目即是愚蠢 (触发天赋追加攻击时，额外恢复 15 点能量)；
-   - E5: 弃绝虚妄 (战技+2，天赋+2)；
-   - E6: 永恒真理 (终结技粉笔触发次数增加 1 次，追加攻击伤害提高 50%)。
+   - E1【倨傲生祸患】：【归纳】层数上限提高 4 层 (至 10 层)，进战直接获得 4 层【归纳】；
+   - E2【显微而阐幽】：追加攻击命中时目标每有 1 个负面额外造成 20% 虚数伤害 (最多 80%)；
+   - E4【盲目造痴愚】：触发天赋追加攻击时额外恢复 15 点能量；
+   - E6【永恒唯真理】：【智者的短见】触发次数增加 1 次，追加攻击伤害提高 50%。
+5. 秘技【偶像塑造】：进战使敌方目标速度降低 15%，持续 2 回合。
 """
 
 from typing import Optional, List, Any
@@ -26,10 +25,12 @@ from ...actions import (
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class RatioKit(KitHandler):
+    """真理医生 (ID 1305, 巡猎 / 虚数)."""
+
     TALENT_CRIT_BUFF = "Ratio_Talent_Crit"
     ULT_WISDOM_MARK = "Ratio_Ult_Wisdom_Mark"
 
@@ -45,6 +46,13 @@ class RatioKit(KitHandler):
         self.max_stacks: int = 10 if eidolon >= 1 else 6
         self.current_stacks: int = 4 if eidolon >= 1 else 0
         self.ult_triggers_remaining: int = 0
+        self.wisdom_target_id: Optional[str] = None
+
+    def on_battle_start(self) -> None:
+        """E1【倨傲生祸患】：战斗开始时立即获得 4 层【归纳】。"""
+        if self.eidolon >= 1:
+            self.current_stacks = 4
+            self._apply_crit_stacks()
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -59,14 +67,14 @@ class RatioKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=1),
-                name="精神产婆术"
+                name="精神助产术"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(energy=140.0),
-                name="三段论悖论"
+                name="三段悖论"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
@@ -77,27 +85,6 @@ class RatioKit(KitHandler):
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 
-    def on_battle_start(self) -> None:
-        """E1: 傲慢产生偏见 (开战即拥有 4 层天赋暴击增益)。"""
-        if self.eidolon >= 1:
-            self._update_crit_buff()
-
-    def _update_crit_buff(self) -> None:
-        cr = self.current_stacks * 0.025
-        cd = self.current_stacks * 0.05
-        self.port.upsert_status(BuffSpec(
-            key=self.TALENT_CRIT_BUFF,
-            name="归纳总结 (真理医生天赋攻暴)",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(
-                Modifier(StatType.CRIT_RATE, ModifierOp.ADD, cr),
-                Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd),
-            ),
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END
-        ))
-
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
             self._execute_basic(ctx)
@@ -106,88 +93,133 @@ class RatioKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
         elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
+            self.use_technique()
 
-    def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【偶像塑造】：使敌方全体速度降低 15%，持续 2 回合。"""
+    def use_technique(self) -> None:
+        """秘技【偶像塑造】：敌方全体减速 15% 持续 2 回合。"""
         for enemy in self.port.enemies(self.owner_id):
             self.port.upsert_status(BuffSpec(
-                key="Ratio_Technique_Slow",
-                name="减速 (真理医生秘技)",
+                key=f"Ratio_Technique_Slow_{enemy}",
+                name="偶像塑造",
                 source_id=self.owner_id,
                 target_id=enemy,
                 modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.15),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="debuff",
+                description="速度降低 15.0%"
             ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
+        """普攻【知识就是力量】：单体虚数伤害 140% (Lv 10)。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("basic", 0, default=1.40)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_tag="BasicAttack",
+            scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
+        """战技【精神助产术】：造成 150% 虚数伤害，叠加【归纳】层数并触发追加攻击。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        # 1. 战技伤害
+        mult = self.skill_param("skill", 0, default=1.50)
+
+        # 叠加【归纳】
+        if self.current_stacks < self.max_stacks:
+            self.current_stacks += 1
+            self._apply_crit_stacks()
+
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=1.50,
+            atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_tag="Skill",
+            scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 30.0)
 
-        # 2. 扔粉笔追加攻击
-        self._trigger_chalk(target_id)
+        # 触发粉笔追加攻击
+        self._trigger_follow_up(target_id)
 
-    def _trigger_chalk(self, target_id: str) -> None:
-        """投掷粉笔追加攻击 (E2 额外附加 80% 伤害，E4 回能 15，E6 增伤 50%)。"""
-        # 堆叠天赋层数
-        self.current_stacks = min(self.max_stacks, self.current_stacks + 1)
-        self._update_crit_buff()
-
-        base_mult = 2.70
-        # E6: 追加攻击造成的伤害提高 50%
+    def _trigger_follow_up(self, target_id: str) -> None:
+        """天赋追加攻击：270% 虚数伤害 (E6 增伤 50%)。"""
+        mult = 2.70
         if self.eidolon >= 6:
-            base_mult *= 1.50
+            mult *= 1.50
 
-        # E2: 目标每有负面额外造成最高 80% 伤害
+        # E2: 额外附加最高 80% 攻击力伤害
         if self.eidolon >= 2:
-            base_mult += 0.80
+            mult += 0.80
 
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=base_mult,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="ChalkFollowUp"
+            damage_tag="FollowUpAttack",
+            scaling_stat="atk"
         )
 
-        # E4: 触发追加攻击时额外恢复 15 点能量
-        extra_energy = 15.0 if self.eidolon >= 4 else 0.0
-        self.port.gain_energy(self.owner_id, 5.0 + extra_energy)
+        # 基础回能 5 点 (E4 额外增加 15 点)
+        energy_gain = 20.0 if self.eidolon >= 4 else 5.0
+        self.port.gain_energy(self.owner_id, energy_gain)
+
+    def _apply_crit_stacks(self) -> None:
+        """更新【归纳】Buff：每层暴击率 +2.5%，暴击伤害 +5%。"""
+        cr_val = self.current_stacks * 0.025
+        cd_val = self.current_stacks * 0.05
+        self.port.upsert_status(BuffSpec(
+            key=self.TALENT_CRIT_BUFF,
+            name="归纳 (真理医生天赋暴击与暴伤)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(
+                Modifier(StatType.CRIT_RATE, ModifierOp.ADD, cr_val),
+                Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),
+            ),
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description=f"暴击率 +{cr_val*100:.1f}%，暴击伤害 +{cd_val*100:.1f}%"
+        ))
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        """终结技【三段悖论】：单体虚数伤害 240%，施加【智者的短见】。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        self.wisdom_target_id = target_id
+        self.ult_triggers_remaining = 3 if self.eidolon >= 6 else 2
+
+        mult = self.skill_param("ultra", 0, default=2.40)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Imaginary",
-            atk_multiplier=2.40,
+            atk_multiplier=mult,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_tag="Ultimate",
+            scaling_stat="atk"
         )
-        # E6: 智者的短见触发次数增加 1 次 (2 -> 3 次)
-        self.ult_triggers_remaining = 3 if self.eidolon >= 6 else 2
+
+        self.port.upsert_status(BuffSpec(
+            key=f"{self.ULT_WISDOM_MARK}_{target_id}",
+            name="智者的短见",
+            source_id=self.owner_id,
+            target_id=target_id,
+            modifiers=(),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True,
+            category="debuff",
+            description=f"受到队友攻击时触发真理医生追加攻击 (剩余 {self.ult_triggers_remaining} 次)"
+        ))
         self.port.gain_energy(self.owner_id, 5.0)
