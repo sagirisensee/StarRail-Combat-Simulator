@@ -697,9 +697,23 @@ class TurnSimulator:
             if query == name or query.lower() in name.lower():
                 return data
 
+        # 检查是否是敌方单位名
+        for name, data in st["enemies"].items():
+            if query == name or query.lower() in name.lower():
+                return data
+
         # 点号分段遍历
         parts = query.split(".")
-        curr: Any = st
+        # 支持以角色名或怪物名开头点号访问，例如 "长夜月.current_atk" 或 "月夜天马.current_hp"
+        first_part = parts[0]
+        curr_root = None
+        for name, data in {**st["team"], **st["enemies"]}.items():
+            if first_part == name or first_part.lower() in name.lower():
+                curr_root = data
+                parts = parts[1:]
+                break
+
+        curr: Any = curr_root if curr_root is not None else st
         for p in parts:
             if isinstance(curr, dict) and p in curr:
                 curr = curr[p]
