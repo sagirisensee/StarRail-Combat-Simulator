@@ -42,6 +42,8 @@ class StatType(Enum):
     BREAK_EFFECT = "break_effect"# 击破特攻
     BREAK_EFFICIENCY = "break_eff"# 击破效率
     ELATION = "elation"          # 欢愉伤害/度
+    DEF_BASE = 'def_base'
+    DEF = 'def'
     DEF_PERCENT = "def_pct"      # 防御力百分比
     MAX_HP_PERCENT = "max_hp_pct"# 生命上限百分比
     EFFECT_RES = "effect_res"    # 效果抵抗

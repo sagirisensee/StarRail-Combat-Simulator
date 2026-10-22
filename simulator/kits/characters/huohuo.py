@@ -1,36 +1,37 @@
-"""藿藿 (Huohuo) 战斗技能套件完整实现 (Character Kit).
+"""藿藿 (Huohuo - ID 1217, 风 / 丰饶) 官方标准战斗技能套件。
 
-严格契合 4.2 版本「砺烁新辉」最新官方重做与平衡加强数据：
-1. 【行迹·不敢自专 重做】：战斗开始时，藿藿立即恢复 30 点能量，并直接为全队激活【禳命】(开战自启动！)；
-2. 【战技·灵符保命护身】：
-   - 消耗 1 点 SP，治疗目标与相邻队友，解除负面；
-   - 激活/刷新【禳命】(Divine Provision)；
-   - 若队伍中存在生命低于 50% 的残血目标，定向额外触发 1 次急救大额回复；
-3. 【终结技·尾巴遣策通灵 加强】：
-   - 消耗 140 能量；
+严格遵循官方 Nanoka 4.6 技能定义与机制时序：
+1. 普攻【令旗•征风召雨】：单体风属性伤害，等同藿藿 70% (Lv 10) 生命上限，削韧 10，回能 20，回 1 SP。HP 缩放 (scaling_stat="hp")。
+2. 战技【灵符•保命护身】：
+   - 消耗 1 点 SP，解除指定我方单体 1 个负面，回复生命 (21% HP + 560)，并对其他队友回复生命 (16.8% HP + 448)；
+   - 激活/刷新【禳命】(E1 为 4 回合，E0 为 3 回合)；
+   - 若队伍中存在生命低于 50% 残血目标，额外触发急救回复；
+   - E6【同休共戚，相须而行】：治疗目标时造成伤害提高 50%，持续 2 回合；
+   - 回能 30 点。
+3. 终结技【尾巴•遣神役鬼】(耗能 140 点)：
+   - 为除自身外全队恢复等同各自能量上限 20% 的能量；
+   - 全队攻击力提高 40% (Lv 10)，高能量上限 (>= 160) 目标特化提高 64%，持续 2 回合；
    - 同样刷新并维持【禳命】状态；
-   - 为除自身外我方全体恢复 20% 能量；
-   - 为我方全体提供 40% 攻击力加成；
-   - 【行迹·贞凶之命 高能量特化】：若目标能量上限 >= 160 点 (如流萤 240、云璃 240、知更鸟 160 等)，攻击力额外再提高 24% (总计 64% 攻击力)！
-4. 【星魂 1 岁阳寄体，妖邪依凭 重做】：
-   - 【禳命】持续时间最新加强为整整 4 回合 (轻松打出 E-A-A-A 4动产点循环)；
-   - 拥有【禳命】时我方全体速度提高 12%；
-   - 藿藿造成的治疗量额外提升 20%。
+   - 回能 5 点。
+4. 天赋【凭附•气通天真】：
+   - 行迹【不敢自专】：战斗开始时立即恢复 30 点能量，并直接为全队激活【禳命】；
+   - 【禳命】期间队友回合开始或施放大招回复生命并解除 1 个负面；
+   - E1【岁阳寄体，妖邪依凭】：【禳命】持续 4 回合，且全队速度提高 12%。
+5. 秘技【凶煞•劾压鬼物】：进战使敌方目标攻击力降低 25%，持续 2 回合。
 """
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import (
-    ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
-)
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class HuohuoKit(KitHandler):
+    """藿藿 (ID 1217, 风 / 丰饶)."""
+
     PROVISION_BUFF = "Huohuo_Divine_Provision"
     ULT_ATK_BUFF = "Huohuo_Ult_Atk"
-    ULT_HIGH_ENERGY_BUFF = "Huohuo_Ult_HighEnergy_Atk"
     E6_DMG_BUFF = "Huohuo_E6_DmgBuff"
 
     def __init__(
@@ -38,11 +39,15 @@ class HuohuoKit(KitHandler):
         owner_id: str,
         port: CombatPort,
         *,
-        eidolon: int = 1,
+        eidolon: int = 0,
         skill_levels: Optional[dict] = None
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
-        self.e2_revive_count: int = 2 if eidolon >= 2 else 0
+
+    def on_battle_start(self) -> None:
+        """行迹【不敢自专】：开局立即恢复 30 点能量，并直接为全队激活【禳命】。"""
+        self.port.gain_energy(self.owner_id, 30.0)
+        self._apply_divine_provision()
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -50,7 +55,7 @@ class HuohuoKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=-1),
-                name="旗令·招风掣电"
+                name="令旗•征风召雨"
             )
         elif kind == ActionKind.SKILL:
             return AbilityDefinition(
@@ -58,7 +63,7 @@ class HuohuoKit(KitHandler):
                 target_mode=TargetMode.SINGLE_ALLY,
                 cost=ResourceCost(sp=1),
                 allow_self=True,
-                name="灵符·保命护身"
+                name="灵符•保命护身"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
@@ -66,41 +71,17 @@ class HuohuoKit(KitHandler):
                 target_mode=TargetMode.ALL_ALLIES,
                 cost=ResourceCost(energy=140.0),
                 allow_self=True,
-                name="尾巴·遣策通灵"
+                name="尾巴•遣神役鬼"
             )
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(technique_points=1),
-                name="凶煞·吓唬吓唬猫"
+                allow_self=True,
+                name="凶煞•劾压鬼物"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
-
-    def on_battle_start(self) -> None:
-        """4.2「砺烁新辉」行迹重做：开局立即恢复 30 点能量，并直接获得【禳命】！"""
-        self.port.gain_energy(self.owner_id, 30.0)
-        self._apply_divine_provision()
-
-    def _apply_divine_provision(self) -> None:
-        """施加/刷新【禳命】状态 (E1 加强为持续 4 回合，E0 为 3 回合)。"""
-        duration = 4 if self.eidolon >= 1 else 3
-        allies = self.port.allies(self.owner_id)
-        for ally in allies:
-            mods = []
-            if self.eidolon >= 1:
-                mods.append(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.12))
-
-            self.port.upsert_status(BuffSpec(
-                key=self.PROVISION_BUFF,
-                name="禳命 (藿藿天赋治疗与E1提速12%)",
-                source_id=self.owner_id,
-                target_id=ally,
-                modifiers=tuple(mods),
-                duration=duration,
-                timing=DurationTiming.CASTER_TURN_END,
-                skip_current_clock=True
-            ))
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
@@ -110,105 +91,131 @@ class HuohuoKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
         elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
+            self.use_technique()
 
-    def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【凶煞·吓唬吓唬猫】：敌方全体攻击力降低 25%，持续 2 回合。"""
+    def use_technique(self) -> None:
+        """秘技【凶煞•劾压鬼物】：进战使敌方目标攻击力降低 25%，持续 2 回合。"""
         for enemy in self.port.enemies(self.owner_id):
             self.port.upsert_status(BuffSpec(
-                key="Huohuo_Technique_AtkDebuff",
-                name="魄散 (藿藿秘技减攻25%)",
+                key=f"Huohuo_Tech_AtkDown_{enemy}",
+                name="凶煞•劾压鬼物",
                 source_id=self.owner_id,
                 target_id=enemy,
-                modifiers=(Modifier(StatType.ATK, ModifierOp.PERCENT, -0.25),),
+                modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, -0.25),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="debuff",
+                description="攻击力降低 25.0%"
             ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
+        """普攻【令旗•征风召雨】：单体风属性伤害，70% (Lv 10) 生命上限。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("basic", 0, default=0.70)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Wind",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_tag="BasicAttack",
+            scaling_stat="hp"
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
-    def _execute_skill(self, ctx: ActionContext) -> None:
-        target_id = ctx.target_ids[0] if ctx.target_ids else self.owner_id
-        # 1. 基础单体治疗 (E1: +20% 治疗量, E4: 目标血量越低额外获得最高 80% 治疗加成)
-        base_heal = 3000.0 if self.eidolon >= 1 else 2500.0
-        if self.eidolon >= 4:
-            lost_ratio = max(0.0, 1.0 - self.port.hp_ratio(target_id))
-            base_heal *= (1.0 + lost_ratio * 0.80)
+    def _apply_divine_provision(self) -> None:
+        """施加/刷新【禳命】状态 (E1 为 4 回合，E0 为 3 回合)。"""
+        duration = 4 if self.eidolon >= 1 else 3
+        for ally in self.port.allies(self.owner_id):
+            mods = []
+            desc = "回合开始或施放大招回复生命"
 
-        self.port.heal(self.owner_id, target_id, base_heal)
+            if self.eidolon >= 1:
+                mods.append(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.12))
+                desc += "，速度提高 +12.0%"
 
-        # E6: 治疗目标时，使目标造成的伤害提高 50%，持续 2 回合
-        if self.eidolon >= 6:
             self.port.upsert_status(BuffSpec(
-                key=self.E6_DMG_BUFF,
-                name="同气连枝 (藿藿E6治疗增伤50%)",
+                key=self.PROVISION_BUFF,
+                name="凭附•气通天真 (禳命)",
                 source_id=self.owner_id,
-                target_id=target_id,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                target_id=ally,
+                modifiers=tuple(mods),
+                duration=duration,
+                timing=DurationTiming.CASTER_TURN_END,
+                skip_current_clock=True,
+                category="buff",
+                description=desc
             ))
 
-        # 2. 定向残血急救机制：若存在生命值 < 50% 的队友，额外定向治疗
-        allies = self.port.allies(self.owner_id)
-        for ally in allies:
-            if self.port.hp_ratio(ally) < 0.50:
-                self.port.heal(self.owner_id, ally, 1500.0)
-                if self.eidolon >= 6:
-                    self.port.upsert_status(BuffSpec(
-                        key=self.E6_DMG_BUFF,
-                        name="同气连枝 (藿藿E6治疗增伤50%)",
-                        source_id=self.owner_id,
-                        target_id=ally,
-                        modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
-                        duration=2,
-                        timing=DurationTiming.TARGET_TURN_END,
-                        skip_current_clock=True
-                    ))
+    def _execute_skill(self, ctx: ActionContext) -> None:
+        """战技【灵符•保命护身】：单体与扩散治疗，解除负面，激活【禳命】。"""
+        target_id = ctx.target_ids[0] if ctx.target_ids else self.owner_id
+        if hasattr(self.port, "dispel_debuff"):
+            self.port.dispel_debuff(target_id)
 
-        # 3. 激活/刷新【禳命】
+        max_hp = self.port.max_hp(self.owner_id)
+        heal_val = max_hp * 0.21 + 560.0
+        self.port.heal(self.owner_id, target_id, heal_val)
+
+        if self.eidolon >= 6:
+            self._apply_e6_buff(target_id)
+
+        # 扩散治疗与残血急救
+        allies = self.port.allies(self.owner_id)
+        for a in allies:
+            if a != target_id:
+                adj_heal = max_hp * 0.168 + 448.0
+                self.port.heal(self.owner_id, a, adj_heal)
+                if self.eidolon >= 6:
+                    self._apply_e6_buff(a)
+            # 残血 < 50% 急救机制
+            if self.port.hp_ratio(a) < 0.50:
+                self.port.heal(self.owner_id, a, 1500.0)
+                if self.eidolon >= 6:
+                    self._apply_e6_buff(a)
+
         self._apply_divine_provision()
         self.port.gain_energy(self.owner_id, 30.0)
 
+    def _apply_e6_buff(self, target_id: str) -> None:
+        """E6【同休共戚，相须而行】：治疗目标时伤害提高 50%，持续 2 回合。"""
+        self.port.upsert_status(BuffSpec(
+            key=self.E6_DMG_BUFF,
+            name="同气连枝 (藿藿E6增伤50%)",
+            source_id=self.owner_id,
+            target_id=target_id,
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True,
+            category="buff",
+            description="造成的伤害提高 +50.0%"
+        ))
+
     def _execute_ultimate(self, ctx: ActionContext) -> None:
+        """终结技【尾巴•遣神役鬼】：全队回能 20%，常规攻击提高 40%，高能量上限 (>=160) 特化提高 64%。"""
         allies = self.port.allies(self.owner_id)
-        other_allies = [a for a in allies if a != self.owner_id]
-
-        # 1. 为除藿藿以外全队回能 20%
-        for ally in other_allies:
-            target_max_energy = self.port.max_energy(ally)
-            energy_gain = target_max_energy * 0.20
-            self.port.gain_energy(ally, energy_gain)
-
-        # 2. 全队攻击力提高 40% (高能量上限 >= 160 额外加成 24%)
         for ally in allies:
-            target_max_energy = self.port.max_energy(ally)
+            target_max_energy = self.port.max_energy(ally) if hasattr(self.port, "max_energy") else 120.0
+            if ally != self.owner_id:
+                self.port.gain_energy(ally, target_max_energy * 0.20)
+
             is_high_energy = target_max_energy >= 160.0
             bonus_atk_pct = 0.64 if is_high_energy else 0.40
 
             self.port.upsert_status(BuffSpec(
                 key=self.ULT_ATK_BUFF,
-                name="遣策 (藿藿大招攻击加成，高能量特化64%)" if is_high_energy else "遣策 (藿藿大招攻击力提高40%)",
+                name="尾巴•遣神役鬼 (高能量特化64%)" if is_high_energy else "尾巴•遣神役鬼 (攻击提高40%)",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, bonus_atk_pct),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="buff",
+                description=f"攻击力提高 +{bonus_atk_pct*100:.1f}%"
             ))
 
-        # 3. 施放大招同样刷新/维持【禳命】
         self._apply_divine_provision()
         self.port.gain_energy(self.owner_id, 5.0)

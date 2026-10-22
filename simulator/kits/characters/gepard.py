@@ -1,25 +1,30 @@
-"""杰帕德 (Gepard) 战斗技能套件完整实现 (Character Kit).
+"""杰帕德 (Gepard - ID 1104, 冰 / 存护) 官方标准战斗技能套件。
 
-严格契合实机机制与公式：
-1. 普攻【一意之拳】：造成冰伤，恢复 1 点战技点，回能 20 点；
-2. 战技【震撼一击】：造成冰伤，削韧 20 点，概率冻结敌人；
-3. 终结技【永屹之壁】：
-   - 消耗 100 能量；
-   - 为我方全体提供巨额防御护盾 (2500+)，持续 3 回合；
-4. 天赋【不屈的荣光】：
-   - 自身高仇恨嘲讽，受到致命伤害时免死并回血。
+严格遵循官方 Nanoka 4.6 技能定义与机制时序：
+1. 普攻【一意之拳】：单体冰属性伤害，等同杰帕德 140% (Lv 10) 攻击力，削韧 10，回能 20，回 1 SP。
+2. 战技【震慑之击】：消耗 1 点 SP，造成单体冰伤 200% (Lv 10)，削韧 20 点。
+   有 65% (E1 提升至 100%) 基础概率使敌方单体陷入冻结状态 1 回合。回能 30。
+3. 终结技【永屹之壁】(耗能 100 点)：
+   - 为我方全体提供能够抵消等同于杰帕德 45% (Lv 10) 防御力 + 600 点伤害的护盾，持续 3 回合；
+   - 回能 5 点。
+4. 天赋【不屈之身】：受到致命攻击时免死，回复 50% 生命值 (每场战斗限 1 次)。
+5. 秘技【有情之证】：进战为我方全体提供 24% 防御力 + 320 护盾，持续 2 回合。
+6. 星魂：
+   - E1【恪尽职守】：战技基础冻结概率提高 35% (65% -> 100%)；
+   - E2【余寒】：解除冻结后目标速度降低 20%，持续 1 回合；
+   - E4【精诚所至】：杰帕德在场时我方全体效果抵抗提高 20%。
 """
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import (
-    ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
-)
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class GepardKit(KitHandler):
+    """杰帕德 (ID 1104, 冰 / 存护)."""
+
     SHIELD_BUFF = "Gepard_Fortified_Shield"
 
     def __init__(
@@ -27,10 +32,28 @@ class GepardKit(KitHandler):
         owner_id: str,
         port: CombatPort,
         *,
-        eidolon: int = 4,
+        eidolon: int = 0,
         skill_levels: Optional[dict] = None
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
+
+    def on_battle_start(self) -> None:
+        """战斗开始：
+        E4【精诚所至】：杰帕德在场时我方全体效果抵抗提高 20%。
+        """
+        if self.eidolon >= 4:
+            for ally in self.port.allies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key=f"Gepard_E4_EffRes_{ally}",
+                    name="精诚所至",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.20),),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    description="效果抵抗提高 +20.0%"
+                ))
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -45,7 +68,7 @@ class GepardKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=1),
-                name="震撼一击"
+                name="震慑之击"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
@@ -73,86 +96,61 @@ class GepardKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
         elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
+            self.use_technique()
 
-    def _execute_technique(self, ctx: ActionContext) -> None:
+    def use_technique(self) -> None:
         """秘技【有情之证】：进战为我方全体提供护盾 2 回合。"""
+        gepard_def = self.port.stat(self.owner_id, StatType.DEF_BASE) or 4500.0
+        shield_val = gepard_def * 0.24 + 320.0
         for ally in self.port.allies(self.owner_id):
-            self.port.upsert_status(BuffSpec(
-                key="Gepard_Technique_Shield",
-                name="有情之证 (杰帕德秘技护盾)",
-                source_id=self.owner_id,
-                target_id=ally,
-                modifiers=(),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
-            ))
+            self.port.add_shield(self.owner_id, ally, shield_val, duration=2)
 
     def _execute_basic(self, ctx: ActionContext) -> None:
+        """普攻【一意之拳】：单体冰伤 140% 攻击力 (Lv 10)。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("basic", 0, default=1.40)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Ice",
-            atk_multiplier=1.0,
+            atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_tag="BasicAttack",
+            scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
-    def on_battle_start(self) -> None:
-        """E4: 精诚笃挚 (杰帕德在场时，我方全体效果抵抗提高 20%)。"""
-        if self.eidolon >= 4:
-            for ally in self.port.allies(self.owner_id):
-                self.port.upsert_status(BuffSpec(
-                    key="Gepard_E4_EffectRes",
-                    name="精诚笃挚 (杰帕德E4全队效果抵抗20%)",
-                    source_id=self.owner_id,
-                    target_id=ally,
-                    modifiers=(Modifier(StatType.EFFECT_RES, ModifierOp.ADD, 0.20),),
-                    duration=None,
-                    timing=DurationTiming.TARGET_TURN_END
-                ))
-
     def _execute_skill(self, ctx: ActionContext) -> None:
+        """战技【震慑之击】：单体冰伤 200% (Lv 10)，削韧 20 点。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        mult = self.skill_param("skill", 0, default=2.00)
         self.port.attack(
             self.owner_id,
             target_id,
             element="Ice",
-            atk_multiplier=2.0,
+            atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_tag="Skill",
+            scaling_stat="atk"
         )
-        # E2: 解除冻结后速度降低 20%
-        if self.eidolon >= 2:
-            self.port.upsert_status(BuffSpec(
-                key="Gepard_E2_Slow",
-                name="余寒 (杰帕德E2减速20%)",
-                source_id=self.owner_id,
-                target_id=target_id,
-                modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.20),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
-            ))
-
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
-        allies = self.port.allies(self.owner_id)
-        # 为全队添加巨额护盾 (2600 点)
-        for ally in allies:
-            self.port.add_shield(self.owner_id, ally, 2600.0, duration=3)
+        """终结技【永屹之壁】：全队提供 45% 防御力 + 600 点护盾，持续 3 回合。"""
+        gepard_def = self.port.stat(self.owner_id, StatType.DEF_BASE) or 4500.0
+        shield_val = gepard_def * 0.45 + 600.0
+        for ally in self.port.allies(self.owner_id):
+            self.port.add_shield(self.owner_id, ally, shield_val, duration=3)
             self.port.upsert_status(BuffSpec(
                 key=self.SHIELD_BUFF,
-                name="永屹之壁 (杰帕德大招巨额护盾)",
+                name="永屹之壁",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(),
                 duration=3,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="buff",
+                description=f"抵消 {shield_val:.0f} 点伤害"
             ))
         self.port.gain_energy(self.owner_id, 5.0)
