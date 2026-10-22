@@ -64,6 +64,14 @@ class BronyaKit(KitHandler):
                 allow_self=True,
                 name="贝洛伯格进行曲"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ALLIES,
+                cost=ResourceCost(technique_points=1),
+                allow_self=True,
+                name="在旗帜下"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -73,6 +81,23 @@ class BronyaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【在旗帜下】：进战使我方全体攻击力提高 15%，持续 2 回合。"""
+        allies = self.port.allies(self.owner_id)
+        for ally in allies:
+            self.port.upsert_status(BuffSpec(
+                key="Bronya_Tech_Atk",
+                name="在旗帜下 (布洛妮娅秘技增攻15%)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.15),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

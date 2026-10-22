@@ -59,6 +59,13 @@ class GallagherKit(KitHandler):
                 cost=ResourceCost(energy=110.0),
                 name="香槟礼仪"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="亲启佳酿"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -68,6 +75,30 @@ class GallagherKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【亲启佳酿】：对敌方全体造成 50% 火伤并施加【酩酊】2 回合。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Fire",
+                atk_multiplier=0.50,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+            self.port.upsert_status(BuffSpec(
+                key=self.BESOTTED_DEBUFF,
+                name="酩酊 (加拉赫秘技击破易伤)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.BREAK_VULN, ModifierOp.ADD, 0.12),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

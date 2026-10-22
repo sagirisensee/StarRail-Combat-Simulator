@@ -67,6 +67,13 @@ class MozeKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="匕影断喉"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="翼蔽"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -81,6 +88,21 @@ class MozeKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【翼蔽】：进战造成的伤害提高 30%，持续 2 回合。"""
+        self.port.upsert_status(BuffSpec(
+            key="Moze_Technique_DmgBuff",
+            name="翼蔽 (貊泽秘技增伤30%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True
+        ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

@@ -69,6 +69,13 @@ class March7thHuntKit(KitHandler):
                 cost=ResourceCost(energy=110.0),
                 name="盖世一击，横扫千军"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="一袭白衣天下倾"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -95,6 +102,13 @@ class March7thHuntKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【一袭白衣天下倾】：进入战斗后自身恢复 30 点能量，并获得 2 点充能。"""
+        self.port.gain_energy(self.owner_id, 30.0)
+        self.charge = min(7, self.charge + 2)
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

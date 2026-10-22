@@ -60,6 +60,14 @@ class ElationKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="阿哈时刻！"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ALLIES,
+                cost=ResourceCost(technique_points=1),
+                allow_self=True,
+                name="阿哈的玩笑"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -69,6 +77,22 @@ class ElationKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【阿哈的玩笑】：进入战斗后使我方全体伤害提高 25%，持续 2 回合。"""
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Aha_Technique_DmgBuff",
+                name="阿哈玩笑 (欢愉秘技增伤25%)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.25),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _get_elation_multiplier(self) -> float:
         # 获取欢愉度属性，若未配置默认保底 0.30

@@ -72,6 +72,13 @@ class JingliuKit(KitHandler):
                 cost=ResourceCost(energy=140.0),
                 name="昙华生灭，天河泻梦"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="古镜照神"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -81,6 +88,13 @@ class JingliuKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【古镜照神】：进战获得 1 层朔望，恢复 15 点能量。"""
+        self.syzygy_stacks = min(self.max_syzygy, self.syzygy_stacks + 1)
+        self.port.gain_energy(self.owner_id, 15.0)
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

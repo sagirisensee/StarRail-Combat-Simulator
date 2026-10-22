@@ -66,6 +66,14 @@ class TrailblazerHarmonyKit(KitHandler):
                 allow_self=True,
                 name="喧嚣的盛会巡游"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ALLIES,
+                cost=ResourceCost(technique_points=1),
+                allow_self=True,
+                name="旷野的弦音"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -90,6 +98,22 @@ class TrailblazerHarmonyKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【旷野的弦音】：进入战斗后我方全体击破特攻提高 30%，持续 2 回合。"""
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="TB_Harmony_Technique_Break",
+                name="弦音 (开拓者同谐秘技全队击破特攻30%)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.BREAK_EFFECT, ModifierOp.ADD, 0.30),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

@@ -33,6 +33,22 @@ class KitHandler(ABC):
         """执行指定动作的具体战斗逻辑。"""
         pass
 
+    def use_technique(self) -> None:
+        """执行角色的进战前秘技逻辑。"""
+        try:
+            defn = self.definition(ActionKind.TECHNIQUE)
+            if not defn:
+                return
+            ctx = ActionContext(
+                action_id=f"{self.owner_id}_technique",
+                actor_id=self.owner_id,
+                kind=ActionKind.TECHNIQUE,
+                target_ids=()
+            )
+            self.execute(ctx)
+        except (ValueError, KeyError, NotImplementedError):
+            pass
+
     def on_battle_start(self) -> None:
         """战斗开始时的初始化被动与光环激活。"""
         pass

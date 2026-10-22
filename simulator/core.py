@@ -11,7 +11,7 @@ from typing import Callable, List, Optional, Dict, Any, Tuple
 
 from .events import (
     EventBus, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, 
-    ToughnessRecoverEvent
+    ToughnessRecoverEvent, TechniqueExecuteEvent
 )
 from .effects import (
     EffectResolver, AdvanceActionEffect, DelayActionEffect, ModifySPEffect, 
@@ -140,7 +140,8 @@ class SimulatorCombatPort:
         element: str,
         atk_multiplier: float,
         toughness_damage: float,
-        damage_tag: str = "direct"
+        damage_tag: str = "direct",
+        ignore_weakness: bool = False
     ) -> None:
         tgt = self._get_entity(target_id)
         src = self._get_entity(source_id)
@@ -148,9 +149,12 @@ class SimulatorCombatPort:
             return
         from .effects import DamageRequest
         req = DamageRequest(attacker=src, target=tgt, skill_multiplier=atk_multiplier)
-        self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=toughness_damage, element=element))
-        if toughness_damage > 0:
-            self.sim.resolver.enqueue(ReduceToughnessEffect(src, tgt, toughness_damage, element))
+        self.sim.resolver.enqueue(ApplyDamageEffect(
+            request=req,
+            toughness_reduction=toughness_damage,
+            element=element,
+            ignore_weakness=ignore_weakness
+        ))
 
 
 @dataclass
@@ -231,7 +235,14 @@ class Entity:
 
 
 class TurnSimulator:
-    def __init__(self, entities: Optional[List[Entity]] = None, initial_sp: int = 3, max_sp: int = 5):
+    def __init__(
+        self,
+        entities: Optional[List[Entity]] = None,
+        initial_sp: int = 3,
+        max_sp: int = 5,
+        use_techniques: bool = False,
+        technique_users: Optional[List[str]] = None
+    ):
         self.entities: List[Entity] = []
         self.current_av: float = 0.0
         self.event_bus: EventBus = EventBus()
@@ -243,9 +254,53 @@ class TurnSimulator:
         if entities:
             for e in entities:
                 self.add_entity(e, trigger_battle_start=False)
+
+            # 1. 结算进场常态被动与基础光环 (如花火天赋扩展SP上限至7点)
             for e in self.entities:
                 if getattr(e, "kit", None) is not None:
                     e.kit.on_battle_start()
+
+            # 2. 结算战前秘技 (Techniques)
+            if use_techniques:
+                target_users = technique_users or [e.name for e in self.entities if not e.is_enemy]
+                for user_id in target_users:
+                    self.use_technique(user_id)
+            elif technique_users:
+                for user_id in technique_users:
+                    self.use_technique(user_id)
+
+            self.resolver.resolve_all()
+
+    def get_entity(self, name_or_id: str) -> Optional[Entity]:
+        for e in self.entities:
+            if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
+                return e
+        return None
+
+    def _get_entity(self, name_or_id: str) -> Optional[Entity]:
+        return self.get_entity(name_or_id)
+
+    def use_technique(self, actor_id: str) -> None:
+        """在开战前执行指定角色的秘技。"""
+        ent = self._get_entity(actor_id)
+        if ent and getattr(ent, "kit", None) is not None:
+            try:
+                defn = ent.kit.definition(ActionKind.TECHNIQUE)
+                tech_name = defn.name if defn else "秘技"
+            except Exception:
+                tech_name = "秘技"
+
+            self.event_bus.publish(TechniqueExecuteEvent(
+                av=0.0,
+                cycle=0,
+                actor_id=ent.name,
+                actor_name=ent.name,
+                technique_name=tech_name,
+                description=f"施放秘技【{tech_name}】"
+            ))
+
+            ent.kit.use_technique()
+            self.resolver.resolve_all()
 
     def add_entity(self, entity: Entity, trigger_battle_start: bool = True):
         entity.simulator = self

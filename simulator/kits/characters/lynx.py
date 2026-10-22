@@ -55,6 +55,14 @@ class LynxKit(KitHandler):
                 allow_self=True,
                 name="雪原急救方案"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ALLIES,
+                cost=ResourceCost(technique_points=1),
+                allow_self=True,
+                name="巧克力能量棒"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -64,6 +72,22 @@ class LynxKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【巧克力能量棒】：进战为我方全体附上持续治疗回复状态 2 回合。"""
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Lynx_Technique_HoT",
+                name="能量棒持续回复 (玲可秘技)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

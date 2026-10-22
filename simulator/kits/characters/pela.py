@@ -54,6 +54,13 @@ class PelaKit(KitHandler):
                 cost=ResourceCost(energy=110.0),
                 name="通塔普的压制"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="先发制人"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -63,6 +70,32 @@ class PelaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【先发制人】：对敌方随机单体造成 80% 冰伤，使敌方全体防御降低 20% 持续 2 回合。"""
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            self.port.attack(
+                self.owner_id,
+                enemies[0],
+                element="Ice",
+                atk_multiplier=0.80,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+        for enemy in enemies:
+            self.port.upsert_status(BuffSpec(
+                key="Pela_Technique_DefShred",
+                name="减防 (佩拉秘技减防20%)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.20),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

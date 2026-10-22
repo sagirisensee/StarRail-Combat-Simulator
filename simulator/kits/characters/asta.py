@@ -66,6 +66,13 @@ class AstaKit(KitHandler):
                 allow_self=True,
                 name="星空祝言"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="灵光一现"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -93,6 +100,20 @@ class AstaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【灵光一现】：进入战斗后对敌方全体造成 50% 攻击力的火属性伤害。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Fire",
+                atk_multiplier=0.50,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

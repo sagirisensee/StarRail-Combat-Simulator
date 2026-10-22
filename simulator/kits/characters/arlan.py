@@ -63,6 +63,13 @@ class ArlanKit(KitHandler):
                 cost=ResourceCost(energy=110.0),
                 name="狂煞狂飙"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="极速收割"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -72,6 +79,20 @@ class ArlanKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【极速收割】：对敌方全体造成 80% 雷伤。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Lightning",
+                atk_multiplier=0.80,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

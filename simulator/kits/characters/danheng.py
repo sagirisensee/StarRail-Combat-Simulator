@@ -63,6 +63,13 @@ class DanHengKit(KitHandler):
                 cost=ResourceCost(energy=100.0),
                 name="洞天幻化，长梦一觉"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="破敌锋芒"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -72,6 +79,21 @@ class DanHengKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【破敌锋芒】：进战后攻击力提高 40%，持续 3 回合。"""
+        self.port.upsert_status(BuffSpec(
+            key="DanHeng_Technique_AtkBuff",
+            name="破敌 (丹恒秘技加攻40%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.40),),
+            duration=3,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True
+        ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

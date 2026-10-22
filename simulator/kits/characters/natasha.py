@@ -53,6 +53,13 @@ class NatashaKit(KitHandler):
                 allow_self=True,
                 name="新生之礼"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="催眠研究"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -62,6 +69,32 @@ class NatashaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【催眠研究】：对敌方单体造成 80% 物理伤害并使敌方全体伤害降低 30% 持续 1 回合。"""
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            self.port.attack(
+                self.owner_id,
+                enemies[0],
+                element="Physical",
+                atk_multiplier=0.80,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+        for enemy in enemies:
+            self.port.upsert_status(BuffSpec(
+                key="Natasha_Technique_Weaken",
+                name="虚弱 (娜塔莎秘技)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, -0.30),),
+                duration=1,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

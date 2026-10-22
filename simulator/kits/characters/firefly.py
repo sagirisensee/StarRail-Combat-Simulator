@@ -65,6 +65,13 @@ class FireflyKit(KitHandler):
                 allow_self=True,
                 name="火萤Ⅳ型-完全燃烧"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="Δ指令-焦土陨击"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -77,6 +84,31 @@ class FireflyKit(KitHandler):
                 self._execute_normal_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【Δ指令-焦土陨击】：进战对全体造成火伤并植入火弱点持续 2 回合！"""
+        enemies = self.port.enemies(self.owner_id)
+        for enemy in enemies:
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Fire",
+                atk_multiplier=2.00,
+                toughness_damage=10.0,
+                damage_tag="Technique"
+            )
+            self.port.upsert_status(BuffSpec(
+                key="Firefly_Tech_FireWeakness",
+                name="焦土陨击 (流萤秘技植入火弱点)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.20),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

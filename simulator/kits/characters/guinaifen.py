@@ -66,6 +66,13 @@ class GuinaifenKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="初来乍到，鸣锣开道"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="杂耍绝活"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -75,6 +82,23 @@ class GuinaifenKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【杂耍绝活】：进战随机单体造成 4 次火伤并施加【吞火】。"""
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            for _ in range(4):
+                self.port.attack(
+                    self.owner_id,
+                    enemies[0],
+                    element="Fire",
+                    atk_multiplier=0.50,
+                    toughness_damage=5.0,
+                    damage_tag="Technique"
+                )
+                self._apply_firekiss(enemies[0])
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

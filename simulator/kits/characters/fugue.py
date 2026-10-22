@@ -68,6 +68,13 @@ class FugueKit(KitHandler):
                 cost=ResourceCost(energy=130.0),
                 name="九尾引火，涅槃离离"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="狐媚清影"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -77,6 +84,30 @@ class FugueKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【狐媚清影】：进战对敌方全体造成削韧，并降低防御力 18% 持续 2 回合。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Fire",
+                atk_multiplier=0.50,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+            self.port.upsert_status(BuffSpec(
+                key=self.CLOUDFLAME_DEBUFF,
+                name="云焰 (忘归人秘技减防18%)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.18),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

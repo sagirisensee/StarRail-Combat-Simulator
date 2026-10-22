@@ -70,6 +70,13 @@ class ClaraKit(KitHandler):
                 allow_self=True,
                 name="是约定不是命令"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="胜利的小小代价"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -91,6 +98,21 @@ class ClaraKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【胜利的小小代价】：克拉拉受击概率大幅提高 2 回合。"""
+        self.port.upsert_status(BuffSpec(
+            key="Clara_Technique_Aggro",
+            name="嘲讽提高 (克拉拉秘技)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.AGGRO, ModifierOp.PERCENT, 5.0),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True
+        ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

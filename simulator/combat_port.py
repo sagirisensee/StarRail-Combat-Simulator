@@ -43,5 +43,6 @@ class CombatPort(Protocol):
         element: str,
         atk_multiplier: float,
         toughness_damage: float,
-        damage_tag: str = "direct"
+        damage_tag: str = "direct",
+        ignore_weakness: bool = False
     ) -> None: ...

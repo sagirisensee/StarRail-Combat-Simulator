@@ -67,6 +67,13 @@ class YukongKit(KitHandler):
                 cost=ResourceCost(energy=130.0),
                 name="贯云落羽"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="鸢飞戾天"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -91,6 +98,22 @@ class YukongKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【鸢飞戾天】：进战立即获得 2 层【鸣弦号令】。"""
+        self.bowstring_stacks = 2
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key=self.BOWSTRING_BUFF,
+                name="鸣弦号令 (驭空秘技全队攻击力提高80%)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.80),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

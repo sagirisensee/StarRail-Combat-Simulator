@@ -64,6 +64,13 @@ class BladeKit(KitHandler):
                 cost=ResourceCost(energy=130.0),
                 name="大辟赋"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="业途风"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -73,6 +80,21 @@ class BladeKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【业途风】：进战消耗生命，对敌方全体造成风属性伤害并获得 1 层充能。"""
+        self._add_charge()
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Wind",
+                atk_multiplier=0.40,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

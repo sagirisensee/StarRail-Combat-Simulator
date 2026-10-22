@@ -59,6 +59,13 @@ class WeltKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="拟似黑洞"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="画地为牢"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -68,6 +75,23 @@ class WeltKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【画地为牢】：进战使敌方全体速度降低 10%，行动延后 20%。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.delay_action(enemy, 0.20)
+            self.port.upsert_status(BuffSpec(
+                key="Welt_Technique_Slow",
+                name="减速 (瓦尔特秘技)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, -0.10),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

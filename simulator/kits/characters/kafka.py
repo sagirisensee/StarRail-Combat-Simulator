@@ -63,6 +63,13 @@ class KafkaKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="悲剧尽头的颤音"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="慈悲并不等于宽恕"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -85,6 +92,30 @@ class KafkaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【慈悲并不等于宽恕】：敌方全体造成 50% 雷伤并 100% 概率施加触电 2 回合。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Lightning",
+                atk_multiplier=0.50,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+            self.port.upsert_status(BuffSpec(
+                key=self.SHOCK_DEBUFF,
+                name="触电 (卡芙卡秘技)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

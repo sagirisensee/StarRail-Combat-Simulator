@@ -69,6 +69,13 @@ class QingqueKit(KitHandler):
                 cost=ResourceCost(energy=140.0),
                 name="四幺？和了！"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="独弈之乐"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -78,6 +85,14 @@ class QingqueKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【独弈之乐】：进战摸牌 2 张。"""
+        self.skill_draw_stacks = min(4, self.skill_draw_stacks + 2)
+        if self.skill_draw_stacks >= 4:
+            self.is_hidden_hand = True
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

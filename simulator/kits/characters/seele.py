@@ -65,6 +65,13 @@ class SeeleKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="乱蝶"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SELF,
+                cost=ResourceCost(technique_points=1),
+                name="幻影"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -74,6 +81,21 @@ class SeeleKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【幻影】：进战直接进入增幅状态（增伤 60%）。"""
+        self.port.upsert_status(BuffSpec(
+            key=self.AMPLIFY_BUFF,
+            name="增幅 (希儿秘技增伤60%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.60),),
+            duration=1,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True
+        ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

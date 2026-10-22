@@ -32,7 +32,15 @@ class TurnEndEvent(BattleEvent):
 class ActionExecuteEvent(BattleEvent):
     actor_id: str
     actor_name: str
-    action_type: str            # "BasicAttack", "Skill", "Ultimate", "FollowUp"
+    action_type: str            # "BasicAttack", "Skill", "Ultimate", "FollowUp", "Technique"
+    description: str
+
+
+@dataclass(frozen=True)
+class TechniqueExecuteEvent(BattleEvent):
+    actor_id: str
+    actor_name: str
+    technique_name: str
     description: str
 
 

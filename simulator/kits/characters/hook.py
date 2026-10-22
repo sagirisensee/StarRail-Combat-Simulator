@@ -66,6 +66,13 @@ class HookKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="轰！飞蹈的火花"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="天下第一痛！"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -75,6 +82,32 @@ class HookKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【天下第一痛！】：随机单体造成 50% 火伤，全体陷入灼烧 3 回合。"""
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            self.port.attack(
+                self.owner_id,
+                enemies[0],
+                element="Fire",
+                atk_multiplier=0.50,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+        for enemy in enemies:
+            self.port.upsert_status(BuffSpec(
+                key=self.BURN_DEBUFF,
+                name="灼烧 (虎克秘技)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(),
+                duration=3,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

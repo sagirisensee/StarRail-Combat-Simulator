@@ -63,6 +63,13 @@ class SilverWolfKit(KitHandler):
                 cost=ResourceCost(energy=110.0),
                 name="账号已封禁"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="强制结束进程"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -90,6 +97,21 @@ class SilverWolfKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【强制结束进程】：对敌方全体造成 80% 攻击力量子伤害，削韧 20 点。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Quantum",
+                atk_multiplier=0.80,
+                toughness_damage=20.0,
+                damage_tag="Technique",
+                ignore_weakness=True
+            )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

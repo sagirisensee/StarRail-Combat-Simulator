@@ -69,6 +69,13 @@ class LukaKit(KitHandler):
                 cost=ResourceCost(energy=130.0),
                 name="制胜一击"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SINGLE_ENEMY,
+                cost=ResourceCost(technique_points=1),
+                name="先祖的气力"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -78,6 +85,32 @@ class LukaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【先祖的气力】：单体造成 50% 物理伤害并施加裂伤，卢卡获得 1 层斗志。"""
+        self.fighting_will = min(4, self.fighting_will + 1)
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            self.port.attack(
+                self.owner_id,
+                enemies[0],
+                element="Physical",
+                atk_multiplier=0.50,
+                toughness_damage=20.0,
+                damage_tag="Technique"
+            )
+            self.port.upsert_status(BuffSpec(
+                key=self.BLEED_DEBUFF,
+                name="裂伤 (卢卡秘技)",
+                source_id=self.owner_id,
+                target_id=enemies[0],
+                modifiers=(),
+                duration=3,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

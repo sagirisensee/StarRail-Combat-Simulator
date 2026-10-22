@@ -65,6 +65,13 @@ class HanyaKit(KitHandler):
                 allow_self=False,
                 name="十王敕令，遍地收网"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.SINGLE_ENEMY,
+                cost=ResourceCost(technique_points=1),
+                name="日冥归晦"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -74,6 +81,24 @@ class HanyaKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【日冥归晦】：对敌方随机单体施加【承负】状态。"""
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            vuln = 0.40 if self.eidolon >= 6 else 0.30
+            self.port.upsert_status(BuffSpec(
+                key=self.BURDEN_DEBUFF,
+                name="承负 (寒鸦秘技易伤)",
+                source_id=self.owner_id,
+                target_id=enemies[0],
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, vuln),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

@@ -102,6 +102,12 @@ class SparkleKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【不可靠叙事者】：进入战斗后为我方额外恢复 3 点战技点！"""
+        self.port.change_sp(self.owner_id, 3, "花火秘技额外恢复3点战技点")
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

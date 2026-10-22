@@ -66,6 +66,13 @@ class HimekoKit(KitHandler):
                 cost=ResourceCost(energy=120.0),
                 name="天火天火"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="不完全燃烧"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -75,6 +82,22 @@ class HimekoKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【不完全燃烧】：使敌方受到的火属性伤害提高 10%，持续 2 回合。"""
+        for enemy in self.port.enemies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Himeko_Technique_FireVuln",
+                name="火易伤 (姬子秘技)",
+                source_id=self.owner_id,
+                target_id=enemy,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.10),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

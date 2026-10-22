@@ -62,6 +62,14 @@ class AventurineKit(KitHandler):
                 cost=ResourceCost(energy=110.0),
                 name="轮盘赌的勋爵"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ALLIES,
+                cost=ResourceCost(technique_points=1),
+                allow_self=True,
+                name="红黑之间"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
@@ -71,6 +79,24 @@ class AventurineKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【红黑之间】：进战为全队提供 1200 点护盾并提高 40% 防御力持续 3 回合！"""
+        allies = self.port.allies(self.owner_id)
+        for ally in allies:
+            self.port.add_shield(self.owner_id, ally, 1200.0, duration=3)
+            self.port.upsert_status(BuffSpec(
+                key="Aventurine_Tech_Def",
+                name="红黑之间 (砂金秘技防御力提高40%)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.DEF_PERCENT, ModifierOp.ADD, 0.40),),
+                duration=3,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]

@@ -69,6 +69,13 @@ class AcheronKit(KitHandler):
                 cost=ResourceCost(energy=0.0), # 黄泉不消耗能量，走残梦机制
                 name="残梦尽染，一刀缭断"
             )
+        elif kind == ActionKind.TECHNIQUE:
+            return AbilityDefinition(
+                kind=kind,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(technique_points=1),
+                name="四相断我"
+            )
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def on_battle_start(self) -> None:
@@ -121,6 +128,25 @@ class AcheronKit(KitHandler):
             self._execute_skill(ctx)
         elif ctx.kind == ActionKind.ULTIMATE:
             self._execute_ultimate(ctx)
+        elif ctx.kind == ActionKind.TECHNIQUE:
+            self._execute_technique(ctx)
+
+    def _execute_technique(self, ctx: ActionContext) -> None:
+        """秘技【四相断我】：进战对全体造成 80% 雷伤，无视弱点削韧 20 点，获得 2 点残梦并施加 2 点集真赤！"""
+        self.slashed_dream = min(9, self.slashed_dream + 2)
+        enemies = self.port.enemies(self.owner_id)
+        for enemy in enemies:
+            self.port.attack(
+                self.owner_id,
+                enemy,
+                element="Lightning",
+                atk_multiplier=0.80,
+                toughness_damage=20.0,
+                damage_tag="Technique",
+                ignore_weakness=True
+            )
+        if enemies:
+            self.crimson_knots[enemies[0]] = self.crimson_knots.get(enemies[0], 0) + 2
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
