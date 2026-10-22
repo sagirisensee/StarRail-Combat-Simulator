@@ -241,7 +241,8 @@ class TurnSimulator:
         initial_sp: int = 3,
         max_sp: int = 5,
         use_techniques: bool = False,
-        technique_users: Optional[List[str]] = None
+        technique_users: Optional[List[str]] = None,
+        auto_ult: bool = True
     ):
         self.entities: List[Entity] = []
         self.current_av: float = 0.0
@@ -250,6 +251,7 @@ class TurnSimulator:
         self.status_mgr: StatusManager = StatusManager(self)
         self.resolver: EffectResolver = EffectResolver(self)
         self.port: SimulatorCombatPort = SimulatorCombatPort(self)
+        self.auto_ult: bool = auto_ult
 
         if entities:
             for e in entities:
@@ -412,8 +414,20 @@ class TurnSimulator:
 
             if active_entity.action_callback:
                 active_entity.action_callback(active_entity, self.resolver, actual_action)
+            elif active_entity.is_enemy:
+                allies = [e for e in self.entities if not e.is_enemy]
+                if allies:
+                    import random
+                    target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))
+                    from .effects import ApplyDamageEffect, DamageRequest
+                    req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
+                    self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                    self.port.gain_energy(target.name, 10.0)
 
         self.resolver.resolve_all()
+
+        if self.auto_ult:
+            self.check_and_cast_ultimates()
 
         # 7. 状态时钟：结算【目标行动结束】与【施法者行动结束】状态
         self.status_mgr.tick_on_turn_end(active_entity)
@@ -438,6 +452,62 @@ class TurnSimulator:
         ))
         active_entity.reset_distance()
         return active_entity
+
+    def cast_ultimate(self, actor_id: str) -> bool:
+        """立即插入并施放指定角色的终结技。"""
+        ent = self.get_entity(actor_id)
+        if not ent or getattr(ent, "kit", None) is None:
+            return False
+
+        try:
+            defn = ent.kit.definition(ActionKind.ULTIMATE)
+        except Exception:
+            return False
+
+        # 校验并消耗能量 / 特殊机制 (如黄泉残梦)
+        if hasattr(ent.kit, "slashed_dream"):
+            if ent.kit.slashed_dream < 9:
+                return False
+            ent.kit.slashed_dream = 0
+        else:
+            if ent.max_energy > 0 and ent.energy < ent.max_energy:
+                return False
+            ent.energy = 0.0
+
+        self.event_bus.publish(ActionExecuteEvent(
+            av=round(self.current_av, 2),
+            cycle=self.current_cycle,
+            actor_id=ent.name,
+            actor_name=ent.name,
+            action_type=f"Ultimate ({defn.name})",
+            description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！"
+        ))
+
+        ctx = ActionContext(
+            action_id=f"{ent.name}_ult_{self.current_av:.1f}",
+            actor_id=ent.name,
+            kind=ActionKind.ULTIMATE,
+            target_ids=()
+        )
+        ent.kit.execute(ctx)
+        self.resolver.resolve_all()
+        return True
+
+    def check_and_cast_ultimates(self) -> List[str]:
+        """检查场上全员能量，自动抢断施放所有就绪的终结技。"""
+        casted = []
+        for e in self.entities:
+            if not e.is_enemy and getattr(e, "kit", None) is not None:
+                can_cast = False
+                if hasattr(e.kit, "slashed_dream"):
+                    can_cast = (e.kit.slashed_dream >= 9)
+                elif e.max_energy > 0 and e.energy >= e.max_energy:
+                    can_cast = True
+
+                if can_cast:
+                    if self.cast_ultimate(e.name):
+                        casted.append(e.name)
+        return casted
 
     def insert_ultimate(self, entity: Entity, description: str = "释放终结技", sp_change: int = 0):
         self.resolver.enqueue(InterruptActionEffect(

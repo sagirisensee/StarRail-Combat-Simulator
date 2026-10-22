@@ -45,6 +45,9 @@ class StatType(Enum):
     DEF_PERCENT = "def_pct"      # 防御力百分比
     MAX_HP_PERCENT = "max_hp_pct"# 生命上限百分比
     EFFECT_RES = "effect_res"    # 效果抵抗
+    AGGRO = "aggro"              # 嘲讽/仇恨值
+    BREAK_VULN = "break_vuln"    # 击破易伤
+    ATK = "atk"                  # 攻击力加成 (同 ATK_PERCENT)
 
 
 class ModifierOp(Enum):

@@ -347,17 +347,44 @@ class CharacterDB:
         else:
             profile = self.get_by_name(str(avatar_id_or_name_or_profile))
 
-        if not profile:
-            raise KeyError(f"未找到角色档案: {avatar_id_or_name_or_profile}")
-
-        panel = profile.panel
-        
         # 动态导入 Entity 与 Kit 注册中心保证类型安全
         from ..core import Entity
         try:
             from ..kits.registry import get_kit_class
         except ImportError:
             get_kit_class = None
+
+        if not profile:
+            # 若角色未在已导入的账号数据中，自动按满级标准模版构建并装配对应专属 Kit
+            char_name = str(avatar_id_or_name_or_profile)
+            kit_cls = get_kit_class(char_name) if get_kit_class else None
+            kit_inst = kit_cls(owner_id=char_name, port=None, eidolon=0) if kit_cls else None
+            max_energy = 120.0
+            if kit_inst:
+                try:
+                    from ..actions import ActionKind
+                    ult_defn = kit_inst.definition(ActionKind.ULTIMATE)
+                    if ult_defn and ult_defn.cost.energy > 0:
+                        max_energy = ult_defn.cost.energy
+                except Exception:
+                    pass
+            return Entity(
+                name=char_name,
+                base_speed=134.0,
+                base_atk=2600.0,
+                base_crit_rate=0.60,
+                base_crit_dmg=1.30,
+                max_hp=10000.0,
+                current_hp=10000.0,
+                energy=0.0,
+                max_energy=max_energy,
+                kit=kit_inst,
+                distance_remaining=10000.0,
+                policy=policy,
+                is_enemy=False
+            )
+
+        panel = profile.panel
         
         # 自动尝试装配对应的 KitHandler (未专门定制的角色优雅回退至 GenericKit)
         kit_inst = None
