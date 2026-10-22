@@ -51,7 +51,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             "心意相契的安宁",
             "神启",
             "天气正好，万物可爱！",
-            "烈阳惊雷的女武神",
+            "甘霖",
             "星月漫天的明日",
             "哀歌覆国的诗人"
         ]
@@ -87,6 +87,63 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertAlmostEqual(snap["dmg_boost"], 1.12, places=2)
         # 生命上限 = 6505.1 + 基础白字生命2419.5 * 20% + 2527 = 9516.0
         self.assertEqual(round(snap["max_hp"]), 9516)
+
+    def test_fengjin_full_status_verification(self):
+        """验证风堇在进战且缇宝施放大招后的实机全量面板与增益效果对账。"""
+        sim = TurnSimulator(
+            entities=self.entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
+        )
+        # 缇宝施放大招
+        sim.cast_ultimate("缇宝")
+
+        snap = sim.query_status("风堇")
+        buff_names = [b["name"] for b in snap["buffs"]]
+        other_names = [b["name"] for b in snap["other_effects"]]
+        debuff_names = [b["name"] for b in snap.get("debuffs", [])]
+
+        expected_buffs = [
+            "谕示",
+            "偏离和弦",
+            "暴风停歇",
+            "甘霖",
+            "我们自成旋律",
+            "天气正好，万物可爱！",
+            "神启",
+            "心意相契的安宁"
+        ]
+
+        expected_other = [
+            "好忙好忙的缇宝",
+            "血噬"
+        ]
+
+        # 1. 验证 8 个增益效果
+        self.assertEqual(len(buff_names), 8, f"风堇增益效果应为 8，实际为 {len(buff_names)}: {buff_names}")
+        for expected in expected_buffs:
+            self.assertIn(expected, buff_names, f"风堇应包含增益: {expected}")
+
+        # 2. 验证 2 个其他效果
+        self.assertEqual(len(other_names), 2, f"风堇其他效果应为 2，实际为 {len(other_names)}: {other_names}")
+        for expected in expected_other:
+            self.assertIn(expected, other_names, f"风堇应包含其他效果: {expected}")
+
+        # 3. 验证负面效果数量为 0
+        self.assertEqual(len(debuff_names), 0)
+
+        # 4. 动态属性数值与实机完全对账
+        self.assertEqual(int(snap["max_hp"]), 6014)
+        self.assertEqual(int(snap["current_energy"]), 70)
+        self.assertEqual(int(snap["max_energy"]), 140)
+        self.assertEqual(int(snap["current_atk"]), 1336)
+        self.assertEqual(int(snap["current_def"]), 1527)
+        self.assertEqual(round(snap["current_speed"]), 208)
+        self.assertAlmostEqual(snap["current_crit_rate"], 1.05, places=2)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.426, places=3)
+        self.assertAlmostEqual(snap["outgoing_healing"], 0.625, places=3)
+        self.assertAlmostEqual(snap["effect_res"], 0.917, places=3)
 
 
 if __name__ == "__main__":

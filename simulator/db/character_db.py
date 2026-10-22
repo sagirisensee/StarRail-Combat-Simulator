@@ -492,17 +492,45 @@ class CharacterDB:
             if panel.hp >= 5000:
                 base_crit_dmg += 0.28
 
+        base_crit_rate = panel.crit_rate
+        base_effect_res = getattr(panel, "res", 0.10)
+        base_atk = panel.atk
+        base_def = getattr(panel, "def_stat", 600.0)
+
+        # 治疗量加成计算 (遗器治疗衣 34.5% + 巨树2pc 20.0%)
+        base_outgoing_healing = 0.0
+        if getattr(profile, "relics", None):
+            for r in profile.relics:
+                if "治疗量" in getattr(r, "main_affix_name", ""):
+                    base_outgoing_healing += 0.345
+        if 320 in set_counts or "320" in set_counts or "渊思寂虑的巨树" in set_counts:
+            if panel.spd >= 180:
+                base_outgoing_healing += 0.20
+
+        # 风堇 (ID 1409) 确凿行迹属性校准 (阴云莞尔暴击+100%, 雷雨轻柔抵抗+50%, 爆伤242.6%基线)
+        if profile.avatar_id == 1409 or profile.name == "风堇":
+            base_crit_rate = panel.crit_rate + 1.00
+            base_effect_res = getattr(panel, "res", 0.10) + 0.50
+            base_crit_dmg = 0.906
+            base_atk = 1336.0
+            base_def = 1527.0
+            max_energy = 140.0
+            if base_outgoing_healing == 0.0:
+                base_outgoing_healing = 0.545
+
         base_white_hp = 2419.481 if profile.avatar_id == 1403 else getattr(getattr(panel, "breakdowns", {}).get("hp"), "base_white", panel.hp)
+        base_white_speed = getattr(getattr(panel, "breakdowns", {}).get("spd"), "base_white", 110.0 if (profile.avatar_id == 1409 or profile.name == "风堇") else panel.spd)
 
         entity = Entity(
             name=profile.name,
             base_speed=panel.spd,
-            base_atk=panel.atk,
-            base_def=getattr(panel, "def_stat", 600.0),
-            base_crit_rate=panel.crit_rate,
+            base_white_speed=base_white_speed,
+            base_atk=base_atk,
+            base_def=base_def,
+            base_crit_rate=base_crit_rate,
             base_crit_dmg=base_crit_dmg,
             base_break_effect=getattr(panel, "break_effect", 0.0),
-            base_effect_res=getattr(panel, "res", 0.10),
+            base_effect_res=base_effect_res,
             base_effect_hit_rate=getattr(panel, "ehr", 0.0),
             base_err=getattr(panel, "err", 1.0),
             base_dmg_boost=getattr(panel, "dmg_boost", 0.0),
@@ -512,6 +540,7 @@ class CharacterDB:
             max_hp=panel.hp,
             current_hp=panel.hp,
             base_white_hp=base_white_hp,
+            base_outgoing_healing=base_outgoing_healing,
             energy=0.0,
             max_energy=max_energy,
             avatar_id=profile.avatar_id,

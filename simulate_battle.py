@@ -326,11 +326,13 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     if snap.get('shield', 0.0) > 0:
         hp_str += f" │ 护盾: {floor_int(snap['shield']):,d}"
     print(f"   • 生命值 (HP)       : {hp_str}")
-    print(f"   • 行动速度 (SPD)    : {floor_str(snap['current_speed'], 2)} (基础 {floor_str(snap['base_speed'], 2)} │ 面板显示: {floor_int(snap['current_speed'])}) ➔ 距行动: {floor_str(snap['remaining_av'], 2)} AV")
+    print(f"   • 行动速度 (SPD)    : {floor_str(snap['current_speed'], 2)} (基础 {floor_str(snap['base_speed'], 2)} │ 面板显示: {round(snap['current_speed'])}) ➔ 距行动: {floor_str(snap['remaining_av'], 2)} AV")
     print(f"   • 实时攻击 (ATK)    : {floor_int(snap['current_atk']):,d} (基础 {floor_int(snap['base_atk']):,d})")
     print(f"   • 实时防御 (DEF)    : {floor_int(snap['current_def']):,d} (基础 {floor_int(snap['base_def']):,d})")
     print(f"   • 暴击率 (CRIT)     : {floor_str(snap['current_crit_rate']*100, 1)}% (基础 {floor_str(snap['base_crit_rate']*100, 1)}%)")
     print(f"   • 暴击伤害 (CDMG)   : {floor_str(snap['current_crit_dmg']*100, 1)}% (基础 {floor_str(snap['base_crit_dmg']*100, 1)}%)")
+    if snap.get('outgoing_healing', 0.0) > 0:
+        print(f"   • 治疗量加成 (HEAL) : +{floor_str(snap['outgoing_healing']*100, 1)}% (基础 +{floor_str(snap.get('base_outgoing_healing', 0.0)*100, 1)}%)")
     print(f"   • 全属性增伤 (DMG)  : +{floor_str(snap['dmg_boost']*100, 1)}%")
     print(f"   • 属性抗性穿透(PEN) : +{floor_str(snap['res_pen']*100, 1)}%")
     print(f"   • 受到易伤加深(VULN): +{floor_str(snap['vulnerability']*100, 1)}%")

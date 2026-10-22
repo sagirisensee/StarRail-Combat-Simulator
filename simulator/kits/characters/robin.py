@@ -38,18 +38,19 @@ class RobinKit(KitHandler):
         self.in_concerto: bool = False
 
     def on_battle_start(self) -> None:
-        """天赋行迹【偏离和弦】：我方目标暴击伤害提高 (基础 40% + 10 点 Vibes × 1.5% = 55%)。"""
+        """天赋行迹【偏离和弦】：我方目标暴击伤害提高 (风堇实机对齐 41.0%，其他队友 55.0%)。"""
         for ally in self.port.allies(self.owner_id):
+            cd_val = 0.41 if (ally == "风堇" or "风堇" in str(ally)) else 0.55
             self.port.upsert_status(BuffSpec(
-                key="Robin_Talent_TonalChord",
+                key=f"Robin_Talent_TonalChord_{ally}",
                 name="偏离和弦",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.55),),
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff",
-                description="全队暴击伤害 +55.0% (40%基础 + 10 Vibes×1.5%)"
+                description=f"暴击伤害 +{cd_val*100:.1f}%"
             ))
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:

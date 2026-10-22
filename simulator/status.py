@@ -52,6 +52,8 @@ class StatType(Enum):
     DMG_VULNERABILITY = "vulnerability" # 易伤区 (兼容别名)
     ERR = "err"                  # 能量恢复效率
     EHR = "ehr"                  # 效果命中
+    OUTGOING_HEALING = "outgoing_healing" # 治疗量加成
+    HEAL_BOOST = "outgoing_healing"       # 治疗量加成 (兼容别名)
 
 
 class ModifierOp(Enum):
@@ -190,15 +192,25 @@ class StatusManager:
                 active.append(s)
             self.statuses[target_name] = active
 
-    def calculate_stat(self, entity_name: str, base_val: float, stat_type: StatType) -> float:
+    def calculate_stat(self, entity_name: str, base_val: float, stat_type: StatType, white_base: float = 0.0) -> float:
         """动态计算指定属性的加成总值。
         
         符合星铁官方属性计算公式：
-        - 攻击力 ATK = 基础攻击力 * (1 + 攻击力%总和) + 固定攻击力总和
-        - 速度 SPD   = 基础速度 * (1 + 速度%总和) + 固定速度总和
-        - 防御力 DEF = 基础防御力 * (1 + 防御力%总和) + 固定防御力总和
-        - 暴击/暴伤/增伤/抗穿/易伤 = 基础值 + 加成数值总和
+        - 攻击力 ATK = 战前攻击力 + 基础白字攻击 * 攻击力%总和 + 固定攻击力总和
+        - 速度 SPD   = 战前速度 + 基础白字速度 * 速度%总和 + 固定速度总和
+        - 防御力 DEF = 战前防御力 + 基础白字防御 * 防御力%总和 + 固定防御力总和
+        - 暴击/暴伤/增伤/抗穿/易伤/治疗量 = 基础值 + 加成数值总和
         """
+        if white_base <= 0.0 and self.simulator:
+            ent = self.simulator.get_entity(entity_name)
+            if ent:
+                if stat_type == StatType.SPEED:
+                    white_base = getattr(ent, "base_white_speed", 0.0)
+                elif stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+                    white_base = getattr(ent, "base_white_atk", 0.0)
+                elif stat_type == StatType.DEF_PERCENT:
+                    white_base = getattr(ent, "base_white_def", 0.0)
+
         flat_sum = 0.0
         pct_sum = 0.0
 
@@ -241,12 +253,15 @@ class StatusManager:
                         pct_sum += total_mod_val
 
         if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
-            return base_val * (1.0 + pct_sum) + flat_sum
+            eff_base = white_base if white_base > 0 else base_val
+            return base_val + (eff_base * pct_sum) + flat_sum
         elif stat_type == StatType.SPEED:
-            return base_val * (1.0 + pct_sum) + flat_sum
+            eff_base = white_base if white_base > 0 else base_val
+            return base_val + (eff_base * pct_sum) + flat_sum
         elif stat_type == StatType.MAX_HP_PERCENT:
-            return base_val * (1.0 + pct_sum) + flat_sum
-        elif stat_type in (StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST, StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT, StatType.DEF_SHRED):
+            eff_base = white_base if white_base > 0 else base_val
+            return base_val + (eff_base * pct_sum) + flat_sum
+        elif stat_type in (StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST, StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT, StatType.DEF_SHRED, StatType.OUTGOING_HEALING):
             return base_val + flat_sum
 
         return (base_val + flat_sum) * (1.0 + pct_sum)
@@ -263,10 +278,11 @@ class StatusManager:
         base_res = getattr(entity, "base_effect_res", 0.10)
         base_ehr = getattr(entity, "base_effect_hit_rate", 0.0)
         base_err = getattr(entity, "base_err", 1.0)
+        base_heal = getattr(entity, "base_outgoing_healing", 0.0)
 
         # 采样各属性
         cur_atk = self.calculate_stat(name, base_atk, StatType.ATK_BASE)
-        cur_spd = self.calculate_stat(name, base_spd, StatType.SPEED)
+        cur_spd = self.calculate_stat(name, base_spd, StatType.SPEED, white_base=getattr(entity, "base_white_speed", 0.0))
         cur_def = self.calculate_stat(name, base_def, StatType.DEF_PERCENT)
         cur_cr = self.calculate_stat(name, base_cr, StatType.CRIT_RATE)
         cur_cd = self.calculate_stat(name, base_cd, StatType.CRIT_DMG)
@@ -276,6 +292,7 @@ class StatusManager:
         def_shred = self.calculate_stat(name, 0.0, StatType.DEF_SHRED)
         break_eff = self.calculate_stat(name, base_be, StatType.BREAK_EFFECT)
         effect_res = self.calculate_stat(name, base_res, StatType.EFFECT_RES)
+        cur_heal = self.calculate_stat(name, base_heal, StatType.OUTGOING_HEALING)
 
         # 统计百分比增量构成
         atk_pct = (cur_atk - base_atk) / base_atk if base_atk > 0 else 0.0
@@ -395,6 +412,8 @@ class StatusManager:
             "effect_res": effect_res,
             "effect_hit_rate": base_ehr,
             "err": base_err,
+            "outgoing_healing": cur_heal,
+            "base_outgoing_healing": base_heal,
 
             # 韧性系统 (敌方)
             "max_toughness": getattr(entity, "max_toughness", 0.0),
@@ -423,6 +442,7 @@ class StatusManager:
                 "break_effect": break_eff,
                 "effect_res": effect_res,
                 "effect_hit_rate": base_ehr,
-                "err": base_err
+                "err": base_err,
+                "outgoing_healing": cur_heal
             }
         }

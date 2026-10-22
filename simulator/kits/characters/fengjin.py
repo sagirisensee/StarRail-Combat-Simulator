@@ -8,13 +8,30 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 class FengjinKit(KitHandler):
     """风堇 (ID 1409, 风 / 记忆, E1)."""
 
+    def on_battle_start(self):
+        """进战挂载【暴风停歇】：速度 > 200 时触发自身与小伊卡生命上限提高 20%，治疗量提高。"""
+        self.port.upsert_status(BuffSpec(
+            key="Fengjin_Trace_StormCalm",
+            name="暴风停歇",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(
+                Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),
+                Modifier(StatType.OUTGOING_HEALING, ModifierOp.ADD, 0.08),
+            ),
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="生命上限提高 +20.0%，治疗量提高 +8.0%"
+        ))
+
     def definition(self, kind: ActionKind):
         if kind == ActionKind.BASIC:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="轻风拂野")
         elif kind == ActionKind.SKILL:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1), name="堇色狂岚")
         elif kind == ActionKind.ULTIMATE:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(energy=120.0), name="狂岚绝响·千叶飞花")
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(energy=140.0), name="狂岚绝响·千叶飞花")
         elif kind == ActionKind.TECHNIQUE:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(technique_points=1), name="天气正好，万物可爱！")
         raise ValueError(f"未支持的动作类型: {kind}")

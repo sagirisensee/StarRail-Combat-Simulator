@@ -41,8 +41,8 @@ class TestCharacterKitsComprehensive(unittest.TestCase):
         sim = TurnSimulator(entities=[sparkle, dps, boss])
         self.assertEqual(sim.sp.max_sp, 7, "花火天赋应将 SP 上限提升至 7 点")
 
-        # 花火 E3 (>= E1) 开局提速 15%
-        self.assertAlmostEqual(sparkle.speed, sparkle.base_speed * 1.15, places=1)
+        # 花火 E3 (>= E1) 开局提速 15% (基于白字基础速度加成: base_speed + base_white_speed * 0.15)
+        self.assertAlmostEqual(sparkle.speed, sparkle.base_speed + sparkle.base_white_speed * 0.15, places=1)
 
         # 施放战技拉条与暴伤
         dps.distance_remaining = 8000.0

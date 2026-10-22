@@ -189,6 +189,10 @@ class Entity:
     max_hp: float = 10000.0
     current_hp: float = 10000.0
     base_white_hp: float = 0.0            # 基础白字生命 (角色白字+光锥白字，用于百分比生命加成)
+    base_white_speed: float = 0.0         # 基础白字速度 (角色基础白字速度，用于百分比速度加成)
+    base_white_atk: float = 0.0           # 基础白字攻击
+    base_white_def: float = 0.0           # 基础白字防御
+    base_outgoing_healing: float = 0.0    # 基础治疗量加成
     shield: float = 0.0
     energy: float = 0.0
     max_energy: float = 120.0
@@ -229,7 +233,7 @@ class Entity:
     def speed(self) -> float:
         """从状态管理器动态计算实时速度，无缝支持速度 Buff/Debuff。"""
         if self.simulator and hasattr(self.simulator, "status_mgr"):
-            return max(1.0, self.simulator.status_mgr.calculate_stat(self.name, self.base_speed, StatType.SPEED))
+            return max(1.0, self.simulator.status_mgr.calculate_stat(self.name, self.base_speed, StatType.SPEED, white_base=getattr(self, "base_white_speed", 0.0)))
         return max(1.0, self.base_speed)
 
     @property

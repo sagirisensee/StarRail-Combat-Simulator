@@ -33,7 +33,7 @@ class TestRelicRegistryAndDecoupling(unittest.TestCase):
 
         snap_ally1 = sim1.query_status("队友")
         buff_names1 = [b["name"] for b in snap_ally1["buffs"]]
-        self.assertNotIn("烈阳惊雷的女武神", buff_names1, "裸体风堇绝不应附带女武神遗器效果")
+        self.assertNotIn("甘霖", buff_names1, "裸体风堇绝不应附带女武神遗器效果")
 
         # 任意其他角色 (如队友) 穿戴女武神 4 件套进战：应正常为全队提供暴伤 +15%
         valk_handler = RelicRegistry.create("烈阳惊雷的女武神", owner_id="队友", pieces=4)
@@ -48,7 +48,7 @@ class TestRelicRegistryAndDecoupling(unittest.TestCase):
 
         snap_fengjin = sim2.query_status("风堇")
         buff_names2 = [b["name"] for b in snap_fengjin["buffs"]]
-        self.assertIn("烈阳惊雷的女武神", buff_names2, "其他角色装备女武神应正常为全队赋予暴伤增益")
+        self.assertIn("甘霖", buff_names2, "其他角色装备女武神应正常为全队赋予暴伤增益")
         self.assertAlmostEqual(snap_fengjin["current_crit_dmg"], snap_fengjin["base_crit_dmg"] + 0.15, places=2)
 
     def test_poet_decoupled_from_tibao(self):

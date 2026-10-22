@@ -31,6 +31,21 @@ class TibaoKit(KitHandler):
                 description="天赋追加攻击伤害提高 +729.0%"
             ))
 
+        # 天赋标记【好忙好忙的缇宝】(其他效果)：队友施放大招后触发缇宝追击
+        for ally in self.port.allies(self.owner_id):
+            if ally != self.owner_id:
+                self.port.upsert_status(BuffSpec(
+                    key=f"Tribbie_Talent_BusyBusy_{ally}",
+                    name="好忙好忙的缇宝",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="other",
+                    description="队友施放终结技后，触发缇宝天赋追加攻击 (可触发)"
+                ))
+
     def definition(self, kind: ActionKind):
         if kind == ActionKind.BASIC:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="灵心荧光")
@@ -94,11 +109,21 @@ class TibaoKit(KitHandler):
                     description=f"结界领域内受到伤害提高 +{zone_vuln*100:.1f}%"
                 ))
 
-            # 2. 为我方全体附加战技核心增益【神启】(根据当前战技等级动态读取抗穿参数)，并为队友回能
+            # 2. 为我方全体附加战技核心增益【神启】(根据当前战技等级动态读取抗穿参数)，并重置队友【好忙好忙的缇宝】追击计数
             res_pen = self.skill_param("skill", 0, default=0.264)
             for a in self.port.allies(self.owner_id):
                 if a != self.owner_id:
-                    self.port.gain_energy(a, 35.0 if self.eidolon >= 6 else 30.0)
+                    self.port.upsert_status(BuffSpec(
+                        key=f"Tribbie_Talent_BusyBusy_{a}",
+                        name="好忙好忙的缇宝",
+                        source_id=self.owner_id,
+                        target_id=a,
+                        modifiers=(),
+                        duration=None,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        category="other",
+                        description="队友施放终结技后，触发缇宝天赋追加攻击 (次数已重置)"
+                    ))
                 self.port.upsert_status(BuffSpec(
                     key="Tribbie_Ult_DivineRevelation",
                     name="神启",
