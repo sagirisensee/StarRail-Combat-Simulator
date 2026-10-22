@@ -38,14 +38,14 @@ class RobinKit(KitHandler):
         self.in_concerto: bool = False
 
     def on_battle_start(self) -> None:
-        """天赋【偏离和弦】：我方全体暴击伤害提高 20%。"""
+        """天赋行迹【偏离和弦】：我方目标暴击伤害提高 (基础 40% + 10 点 Vibes × 1.5% = 55%)。"""
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
                 key="Robin_Talent_TonalChord",
                 name="偏离和弦",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.20),),
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.55),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff"
@@ -86,7 +86,7 @@ class RobinKit(KitHandler):
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def use_technique(self) -> None:
-        """秘技【我们自成旋律】：进战后自身恢复 5 点能量，并为我方全体提供进战增益。"""
+        """秘技【我们自成旋律】：进战后自身恢复 5 点能量，并为我方全体提供造成伤害提高 30% 增益。"""
         self.port.gain_energy(self.owner_id, 5.0)
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
@@ -94,7 +94,7 @@ class RobinKit(KitHandler):
                 name="我们自成旋律",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.15),),
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,

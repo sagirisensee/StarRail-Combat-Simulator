@@ -69,9 +69,12 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(len(debuff_names), 0, "开局我方应无负面效果")
 
         # 5. 动态属性数值校验
-        self.assertAlmostEqual(snap["current_crit_dmg"], snap["base_crit_dmg"] + 0.96 + 0.20 + 0.15, places=2)
-        self.assertAlmostEqual(snap["res_pen"], 0.24, places=2)
+        self.assertAlmostEqual(snap["current_crit_dmg"], snap["base_crit_dmg"] + 0.96 + 0.55 + 0.15, places=2)
+        self.assertAlmostEqual(snap["current_crit_rate"], snap["base_crit_rate"] + 0.32, places=2)
+        self.assertAlmostEqual(snap["res_pen"], 0.264, places=3)
         self.assertAlmostEqual(snap["def_shred"], 0.18, places=2)
+        # 生命上限 = 6505.1 * 1.20 + 2527 = 10333.1
+        self.assertAlmostEqual(snap["max_hp"], snap["base_max_hp"] * 1.20 + 2527.0 if "base_max_hp" in snap else 10333.1, delta=1.0)
 
 
 if __name__ == "__main__":

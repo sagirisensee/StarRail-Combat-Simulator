@@ -242,6 +242,8 @@ class StatusManager:
             return base_val * (1.0 + pct_sum) + flat_sum
         elif stat_type == StatType.SPEED:
             return base_val * (1.0 + pct_sum) + flat_sum
+        elif stat_type == StatType.MAX_HP_PERCENT:
+            return base_val * (1.0 + pct_sum) + flat_sum
         elif stat_type in (StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST, StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT, StatType.DEF_SHRED):
             return base_val + flat_sum
 
@@ -278,14 +280,31 @@ class StatusManager:
         spd_pct = (cur_spd - base_spd) / base_spd if base_spd > 0 else 0.0
         def_pct = (cur_def - base_def) / base_def if base_def > 0 else 0.0
 
+        base_max_hp = getattr(entity, "max_hp", 0.0)
+        cur_max_hp = base_max_hp
+        if base_max_hp != float("inf") and base_max_hp > 0:
+            cur_max_hp = self.calculate_stat(name, base_max_hp, StatType.MAX_HP_PERCENT)
+        cur_hp = entity.current_hp + (cur_max_hp - base_max_hp) if (entity.current_hp > 0 and base_max_hp != float("inf")) else entity.current_hp
+
         # Buff 详情列表
         active_buffs = []
         for s in self.get_statuses(name):
             mod_strs = []
             for m in s.modifiers:
-                op_str = "%" if (m.op == ModifierOp.PERCENT or m.stat in (StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST, StatType.VULNERABILITY, StatType.DEF_SHRED, StatType.BREAK_EFFECT, StatType.EFFECT_RES)) else ""
-                val_disp = m.value * 100 if op_str == "%" else m.value
-                mod_strs.append(f"{m.stat.name} +{val_disp:.1f}{op_str}")
+                if m.stat == StatType.MAX_HP_PERCENT:
+                    if m.op == ModifierOp.PERCENT:
+                        mod_strs.append(f"生命上限 +{m.value * 100:.1f}%")
+                    else:
+                        mod_strs.append(f"生命上限 +{m.value:.0f}")
+                elif s.name == "星月漫天的明日" and m.value >= 7.0:
+                    mod_strs.append(f"追加攻击伤害提高 +{m.value * 100:.1f}%")
+                else:
+                    op_str = "%" if (m.op == ModifierOp.PERCENT or m.stat in (StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST, StatType.VULNERABILITY, StatType.DEF_SHRED, StatType.BREAK_EFFECT, StatType.EFFECT_RES)) else ""
+                    val_disp = m.value * 100 if op_str == "%" else m.value
+                    mod_strs.append(f"{m.stat.name} +{val_disp:.1f}{op_str}")
+
+            if not mod_strs and s.name == "猜猜这里住着谁":
+                mod_strs.append("结界领域展开中：敌方在结界内受到伤害提高 +33.0%")
 
             source_name = getattr(s.source, "name", str(s.source))
             active_buffs.append({
@@ -316,7 +335,7 @@ class StatusManager:
                         if isinstance(v, (int, float, bool, str, list, dict)):
                             kit_state[k] = v
 
-        hp_pct = (entity.current_hp / entity.max_hp) if (entity.max_hp > 0 and entity.max_hp != float("inf")) else 1.0
+        hp_pct = (cur_hp / cur_max_hp) if (cur_max_hp > 0 and cur_max_hp != float("inf")) else 1.0
 
         return {
             # 基础身份元数据
@@ -329,8 +348,8 @@ class StatusManager:
             "is_enemy": getattr(entity, "is_enemy", False),
 
             # 生存与行动资源
-            "current_hp": entity.current_hp,
-            "max_hp": entity.max_hp,
+            "current_hp": cur_hp,
+            "max_hp": cur_max_hp,
             "hp_pct": hp_pct,
             "is_infinite_hp": getattr(entity, "is_infinite_hp", False) or entity.max_hp == float("inf"),
             "shield": getattr(entity, "shield", 0.0),

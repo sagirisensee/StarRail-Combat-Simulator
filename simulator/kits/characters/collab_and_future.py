@@ -255,14 +255,14 @@ class FengjinKit(KitHandler):
             self.use_technique()
 
     def use_technique(self):
-        """秘技【天气正好，万物可爱！】：进场时为我方全体施加增益。"""
+        """秘技【天气正好，万物可爱！】：进场时为我方全体提供生命上限提高 20% 增益。"""
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
                 key="Fengjin_Tech_WeatherIsFine",
                 name="天气正好，万物可爱！",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.10),),
+                modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
@@ -291,26 +291,26 @@ class TibaoKit(KitHandler):
         err = getattr(ent, "err", 1.0) if ent else 1.0
         self.port.gain_energy(self.owner_id, 30.0 * err)
 
-        # 星魂 6 常驻质变状态【星月漫天的明日】
+        # 星魂 6 常驻质变状态【星月漫天的明日】(天赋追加增伤 729%)
         if self.eidolon >= 6:
             self.port.upsert_status(BuffSpec(
                 key="Tribbie_E6_StarsAndMoonTomorrow",
                 name="星月漫天的明日",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.25),),
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 7.29),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff"
             ))
 
-        # 遗器 4 件套常驻增益【哀歌覆国的诗人】
+        # 遗器 4 件套常驻增益【哀歌覆国的诗人】(暴击率 32%)
         self.port.upsert_status(BuffSpec(
             key="Relic_PoetOfMourning_4pc",
             name="哀歌覆国的诗人",
             source_id=self.owner_id,
             target_id=self.owner_id,
-            modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.06),),
+            modifiers=(Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.32),),
             duration=None,
             timing=DurationTiming.TARGET_TURN_END,
             category="buff"
@@ -352,7 +352,7 @@ class TibaoKit(KitHandler):
                 ))
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
-            # 1. 展开结界领域【猜猜这里住着谁】(其他效果)
+            # 1. 展开结界领域【猜猜这里住着谁】(其他效果，Lv.12敌方受击伤害+33%)
             self.port.upsert_status(BuffSpec(
                 key="Tribbie_Ult_Zone_GuessWhoLivesHere",
                 name="猜猜这里住着谁",
@@ -363,8 +363,20 @@ class TibaoKit(KitHandler):
                 timing=DurationTiming.CASTER_TURN_END,
                 category="other"
             ))
+            for e in self.port.enemies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key="Tribbie_Ult_Zone_Vulnerability",
+                    name="结界易伤 (猜猜这里住着谁)",
+                    source_id=self.owner_id,
+                    target_id=e,
+                    modifiers=(Modifier(StatType.VULNERABILITY, ModifierOp.ADD, 0.33),),
+                    duration=3,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True,
+                    category="debuff"
+                ))
 
-            # 2. 为我方全体附加终结技核心增益【神启】(全属性抗穿 24%)，并为队友回能
+            # 2. 为我方全体附加终结技核心增益【神启】(12级技能全属性抗穿 26.4%)，并为队友回能
             for a in self.port.allies(self.owner_id):
                 if a != self.owner_id:
                     self.port.gain_energy(a, 35.0 if self.eidolon >= 6 else 30.0)
@@ -373,7 +385,7 @@ class TibaoKit(KitHandler):
                     name="神启",
                     source_id=self.owner_id,
                     target_id=a,
-                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.24),),
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.264),),
                     duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
@@ -395,13 +407,13 @@ class TibaoKit(KitHandler):
                         category="buff"
                     ))
 
-            # 4. 额外能力【长翅膀的玻璃球！】：处于结界期间自身生命上限提升 20%
+            # 4. 额外能力【长翅膀的玻璃球！】：处于结界期间自身生命上限提升 2527 点数值
             self.port.upsert_status(BuffSpec(
                 key="Tribbie_A4_GlassBallWithWings",
                 name="长翅膀的玻璃球！",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
-                modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, 0.20),),
+                modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, 2527.0),),
                 duration=3,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
@@ -413,20 +425,22 @@ class TibaoKit(KitHandler):
 
             # 6. 星魂 6【星月漫天的明日】：施放终结技时立即触发一次追加攻击
             if self.eidolon >= 6:
-                # 额外能力【城墙外的羊羔儿】：施放追加攻击时获得增益
+                # 额外能力【城墙外的羊羔儿】：施放追加攻击时自身增伤 72%
                 self.port.upsert_status(BuffSpec(
                     key="Tribbie_A2_LambOutsideTheWall",
                     name="城墙外的羊羔儿",
                     source_id=self.owner_id,
                     target_id=self.owner_id,
-                    modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
-                    duration=2,
+                    modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.72),),
+                    duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
                     category="buff"
                 ))
+                # 天赋追加攻击基础倍率 1.20，享有 E6 增伤 729%
+                fu_mult = 1.20 * (1.0 + 7.29)
                 for e in self.port.enemies(self.owner_id):
-                    self.port.attack(self.owner_id, e, element="Quantum", atk_multiplier=1.20, toughness_damage=10.0, damage_tag="FollowUpAttack")
+                    self.port.attack(self.owner_id, e, element="Quantum", atk_multiplier=fu_mult, toughness_damage=10.0, damage_tag="FollowUpAttack")
         elif ctx.kind == ActionKind.TECHNIQUE:
             self.use_technique()
 
