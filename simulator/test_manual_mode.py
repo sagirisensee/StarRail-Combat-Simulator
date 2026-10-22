@@ -66,6 +66,31 @@ class TestManualMode(unittest.TestCase):
         # 残梦层数清空
         self.assertEqual(self.acheron.kit.slashed_dream, 0)
 
+    def test_advance_to_next_turn_and_execute_current_turn(self):
+        # 跑道推进：让花火到达终点 (0.0 AV)
+        actor = self.sim.advance_to_next_turn()
+        self.assertEqual(actor.name, "花火")
+        self.assertAlmostEqual(actor.remaining_av, 0.0, places=5)
+        self.assertEqual(self.sim.current_turn_entity.name, "花火")
+
+        # 在花火行动前，黄泉充能完毕，可以插队施放终结技
+        self.acheron.kit.slashed_dream = 9
+        ready = self.sim.get_ready_ultimates()
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(ready[0].name, "黄泉")
+
+        # 插队施放终结技
+        self.sim.cast_ultimate("黄泉")
+        # 终结技施放后，花火依然停留在终点等待行动决策！
+        self.assertEqual(self.sim.current_turn_entity.name, "花火")
+
+        # 此时执行花火的行动：战技指定黄泉
+        actor_done = self.sim.execute_current_turn(action_override=ActionKind.SKILL, target_ids=("黄泉",))
+        self.assertEqual(actor_done.name, "花火")
+        self.assertIsNone(self.sim.current_turn_entity)
+        # 花火重置跑道距离
+        self.assertEqual(self.sparkle.distance_remaining, 10000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

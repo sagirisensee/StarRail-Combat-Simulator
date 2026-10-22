@@ -77,6 +77,15 @@ TEAM_PRESETS = {
     }
 }
 
+TARGET_MODE_NAMES = {
+    TargetMode.SELF: "自身",
+    TargetMode.SINGLE_ALLY: "我方单体",
+    TargetMode.ALL_ALLIES: "我方全体",
+    TargetMode.SINGLE_ENEMY: "敌方单体",
+    TargetMode.ALL_ENEMIES: "敌方全体",
+    TargetMode.BLAST: "扩散",
+}
+
 
 def create_boss_entity(name: str = "拟真首领 (混沌12层)", hp: float = 450000.0, toughness: float = 120.0, speed: float = 115.0) -> Entity:
     """构建高拟真精英/Boss 实体。"""
@@ -239,6 +248,9 @@ def run_simulation(
     for name in team_members:
         pol = (policies or {}).get(name, "E")
         ent = db.to_combat_entity(name, policy=pol)
+        # 遵循星铁混沌回忆/实战基准规则：角色进场默认享有 50% 基础能量充能
+        if ent.max_energy > 0 and ent.energy == 0.0:
+            ent.energy = ent.max_energy * 0.5
         entities.append(ent)
         kit_name = ent.kit.__class__.__name__ if getattr(ent, "kit", None) else "None"
         print(f"   • {ent.name:10} | 星魂: E{ent.eidolon} | 速度: {ent.base_speed:6.2f} | 攻击: {ent.base_atk:6.1f} | 暴率/暴伤: {ent.base_crit_rate*100:4.1f}%/{ent.base_crit_dmg*100:5.1f}% | 套件: {kit_name}")
@@ -297,88 +309,181 @@ def run_simulation(
     auto_all = not interactive
     user_quit = False
 
+    # 4.1 开场就绪决策 (Battle Start Decision)
+    # 战斗刚打响、跑道计时启动前，若我方已有充盈终结技，给玩家先手施放机会
+    if interactive:
+        while True:
+            ready_ults = sim.get_ready_ultimates()
+            if not ready_ults or boss.current_hp <= 0:
+                break
+
+            print("\n" + "═" * 78)
+            print("🚩 【开场就绪决策 (Battle Opening)】 - 战斗正式打响！跑道行进前，我方终结技充盈")
+            print("─" * 78)
+            print(f"当前战技点: {sim.sp.current_sp}/{sim.sp.max_sp} │ 行动值: 0.0 AV")
+            print("🔥【队伍就绪终结技 (可立即先手施放)】:")
+            for i, u in enumerate(ready_ults):
+                u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
+                u_name = u_defn.name if u_defn else "终结技"
+                t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
+                e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
+
+            print("\n【可选决策】:")
+            print("  [Enter] 无需开场终结技，开始跑道行动")
+            print("  [U<序号>] 先手抢施对应终结技 (如 U1)")
+            print("  [AA]    开启全自动战斗")
+            print("  [Q]     认输 / 退出模拟")
+            print("─" * 78)
+
+            try:
+                cmd = input("👉 请输入开场决策指令 [Enter/U1/AA/Q, 默认 Enter]: ").strip().upper()
+            except (EOFError, KeyboardInterrupt):
+                cmd = ""
+
+            if not cmd:
+                break
+            elif cmd.startswith("U") or cmd.isdigit():
+                idx_str = cmd[1:] if cmd.startswith("U") else cmd
+                if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
+                    target_char = ready_ults[int(idx_str) - 1]
+                    handle_cast_ultimate(sim, target_char, team_members)
+                    if boss.current_hp <= 0:
+                        break
+                    continue
+                else:
+                    print("❌ 无效的终结技编号！")
+            elif cmd == "AA":
+                print("⚡ 已开启全程自动战斗托管！")
+                auto_all = True
+                sim.auto_ult = True
+                break
+            elif cmd == "Q":
+                user_quit = True
+                break
+
+    # 4.2 战斗回合主循环 (当跑道有单位到达终点 0.0 AV 时触发决策)
     while turn_count < max_turns and boss.current_hp > 0:
-        if sim.current_cycle > max_cycles:
+        if sim.current_cycle > max_cycles or user_quit:
             break
 
-        next_ent = sim.next_entity
-        if not next_ent:
+        # 跑道推进：让最快到达终点的单位抵达终点 (0.0 AV) 并结算回合开始状态 (如持续伤害结算)
+        actor = sim.advance_to_next_turn()
+        if not actor:
+            break
+
+        # 回合开始结算后，检查 Boss 是否已因 DoT 阵亡
+        if boss.current_hp <= 0:
             break
 
         # 全自动推演分支
         if auto_all:
             if sim.auto_ult:
                 sim.check_and_cast_ultimates()
-            sim.step()
+            sim.execute_current_turn()
             turn_count += 1
             continue
 
-        # 敌方回合分支：提示玩家是否有终结技抢断
-        if next_ent.is_enemy:
-            ready_ults = sim.get_ready_ultimates()
-            if ready_ults:
-                print(f"\n⚠️  【敌方行动预警】 敌方【{next_ent.name}】即将行动！")
-                print("🔥 当前就绪终结技:")
+        # 敌方单位到达终点：提示玩家敌方即将行动，列出所有可触发的插队终结技
+        if actor.is_enemy:
+            while True:
+                ready_ults = sim.get_ready_ultimates()
+                if not ready_ults or boss.current_hp <= 0:
+                    sim.execute_current_turn()
+                    turn_count += 1
+                    break
+
+                print("\n" + "═" * 78)
+                print(f"⚠️  【敌方行动预警】 敌方【{actor.name}】已到达终点 (0.0 AV)，即将行动！")
+                print("─" * 78)
+                print("🔥【我方队伍就绪终结技 (可在此刻抢断插队，先发制人)】:")
                 for i, u in enumerate(ready_ults):
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
-                    print(f"   [U{i+1}] 【{u.name}】➔ 《{u_name}》")
-                try:
-                    user_in = input("👉 请输入抢断终结技编号 (如 U1, U2) 或直接按 [Enter] 让敌方行动: ").strip().upper()
-                except (EOFError, KeyboardInterrupt):
-                    user_in = ""
+                    t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
+                    e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
-                if user_in.startswith("U"):
-                    idx_str = user_in[1:]
+                print("\n【可选决策】:")
+                print("  [Enter] 不抢断，继续敌方行动")
+                print("  [U<序号>] 抢断施放对应终结技 (如 U1)")
+                print("  [AA]    开启全自动战斗")
+                print("  [Q]     认输 / 退出模拟")
+                print("─" * 78)
+
+                try:
+                    cmd = input("👉 请输入决策指令 [Enter/U1/AA/Q, 默认 Enter]: ").strip().upper()
+                except (EOFError, KeyboardInterrupt):
+                    cmd = ""
+
+                if not cmd:
+                    sim.execute_current_turn()
+                    turn_count += 1
+                    break
+                elif cmd.startswith("U") or cmd.isdigit():
+                    idx_str = cmd[1:] if cmd.startswith("U") else cmd
                     if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
                         target_char = ready_ults[int(idx_str) - 1]
                         handle_cast_ultimate(sim, target_char, team_members)
                         if boss.current_hp <= 0:
                             break
                         continue
-                elif user_in.isdigit() and 1 <= int(user_in) <= len(ready_ults):
-                    target_char = ready_ults[int(user_in) - 1]
-                    handle_cast_ultimate(sim, target_char, team_members)
-                    if boss.current_hp <= 0:
-                        break
-                    continue
+                    else:
+                        print("❌ 无效的终结技编号！")
+                elif cmd == "AA":
+                    auto_all = True
+                    sim.auto_ult = True
+                    sim.execute_current_turn()
+                    turn_count += 1
+                    break
+                elif cmd == "Q":
+                    user_quit = True
+                    break
 
-            # 敌方正常行动
-            sim.step()
-            turn_count += 1
+            if user_quit or boss.current_hp <= 0:
+                break
             continue
 
-        # 我方角色回合分支
-        render_hud(sim, boss, team_members, next_ent)
-
-        action_override = None
-        target_ids = ()
-
+        # 我方角色到达终点：展示完整战场仪表盘与所有可触发决策 (自身技能 + 全队已充盈终结技)
         while True:
+            render_hud(sim, boss, team_members, actor)
             ready_ults = sim.get_ready_ultimates()
-            defn_basic = next_ent.kit.definition(ActionKind.BASIC) if getattr(next_ent, "kit", None) else None
-            defn_skill = next_ent.kit.definition(ActionKind.SKILL) if getattr(next_ent, "kit", None) else None
+
+            defn_basic = actor.kit.definition(ActionKind.BASIC) if getattr(actor, "kit", None) else None
+            defn_skill = actor.kit.definition(ActionKind.SKILL) if getattr(actor, "kit", None) else None
             sp_cost = defn_skill.cost.sp if (defn_skill and hasattr(defn_skill, "cost")) else 1
             can_use_skill = sim.sp.can_consume(sp_cost)
 
-            print(f"\n🎮 【{next_ent.name}】回合行动决策 (当前战技点: {sim.sp.current_sp}/{sim.sp.max_sp}):")
             basic_name = defn_basic.name if defn_basic else "普攻"
-            print(f"  [1] 普攻 ({basic_name} ➔ 回复 1 SP)")
+            basic_target = TARGET_MODE_NAMES.get(getattr(defn_basic, "target_mode", None), "敌方单体")
             skill_name = defn_skill.name if defn_skill else "战技"
-            skill_status = f"消耗 {sp_cost} SP" if can_use_skill else "⚠️ 战技点不足"
-            print(f"  [2] 战技 ({skill_name} ➔ {skill_status})")
+            skill_target = TARGET_MODE_NAMES.get(getattr(defn_skill, "target_mode", None), "敌方单体")
 
-            for i, u in enumerate(ready_ults):
-                u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
-                u_name = u_defn.name if u_defn else "终结技"
-                print(f"  [U{i+1}] 终结技抢断: 【{u.name}】➔ 《{u_name}》 (Ready!)")
+            print(f"\n🎮 【当前决策窗口】 轮到【{actor.name}】行动 (距终点: 0.0 AV │ 战技点: {sim.sp.current_sp}/{sim.sp.max_sp}):")
+            print("─" * 78)
+            print("【本回合行动决策】:")
+            print(f"  [1] 普攻: 《{basic_name}》 (回复 1 SP │ 目标: {basic_target})")
+            skill_sp_desc = f"消耗 {sp_cost} SP" if can_use_skill else f"⚠️ 战技点不足 (需 {sp_cost} 点)"
+            print(f"  [2] 战技: 《{skill_name}》 ({skill_sp_desc} │ 目标: {skill_target})")
 
-            print(f"  [A]  本回合托管自动 (Auto)")
-            print(f"  [AA] 开启全自动战斗 (Full Auto)")
-            print(f"  [Q]  认输 / 退出模拟")
+            if ready_ults:
+                print("\n🔥【队伍就绪终结技 (可随时抢断插队)】:")
+                for i, u in enumerate(ready_ults):
+                    u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
+                    u_name = u_defn.name if u_defn else "终结技"
+                    t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
+                    e_desc = f"残梦: {u.kit.slashed_dream}/9" if hasattr(u.kit, "slashed_dream") else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    is_self_tag = " (当前行动者)" if u.name == actor.name else ""
+                    print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc}){is_self_tag}")
+
+            print("\n【托管与控制】:")
+            print("  [A]  本回合托管自动 (Auto)")
+            print("  [AA] 开启全自动战斗 (Full Auto)")
+            print("  [Q]  认输 / 退出模拟")
+            print("─" * 78)
 
             try:
-                cmd = input(f"👉 请输入指令 [1/2/U1/A/AA/Q, 默认 1]: ").strip().upper()
+                cmd = input(f"👉 请输入决策指令 [1/2/U1/A/AA/Q, 默认 1]: ").strip().upper()
             except (EOFError, KeyboardInterrupt):
                 cmd = "Q"
 
@@ -386,15 +491,18 @@ def run_simulation(
                 cmd = "1"
 
             if cmd == "1":
-                action_override = ActionKind.BASIC
+                sim.execute_current_turn(action_override=ActionKind.BASIC)
+                turn_count += 1
                 break
             elif cmd == "2":
                 if not can_use_skill:
                     print(f"❌ 战技点不足 (当前 {sim.sp.current_sp} 点，需要 {sp_cost} 点)，无法施放战技！")
                     continue
-                action_override = ActionKind.SKILL
+                target_ids = ()
                 if defn_skill and hasattr(defn_skill, "target_mode") and defn_skill.target_mode == TargetMode.SINGLE_ALLY:
-                    target_ids = prompt_ally_target(sim, next_ent, team_members, action_name=defn_skill.name)
+                    target_ids = prompt_ally_target(sim, actor, team_members, action_name=defn_skill.name)
+                sim.execute_current_turn(action_override=ActionKind.SKILL, target_ids=target_ids)
+                turn_count += 1
                 break
             elif cmd.startswith("U") or (cmd.isdigit() and int(cmd) > 2):
                 idx_str = cmd[1:] if cmd.startswith("U") else cmd
@@ -403,19 +511,21 @@ def run_simulation(
                     handle_cast_ultimate(sim, target_char, team_members)
                     if boss.current_hp <= 0:
                         break
-                    render_hud(sim, boss, team_members, next_ent)
+                    # 终结技插队结算后，重新返回当前角色的行动决策
                     continue
                 else:
                     print("❌ 无效的终结技编号！")
                     continue
             elif cmd == "A":
-                action_override = None
+                sim.execute_current_turn(action_override=None)
+                turn_count += 1
                 break
             elif cmd == "AA":
                 print("⚡ 已开启全程自动战斗托管！")
                 auto_all = True
                 sim.auto_ult = True
-                action_override = None
+                sim.execute_current_turn(action_override=None)
+                turn_count += 1
                 break
             elif cmd == "Q":
                 print("🏳️ 玩家主动撤退退出模拟。")
@@ -426,10 +536,6 @@ def run_simulation(
 
         if user_quit or boss.current_hp <= 0:
             break
-
-        # 执行指定动作
-        sim.step(action_override=action_override, target_ids=target_ids)
-        turn_count += 1
 
     # 5. 战斗结果结算报表
     print("\n" + "═" * 78)

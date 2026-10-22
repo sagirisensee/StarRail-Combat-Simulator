@@ -252,6 +252,7 @@ class TurnSimulator:
         self.resolver: EffectResolver = EffectResolver(self)
         self.port: SimulatorCombatPort = SimulatorCombatPort(self)
         self.auto_ult: bool = auto_ult
+        self._current_turn_entity: Optional[Entity] = None
 
         if entities:
             for e in entities:
@@ -328,11 +329,13 @@ class TurnSimulator:
     def get_action_order(self) -> List[Entity]:
         return sorted(self.entities, key=lambda e: e.remaining_av)
 
-    def step(
-        self, 
-        action_override: Optional[ActionKind] = None, 
-        target_ids: Optional[Tuple[str, ...]] = None
-    ) -> Optional[Entity]:
+    @property
+    def current_turn_entity(self) -> Optional[Entity]:
+        """获取当前已到达跑道终点、处于行动决策窗口中的实体。"""
+        return self._current_turn_entity
+
+    def advance_to_next_turn(self) -> Optional[Entity]:
+        """将跑道推进至最快到达终点的实体 (0.0 AV)，结算【回合开始】状态时钟并发布 TurnBeginEvent。"""
         if not self.entities:
             return None
 
@@ -358,6 +361,21 @@ class TurnSimulator:
             actor_name=active_entity.name,
             speed=round(active_entity.speed, 1)
         ))
+
+        self._current_turn_entity = active_entity
+        return active_entity
+
+    def execute_current_turn(
+        self, 
+        action_override: Optional[ActionKind] = None, 
+        target_ids: Optional[Tuple[str, ...]] = None
+    ) -> Entity:
+        """执行当前到达终点实体的回合动作，结算伤害、终结技抢断、状态时钟与回合结束。"""
+        active_entity = self._current_turn_entity
+        if active_entity is None:
+            active_entity = self.advance_to_next_turn()
+            if active_entity is None:
+                raise RuntimeError("场上无可用实体执行行动")
 
         # 5. 决定动作意图与执行路径 (优先走 KitHandler 架构)
         intent = active_entity.get_next_action_intent()
@@ -466,7 +484,21 @@ class TurnSimulator:
             actor_name=active_entity.name
         ))
         active_entity.reset_distance()
+        self._current_turn_entity = None
         return active_entity
+
+    def step(
+        self, 
+        action_override: Optional[ActionKind] = None, 
+        target_ids: Optional[Tuple[str, ...]] = None
+    ) -> Optional[Entity]:
+        if not self.entities:
+            return None
+        if self._current_turn_entity is None:
+            actor = self.advance_to_next_turn()
+            if not actor:
+                return None
+        return self.execute_current_turn(action_override=action_override, target_ids=target_ids)
 
     def can_cast_ultimate(self, actor_id: str) -> bool:
         """检查指定角色当前是否满足终结技施放条件 (满能量或满特殊层数)。"""
