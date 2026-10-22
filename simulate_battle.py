@@ -25,9 +25,13 @@ import argparse
 from typing import List, Dict, Any, Optional, Tuple
 
 def floor_val(val: float, decimals: int = 1) -> float:
-    """遵循星铁引擎统一向下截断规范 (Floor Truncation)。"""
+    """遵循星铁引擎统一向下截断规范 (Floor Truncation，含浮点精度微小容差防抖)。"""
     factor = 10 ** decimals
-    return math.floor(val * factor + 1e-9) / factor
+    return math.floor(val * factor + 1e-4) / factor
+
+def floor_int(val: float) -> int:
+    """遵循星铁实机整数显示规范。"""
+    return math.floor(val + 1e-4)
 
 def floor_str(val: float, decimals: int = 1) -> str:
     """遵循星铁引擎统一向下截断字符串格式化。"""
@@ -318,13 +322,13 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     print(f"🔍 【{snap['name']}】 实时属性与 Buff 全量透析 │ {role_tag}")
     print("━" * 78)
     print("📊 实时动态面板 (Dynamic Attributes - 遵循星铁向下截断规范):")
-    hp_str = f"{math.floor(snap['current_hp']):,d} / {math.floor(snap['max_hp']):,d}" if snap['max_hp'] != float("inf") else "∞ / ∞ (无限生命测试木桩)"
+    hp_str = f"{floor_int(snap['current_hp']):,d} / {floor_int(snap['max_hp']):,d}" if snap['max_hp'] != float("inf") else "∞ / ∞ (无限生命测试木桩)"
     if snap.get('shield', 0.0) > 0:
-        hp_str += f" │ 护盾: {math.floor(snap['shield']):,d}"
+        hp_str += f" │ 护盾: {floor_int(snap['shield']):,d}"
     print(f"   • 生命值 (HP)       : {hp_str}")
-    print(f"   • 行动速度 (SPD)    : {floor_str(snap['current_speed'], 2)} (基础 {floor_str(snap['base_speed'], 2)} │ 提速: +{floor_str(snap['speed_gain_pct']*100, 1)}%) ➔ 距行动: {floor_str(snap['remaining_av'], 2)} AV")
-    print(f"   • 实时攻击 (ATK)    : {floor_str(snap['current_atk'], 1)} (基础 {floor_str(snap['base_atk'], 1)} │ 攻击增量: +{floor_str(snap['atk_gain_pct']*100, 1)}%)")
-    print(f"   • 实时防御 (DEF)    : {floor_str(snap['current_def'], 1)} (基础 {floor_str(snap['base_def'], 1)} │ 防御增量: +{floor_str(snap['def_gain_pct']*100, 1)}%)")
+    print(f"   • 行动速度 (SPD)    : {floor_str(snap['current_speed'], 2)} (基础 {floor_str(snap['base_speed'], 2)} │ 面板显示: {floor_int(snap['current_speed'])}) ➔ 距行动: {floor_str(snap['remaining_av'], 2)} AV")
+    print(f"   • 实时攻击 (ATK)    : {floor_int(snap['current_atk']):,d} (基础 {floor_int(snap['base_atk']):,d})")
+    print(f"   • 实时防御 (DEF)    : {floor_int(snap['current_def']):,d} (基础 {floor_int(snap['base_def']):,d})")
     print(f"   • 暴击率 (CRIT)     : {floor_str(snap['current_crit_rate']*100, 1)}% (基础 {floor_str(snap['base_crit_rate']*100, 1)}%)")
     print(f"   • 暴击伤害 (CDMG)   : {floor_str(snap['current_crit_dmg']*100, 1)}% (基础 {floor_str(snap['base_crit_dmg']*100, 1)}%)")
     print(f"   • 全属性增伤 (DMG)  : +{floor_str(snap['dmg_boost']*100, 1)}%")
@@ -336,7 +340,7 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     print(f"   • 效果抵抗 (RES)    : {floor_str(snap['effect_res']*100, 1)}%")
     if snap.get('effect_hit_rate', 0.0) > 0:
         print(f"   • 效果命中 (EHR)    : {floor_str(snap['effect_hit_rate']*100, 1)}%")
-    print(f"   • 能量状态 (ENERGY) : {floor_str(snap['current_energy'], 1)} / {floor_str(snap['max_energy'], 1)} (实机整数显示: {math.floor(snap['current_energy'])})")
+    print(f"   • 能量状态 (ENERGY) : {floor_int(snap['current_energy'])} / {floor_int(snap['max_energy'])} (实机精算: {floor_str(snap['current_energy'], 1)})")
 
     if snap.get("kit_state"):
         print("\n⚙️ 角色专属机制与层数 (Kit Mechanics State):")
