@@ -183,7 +183,24 @@ class SimulatorCombatPort:
     def max_hp(self, entity_id: str) -> float:
         ent = self._get_entity(entity_id)
         if ent:
-            return getattr(ent, "max_hp", 0.0)
+            base_max_hp = getattr(ent, "max_hp", 0.0)
+            if hasattr(self.sim, "status_mgr") and base_max_hp > 0 and base_max_hp != float("inf"):
+                white_hp = getattr(ent, "base_white_hp", 0.0) or base_max_hp
+                hp_pct_sum = 0.0
+                hp_flat_sum = 0.0
+                for status in self.sim.status_mgr.get_statuses(ent.name):
+                    for mod in status.modifiers:
+                        if mod.stat == StatType.MAX_HP_PERCENT:
+                            val = mod.value * status.stacks
+                            if mod.op == ModifierOp.PERCENT:
+                                hp_pct_sum += val
+                            elif mod.op == ModifierOp.ADD:
+                                if val > 1.0:
+                                    hp_flat_sum += val
+                                else:
+                                    hp_pct_sum += val
+                return base_max_hp + (white_hp * hp_pct_sum) + hp_flat_sum
+            return base_max_hp
         return 0.0
 
     def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None:
@@ -374,17 +391,7 @@ class TurnSimulator:
             for e in entities:
                 self.add_entity(e, trigger_battle_start=False)
 
-            # 1. 结算进场常态被动与基础光环 (如花火天赋扩展SP上限至7点、光锥进战回能与谕示、遗器被动)
-            for e in self.entities:
-                if getattr(e, "kit", None) is not None:
-                    e.kit.on_battle_start()
-                if getattr(e, "light_cone", None) is not None:
-                    e.light_cone.on_battle_start()
-                for rh in getattr(e, "relic_handlers", []):
-                    rh.port = self.port
-                    rh.on_battle_start()
-
-            # 2. 结算战前秘技 (Techniques)
+            # 1. 战前秘技 (Techniques 在入场前生效)
             if use_techniques:
                 target_users = technique_users or [e.name for e in self.entities if not e.is_enemy]
                 if not technique_users:
@@ -396,9 +403,9 @@ class TurnSimulator:
                                 name = d.name if d else ""
                             except Exception:
                                 name = ""
-                            if "天气正好" in name or "治" in name or "护" in name or "不可靠" in name:
+                            if "银狼" in name or "瓦尔特" in name or "卡芙卡" in name or "黑天鹅" in name:
                                 return 0
-                            if "我们自成旋律" in name or "结界" in name or "领域" in name:
+                            if "自律" in name or "知更鸟" in name or "星期日" in name:
                                 return 2
                         return 1
                     target_users = sorted(target_users, key=_tech_order)
@@ -408,7 +415,7 @@ class TurnSimulator:
                 for user_id in technique_users:
                     self.use_technique(user_id)
 
-            # 3. 结算关卡环境机制 (按关卡入参动态挂载)
+            # 2. 关卡环境机制 (Stage Mechanics 环境效果在进战时挂载)
             if stage_mechanics:
                 for mech in stage_mechanics:
                     for e in self.entities:
@@ -423,6 +430,16 @@ class TurnSimulator:
                             category="other",
                             description="关卡全局环境机制"
                         ))
+
+            # 3. 战斗开始被动与光环 (on_battle_start)
+            for e in self.entities:
+                if getattr(e, "kit", None) is not None:
+                    e.kit.on_battle_start()
+                if getattr(e, "light_cone", None) is not None:
+                    e.light_cone.on_battle_start()
+                for rh in getattr(e, "relic_handlers", []):
+                    rh.port = self.port
+                    rh.on_battle_start()
 
             self.resolver.resolve_all()
 

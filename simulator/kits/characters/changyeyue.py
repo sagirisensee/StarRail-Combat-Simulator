@@ -46,8 +46,17 @@ class ChangyeyueKit(KitHandler):
 
     @property
     def spirit_max_hp(self) -> float:
-        """忆灵「长夜」生命上限为长夜月的 50% (官方参数 param_list[4] = 0.50)。"""
-        return 0.50 * self.port.max_hp(self.owner_id)
+        """忆灵「长夜」生命上限为长夜月实时生命上限的 50% (满血 4313 点)。"""
+        return float(round(0.50 * self.port.max_hp(self.owner_id)))
+
+    def _has_stage_bleed(self) -> bool:
+        """检查当前关卡环境是否挂载【血噬】机制。"""
+        if self.port.has_status(self.owner_id, f"Stage_Mechanic_血噬_{self.owner_id}"):
+            return True
+        sim = getattr(self.port, "sim", None)
+        if sim and "血噬" in getattr(sim, "stage_mechanics", []):
+            return True
+        return False
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
@@ -92,6 +101,11 @@ class ChangyeyueKit(KitHandler):
         self.threshold_issued = False
         if not was_alive or self.spirit_hp <= 0:
             self.spirit_hp = self.spirit_max_hp
+            # 关卡【血噬】机制：召唤/进场受到一次血噬扣血 500 点 (4313 -> 3813)
+            if self._has_stage_bleed():
+                bleed_loss = 500.0
+                self.spirit_hp = max(1.0, self.spirit_hp - bleed_loss)
+                self.on_hp_lost("长夜", bleed_loss, cause="stage_mechanic_bleed_summon")
 
         # 忆灵天赋【孤独，浮游，漆黑】：长夜在场增伤 70%
         self.port.upsert_status(BuffSpec(
@@ -119,11 +133,11 @@ class ChangyeyueKit(KitHandler):
             return
         target = enemies[0]
 
-        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴击伤害提高 15%，持续 2 回合
+        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值 (3813 -> 3622)
         if self.spirit_hp <= 0:
             self.spirit_hp = self.spirit_max_hp
-        hp_loss = self.spirit_hp * 0.05
-        self.spirit_hp = max(1.0, self.spirit_hp - hp_loss)
+        hp_loss = round(self.spirit_hp * 0.05, 2)
+        self.spirit_hp = max(1.0, round(self.spirit_hp - hp_loss, 2))
 
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_A2_Skill_CritDmg",
@@ -137,8 +151,14 @@ class ChangyeyueKit(KitHandler):
             description="暴击伤害提高 +15.0%"
         ))
 
-        # 天赋【今夜与我同行】：长夜月或忆灵「长夜」每次生命降低时，使自身和忆灵「长夜」暴伤提高 60% 持续 2 回合，并获得 2 点忆质 (E2为3点)
-        self.on_hp_lost(self.owner_id, hp_loss, cause="memosprite_skill_cost")
+        # 天赋【今夜与我同行】：长夜扣血触发生命降低暴伤提升与忆质累积
+        self.on_hp_lost("长夜", hp_loss, cause="memosprite_skill_cost")
+
+        # 立即行动进入长夜自身回合 (Turn Begin)：若处于【血噬】环境再次扣血 500 点 (3622 -> 3122)
+        if self._has_stage_bleed():
+            turn_bleed = 500.0
+            self.spirit_hp = max(1.0, round(self.spirit_hp - turn_bleed, 2))
+            self.on_hp_lost("长夜", turn_bleed, cause="stage_mechanic_bleed_turn_begin")
 
         # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 5.0)
@@ -243,8 +263,9 @@ class ChangyeyueKit(KitHandler):
             self.bursting = False
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
-        """生命降低响应：暴伤提高 60% 并获得 2 点【忆质】(E2为3点)。"""
-        if (entity_id == self.owner_id or entity_id == "长夜") and cause != "evernight_self_destruct":
+        """生命降低响应：受到攻击或技能自耗生命时，暴伤提高 60% 并获得 2 点【忆质】(E2为3点)。
+        注意：关卡环境机制 (如【血噬】) 造成的扣血为环境负面扣血，不视为受到攻击，不触发天赋产质。"""
+        if (entity_id == self.owner_id or entity_id == "长夜") and not cause.startswith("evernight_self_destruct") and not cause.startswith("stage_mechanic"):
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Talent_CritDmg",
                 name="今夜与我同行 (生命降低暴伤+60%)",
