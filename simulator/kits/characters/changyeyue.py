@@ -40,6 +40,7 @@ class ChangyeyueKit(KitHandler):
         self.darkness: bool = False
         self.charges: int = 0
         self.spirit_alive: bool = False
+        self.spirit_hp: float = 0.0
         self.threshold_issued: bool = False
         self.bursting: bool = False
 
@@ -49,7 +50,7 @@ class ChangyeyueKit(KitHandler):
         return 0.50 * self.port.max_hp(self.owner_id)
 
     def on_battle_start(self) -> None:
-        """进战：由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
+        """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
         # E2 自带 60% 暴伤提升
         if self.eidolon >= 2:
             self.port.upsert_status(BuffSpec(
@@ -64,6 +65,23 @@ class ChangyeyueKit(KitHandler):
                 description="暴击伤害提高 +60.0%"
             ))
 
+        # 行迹【天黑黑，月寂寂】：长夜月和忆灵「长夜」暴击率提高 35%
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_A2_CritRate",
+            name="天黑黑，月寂寂 (暴击率+35%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.35),),
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="暴击率提高 +35.0%"
+        ))
+
+        # 行迹【烛火起，烛火熄】：战斗开始时，长夜月恢复 70 点能量并获得 1 点【忆质】
+        self.port.gain_energy(self.owner_id, 70.0)
+        self.gain_yizhi(1)
+
         # 召唤伴生忆灵「长夜」在场（入场触发【与夜，形影，不离】）
         self.summon_spirit()
 
@@ -72,6 +90,8 @@ class ChangyeyueKit(KitHandler):
         was_alive = self.spirit_alive
         self.spirit_alive = True
         self.threshold_issued = False
+        if not was_alive or self.spirit_hp <= 0:
+            self.spirit_hp = self.spirit_max_hp
 
         # 忆灵天赋【孤独，浮游，漆黑】：长夜在场增伤 70%
         self.port.upsert_status(BuffSpec(
@@ -98,6 +118,31 @@ class ChangyeyueKit(KitHandler):
         if not enemies:
             return
         target = enemies[0]
+
+        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴击伤害提高 15%，持续 2 回合
+        if self.spirit_hp <= 0:
+            self.spirit_hp = self.spirit_max_hp
+        hp_loss = self.spirit_hp * 0.05
+        self.spirit_hp = max(1.0, self.spirit_hp - hp_loss)
+
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_A2_Skill_CritDmg",
+            name="天黑黑，月寂寂 (施法暴伤+15%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="暴击伤害提高 +15.0%"
+        ))
+
+        # 天赋【今夜与我同行】：长夜月或忆灵「长夜」每次生命降低时，使自身和忆灵「长夜」暴伤提高 60% 持续 2 回合，并获得 2 点忆质 (E2为3点)
+        self.on_hp_lost(self.owner_id, hp_loss, cause="memosprite_skill_cost")
+
+        # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
+        self.port.gain_energy(self.owner_id, 5.0)
+        self.gain_yizhi(1)
 
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
         # 对敌方单体造成等同于「长夜」70% 生命上限的冰属性伤害，
@@ -173,8 +218,12 @@ class ChangyeyueKit(KitHandler):
                     self.darkness = False
                     self.clear_darkness_buffs()
 
+            # 行迹【天黑黑，月寂寂】：忆灵「长夜」施放【迷梦，流失，如露】后，为我方恢复 1 个战技点
+            self.port.change_sp(self.owner_id, 1, "evernight_a2_sp_recover")
+
             # 忆灵自毁离场
             self.spirit_alive = False
+            self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
 
             # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (上限 40%)
@@ -195,7 +244,7 @@ class ChangyeyueKit(KitHandler):
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
         """生命降低响应：暴伤提高 60% 并获得 2 点【忆质】(E2为3点)。"""
-        if entity_id == self.owner_id and cause != "evernight_self_destruct":
+        if (entity_id == self.owner_id or entity_id == "长夜") and cause != "evernight_self_destruct":
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Talent_CritDmg",
                 name="今夜与我同行 (生命降低暴伤+60%)",
@@ -209,6 +258,68 @@ class ChangyeyueKit(KitHandler):
             ))
             # 获得 2 点忆质 (E2 自动 +1 变为 3 点)
             self.gain_yizhi(2)
+
+    def _get_remembrance_count(self) -> int:
+        """统计队伍中「记忆」命途角色数量 (供行迹【天亮了，雨落了】结算)。"""
+        count = 1  # 长夜月本体
+        allies = self.port.allies(self.owner_id)
+        if hasattr(self.port, "_get_entity"):
+            for a_name in allies:
+                if a_name != self.owner_id:
+                    ent = getattr(self.port, "_get_entity")(a_name)
+                    if ent and getattr(ent, "path", "") == "Remembrance":
+                        count += 1
+        return count
+
+    def get_memosprite_snapshot(self) -> dict:
+        """返回伴生忆灵「长夜」的完整独立状态快照。"""
+        max_hp = self.spirit_max_hp
+        cur_hp = self.spirit_hp if self.spirit_alive else 0.0
+        hp_pct = (cur_hp / max_hp) if max_hp > 0 else 0.0
+
+        buffs = [
+            {"name": "孤独，浮游，漆黑 (在场增伤+70%)", "value": "增伤 +70.0%"},
+            {"name": "天黑黑，月寂寂 (暴击率+35%)", "value": "暴率 +35.0%"}
+        ]
+        if self.eidolon >= 2:
+            buffs.append({"name": "呓语 (E2暴伤+60%)", "value": "暴伤 +60.0%"})
+        if self.port.has_status(self.owner_id, "Changyeyue_A2_Skill_CritDmg"):
+            buffs.append({"name": "天黑黑，月寂寂 (施法暴伤+15%)", "value": "暴伤 +15.0%"})
+        if self.port.has_status(self.owner_id, "Changyeyue_Talent_CritDmg"):
+            buffs.append({"name": "今夜与我同行 (生命降低暴伤+60%)", "value": "暴伤 +60.0%"})
+
+        return {
+            "name": "长夜",
+            "owner": "长夜月",
+            "is_memosprite": True,
+            "is_alive": self.spirit_alive,
+            "current_hp": round(cur_hp, 1),
+            "max_hp": round(max_hp, 1),
+            "hp_pct": round(hp_pct, 4),
+            "speed": 160.0,
+            "aggro": 125,
+            "buffs": buffs,
+            "skills": [
+                "追忆，蹁跹，如雨 (忆灵技 1141301)",
+                "迷梦，流失，如露 (终极爆发 1141307)",
+                "孤独，浮游，漆黑 (免控与在场增伤 1141303)",
+                "与夜，形影，不离 (入场立即行动 1141305)",
+                "与你，再见，无期 (离场加速 1141306)"
+            ]
+        }
+
+    def get_kit_state(self) -> dict:
+        return {
+            "eidolon": self.eidolon,
+            "yizhi": self.yizhi,
+            "darkness": self.darkness,
+            "charges": self.charges,
+            "spirit_alive": self.spirit_alive,
+            "spirit_hp": round(self.spirit_hp, 1),
+            "spirit_max_hp": round(self.spirit_max_hp, 1),
+            "spirit_hp_pct": round(self.spirit_hp / self.spirit_max_hp, 4) if self.spirit_max_hp > 0 else 0.0,
+            "memosprite": self.get_memosprite_snapshot()
+        }
 
     def clear_darkness_buffs(self) -> None:
         """退出【至暗之谜】状态。"""
@@ -247,12 +358,31 @@ class ChangyeyueKit(KitHandler):
             cur_hp = self.port.max_hp(self.owner_id)
             self.port.lose_hp(self.owner_id, 0.10 * cur_hp, cause="evernight_skill_cost")
 
-            # 重新召唤/维持忆灵长夜在场
-            self.summon_spirit()
+            # 行迹【天黑黑，月寂寂】：施放技能时，消耗自身当前生命值的 5% 使双方的暴击伤害提高 15%，持续 2 回合
+            self.port.lose_hp(self.owner_id, 0.05 * cur_hp, cause="evernight_a2_cost")
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_A2_Skill_CritDmg",
+                name="天黑黑，月寂寂 (施法暴伤+15%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                category="buff",
+                description="暴击伤害提高 +15.0%"
+            ))
 
-            # 提高我方全体忆灵暴伤：长夜月暴伤 * 24%
+            # 重新召唤/维持忆灵长夜在场 (若已在场为其恢复 50% 生命上限)
+            if self.spirit_alive:
+                self.spirit_hp = min(self.spirit_max_hp, self.spirit_hp + 0.50 * self.spirit_max_hp)
+            else:
+                self.summon_spirit()
+
+            # 提高我方全体忆灵暴伤：长夜月暴伤 * 24% + 行迹【天亮了，雨落了】记忆命途角色加成
             owner_cd = self.port.stat(self.owner_id, StatType.CRIT_DMG)
-            shared_cd = 0.24 * owner_cd
+            rem_count = self._get_remembrance_count()
+            rem_bonus = 0.05 if rem_count <= 1 else (0.15 if rem_count == 2 else (0.50 if rem_count == 3 else 0.65))
+            shared_cd = 0.24 * owner_cd + rem_bonus
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Skill_SharedCritDmg",
                 name=f"白昼悄然离去 (忆灵暴伤+{shared_cd*100:.1f}%)",
@@ -268,6 +398,10 @@ class ChangyeyueKit(KitHandler):
             # 施放战技自身直接获得 2 点忆质 (至暗之谜下额外 +12 点，E2 自动 +1 点)
             direct_yizhi = 2 + (12 if self.darkness else 0)
             self.gain_yizhi(direct_yizhi)
+
+            # 行迹【烛火起，烛火熄】：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
+            self.port.gain_energy(self.owner_id, 5.0)
+            self.gain_yizhi(1)
 
             self.port.gain_energy(self.owner_id, 30.0)
 

@@ -787,6 +787,7 @@ class TurnSimulator:
 
         team = {}
         enemies = {}
+        memosprites = {}
 
         for e in self.entities:
             snap = self.status_mgr.get_detailed_snapshot(e)
@@ -794,11 +795,17 @@ class TurnSimulator:
                 enemies[e.name] = snap
             else:
                 team[e.name] = snap
+            kit = getattr(e, "kit", None)
+            if kit and hasattr(kit, "get_memosprite_snapshot"):
+                msnap = kit.get_memosprite_snapshot()
+                if msnap:
+                    memosprites[msnap["name"]] = msnap
 
         return {
             "meta": meta,
             "team": team,
-            "enemies": enemies
+            "enemies": enemies,
+            "memosprites": memosprites
         }
 
     @property
@@ -833,26 +840,52 @@ class TurnSimulator:
         if query.lower() in ("boss", "enemy", "怪物", "首领"):
             return next(iter(st["enemies"].values())) if st["enemies"] else None
 
-        # 检查是否是队伍中角色名
+        # 1. 精确匹配伴生忆灵 (避免 "长夜" 被子串命中为 "长夜月")
+        if "memosprites" in st and query in st["memosprites"]:
+            return st["memosprites"][query]
+
+        # 2. 精确匹配队伍角色名
         for name, data in st["team"].items():
-            if query == name or query.lower() in name.lower():
+            if query == name:
                 return data
 
-        # 检查是否是敌方单位名
+        # 3. 精确匹配敌方单位名
         for name, data in st["enemies"].items():
-            if query == name or query.lower() in name.lower():
+            if query == name:
+                return data
+
+        # 4. 模糊匹配伴生忆灵
+        for m_name, m_data in st.get("memosprites", {}).items():
+            if query.lower() in m_name.lower():
+                return m_data
+
+        # 5. 模糊匹配队伍角色名
+        for name, data in st["team"].items():
+            if query.lower() in name.lower():
+                return data
+
+        # 6. 模糊匹配敌方单位名
+        for name, data in st["enemies"].items():
+            if query.lower() in name.lower():
                 return data
 
         # 点号分段遍历
         parts = query.split(".")
-        # 支持以角色名或怪物名开头点号访问，例如 "长夜月.current_atk" 或 "月夜天马.current_hp"
+        # 支持以角色名、怪物名或忆灵名开头点号访问，例如 "长夜月.current_atk" 或 "长夜.current_hp"
         first_part = parts[0]
         curr_root = None
-        for name, data in {**st["team"], **st["enemies"]}.items():
-            if first_part == name or first_part.lower() in name.lower():
+        all_targets = {**st["team"], **st["enemies"], **st.get("memosprites", {})}
+        for name, data in all_targets.items():
+            if first_part == name:
                 curr_root = data
                 parts = parts[1:]
                 break
+        if curr_root is None:
+            for name, data in all_targets.items():
+                if first_part.lower() in name.lower():
+                    curr_root = data
+                    parts = parts[1:]
+                    break
 
         curr: Any = curr_root if curr_root is not None else st
         for p in parts:

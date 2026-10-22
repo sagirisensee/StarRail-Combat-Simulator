@@ -285,6 +285,29 @@ def render_hud(sim: TurnSimulator, enemies: List[Entity], team_members: List[str
 
 def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List[str], current_actor: Optional[Entity] = None):
     """透析并打印指定角色的实时全量动态属性与所有生效 Buff/Debuff 详情 (对账利器)。"""
+    target_clean = target_key.strip().lower() if target_key else ""
+
+    # 优先支持透析伴生忆灵 (如 "长夜")
+    memos = sim.status.get("memosprites", {})
+    if target_clean in ("长夜", "忆灵", "memosprite") or target_key in memos:
+        msnap = memos.get(target_key) or memos.get("长夜") or (next(iter(memos.values())) if memos else None)
+        if msnap:
+            print("\n" + "━" * 78)
+            print(f"🔍 【{msnap['name']}】 伴生忆灵实时状态透析 │ 👻 伴生忆灵 (主体: {msnap['owner']})")
+            print("━" * 78)
+            print("📊 忆灵动态面板:")
+            print(f"   • 在场状态          : {'🟢 在场战斗中' if msnap['is_alive'] else '🔴 已离场'}")
+            print(f"   • 生命值 (HP)       : {floor_int(msnap['current_hp']):,d} / {floor_int(msnap['max_hp']):,d} ({msnap['hp_pct']*100:.1f}%)")
+            print(f"   • 行动速度 (SPD)    : {msnap['speed']:.1f}")
+            print(f"   • 基础嘲讽值        : {msnap.get('aggro', 125)}")
+            print("\n🛡️ 忆灵生效 Buff 列表:")
+            for b in msnap.get("buffs", []):
+                print(f"   • {b['name']:36} │ {b['value']}")
+            print("\n⚔️ 忆灵技能与机制组:")
+            for s in msnap.get("skills", []):
+                print(f"   • {s}")
+            print("━" * 78 + "\n")
+            return
     ent = None
     target_clean = target_key.strip().lower() if target_key else ""
     if not target_clean:
