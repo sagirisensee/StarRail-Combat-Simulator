@@ -147,6 +147,7 @@ class ChangyeyueKit(KitHandler):
         if not enemies:
             return
         target = enemies[0]
+        self.in_initial_action = True
 
         # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值 (3813 -> 3622)
         if self.spirit_hp <= 0:
@@ -205,8 +206,10 @@ class ChangyeyueKit(KitHandler):
             scaling_stat="hp"
         )
 
-        # 施放后获得 1 点【忆质】(E2自动+1变为2点)
+        # 施放后获得 1 点【忆质】(E2自动+2变为3点)
         self.gain_yizhi(1)
+        self.in_initial_action = False
+        self._check_threshold()
 
     def gain_yizhi(self, amount: int) -> None:
         """获取【忆质】，E2 额外提高 2 点。若达到 16 点且长夜在场，触发天赋【立即行动】。"""
@@ -223,6 +226,7 @@ class ChangyeyueKit(KitHandler):
             and self.spirit_alive
             and not self.threshold_issued
             and not self.bursting
+            and not getattr(self, "in_initial_action", False)
         ):
             self.threshold_issued = True
             # 天赋【今夜与我同行】：解除并免疫控制，若长夜在场使其立即行动进入自身回合 (Turn Begin)
@@ -291,9 +295,8 @@ class ChangyeyueKit(KitHandler):
             self.bursting = False
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
-        """生命降低响应：受到攻击或技能自耗生命时，暴伤提高 60% 并获得 2 点【忆质】(E2为3点)。
-        注意：关卡环境机制 (如【血噬】) 造成的扣血为环境负面扣血，不视为受到攻击，不触发天赋产质。"""
-        if (entity_id == self.owner_id or entity_id == "长夜") and not cause.startswith("evernight_self_destruct") and not cause.startswith("stage_mechanic"):
+        """生命降低响应：受到攻击、技能自耗或环境机制(如【血噬】)扣血时，暴伤提高 60% 并获得 2 点【忆质】(E2为 2+2=4 点)。"""
+        if (entity_id == self.owner_id or entity_id == "长夜") and not cause.startswith("evernight_self_destruct"):
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Talent_CritDmg",
                 name="今夜与我同行 (生命降低暴伤+60%)",

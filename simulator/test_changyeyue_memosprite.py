@@ -177,6 +177,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         robin = sim.get_entity("知更鸟•晴歌")
         self.assertEqual(robin.kit.vibes, 8)
 
+        # 验证长夜月身上忆质层数演变与最终值：6 -> 10 -> 17 -> 20 -> 24
+        self.assertEqual(cy_kit.yizhi, 24, "开局完整时序动完后，长夜月忆质应精准为 24 层")
+
         # 3. 验证长夜快照
         msnap = sim.query_status("长夜")
         self.assertEqual(msnap["name"], "长夜")
