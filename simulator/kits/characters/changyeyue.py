@@ -8,6 +8,12 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 class ChangyeyueKit(KitHandler):
     """长夜月 (ID 1413, 冰 / 记忆, E2)."""
 
+    def on_battle_start(self) -> None:
+        """天赋【今夜与我同行】：进战召唤忆灵「长夜」(初始160速顶头行动)，发动首次攻击。"""
+        enemies = self.port.enemies(self.owner_id)
+        if enemies:
+            self.port.attack("长夜", enemies[0], element="Ice", atk_multiplier=1.0, toughness_damage=10.0, damage_tag="FollowUpAttack")
+
     def definition(self, kind: ActionKind):
         if kind == ActionKind.BASIC:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="霜月薄暮")

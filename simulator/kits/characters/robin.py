@@ -49,9 +49,9 @@ class RobinKit(KitHandler):
         """增加气氛值，并仅为【使知更鸟获得气氛值的行动目标】动态挂载/刷新【偏离和弦】。"""
         self.vibes = min(self.max_vibes, self.vibes + amount)
         if trigger_ally_id:
-            self.apply_tonal_chord_to_ally(trigger_ally_id, effective_vibes=amount)
+            self.apply_tonal_chord_to_ally(trigger_ally_id)
 
-    def apply_tonal_chord_to_ally(self, ally_id: str, effective_vibes: Optional[int] = None) -> None:
+    def apply_tonal_chord_to_ally(self, ally_id: str) -> None:
         """行迹【偏离和弦】动态属性判定与分流计算。
 
         官方 Nanoka 4.6 规范：
@@ -62,14 +62,13 @@ class RobinKit(KitHandler):
         import math
         target_atk = self.port.stat(ally_id, StatType.ATK_BASE)
         robin_atk = self.port.stat(self.owner_id, StatType.ATK_BASE)
-        eff_vibes = effective_vibes if effective_vibes is not None else min(10, self.vibes)
 
         if target_atk > robin_atk:
-            atk_pct = 0.16 + eff_vibes * 0.004
+            atk_pct = 0.16 + self.vibes * 0.004
             mods = (Modifier(StatType.ATK_PERCENT, ModifierOp.PERCENT, atk_pct),)
             desc = f"攻击力提高 +{atk_pct * 100:.1f}% (当前气氛值: {self.vibes} 点)"
         else:
-            cd_val = math.floor((0.40 + eff_vibes * 0.015) * 100) / 100
+            cd_val = math.floor((0.40 + self.vibes * 0.015) * 100) / 100
             mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
             desc = f"暴击伤害 +{cd_val * 100:.1f}%"
 
@@ -93,19 +92,17 @@ class RobinKit(KitHandler):
             actor_name = event.actor_name
             if actor_name in allies and actor_name != self.owner_id:
                 # 仅当队友秘技提供治疗或护盾时响应知更鸟天赋 (如风堇《天气正好，万物可爱！》)
-                # 未提供治疗/攻击的秘技 (如长夜月《愿有冷雨落下》、缇宝《璀璨序章》) 绝不触发
                 if "天气正好" in event.technique_name or "治" in event.technique_name or "盾" in event.technique_name:
                     self.gain_vibes(1, trigger_ally_id=actor_name)
         elif isinstance(event, ActionExecuteEvent):
             actor_name = event.actor_name
-            if actor_name in allies:
-                # 终结技与追加攻击使知更鸟获得气氛值（爆发阶段直接拉满气氛值至 10 点）
-                gained = 10 if ("Ultimate" in event.action_type or "FollowUp" in event.action_type) else 1
-                self.gain_vibes(gained, trigger_ally_id=actor_name)
+            # 我方角色或忆灵每次施放攻击，知更鸟获得 1 点气氛值
+            if actor_name in allies or "长夜" in actor_name or actor_name.startswith("忆灵"):
+                self.gain_vibes(1, trigger_ally_id=actor_name)
 
     def use_technique(self) -> None:
-        """秘技【我们自成旋律】：进战行动提前，立即获得 7 点气氛值 (自身暴伤50%)，全队增伤 30%。"""
-        self.gain_vibes(7, trigger_ally_id=self.owner_id)
+        """秘技【我们自成旋律】：进战行动提前，立即获得 6 点气氛值 (自身暴伤50%)，全队增伤 30%。"""
+        self.gain_vibes(6, trigger_ally_id=self.owner_id)
         self.port.gain_energy(self.owner_id, 5.0)
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(

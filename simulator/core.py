@@ -344,6 +344,21 @@ class TurnSimulator:
             # 2. 结算战前秘技 (Techniques)
             if use_techniques:
                 target_users = technique_users or [e.name for e in self.entities if not e.is_enemy]
+                if not technique_users:
+                    def _tech_order(uid):
+                        ent = self._get_entity(uid)
+                        if ent and getattr(ent, "kit", None):
+                            try:
+                                d = ent.kit.definition(ActionKind.TECHNIQUE)
+                                name = d.name if d else ""
+                            except Exception:
+                                name = ""
+                            if "天气正好" in name or "治" in name or "护" in name or "不可靠" in name:
+                                return 0
+                            if "我们自成旋律" in name or "结界" in name or "领域" in name:
+                                return 2
+                        return 1
+                    target_users = sorted(target_users, key=_tech_order)
                 for user_id in target_users:
                     self.use_technique(user_id)
             elif technique_users:
