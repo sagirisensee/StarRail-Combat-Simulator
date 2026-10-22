@@ -318,10 +318,21 @@ class TurnSimulator:
             return 0
         return 1 + int((self.current_av - 150.0) // 100.0)
 
+    @property
+    def next_entity(self) -> Optional[Entity]:
+        """获取当前跑道上最先到达行动终点的实体。"""
+        if not self.entities:
+            return None
+        return min(self.entities, key=lambda e: e.remaining_av)
+
     def get_action_order(self) -> List[Entity]:
         return sorted(self.entities, key=lambda e: e.remaining_av)
 
-    def step(self) -> Optional[Entity]:
+    def step(
+        self, 
+        action_override: Optional[ActionKind] = None, 
+        target_ids: Optional[Tuple[str, ...]] = None
+    ) -> Optional[Entity]:
         if not self.entities:
             return None
 
@@ -351,7 +362,10 @@ class TurnSimulator:
         # 5. 决定动作意图与执行路径 (优先走 KitHandler 架构)
         intent = active_entity.get_next_action_intent()
         if getattr(active_entity, "kit", None) is not None:
-            req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
+            if action_override is not None:
+                req_kind = action_override
+            else:
+                req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
             defn = active_entity.kit.definition(req_kind)
 
             # 校验 SP 资源
@@ -382,13 +396,14 @@ class TurnSimulator:
                 action_id=f"{active_entity.name}_{self.current_av:.1f}",
                 actor_id=active_entity.name,
                 kind=actual_kind,
-                target_ids=()
+                target_ids=target_ids if target_ids is not None else ()
             )
             active_entity.kit.execute(ctx)
         else:
             # 兼容模式：传统回调执行路径
             if not active_entity.is_enemy:
-                if intent == "E":
+                is_skill = (action_override == ActionKind.SKILL) if action_override is not None else (intent == "E")
+                if is_skill:
                     if self.sp.can_consume(1):
                         actual_action = "Skill"
                         self.resolver.enqueue(ModifySPEffect(active_entity.name, -1, "施放战技"))
@@ -453,7 +468,24 @@ class TurnSimulator:
         active_entity.reset_distance()
         return active_entity
 
-    def cast_ultimate(self, actor_id: str) -> bool:
+    def can_cast_ultimate(self, actor_id: str) -> bool:
+        """检查指定角色当前是否满足终结技施放条件 (满能量或满特殊层数)。"""
+        ent = self.get_entity(actor_id)
+        if not ent or getattr(ent, "kit", None) is None:
+            return False
+        if hasattr(ent.kit, "slashed_dream"):
+            return getattr(ent.kit, "slashed_dream", 0) >= 9
+        return ent.max_energy > 0 and ent.energy >= ent.max_energy
+
+    def get_ready_ultimates(self) -> List[Entity]:
+        """获取当前所有终结技充能就绪的我方角色。"""
+        ready = []
+        for e in self.entities:
+            if not e.is_enemy and self.can_cast_ultimate(e.name):
+                ready.append(e)
+        return ready
+
+    def cast_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:
         """立即插入并施放指定角色的终结技。"""
         ent = self.get_entity(actor_id)
         if not ent or getattr(ent, "kit", None) is None:
@@ -487,7 +519,7 @@ class TurnSimulator:
             action_id=f"{ent.name}_ult_{self.current_av:.1f}",
             actor_id=ent.name,
             kind=ActionKind.ULTIMATE,
-            target_ids=()
+            target_ids=target_ids if target_ids is not None else ()
         )
         ent.kit.execute(ctx)
         self.resolver.resolve_all()
@@ -496,17 +528,9 @@ class TurnSimulator:
     def check_and_cast_ultimates(self) -> List[str]:
         """检查场上全员能量，自动抢断施放所有就绪的终结技。"""
         casted = []
-        for e in self.entities:
-            if not e.is_enemy and getattr(e, "kit", None) is not None:
-                can_cast = False
-                if hasattr(e.kit, "slashed_dream"):
-                    can_cast = (e.kit.slashed_dream >= 9)
-                elif e.max_energy > 0 and e.energy >= e.max_energy:
-                    can_cast = True
-
-                if can_cast:
-                    if self.cast_ultimate(e.name):
-                        casted.append(e.name)
+        for e in self.get_ready_ultimates():
+            if self.cast_ultimate(e.name):
+                casted.append(e.name)
         return casted
 
     def insert_ultimate(self, entity: Entity, description: str = "释放终结技", sp_change: int = 0):
