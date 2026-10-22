@@ -92,9 +92,10 @@ class RobinKit(KitHandler):
         if isinstance(event, TechniqueExecuteEvent):
             actor_name = event.actor_name
             if actor_name in allies and actor_name != self.owner_id:
-                # 队友施放战前治疗或辅助秘技 (如风堇《天气正好，万物可爱！》)
-                # 知更鸟天赋响应：队友提供治疗/护盾，知更鸟获得 1 点气氛值，并为该施法队友挂载【偏离和弦】
-                self.gain_vibes(1, trigger_ally_id=actor_name)
+                # 仅当队友秘技提供治疗或护盾时响应知更鸟天赋 (如风堇《天气正好，万物可爱！》)
+                # 未提供治疗/攻击的秘技 (如长夜月《愿有冷雨落下》、缇宝《璀璨序章》) 绝不触发
+                if "天气正好" in event.technique_name or "治" in event.technique_name or "盾" in event.technique_name:
+                    self.gain_vibes(1, trigger_ally_id=actor_name)
         elif isinstance(event, ActionExecuteEvent):
             actor_name = event.actor_name
             if actor_name in allies:
