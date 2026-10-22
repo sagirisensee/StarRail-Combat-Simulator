@@ -486,40 +486,14 @@ class CharacterDB:
             except Exception:
                 pass
 
-        # 拾骨地 2pc (Relic 319): 生命上限 >= 5000 时，暴击伤害 +28%
         base_crit_dmg = panel.crit_dmg
-        if any("319" in str(k) or "拾骨地" in str(k) for k in getattr(profile, "relic_sets", [])) or (319 in set_counts or "319" in set_counts or "谧宁拾骨地" in set_counts):
-            if panel.hp >= 5000:
-                base_crit_dmg += 0.28
-
         base_crit_rate = panel.crit_rate
         base_effect_res = getattr(panel, "res", 0.10)
         base_atk = panel.atk
         base_def = getattr(panel, "def_stat", 600.0)
 
-        # 治疗量加成计算 (遗器治疗衣 34.5% + 巨树2pc 20.0%)
-        base_outgoing_healing = 0.0
-        if getattr(profile, "relics", None):
-            for r in profile.relics:
-                if "治疗量" in getattr(r, "main_affix_name", ""):
-                    base_outgoing_healing += 0.345
-        if 320 in set_counts or "320" in set_counts or "渊思寂虑的巨树" in set_counts:
-            if panel.spd >= 180:
-                base_outgoing_healing += 0.20
-
-        # 风堇 (ID 1409) 确凿行迹属性校准 (阴云莞尔暴击+100%, 雷雨轻柔抵抗+50%, 爆伤242.6%基线)
-        if profile.avatar_id == 1409 or profile.name == "风堇":
-            base_crit_rate = panel.crit_rate + 1.00
-            base_effect_res = getattr(panel, "res", 0.10) + 0.50
-            base_crit_dmg = 0.906
-            base_atk = 1336.0
-            base_def = 1527.0
-            max_energy = 140.0
-            if base_outgoing_healing == 0.0:
-                base_outgoing_healing = 0.545
-
         base_white_hp = 2419.481 if profile.avatar_id == 1403 else getattr(getattr(panel, "breakdowns", {}).get("hp"), "base_white", panel.hp)
-        base_white_speed = getattr(getattr(panel, "breakdowns", {}).get("spd"), "base_white", 110.0 if (profile.avatar_id == 1409 or profile.name == "风堇") else panel.spd)
+        base_white_speed = getattr(getattr(panel, "breakdowns", {}).get("spd"), "base_white", panel.spd)
 
         entity = Entity(
             name=profile.name,
@@ -540,7 +514,7 @@ class CharacterDB:
             max_hp=panel.hp,
             current_hp=panel.hp,
             base_white_hp=base_white_hp,
-            base_outgoing_healing=base_outgoing_healing,
+            base_outgoing_healing=0.0,
             energy=0.0,
             max_energy=max_energy,
             avatar_id=profile.avatar_id,
@@ -552,6 +526,18 @@ class CharacterDB:
             policy=policy,
             is_enemy=False
         )
+
+        # 1. 遗器被动属性与主词条提取 (解耦委托至遗器模块自身处理)
+        from ..relics.base import apply_equipped_relics_affixes
+        apply_equipped_relics_affixes(getattr(profile, "relics", None), entity)
+        for rh in relic_handlers:
+            if hasattr(rh, "apply_panel_passives"):
+                rh.apply_panel_passives(entity)
+
+        # 2. 角色行迹常驻被动属性提取 (多态委托至各角色的技能套件 Kit 自身处理)
+        if kit_inst and hasattr(kit_inst, "apply_trace_passives"):
+            kit_inst.apply_trace_passives(entity)
+
         return entity
 
     def export_summary_json(self, output_path: str):

@@ -3,6 +3,8 @@ from .models import RelicSetSpec
 from .registry import RelicRegistry
 from .handlers.valkyrie_of_sun_and_thunder import ValkyrieOfSunAndThunderHandler
 from .handlers.poet_of_mourning import PoetOfMourningHandler
+from .handlers.bone_collecting_ground import BoneCollectingGroundHandler
+from .handlers.sunken_tree import SunkenTreeHandler
 
 
 def register_all_relics() -> None:
@@ -27,6 +29,28 @@ def register_all_relics() -> None:
             aliases=("沉醉于狂欢的诗人", "poet_of_mourning", "诗人")
         ),
         PoetOfMourningHandler
+    )
+
+    # 3. 谧宁拾骨地 (ID 319, 位面饰品)
+    RelicRegistry.register(
+        RelicSetSpec(
+            set_id=319,
+            name="谧宁拾骨地",
+            set_type="planar",
+            aliases=("bone_collecting_ground", "拾骨地", "谧宁拾骨地")
+        ),
+        BoneCollectingGroundHandler
+    )
+
+    # 4. 渊思寂虑的巨树 (ID 320, 位面饰品)
+    RelicRegistry.register(
+        RelicSetSpec(
+            set_id=320,
+            name="渊思寂虑的巨树",
+            set_type="planar",
+            aliases=("sunken_tree", "巨树", "渊思寂虑的巨树")
+        ),
+        SunkenTreeHandler
     )
 
 

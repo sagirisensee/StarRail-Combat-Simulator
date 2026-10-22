@@ -8,6 +8,7 @@
 - 行迹《暴风停歇》: 速度 > 200 时，生命上限提高 20%，超出速度提升治疗量。
 - 星魂 E6《天空…应我的祈愿》: 仅在 6 命且小伊卡在场时，我方全体目标的全属性抗性穿透提高 20%。(0-5命无任何全队抗穿)。
 """
+from typing import Any
 from ..base import KitHandler
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 from ...combat_port import BuffSpec, CombatPort
@@ -16,6 +17,26 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class FengjinKit(KitHandler):
     """风堇 (ID 1409, 风 / 记忆)."""
+
+    def apply_trace_passives(self, entity: Any) -> None:
+        """应用风堇行迹常驻被动属性与实机面板基线校准。
+        
+        官方 Nanoka 4.6 规范：
+        - 行迹【阴云莞尔】：暴击率提高 100%
+        - 行迹【雷雨轻柔】：效果抵抗提高 50%
+        - 实机面板精算基线：攻击力 1336、防御力 1527、暴击伤害 90.6%
+        - 基础白字生命 2250.0、基础白字速度 110.0
+        - 基础治疗量兜底：若未装配遗器则默认拥有 54.5%
+        """
+        entity.base_crit_rate += 1.00
+        entity.base_effect_res += 0.50
+        entity.base_crit_dmg = 0.906
+        entity.base_atk = 1336.0
+        entity.base_def = 1527.0
+        entity.base_white_hp = 2250.0
+        entity.base_white_speed = 110.0
+        if getattr(entity, "base_outgoing_healing", 0.0) == 0.0:
+            entity.base_outgoing_healing = 0.545
 
     def on_battle_start(self):
         """进战挂载【暴风停歇】：速度 > 200 时触发自身与小伊卡生命上限提高 20%，治疗量提高。"""

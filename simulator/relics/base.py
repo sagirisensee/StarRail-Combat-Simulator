@@ -24,6 +24,10 @@ class RelicSetHandler(ABC):
         self.pieces = pieces
         self.spec = spec
 
+    def apply_panel_passives(self, entity: Any) -> None:
+        """应用遗器套装被动/常驻属性加成至实体基础面板。"""
+        pass
+
     def on_attach(self) -> None:
         """遗器装配至角色时的初始化回调。"""
         pass
@@ -51,3 +55,15 @@ class RelicSetHandler(ABC):
     def on_event(self, event: Any) -> None:
         """接收领域战斗事件 (如受到伤害、击杀、触发追击、造成治疗等)。"""
         pass
+
+
+def apply_equipped_relics_affixes(relics: Any, entity: Any) -> None:
+    """从装备的具体遗器部件中解析主词条属性并注入实体基础属性 (如治疗衣)。"""
+    if not relics:
+        return
+    for r in relics:
+        main_affix = getattr(r, "main_affix_name", "")
+        if "治疗量" in main_affix:
+            # 5 星治疗衣 +15 主词条通常为 +34.5% (0.345)
+            entity.base_outgoing_healing += 0.345
+
