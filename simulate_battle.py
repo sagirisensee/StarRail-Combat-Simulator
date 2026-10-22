@@ -334,15 +334,34 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
         for k, v in snap["kit_state"].items():
             print(f"   • {k}: {v}")
 
-    print("\n🔮 当前身上生效 Buff / 状态列表 (Active Statuses):")
-    if not snap["buffs"]:
-        print("   (当前无挂载状态)")
+    buffs = snap.get("buffs", [])
+    print(f"\n🔮 增益效果 (Buffs - 共 {len(buffs)} 个):")
+    if not buffs:
+        print("   (暂无增益效果)")
     else:
-        for idx, b in enumerate(snap["buffs"], 1):
+        for idx, b in enumerate(buffs, 1):
             dur_str = f"{b['duration']} 回合" if b['duration'] is not None else "常驻"
             print(f"   [{idx}] 《{b['name']}》 (ID: {b['id']})")
             print(f"       • 来源: {b['source']} │ 剩余: {dur_str} │ 结算时序: {b['timing']}")
-            print(f"       • 属性效果: {b['modifiers_desc']}")
+            print(f"       • 效果: {b['modifiers_desc']}")
+
+    debuffs = snap.get("debuffs", [])
+    if debuffs:
+        print(f"\n🔻 负面效果 (Debuffs - 共 {len(debuffs)} 个):")
+        for idx, b in enumerate(debuffs, 1):
+            dur_str = f"{b['duration']} 回合" if b['duration'] is not None else "常驻"
+            print(f"   [{idx}] 《{b['name']}》 (ID: {b['id']})")
+            print(f"       • 来源: {b['source']} │ 剩余: {dur_str} │ 结算时序: {b['timing']}")
+            print(f"       • 效果: {b['modifiers_desc']}")
+
+    other_effects = snap.get("other_effects", [])
+    if other_effects:
+        print(f"\n🌀 其他效果 (Other Effects - 共 {len(other_effects)} 个):")
+        for idx, b in enumerate(other_effects, 1):
+            dur_str = f"{b['duration']} 回合" if b['duration'] is not None else "常驻/领域"
+            print(f"   [{idx}] 《{b['name']}》 (ID: {b['id']})")
+            print(f"       • 来源: {b['source']} │ 剩余: {dur_str} │ 结算时序: {b['timing']}")
+            print(f"       • 效果: {b['modifiers_desc']}")
     print("━" * 78)
 
 

@@ -79,7 +79,8 @@ class SimulatorCombatPort:
             timing=spec.timing,
             modifiers=list(spec.modifiers),
             stack_policy=spec.stack_policy,
-            skip_current_clock=spec.skip_current_clock
+            skip_current_clock=spec.skip_current_clock,
+            category=getattr(spec, "category", "buff")
         )
         self.sim.status_mgr.add_status(status)
 
@@ -294,7 +295,8 @@ class TurnSimulator:
         max_sp: int = 5,
         use_techniques: bool = False,
         technique_users: Optional[List[str]] = None,
-        auto_ult: bool = True
+        auto_ult: bool = True,
+        stage_mechanic: Optional[str] = "血噬"
     ):
         self.entities: List[Entity] = []
         self.current_av: float = 0.0
@@ -332,6 +334,20 @@ class TurnSimulator:
             elif technique_users:
                 for user_id in technique_users:
                     self.use_technique(user_id)
+
+            # 3. 结算关卡环境机制 (如 Peak 10 血噬)
+            if stage_mechanic:
+                for e in self.entities:
+                    self.status_mgr.add_status(StatusInstance(
+                        id=f"Stage_Mechanic_{stage_mechanic}_{e.name}",
+                        name=stage_mechanic,
+                        source=e,
+                        target=e,
+                        duration=None,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        modifiers=[],
+                        category="other"
+                    ))
 
             self.resolver.resolve_all()
 

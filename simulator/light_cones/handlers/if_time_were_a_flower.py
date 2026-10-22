@@ -27,13 +27,14 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
                 key="LC_IfTimeWereAFlower_Oracle",
-                name=f"谕示 (如果时间是一朵花S{self.superimposition}全队暴伤+{crit_val*100:.0f}%)",
+                name="谕示",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, crit_val),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                category="buff"
             ))
 
     def on_battle_start(self) -> None:

@@ -78,6 +78,7 @@ class StatusInstance:
     max_stacks: int = 1                      # 最大层数
     stack_policy: StackPolicy = StackPolicy.REPLACE # 合并策略
     skip_current_clock: bool = False         # 施加当回合是否豁免扣减
+    category: str = "buff"                   # 状态类别: "buff" (增益), "debuff" (负面), "other" (其他效果/结界)
 
     @property
     def is_expired(self) -> bool:
@@ -294,8 +295,13 @@ class StatusManager:
                 "duration": s.duration,
                 "timing": s.timing.name if hasattr(s.timing, "name") else str(s.timing),
                 "stacks": s.stacks,
-                "modifiers_desc": ", ".join(mod_strs)
+                "category": getattr(s, "category", "buff"),
+                "modifiers_desc": ", ".join(mod_strs) if mod_strs else "特殊效果 / 机制生效中"
             })
+
+        buffs_list = [b for b in active_buffs if b.get("category", "buff") == "buff"]
+        debuffs_list = [b for b in active_buffs if b.get("category", "buff") == "debuff"]
+        other_list = [b for b in active_buffs if b.get("category", "buff") == "other"]
 
         # 套件机制独有状态提取
         kit_state = {}
@@ -364,7 +370,10 @@ class StatusManager:
             "weaknesses": list(getattr(entity, "weaknesses", [])),
 
             # Buff 与特有机制
-            "buffs": active_buffs,
+            "buffs": buffs_list,
+            "debuffs": debuffs_list,
+            "other_effects": other_list,
+            "all_statuses": active_buffs,
             "kit_state": kit_state,
 
             # 结构化别名分组 (供链式查询与对账)

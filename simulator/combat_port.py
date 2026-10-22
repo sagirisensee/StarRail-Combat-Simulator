@@ -15,6 +15,7 @@ class BuffSpec:
     timing: DurationTiming = DurationTiming.TARGET_TURN_END
     stack_policy: StackPolicy = StackPolicy.REPLACE
     skip_current_clock: bool = False
+    category: str = "buff"
 
 
 class CombatPort(Protocol):

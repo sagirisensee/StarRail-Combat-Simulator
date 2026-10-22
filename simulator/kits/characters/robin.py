@@ -37,6 +37,20 @@ class RobinKit(KitHandler):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.in_concerto: bool = False
 
+    def on_battle_start(self) -> None:
+        """天赋【偏离和弦】：我方全体暴击伤害提高 20%。"""
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Robin_Talent_TonalChord",
+                name="偏离和弦",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.20),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END,
+                category="buff"
+            ))
+
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
             return AbilityDefinition(
@@ -67,9 +81,25 @@ class RobinKit(KitHandler):
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(technique_points=1),
                 allow_self=True,
-                name="酩酊序曲"
+                name="我们自成旋律"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
+
+    def use_technique(self) -> None:
+        """秘技【我们自成旋律】：进战后自身恢复 5 点能量，并为我方全体提供进战增益。"""
+        self.port.gain_energy(self.owner_id, 5.0)
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Robin_Tech_WeAreTheMelody",
+                name="我们自成旋律",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.ADD, 0.15),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True,
+                category="buff"
+            ))
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
@@ -82,8 +112,8 @@ class RobinKit(KitHandler):
             self._execute_technique(ctx)
 
     def _execute_technique(self, ctx: ActionContext) -> None:
-        """秘技【酩酊序曲】：进入战斗后为自身恢复 5 点能量。"""
-        self.port.gain_energy(self.owner_id, 5.0)
+        """执行秘技逻辑。"""
+        self.use_technique()
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
