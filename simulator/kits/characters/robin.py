@@ -43,15 +43,13 @@ class RobinKit(KitHandler):
         """战斗开始：仅为使知更鸟获得气氛值的角色挂载【偏离和弦】。
         未行动、未攻击且未提供治疗的目标 (如长夜月) 绝不挂载此 Buff。
         """
-        # 知更鸟自身进战基础触发 (秘技获得 7 点气氛值，暴伤 50.0%)
-        if self.vibes == 0:
-            self.gain_vibes(7, trigger_ally_id=self.owner_id)
+        pass
 
     def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
         """增加气氛值，并仅为【使知更鸟获得气氛值的行动目标】动态挂载/刷新【偏离和弦】。"""
         self.vibes = min(self.max_vibes, self.vibes + amount)
         if trigger_ally_id:
-            self.apply_tonal_chord_to_ally(trigger_ally_id)
+            self.apply_tonal_chord_to_ally(trigger_ally_id, effective_vibes=amount)
 
     def apply_tonal_chord_to_ally(self, ally_id: str, effective_vibes: Optional[int] = None) -> None:
         """行迹【偏离和弦】动态属性判定与分流计算。
@@ -88,14 +86,20 @@ class RobinKit(KitHandler):
         ))
 
     def on_event(self, event: Any) -> None:
-        """监听队友行动与攻击事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
-        from ...events import ActionExecuteEvent
-        if isinstance(event, ActionExecuteEvent):
+        """监听队友行动、攻击与秘技事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
+        from ...events import ActionExecuteEvent, TechniqueExecuteEvent
+        allies = self.port.allies(self.owner_id)
+        if isinstance(event, TechniqueExecuteEvent):
             actor_name = event.actor_name
-            allies = self.port.allies(self.owner_id)
+            if actor_name in allies and actor_name != self.owner_id:
+                # 队友施放战前治疗或辅助秘技 (如风堇《天气正好，万物可爱！》)
+                # 知更鸟天赋响应：队友提供治疗/护盾，知更鸟获得 1 点气氛值，并为该施法队友挂载【偏离和弦】
+                self.gain_vibes(1, trigger_ally_id=actor_name)
+        elif isinstance(event, ActionExecuteEvent):
+            actor_name = event.actor_name
             if actor_name in allies:
                 # 终结技与追加攻击使知更鸟获得气氛值（爆发阶段直接拉满气氛值至 10 点）
-                gained = 9 if ("Ultimate" in event.action_type or "FollowUp" in event.action_type) else 1
+                gained = 10 if ("Ultimate" in event.action_type or "FollowUp" in event.action_type) else 1
                 self.gain_vibes(gained, trigger_ally_id=actor_name)
 
     def use_technique(self) -> None:
@@ -149,23 +153,6 @@ class RobinKit(KitHandler):
                 name="我们自成旋律"
             )
         raise ValueError(f"未支持的动作类型: {kind}")
-
-    def use_technique(self) -> None:
-        """秘技【我们自成旋律】：进战后自身恢复 5 点能量，并为我方全体提供造成伤害提高 30% 增益。"""
-        self.port.gain_energy(self.owner_id, 5.0)
-        for ally in self.port.allies(self.owner_id):
-            self.port.upsert_status(BuffSpec(
-                key="Robin_Tech_WeAreTheMelody",
-                name="我们自成旋律",
-                source_id=self.owner_id,
-                target_id=ally,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
-                category="buff",
-                description="全队造成伤害提高 +30.0%"
-            ))
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
