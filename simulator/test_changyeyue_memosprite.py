@@ -47,8 +47,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # 长夜立即行动扣血触发天赋获得 3 点 (2+1)
         # 长夜施放技能触发A4获得 2 点 (1+1)
         # 技能自带获得 2 点 (1+1)
-        # 无秘技 E2 合计 9 点【忆质】
-        self.assertEqual(kit.yizhi, 9, "开局长夜动完后，在E2无秘技下应获得 9 点忆质")
+        # 无秘技 E2 合计 13 点【忆质】(A4进战 1+2=3, 扣血天赋 2+2=4, 施法A4 1+2=3, 技能结算 1+2=3)
+        self.assertEqual(kit.yizhi, 13, "开局长夜动完后，在E2无秘技下应获得 13 点忆质 (含E2每动+2额外忆质)")
 
         # 验证长夜月状态快照与 Buff
         snap = sim.query_status("长夜月")
@@ -96,8 +96,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # A2 自扣 5% 触发生命降低天赋 +3
         # 战技本身获取 +3 (2+1)
         # A4 施放技能回能回质 +2 (1+1)
-        # 单次战技累积 11 点忆质
-        self.assertEqual(kit.yizhi, 11, "单次战技自扣血、行迹与施放，在E2下应累积 11 点忆质")
+        # 单次战技累积 15 点忆质 (自扣10% 2+2=4, A2自扣5% 2+2=4, 战技本身 2+2=4, A4技能 1+2=3)
+        self.assertEqual(kit.yizhi, 15, "单次战技自扣血、行迹与施放，在E2下应累积 15 点忆质 (含E2每动+2额外忆质)")
 
     def test_04_memory_threshold_and_memosprite_burst(self):
         """验证【忆质】达到 16 点时，触发长夜立即行动爆发【迷梦，流失，如露】，清空忆质、自毁加速并回 1 SP。"""
@@ -112,8 +112,10 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         boss_hp_before = self.boss.current_hp
         sp_before = sim.sp.current_sp
 
-        # 再获得 1 点忆质 (E2 自动变为 1+1=2 点，累计 17 点 >= 16 点，触发阈值爆发)
+        # 再获得 1 点忆质 (E2 自动变为 1+2=3 点，累计 18 点 >= 16 点，触发阈值立即行动)
         kit.gain_yizhi(1)
+        # 忆灵在行动中施放终极爆发【迷梦，流失，如露】
+        kit.trigger_spirit_burst()
         sim.resolver.resolve_all()
 
         # 验证爆发伤害已造成
@@ -146,9 +148,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         ult_success = sim.cast_ultimate("长夜月")
         self.assertTrue(ult_success)
 
-        # 验证至暗之谜： 3 点充能 (E2)
+        # 验证至暗之谜： 4 点充能 (基础2点 + E2额外2点)
         self.assertTrue(kit.darkness, "施放大招后应进入至暗之谜")
-        self.assertEqual(kit.charges, 3, "E2施放大招应获得 3 点充能")
+        self.assertEqual(kit.charges, 4, "E2施放大招应获得 4 点充能 (基础2点 + E2额外2点)")
 
         # 敌方易伤 30%
         boss_snap = sim.query_status("首领木桩")

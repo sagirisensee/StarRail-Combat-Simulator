@@ -19,9 +19,9 @@
    - 终极爆发【迷梦，流失，如露】(1141307)：【忆质】>= 16 时触发，每点忆质对主目标造成 16.8%、副目标 8.4% 冰伤；
      施放后消耗全部忆质，若在至暗之谜扣除 1 充能，自毁退场。
 6. 星魂 E2【听，沉眠中的呓语】：
-   - 长夜月和长夜暴伤提高 60%；
-   - 每次获得【忆质】时获得的数量提高 1 点；
-   - 施放终结技额外获得 1 点充能。
+   - 长夜月和忆灵「长夜」的暴击伤害提高 40%；
+   - 每当长夜月获得【忆质】时，使获得的【忆质】数量提高 2 点；
+   - 施放终结技时，额外获得 2 点【至暗之谜】的充能。
 """
 
 from typing import Optional, Any
@@ -60,18 +60,18 @@ class ChangyeyueKit(KitHandler):
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
-        # E2 自带暴伤提升 (长夜月 +60%，忆灵「长夜」享受 +40%)
+        # E2【听，沉眠中的呓语】：长夜月和忆灵「长夜」暴击伤害提高 40%
         if self.eidolon >= 2:
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_E2_CritDmg",
-                name="听沉眠中的呓语 (E2暴伤+60%)",
+                name="听沉眠中的呓语 (E2暴伤+40%)",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.60),),
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.40),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff",
-                description="暴击伤害提高 +60.0%"
+                description="暴击伤害提高 +40.0%"
             ))
 
         # 行迹【天黑黑，月寂寂】：长夜月和忆灵「长夜」暴击率提高 35%
@@ -169,11 +169,7 @@ class ChangyeyueKit(KitHandler):
         # 天赋【今夜与我同行】：长夜扣血触发生命降低暴伤提升与忆质累积
         self.on_hp_lost("长夜", hp_loss, cause="memosprite_skill_cost")
 
-        # 立即行动进入长夜自身回合 (Turn Begin)：若处于【血噬】环境再次扣血 500 点 (3622 -> 3122)
-        if self._has_stage_bleed():
-            turn_bleed = 500.0
-            self.spirit_hp = max(1.0, round(self.spirit_hp - turn_bleed, 2))
-            self.on_hp_lost("长夜", turn_bleed, cause="stage_mechanic_bleed_turn_begin")
+        # （注：第二段【血噬】扣血在忆质达到16层触发天赋立即行动进入长夜自身回合时结算）
 
         # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 5.0)
@@ -213,15 +209,15 @@ class ChangyeyueKit(KitHandler):
         self.gain_yizhi(1)
 
     def gain_yizhi(self, amount: int) -> None:
-        """获取【忆质】，E2 额外 +1 点。若达到 16 点且长夜在场，触发天赋【立即行动】。"""
+        """获取【忆质】，E2 额外提高 2 点。若达到 16 点且长夜在场，触发天赋【立即行动】。"""
         if amount <= 0:
             return
-        bonus = 1 if self.eidolon >= 2 else 0
+        bonus = 2 if self.eidolon >= 2 else 0
         self.yizhi += amount + bonus
         self._check_threshold()
 
     def _check_threshold(self) -> None:
-        """检查【忆质】>= 16 点时，触发免控并使长夜立即行动爆发。"""
+        """检查【忆质】>= 16 点时，触发免控并使长夜立即行动进入自身回合。"""
         if (
             self.yizhi >= 16
             and self.spirit_alive
@@ -229,8 +225,12 @@ class ChangyeyueKit(KitHandler):
             and not self.bursting
         ):
             self.threshold_issued = True
-            # 立即触发长夜终极爆发【迷梦，流失，如露】
-            self.trigger_spirit_burst()
+            # 天赋【今夜与我同行】：解除并免疫控制，若长夜在场使其立即行动进入自身回合 (Turn Begin)
+            # 若处于【血噬】环境再次扣血 500 点 (3622 -> 3122)
+            if self._has_stage_bleed():
+                turn_bleed = 500.0
+                self.spirit_hp = max(1.0, round(self.spirit_hp - turn_bleed, 2))
+                self.on_hp_lost("长夜", turn_bleed, cause="stage_mechanic_bleed_turn_begin")
 
     def trigger_spirit_burst(self) -> None:
         """忆灵终极爆发【迷梦，流失，如露】：主目标16.8%*忆质，副目标8.4%*忆质。"""
@@ -489,8 +489,8 @@ class ChangyeyueKit(KitHandler):
 
             # 进入【至暗之谜】
             self.darkness = True
-            # 获得充能 (2 点，E2 额外 +1 点，共 3 点)
-            self.charges = 2 + (1 if self.eidolon >= 2 else 0)
+            # 获得充能 (基础 2 点，E2 额外 +2 点，共 4 点)
+            self.charges = 2 + (2 if self.eidolon >= 2 else 0)
 
             # 挂载易伤 30% 到敌方全体
             for e in self.port.enemies(self.owner_id):
