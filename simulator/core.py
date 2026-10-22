@@ -38,13 +38,13 @@ class SimulatorCombatPort:
         actor = self._get_entity(actor_id)
         if not actor:
             return ()
-        return tuple(e.name for e in self.sim.entities if e.is_enemy == actor.is_enemy)
+        return tuple(e.name for e in self.sim.entities if e.is_enemy == actor.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False)))
 
     def enemies(self, actor_id: str) -> Tuple[str, ...]:
         actor = self._get_entity(actor_id)
         if not actor:
             return ()
-        return tuple(e.name for e in self.sim.entities if e.is_enemy != actor.is_enemy)
+        return tuple(e.name for e in self.sim.entities if e.is_enemy != actor.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False)))
 
     def stat(self, entity_id: str, stat: StatType) -> float:
         ent = self._get_entity(entity_id)
@@ -148,7 +148,18 @@ class SimulatorCombatPort:
         if not tgt or not src:
             return
         from .effects import DamageRequest
-        req = DamageRequest(attacker=src, target=tgt, skill_multiplier=atk_multiplier)
+        base_res = 0.20
+        if hasattr(tgt, "damage_res") and isinstance(tgt.damage_res, dict) and element in tgt.damage_res:
+            base_res = tgt.damage_res[element]
+        elif hasattr(tgt, "weaknesses") and element in tgt.weaknesses:
+            base_res = 0.0
+        req = DamageRequest(
+            attacker=src,
+            target=tgt,
+            skill_multiplier=atk_multiplier,
+            target_base_res=base_res,
+            target_is_broken=tgt.is_broken
+        )
         self.sim.resolver.enqueue(ApplyDamageEffect(
             request=req,
             toughness_reduction=toughness_damage,
@@ -344,13 +355,15 @@ class TurnSimulator:
 
     @property
     def next_entity(self) -> Optional[Entity]:
-        """获取当前跑道上最先到达行动终点的实体。"""
-        if not self.entities:
+        """获取当前跑道上最先到达行动终点的存活实体。"""
+        alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        if not alive:
             return None
-        return min(self.entities, key=lambda e: e.remaining_av)
+        return min(alive, key=lambda e: e.remaining_av)
 
     def get_action_order(self) -> List[Entity]:
-        return sorted(self.entities, key=lambda e: e.remaining_av)
+        alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        return sorted(alive, key=lambda e: e.remaining_av)
 
     @property
     def current_turn_entity(self) -> Optional[Entity]:
@@ -359,11 +372,12 @@ class TurnSimulator:
 
     def advance_to_next_turn(self) -> Optional[Entity]:
         """将跑道推进至最快到达终点的实体 (0.0 AV)，结算【回合开始】状态时钟并发布 TurnBeginEvent。"""
-        if not self.entities:
+        alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        if not alive:
             return None
 
         # 1. 寻找最快到达终点者
-        active_entity = min(self.entities, key=lambda e: e.remaining_av)
+        active_entity = min(alive, key=lambda e: e.remaining_av)
         delta_av = active_entity.remaining_av
 
         # 2. 全员沿跑道行进 delta_av 距离

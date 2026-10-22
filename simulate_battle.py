@@ -63,28 +63,112 @@ TARGET_MODE_NAMES = {
 }
 
 
-def create_boss_entity(name: str = "拟真首领 (混沌12层)", hp: float = float("inf"), toughness: float = 120.0, speed: float = 115.0, infinite_hp: bool = True) -> Entity:
-    """构建高拟真精英/Boss 实体 (默认开启无限生命木桩对账模式)。"""
-    eff_hp = float("inf") if infinite_hp else hp
-    boss = Entity(
-        name=name,
-        base_speed=speed,
-        base_atk=1600.0,
+STAGE_CONFIG = {
+    "id": 1004,
+    "name": "将杀王棋 (キングへの挑戦)",
+    "level": 100,
+    "url": "https://hsr.nanoka.cc/peak/10",
+    "buff": {
+        "id": 3033083,
+        "name": "领航誓言 (導き手の誓い)",
+        "desc": "我方编队中第 1 位角色 (长夜月) 造成的战技和终结技伤害的全属性抗性穿透提高 50%。",
+        "res_pen": 0.50
+    },
+    "waves": [
+        {
+            "wave": 1,
+            "name": "Wave 1/2 - 精英双锋前驱 (月夜天马 + 「灯塔」)",
+            "enemies": [
+                {
+                    "name": "月夜天马 (Lv.100)",
+                    "id": 4023020,
+                    "hp": 550000.0,
+                    "toughness": 160.0,
+                    "speed": 100.0,
+                    "weaknesses": ["Fire", "Quantum", "Imaginary"],
+                    "damage_res": {"Fire": 0.0, "Quantum": 0.0, "Imaginary": 0.0, "Physical": 0.2, "Wind": 0.2, "Thunder": 0.2, "Ice": 0.2},
+                    "infinite_hp": False
+                },
+                {
+                    "name": "「灯塔」 (Lv.100)",
+                    "id": 8033020,
+                    "hp": 650000.0,
+                    "toughness": 160.0,
+                    "speed": 144.0,
+                    "weaknesses": ["Fire", "Wind", "Quantum"],
+                    "damage_res": {"Fire": 0.0, "Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2},
+                    "infinite_hp": False
+                }
+            ]
+        },
+        {
+            "wave": 2,
+            "name": "Wave 2/2 - 决战首领 堕神之血•亚婆离",
+            "enemies": [
+                {
+                    "name": "堕神之血•亚婆离 (Lv.100)",
+                    "id": 5034010,
+                    "hp": float("inf"),
+                    "toughness": 360.0,
+                    "speed": 180.0,
+                    "weaknesses": ["Ice", "Quantum", "Imaginary"],
+                    "damage_res": {
+                        "Ice": 0.0,
+                        "Quantum": 0.0,
+                        "Imaginary": 0.0,
+                        "Physical": 0.20,
+                        "Fire": 0.20,
+                        "Thunder": 0.20,
+                        "Wind": 0.20
+                    },
+                    "effect_res": 0.30,
+                    "infinite_hp": True
+                }
+            ]
+        }
+    ]
+}
+
+
+def create_enemy_from_config(cfg: Dict[str, Any]) -> Entity:
+    """按 nanoka 官方规范构建敌方单位实体。"""
+    infinite = cfg.get("infinite_hp", False)
+    eff_hp = float("inf") if infinite else cfg.get("hp", 500000.0)
+    enemy = Entity(
+        name=cfg["name"],
+        base_speed=cfg.get("speed", 120.0),
+        base_atk=cfg.get("base_atk", 1600.0),
+        base_effect_res=cfg.get("effect_res", 0.30),
         max_hp=eff_hp,
         current_hp=eff_hp,
-        max_toughness=toughness,
-        current_toughness=toughness,
-        weaknesses=["Quantum", "Lightning", "Fire", "Imaginary", "Wind", "Ice", "Physical"],
+        max_toughness=cfg.get("toughness", 160.0),
+        current_toughness=cfg.get("toughness", 160.0),
+        weaknesses=list(cfg.get("weaknesses", ["Ice", "Quantum"])),
         is_enemy=True
     )
-    boss.is_infinite_hp = infinite_hp
-    return boss
+    enemy.is_infinite_hp = infinite
+    if "damage_res" in cfg:
+        enemy.damage_res = cfg["damage_res"]
+    return enemy
+
+
+def create_boss_entity(name: str = "堕神之血•亚婆离 (Lv.100)", hp: float = float("inf"), toughness: float = 360.0, speed: float = 180.0, infinite_hp: bool = True) -> Entity:
+    """构建高拟真精英/Boss 实体 (默认开启无限生命木桩对账模式)。"""
+    return create_enemy_from_config({
+        "name": name,
+        "hp": hp,
+        "toughness": toughness,
+        "speed": speed,
+        "weaknesses": ["Ice", "Quantum", "Imaginary"],
+        "damage_res": {"Ice": 0.0, "Quantum": 0.0, "Imaginary": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Wind": 0.2},
+        "effect_res": 0.30,
+        "infinite_hp": infinite_hp
+    })
 
 
 class BattleReporter:
     """战斗事件监听与实时统计报表收集器。"""
-    def __init__(self, boss_name: str, team_members: List[str]):
-        self.boss_name = boss_name
+    def __init__(self, team_members: List[str]):
         self.team_members = set(team_members)
         self.damage_by_actor: Dict[str, float] = {}
         self.break_count = 0
@@ -102,39 +186,43 @@ class BattleReporter:
         self.break_count += 1
 
 
-def render_hud(sim: TurnSimulator, boss: Entity, team_members: List[str], current_actor: Entity):
+def render_hud(sim: TurnSimulator, enemies: List[Entity], team_members: List[str], current_actor: Entity, wave_desc: str = ""):
     """绘制富交互战场状态仪表盘 (HUD)。"""
     print("\n" + "═" * 78)
     sp_str = "✦ " * sim.sp.current_sp + "✧ " * max(0, sim.sp.max_sp - sim.sp.current_sp)
-    print(f"⏳ 【战斗仪表盘】 轮次: 第 {sim.current_cycle} 轮  │  行动值: {sim.current_av:6.1f} AV  │  战技点: [{sp_str.strip()}] ({sim.sp.current_sp}/{sim.sp.max_sp})")
+    wave_tag = f"  │  🌊 【{wave_desc}】" if wave_desc else ""
+    print(f"⏳ 【战斗仪表盘】 轮次: 第 {sim.current_cycle} 轮  │  行动值: {sim.current_av:6.1f} AV  │  战技点: [{sp_str.strip()}] ({sim.sp.current_sp}/{sim.sp.max_sp}){wave_tag}")
     print("─" * 78)
 
-    # Boss 状态条
-    is_inf = getattr(boss, "is_infinite_hp", False) or boss.max_hp == float("inf")
-    if is_inf:
-        hp_line = "生命值: [████████████████████] ∞ / ∞ (无限木桩对账模式)"
-    else:
-        hp_pct = max(0.0, (boss.current_hp / boss.max_hp) * 100) if boss.max_hp > 0 else 0.0
-        hp_bars = int(hp_pct // 5)
-        hp_visual = "█" * hp_bars + "░" * (20 - hp_bars)
-        hp_line = f"生命值: [{hp_visual}] {max(0.0, boss.current_hp):9,.0f} / {boss.max_hp:9,.0f} ({hp_pct:5.1f}%)"
+    # 敌方存活目标列表
+    alive_enemies = [e for e in enemies if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+    for idx, e in enumerate(alive_enemies, 1):
+        is_inf = getattr(e, "is_infinite_hp", False) or e.max_hp == float("inf")
+        if is_inf:
+            hp_line = "生命值: [████████████████████] ∞ / ∞ (无限木桩对账模式)"
+        else:
+            hp_pct = max(0.0, (e.current_hp / e.max_hp) * 100) if e.max_hp > 0 else 0.0
+            hp_bars = int(hp_pct // 5)
+            hp_visual = "█" * hp_bars + "░" * (20 - hp_bars)
+            hp_line = f"生命值: [{hp_visual}] {max(0.0, e.current_hp):9,.0f} / {e.max_hp:9,.0f} ({hp_pct:5.1f}%)"
 
-    tough_pct = max(0.0, (boss.current_toughness / boss.max_toughness) * 100) if boss.max_toughness > 0 else 0.0
-    tough_bars = int(tough_pct // 10)
-    tough_visual = "█" * tough_bars + "░" * (10 - tough_bars)
-    broken_tag = " ⚠️【弱点击破中!】" if boss.is_broken else ""
+        tough_pct = max(0.0, (e.current_toughness / e.max_toughness) * 100) if e.max_toughness > 0 else 0.0
+        tough_bars = int(tough_pct // 10)
+        tough_visual = "█" * tough_bars + "░" * (10 - tough_bars)
+        broken_tag = " ⚠️【弱点击破中!】" if e.is_broken else ""
 
-    print(f"👾 敌方目标: 【{boss.name}】{broken_tag}")
-    print(f"   {hp_line}")
-    print(f"   韧性条: [{tough_visual}] {max(0.0, boss.current_toughness):4.0f} / {boss.max_toughness:.0f} │ 弱点: {', '.join(boss.weaknesses)}")
+        is_enemy_turn = "👉" if e.name == current_actor.name else "  "
+        print(f" {is_enemy_turn} [{idx}] 👾 敌方目标: 【{e.name}】{broken_tag} │ 速度: {e.speed:5.1f} │ 距行动: {e.remaining_av:5.1f} AV")
+        print(f"       {hp_line}")
+        print(f"       韧性条: [{tough_visual}] {max(0.0, e.current_toughness):4.0f} / {e.max_toughness:.0f} │ 弱点: {', '.join(e.weaknesses)}")
 
-    # 获取 Boss 身上的 Debuff
-    boss_debuffs = [s.name for s in sim.status_mgr.get_statuses(boss.name)]
-    if boss_debuffs:
-        shown_debuffs = " | ".join(boss_debuffs[:4])
-        if len(boss_debuffs) > 4:
-            shown_debuffs += f" ...等{len(boss_debuffs)}个负面"
-        print(f"   负面状态: 🔻 {shown_debuffs}")
+        # 获取敌方身上的 Debuff
+        e_debuffs = [s.name for s in sim.status_mgr.get_statuses(e.name)]
+        if e_debuffs:
+            shown_debuffs = " | ".join(e_debuffs[:3])
+            if len(e_debuffs) > 3:
+                shown_debuffs += f" ...等{len(e_debuffs)}个负面"
+            print(f"       负面状态: 🔻 {shown_debuffs}")
     print("─" * 78)
 
     # 我方队伍状态
@@ -241,6 +329,29 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     print("━" * 78)
 
 
+def prompt_enemy_target(sim: TurnSimulator, actor: Entity, action_name: str = "攻击") -> Tuple[str, ...]:
+    """提示玩家选择敌方单体目标（在场上有多名敌人时）。"""
+    enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+    if len(enemies) <= 1:
+        return (enemies[0].name,) if enemies else ()
+    print(f"\n🎯 【目标选择】请选择【{actor.name}】施放《{action_name}》的目标敌方:")
+    for idx, e in enumerate(enemies, 1):
+        hp_str = f"{e.current_hp:,.0f}/{e.max_hp:,.0f}" if e.max_hp != float("inf") else "∞ / ∞"
+        print(f"   [{idx}] 【{e.name}】 (HP: {hp_str} │ 韧性: {e.current_toughness:.0f}/{e.max_toughness:.0f} │ 弱点: {', '.join(e.weaknesses)})")
+
+    try:
+        choice = input(f"👉 请输入目标序号 [1-{len(enemies)}, 默认 1]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        choice = "1"
+
+    if choice.isdigit() and 1 <= int(choice) <= len(enemies):
+        chosen = enemies[int(choice) - 1]
+    else:
+        chosen = enemies[0]
+    print(f"🎯 已锁定敌方目标: 【{chosen.name}】")
+    return (chosen.name,)
+
+
 def prompt_ally_target(sim: TurnSimulator, actor: Entity, team_members: List[str], action_name: str = "技能") -> Tuple[str, ...]:
     """提示玩家选择单体辅助/治疗的目标队友。"""
     allies = [e for e in sim.entities if not e.is_enemy]
@@ -269,7 +380,7 @@ def prompt_ally_target(sim: TurnSimulator, actor: Entity, team_members: List[str
 
 
 def handle_cast_ultimate(sim: TurnSimulator, actor: Entity, team_members: List[str]):
-    """处理玩家终结技插队施放，若包含单体队友增益则呼叫目标选择器。"""
+    """处理玩家终结技插队施放，若包含单体队友增益或单体敌方目标则呼叫选择器。"""
     defn = None
     if getattr(actor, "kit", None):
         try:
@@ -277,8 +388,11 @@ def handle_cast_ultimate(sim: TurnSimulator, actor: Entity, team_members: List[s
         except Exception:
             pass
     target_ids = ()
-    if defn and hasattr(defn, "target_mode") and defn.target_mode == TargetMode.SINGLE_ALLY:
-        target_ids = prompt_ally_target(sim, actor, team_members, action_name=defn.name)
+    if defn and hasattr(defn, "target_mode"):
+        if defn.target_mode == TargetMode.SINGLE_ALLY:
+            target_ids = prompt_ally_target(sim, actor, team_members, action_name=defn.name)
+        elif defn.target_mode == TargetMode.SINGLE_ENEMY:
+            target_ids = prompt_enemy_target(sim, actor, action_name=defn.name)
     sim.cast_ultimate(actor.name, target_ids=target_ids)
 
 
@@ -288,9 +402,7 @@ def run_simulation(
     max_cycles: int = 5,
     max_turns: int = 40,
     use_technique: bool = True,
-    boss_hp: float = 450000.0,
-    boss_toughness: float = 120.0,
-    boss_speed: float = 115.0,
+    start_wave: int = 1,
     interactive: bool = False,
     verbose: bool = True
 ):
@@ -315,11 +427,21 @@ def run_simulation(
         kit_name = ent.kit.__class__.__name__ if getattr(ent, "kit", None) else "None"
         print(f"   • {ent.name:10} | 星魂: E{ent.eidolon} | 速度: {ent.base_speed:6.2f} | 攻击: {ent.base_atk:6.1f} | 暴率/暴伤: {ent.base_crit_rate*100:4.1f}%/{ent.base_crit_dmg*100:5.1f}% | 套件: {kit_name}")
 
-    # 3. 创建 Boss 实体
-    boss = create_boss_entity("拟真首领·丰饶玄鹿 (Lv.90)", hp=boss_hp, toughness=boss_toughness, speed=boss_speed)
-    entities.append(boss)
-    print(f"\n👾 【敌方目标配置】")
-    print(f"   • {boss.name:22} | 初始生命: {boss.max_hp:,.0f} | 韧性条: {boss.max_toughness:.0f} 点 | 弱点: {', '.join(boss.weaknesses)}")
+    lead_char = entities[0]
+    print(f"\n🏰 【对战关卡】: {STAGE_CONFIG['name']} (Lv.{STAGE_CONFIG['level']})")
+    print(f"   • 关卡祝福: 《{STAGE_CONFIG['buff']['name']}》 - {STAGE_CONFIG['buff']['desc']}")
+
+    # 3. 创建首发波次敌方实体
+    current_wave_idx = max(0, min(len(STAGE_CONFIG["waves"]) - 1, start_wave - 1))
+    current_wave_cfg = STAGE_CONFIG["waves"][current_wave_idx]
+    current_enemies = [create_enemy_from_config(c) for c in current_wave_cfg["enemies"]]
+    for e in current_enemies:
+        entities.append(e)
+
+    print(f"\n🌊 【{current_wave_cfg['name']}】 敌方目标配置:")
+    for e in current_enemies:
+        hp_disp = f"{e.max_hp:,.0f}" if e.max_hp != float("inf") else "∞ (无限木桩模式)"
+        print(f"   • {e.name:22} | 初始生命: {hp_disp} | 速度: {e.speed:5.1f} | 韧性条: {e.max_toughness:.0f} 点 | 弱点: {', '.join(e.weaknesses)}")
     print("─" * 78)
 
     # 4. 初始化模拟器 (交互模式下 auto_ult=False，由玩家自主选择施放时机)
@@ -331,8 +453,21 @@ def run_simulation(
         technique_users=team_members if use_technique else None,
         auto_ult=not interactive
     )
+    sim.wave_info = {"current": current_wave_idx + 1, "total": len(STAGE_CONFIG["waves"]), "name": current_wave_cfg["name"]}
 
-    reporter = BattleReporter(boss.name, team_members)
+    # 装配关卡祝福到 1 号位 (长夜月: 全属性抗穿+50%)
+    from simulator.status import StatusInstance, Modifier, ModifierOp, DurationTiming
+    sim.status_mgr.add_status(StatusInstance(
+        id="StageBuff_LeadOath",
+        name="领航誓言 (全属性抗穿+50%)",
+        source=lead_char,
+        target=lead_char,
+        duration=None,
+        timing=DurationTiming.TARGET_TURN_END,
+        modifiers=[Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.50)]
+    ))
+
+    reporter = BattleReporter(team_members)
 
     # 绑定事件日志与统计
     def log_technique(e: TechniqueExecuteEvent):
@@ -340,18 +475,18 @@ def run_simulation(
 
     def log_action(e: ActionExecuteEvent):
         sp_info = f"SP: {sim.sp.current_sp}/{sim.sp.max_sp}"
-        tough_pct = (boss.current_toughness / boss.max_toughness) * 100 if boss.max_toughness > 0 else 0
-        tough_bar = "█" * int(tough_pct // 10) + "░" * (10 - int(tough_pct // 10))
-        print(f"[{e.av:6.1f} AV | 第 {e.cycle} 轮] 👤 {e.actor_name:8} 施放 ➔ {e.action_type:20} │ {sp_info:8} │ 敌韧性: [{tough_bar}] {max(0.0, boss.current_toughness):4.0f}/{boss.max_toughness:.0f}")
+        print(f"[{e.av:6.1f} AV | 第 {e.cycle} 轮] 👤 {e.actor_name:8} 施放 ➔ {e.action_type:20} │ {sp_info:8}")
 
     def log_damage(e: DamageAppliedEvent):
         crit_mark = "💥 [暴击]" if e.is_crit else "   [命中]"
-        hp_left_str = "∞ (木桩)" if (e.target_hp_left == float("inf") or getattr(boss, "is_infinite_hp", False)) else f"{max(0.0, e.target_hp_left):,.0f}"
+        target_ent = sim.get_entity(e.target_name)
+        is_inf = getattr(target_ent, "is_infinite_hp", False) if target_ent else False
+        hp_left_str = "∞ (木桩)" if (e.target_hp_left == float("inf") or is_inf) else f"{max(0.0, e.target_hp_left):,.0f}"
         print(f"          ↳ {crit_mark} 对 【{e.target_name}】 造成 {e.damage:10,.1f} 点伤害 (剩余HP: {hp_left_str})")
         reporter.on_damage(e)
 
     def log_break(e: WeaknessBreakEvent):
-        print(f"          ⚡⚡⚡ 【弱点击破 BREAK!!】由 {e.breaker_name} 触发 {e.element} 击破伤害 {e.break_damage:,.1f} 点！(Boss行动延后25%)")
+        print(f"          ⚡⚡⚡ 【弱点击破 BREAK!!】由 {e.breaker_name} 触发 {e.element} 击破伤害 {e.break_damage:,.1f} 点！(行动延后25%)")
         reporter.on_break(e)
 
     def log_toughness_recover(e: ToughnessRecoverEvent):
@@ -369,17 +504,18 @@ def run_simulation(
     turn_count = 0
     auto_all = not interactive
     user_quit = False
+    skip_wave = False
 
     # 4.1 开场就绪决策 (Battle Start Decision)
-    # 战斗刚打响、跑道计时启动前，展示编队起始状态与可用终结技，提供透析属性与对账窗口
     if interactive:
         while True:
             ready_ults = sim.get_ready_ultimates()
-            if boss.current_hp <= 0:
+            alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+            if not alive_enemies:
                 break
 
             print("\n" + "═" * 78)
-            print("🚩 【开场就绪决策 (Battle Opening)】 - 战前秘技已就绪，跑道即将起跑")
+            print(f"🚩 【开场就绪决策 (Battle Opening)】 - 战前秘技与关卡祝福已生效 │ 🌊 【{current_wave_cfg['name']}】")
             print("─" * 78)
             print(f"当前战技点: {sim.sp.current_sp}/{sim.sp.max_sp} │ 跑道初始行动值: 0.0 AV")
             print("👥 我方编队起始状态:")
@@ -402,13 +538,15 @@ def run_simulation(
             print("  [Enter]    起跑，推进跑道行动")
             if ready_ults:
                 print("  [U<序号>]  先手抢施对应终结技 (如 U1)")
-            print("  [I <目标>] 透析角色实时属性与生效Buff (如 I 1, I 2, I 长夜月, I boss)")
+            print("  [I <目标>] 透析角色实时属性与生效Buff (如 I 1, I 2, I 长夜月, I boss, I 灯塔)")
+            if current_wave_idx + 1 < len(STAGE_CONFIG["waves"]):
+                print("  [NW]       跳过当前波次直接进入下一波 (Next Wave)")
             print("  [AA]       开启全自动战斗")
             print("  [Q]        认输 / 退出模拟")
             print("─" * 78)
 
             try:
-                raw_cmd = input("👉 请输入开场决策指令 [Enter/I 1/U1/AA/Q, 默认 Enter]: ").strip()
+                raw_cmd = input("👉 请输入开场决策指令 [Enter/I 1/U1/NW/AA/Q, 默认 Enter]: ").strip()
             except (EOFError, KeyboardInterrupt):
                 raw_cmd = ""
 
@@ -420,13 +558,14 @@ def run_simulation(
                 target_key = raw_cmd[1:].strip()
                 render_inspect_panel(sim, target_key, team_members)
                 continue
+            elif cmd == "NW":
+                skip_wave = True
+                break
             elif cmd.startswith("U") or (cmd.isdigit() and ready_ults):
                 idx_str = cmd[1:] if cmd.startswith("U") else cmd
                 if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
                     target_char = ready_ults[int(idx_str) - 1]
                     handle_cast_ultimate(sim, target_char, team_members)
-                    if boss.current_hp <= 0:
-                        break
                     continue
                 else:
                     print("❌ 无效的终结技编号！")
@@ -439,21 +578,51 @@ def run_simulation(
                 user_quit = True
                 break
             else:
-                print("❌ 指令有误，请输入 Enter / I 1 / U1 / AA / Q")
+                print("❌ 指令有误，请输入 Enter / I 1 / U1 / NW / AA / Q")
 
-    # 4.2 战斗回合主循环 (当跑道有单位到达终点 0.0 AV 时触发决策)
-    while turn_count < max_turns and boss.current_hp > 0:
+    # 4.2 战斗回合主循环 (当跑道有单位到达终点 0.0 AV 时触发决策，支持多波次推进)
+    while turn_count < max_turns:
         if sim.current_cycle > max_cycles or user_quit:
             break
 
-        # 跑道推进：让最快到达终点的单位抵达终点 (0.0 AV) 并结算回合开始状态 (如持续伤害结算)
+        # 波次检查与切换判定
+        alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+        if not alive_enemies or skip_wave:
+            if current_wave_idx + 1 < len(STAGE_CONFIG["waves"]):
+                current_wave_idx += 1
+                next_wave_cfg = STAGE_CONFIG["waves"][current_wave_idx]
+                print("\n" + "🏁 " + "═" * 76)
+                if skip_wave:
+                    print(f"⚡ 【跳过波次】玩家手动触发切波！直接进入 【{next_wave_cfg['name']}】！")
+                else:
+                    print(f"🏁 【波次通关 (Wave {current_wave_idx} Complete)】 敌方已全部肃清！")
+                    print(f"   🌊 正在进入 【{next_wave_cfg['name']}】...")
+                print("   (全队当前行动值、能量、战技点与身上增益无损继承！)")
+                print("🏁 " + "═" * 76 + "\n")
+
+                # 移除旧波次敌人，加入新波次敌人
+                sim.entities = [e for e in sim.entities if not e.is_enemy]
+                new_enemies = [create_enemy_from_config(c) for c in next_wave_cfg["enemies"]]
+                for ne in new_enemies:
+                    sim.add_entity(ne, trigger_battle_start=False)
+
+                current_wave_cfg = next_wave_cfg
+                sim.wave_info = {"current": current_wave_idx + 1, "total": len(STAGE_CONFIG["waves"]), "name": current_wave_cfg["name"]}
+                skip_wave = False
+                continue
+            else:
+                print("🎉 【战斗大捷】所有波次敌方首领均已肃清！")
+                break
+
+        # 跑道推进：让最快到达终点的单位抵达终点 (0.0 AV) 并结算回合开始状态
         actor = sim.advance_to_next_turn()
         if not actor:
             break
 
-        # 回合开始结算后，检查 Boss 是否已因 DoT 阵亡
-        if boss.current_hp <= 0:
-            break
+        # 敌方死绝检查
+        alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+        if not alive_enemies:
+            continue
 
         # 全自动推演分支
         if auto_all:
@@ -467,13 +636,14 @@ def run_simulation(
         if actor.is_enemy:
             while True:
                 ready_ults = sim.get_ready_ultimates()
-                if not ready_ults or boss.current_hp <= 0:
+                alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+                if not ready_ults or not alive_enemies:
                     sim.execute_current_turn()
                     turn_count += 1
                     break
 
                 print("\n" + "═" * 78)
-                print(f"⚠️  【敌方行动预警】 敌方【{actor.name}】已到达终点 (0.0 AV)，即将行动！")
+                print(f"⚠️  【敌方行动预警】 敌方【{actor.name}】已到达终点 (0.0 AV)，即将行动！│ 🌊 【{current_wave_cfg['name']}】")
                 print("─" * 78)
                 print("🔥【我方队伍就绪终结技 (可在此刻抢断插队，先发制人)】:")
                 for i, u in enumerate(ready_ults):
@@ -512,8 +682,6 @@ def run_simulation(
                     if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
                         target_char = ready_ults[int(idx_str) - 1]
                         handle_cast_ultimate(sim, target_char, team_members)
-                        if boss.current_hp <= 0:
-                            break
                         continue
                     else:
                         print("❌ 无效的终结技编号！")
@@ -527,13 +695,14 @@ def run_simulation(
                     user_quit = True
                     break
 
-            if user_quit or boss.current_hp <= 0:
+            if user_quit:
                 break
             continue
 
-        # 我方角色到达终点：展示完整战场仪表盘与所有可触发决策 (自身技能 + 全队已充盈终结技)
+        # 我方角色到达终点：展示完整战场仪表盘与所有可触发决策
         while True:
-            render_hud(sim, boss, team_members, actor)
+            alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+            render_hud(sim, alive_enemies, team_members, actor, wave_desc=current_wave_cfg["name"])
             ready_ults = sim.get_ready_ultimates()
 
             defn_basic = actor.kit.definition(ActionKind.BASIC) if getattr(actor, "kit", None) else None
@@ -565,13 +734,15 @@ def run_simulation(
 
             print("\n【透析与控制】:")
             print("  [I <目标>] 透析属性与Buff (直接按 I 查当前角色，或 I 1 / I 2 / I boss)")
+            if current_wave_idx + 1 < len(STAGE_CONFIG["waves"]):
+                print("  [NW]       跳过当前波次直接进入下一波 (Next Wave)")
             print("  [A]        本回合托管自动 (Auto)")
             print("  [AA]       开启全自动战斗 (Full Auto)")
             print("  [Q]        认输 / 退出模拟")
             print("─" * 78)
 
             try:
-                raw_cmd = input(f"👉 请输入决策指令 [1/2/U1/I/A/AA/Q, 默认 1]: ").strip()
+                raw_cmd = input(f"👉 请输入决策指令 [1/2/U1/I/NW/A/AA/Q, 默认 1]: ").strip()
             except (EOFError, KeyboardInterrupt):
                 raw_cmd = "Q"
 
@@ -581,7 +752,10 @@ def run_simulation(
                 cmd = "1"
 
             if cmd == "1":
-                sim.execute_current_turn(action_override=ActionKind.BASIC)
+                target_ids = ()
+                if defn_basic and hasattr(defn_basic, "target_mode") and defn_basic.target_mode == TargetMode.SINGLE_ENEMY:
+                    target_ids = prompt_enemy_target(sim, actor, action_name=basic_name)
+                sim.execute_current_turn(action_override=ActionKind.BASIC, target_ids=target_ids)
                 turn_count += 1
                 break
             elif cmd == "2":
@@ -589,10 +763,16 @@ def run_simulation(
                     print(f"❌ 战技点不足 (当前 {sim.sp.current_sp} 点，需要 {sp_cost} 点)，无法施放战技！")
                     continue
                 target_ids = ()
-                if defn_skill and hasattr(defn_skill, "target_mode") and defn_skill.target_mode == TargetMode.SINGLE_ALLY:
-                    target_ids = prompt_ally_target(sim, actor, team_members, action_name=defn_skill.name)
+                if defn_skill and hasattr(defn_skill, "target_mode"):
+                    if defn_skill.target_mode == TargetMode.SINGLE_ALLY:
+                        target_ids = prompt_ally_target(sim, actor, team_members, action_name=defn_skill.name)
+                    elif defn_skill.target_mode == TargetMode.SINGLE_ENEMY:
+                        target_ids = prompt_enemy_target(sim, actor, action_name=defn_skill.name)
                 sim.execute_current_turn(action_override=ActionKind.SKILL, target_ids=target_ids)
                 turn_count += 1
+                break
+            elif cmd == "NW":
+                skip_wave = True
                 break
             elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
                 target_key = raw_cmd[1:].strip()
@@ -603,9 +783,6 @@ def run_simulation(
                 if idx_str.isdigit() and 1 <= int(idx_str) <= len(ready_ults):
                     target_char = ready_ults[int(idx_str) - 1]
                     handle_cast_ultimate(sim, target_char, team_members)
-                    if boss.current_hp <= 0:
-                        break
-                    # 终结技插队结算后，重新返回当前角色的行动决策
                     continue
                 else:
                     print("❌ 无效的终结技编号！")
@@ -626,9 +803,9 @@ def run_simulation(
                 user_quit = True
                 break
             else:
-                print("❌ 指令有误，请输入 1 / 2 / U1 / I / A / AA / Q")
+                print("❌ 指令有误，请输入 1 / 2 / U1 / I / NW / A / AA / Q")
 
-        if user_quit or boss.current_hp <= 0:
+        if user_quit:
             break
 
     # 5. 战斗结果结算报表
@@ -636,19 +813,17 @@ def run_simulation(
     print("                     📊 战 斗 结 算 统 计 报 表")
     print("═" * 78)
 
-    if boss.current_hp <= 0:
-        battle_result = "🎉 战斗胜利 (VICTORY)"
+    alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
+    if not alive_enemies and current_wave_idx + 1 >= len(STAGE_CONFIG["waves"]):
+        battle_result = "🎉 战斗大捷 (VICTORY - 全波次肃清)"
     elif user_quit:
         battle_result = "🏳️ 玩家撤退 (RETREAT)"
     else:
         battle_result = "⏱️ 轮次用尽 (CYCLE LIMIT)"
 
     print(f"【战斗结果】: {battle_result}")
+    print(f"【推进进度】: 当前波次 {current_wave_idx + 1}/{len(STAGE_CONFIG['waves'])} ({current_wave_cfg['name']})")
     print(f"【消耗行动值】: {sim.current_av:.2f} AV  │  【消耗轮次】: {sim.current_cycle} 轮 (Cycle)  │  【总行动数】: {turn_count} 动")
-    if getattr(boss, "is_infinite_hp", False) or boss.max_hp == float("inf"):
-        print(f"【Boss状态】 : 生命剩余 ∞ / ∞ (无限生命测试木桩)")
-    else:
-        print(f"【Boss状态】 : 生命剩余 {max(0.0, boss.current_hp):,.1f} / {boss.max_hp:,.1f} (扣减率: {(1.0 - max(0.0, boss.current_hp)/boss.max_hp)*100:.1f}%)")
     print(f"【击破次数】: 共造成 {reporter.break_count} 次弱点击破")
     print(f"【全队总伤害】: {reporter.total_damage:,.1f} 点")
 
@@ -674,9 +849,9 @@ def main():
                         help="自定义 4 人编队，逗号分隔，如: '长夜月,缇宝,知更鸟•晴歌,风堇'")
     parser.add_argument("--cycles", type=int, default=3, help="模拟最大轮次 (Cycle)，默认 3 轮")
     parser.add_argument("--turns", type=int, default=40, help="模拟最大行动回合数，默认 40 动")
+    parser.add_argument("--wave", type=int, choices=[1, 2], default=1,
+                        help="选择起始波次 (1: 精英双锋 月夜天马+灯塔, 2: 堕神之血•亚婆离)")
     parser.add_argument("--no-technique", action="store_true", help="禁用开战前秘技")
-    parser.add_argument("--boss-hp", type=float, default=450000.0, help="Boss 最大生命值，默认 450,000")
-    parser.add_argument("--boss-toughness", type=float, default=120.0, help="Boss 韧性条，默认 120 点")
 
     args = parser.parse_args()
 
@@ -721,14 +896,25 @@ def main():
         print(f"📌 加载精选阵容: 【{preset['name']}】")
         print(f"   说明: {preset['desc']}")
 
+    wave_choice = args.wave
+    if interactive_mode and sys.stdin.isatty() and args.wave == 1:
+        print("\n🌊 请选择关卡起始波次:")
+        print("  [1] Wave 1: 月夜天马 + 「灯塔」 (双精英开局) [默认]")
+        print("  [2] Wave 2: 堕神之血•亚婆离 (决战首领直达)")
+        try:
+            w_input = input("请选择波次 [1/2, 默认 1]: ").strip()
+            if w_input in ("1", "2"):
+                wave_choice = int(w_input)
+        except (EOFError, KeyboardInterrupt):
+            wave_choice = 1
+
     run_simulation(
         team_members=team_members,
         policies=policies,
         max_cycles=args.cycles,
         max_turns=args.turns,
         use_technique=not args.no_technique,
-        boss_hp=args.boss_hp,
-        boss_toughness=args.boss_toughness,
+        start_wave=wave_choice,
         interactive=interactive_mode
     )
 
