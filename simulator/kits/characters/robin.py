@@ -36,22 +36,24 @@ class RobinKit(KitHandler):
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.in_concerto: bool = False
-        self.vibes: int = 1        # 气氛值 (进战初始基线为 1 点)
+        self.vibes: int = 0        # 气氛值
         self.max_vibes: int = 50   # 气氛值上限
 
     def on_battle_start(self) -> None:
-        """战斗开始：全队基于初始气氛值（1 点气氛值，暴伤 41.0%）挂载初始【偏离和弦】。"""
-        self.vibes = 1
-        for ally in self.port.allies(self.owner_id):
-            self.apply_tonal_chord_to_ally(ally)
+        """战斗开始：仅为使知更鸟获得气氛值的角色挂载【偏离和弦】。
+        未行动、未攻击且未提供治疗的目标 (如长夜月) 绝不挂载此 Buff。
+        """
+        # 知更鸟自身进战基础触发 (秘技获得 7 点气氛值，暴伤 50.0%)
+        if self.vibes == 0:
+            self.gain_vibes(7, trigger_ally_id=self.owner_id)
 
     def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
-        """增加气氛值，并根据最新状态判定刷新对应行动队友的【偏离和弦】。"""
+        """增加气氛值，并仅为【使知更鸟获得气氛值的行动目标】动态挂载/刷新【偏离和弦】。"""
         self.vibes = min(self.max_vibes, self.vibes + amount)
         if trigger_ally_id:
             self.apply_tonal_chord_to_ally(trigger_ally_id)
 
-    def apply_tonal_chord_to_ally(self, ally_id: str) -> None:
+    def apply_tonal_chord_to_ally(self, ally_id: str, effective_vibes: Optional[int] = None) -> None:
         """行迹【偏离和弦】动态属性判定与分流计算。
 
         官方 Nanoka 4.6 规范：
@@ -62,7 +64,7 @@ class RobinKit(KitHandler):
         import math
         target_atk = self.port.stat(ally_id, StatType.ATK_BASE)
         robin_atk = self.port.stat(self.owner_id, StatType.ATK_BASE)
-        eff_vibes = min(10, self.vibes)
+        eff_vibes = effective_vibes if effective_vibes is not None else min(10, self.vibes)
 
         if target_atk > robin_atk:
             atk_pct = 0.16 + eff_vibes * 0.004
@@ -92,9 +94,27 @@ class RobinKit(KitHandler):
             actor_name = event.actor_name
             allies = self.port.allies(self.owner_id)
             if actor_name in allies:
-                # 终结技与追加攻击使知更鸟获得气氛值（爆发阶段直接叠满至 10 点气氛值）
+                # 终结技与追加攻击使知更鸟获得气氛值（爆发阶段直接拉满气氛值至 10 点）
                 gained = 9 if ("Ultimate" in event.action_type or "FollowUp" in event.action_type) else 1
                 self.gain_vibes(gained, trigger_ally_id=actor_name)
+
+    def use_technique(self) -> None:
+        """秘技【我们自成旋律】：进战行动提前，立即获得 7 点气氛值 (自身暴伤50%)，全队增伤 30%。"""
+        self.gain_vibes(7, trigger_ally_id=self.owner_id)
+        self.port.gain_energy(self.owner_id, 5.0)
+        for ally in self.port.allies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Robin_Tech_WeAreTheMelody",
+                name="我们自成旋律",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.30),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True,
+                category="buff",
+                description="全队造成伤害提高 +30.0%"
+            ))
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:

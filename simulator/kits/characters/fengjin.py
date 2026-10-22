@@ -111,7 +111,7 @@ class FengjinKit(KitHandler):
             self.use_technique()
 
     def use_technique(self):
-        """秘技【天气正好，万物可爱！】：进场时为我方全体提供生命上限提高 20% 增益。"""
+        """秘技【天气正好，万物可爱！】：进场为我方全体回血并使生命上限提高 20%，同时触发知更鸟天赋气氛值。"""
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
                 key=f"Fengjin_Tech_WeatherIsFine_{ally}",
@@ -125,3 +125,9 @@ class FengjinKit(KitHandler):
                 category="buff",
                 description="全队生命上限提高 +20.0%"
             ))
+        # 风堇进战回血判定为队友提供治疗，使知更鸟获得 1 点气氛值，知更鸟为风堇挂载 41.0% 偏离和弦
+        for ally in self.port.allies(self.owner_id):
+            if "知更鸟" in ally:
+                ent = self.port._get_entity(ally) if hasattr(self.port, "_get_entity") else None
+                if ent and getattr(ent, "kit", None) and hasattr(ent.kit, "apply_tonal_chord_to_ally"):
+                    ent.kit.apply_tonal_chord_to_ally(self.owner_id, effective_vibes=1)
