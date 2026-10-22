@@ -34,7 +34,8 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
-                category="buff"
+                category="buff",
+                description=f"全队暴击伤害 +{crit_val*100:.1f}%"
             ))
 
     def on_battle_start(self) -> None:

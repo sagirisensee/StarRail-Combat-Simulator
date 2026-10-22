@@ -17,7 +17,12 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
 
     def test_tibao_11_buffs_and_2_other_effects_after_ultimate(self):
-        sim = TurnSimulator(entities=self.entities + self.enemies, use_techniques=True, auto_ult=False)
+        sim = TurnSimulator(
+            entities=self.entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
+        )
         tibao = sim.get_entity("缇宝")
 
         # 1. 验证开局 0.00 AV 满能

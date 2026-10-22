@@ -209,7 +209,8 @@ class FengjinKit(KitHandler):
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
-                category="buff"
+                category="buff",
+                description="全队暴击伤害 +15.0%"
             ))
 
     def definition(self, kind: ActionKind):
@@ -266,7 +267,8 @@ class FengjinKit(KitHandler):
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
-                category="buff"
+                category="buff",
+                description="全队生命上限提高 +20.0%"
             ))
 
 
@@ -301,7 +303,8 @@ class TibaoKit(KitHandler):
                 modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 7.29),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
-                category="buff"
+                category="buff",
+                description="天赋追加攻击伤害提高 +729.0%"
             ))
 
         # 遗器 4 件套常驻增益【哀歌覆国的诗人】(暴击率 32%)
@@ -313,7 +316,8 @@ class TibaoKit(KitHandler):
             modifiers=(Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.32),),
             duration=None,
             timing=DurationTiming.TARGET_TURN_END,
-            category="buff"
+            category="buff",
+            description="自身暴击率提高 +32.0%"
         ))
 
     def definition(self, kind: ActionKind):
@@ -361,7 +365,8 @@ class TibaoKit(KitHandler):
                 modifiers=(),
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
-                category="other"
+                category="other",
+                description="结界领域展开中：敌方在结界内受到伤害提高 +33.0%"
             ))
             for e in self.port.enemies(self.owner_id):
                 self.port.upsert_status(BuffSpec(
@@ -373,7 +378,8 @@ class TibaoKit(KitHandler):
                     duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
-                    category="debuff"
+                    category="debuff",
+                    description="结界领域内受到伤害提高 +33.0%"
                 ))
 
             # 2. 为我方全体附加终结技核心增益【神启】(12级技能全属性抗穿 26.4%)，并为队友回能
@@ -389,7 +395,8 @@ class TibaoKit(KitHandler):
                     duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
-                    category="buff"
+                    category="buff",
+                    description="全属性抗性穿透 +26.4%"
                 ))
 
             # 3. 星魂 4【心意相契的安宁】：结界期间我方全体造成的伤害无视目标 18% 防御
@@ -404,7 +411,8 @@ class TibaoKit(KitHandler):
                         duration=3,
                         timing=DurationTiming.TARGET_TURN_END,
                         skip_current_clock=True,
-                        category="buff"
+                        category="buff",
+                        description="全队造成的伤害无视目标 18.0% 防御"
                     ))
 
             # 4. 额外能力【长翅膀的玻璃球！】：处于结界期间自身生命上限提升 2527 点数值
@@ -417,7 +425,8 @@ class TibaoKit(KitHandler):
                 duration=3,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
-                category="buff"
+                category="buff",
+                description="生命上限提升 +2527"
             ))
 
             # 5. 施放大招自身固定回能 5 点
@@ -435,7 +444,8 @@ class TibaoKit(KitHandler):
                     duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
-                    category="buff"
+                    category="buff",
+                    description="造成伤害提高 +72.0%"
                 ))
                 # 天赋追加攻击基础倍率 1.20，享有 E6 增伤 729%
                 fu_mult = 1.20 * (1.0 + 7.29)

@@ -48,7 +48,8 @@ class RobinKit(KitHandler):
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.55),),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
-                category="buff"
+                category="buff",
+                description="全队暴击伤害 +55.0% (40%基础 + 10 Vibes×1.5%)"
             ))
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
@@ -98,7 +99,8 @@ class RobinKit(KitHandler):
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
-                category="buff"
+                category="buff",
+                description="全队造成伤害提高 +30.0%"
             ))
 
     def execute(self, ctx: ActionContext) -> None:

@@ -16,6 +16,7 @@ class BuffSpec:
     stack_policy: StackPolicy = StackPolicy.REPLACE
     skip_current_clock: bool = False
     category: str = "buff"
+    description: Optional[str] = None
 
 
 class CombatPort(Protocol):

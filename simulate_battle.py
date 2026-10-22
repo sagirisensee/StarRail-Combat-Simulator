@@ -68,6 +68,7 @@ STAGE_CONFIG = {
     "name": "将杀王棋 (キングへの挑戦)",
     "level": 100,
     "url": "https://hsr.nanoka.cc/peak/10",
+    "mechanics": ["血噬"],
     "buffs": [
         {
             "id": 3033082,
@@ -490,7 +491,8 @@ def run_simulation(
         max_sp=5,
         use_techniques=use_technique,
         technique_users=team_members if use_technique else None,
-        auto_ult=not interactive
+        auto_ult=not interactive,
+        stage_mechanics=STAGE_CONFIG.get("mechanics", [])
     )
     sim.wave_info = {"current": current_wave_idx + 1, "total": len(STAGE_CONFIG["waves"]), "name": current_wave_cfg["name"]}
 

@@ -80,7 +80,8 @@ class SimulatorCombatPort:
             modifiers=list(spec.modifiers),
             stack_policy=spec.stack_policy,
             skip_current_clock=spec.skip_current_clock,
-            category=getattr(spec, "category", "buff")
+            category=getattr(spec, "category", "buff"),
+            description=getattr(spec, "description", None)
         )
         self.sim.status_mgr.add_status(status)
 
@@ -296,7 +297,7 @@ class TurnSimulator:
         use_techniques: bool = False,
         technique_users: Optional[List[str]] = None,
         auto_ult: bool = True,
-        stage_mechanic: Optional[str] = "血噬"
+        stage_mechanics: Optional[List[str]] = None
     ):
         self.entities: List[Entity] = []
         self.current_av: float = 0.0
@@ -335,19 +336,21 @@ class TurnSimulator:
                 for user_id in technique_users:
                     self.use_technique(user_id)
 
-            # 3. 结算关卡环境机制 (如 Peak 10 血噬)
-            if stage_mechanic:
-                for e in self.entities:
-                    self.status_mgr.add_status(StatusInstance(
-                        id=f"Stage_Mechanic_{stage_mechanic}_{e.name}",
-                        name=stage_mechanic,
-                        source=e,
-                        target=e,
-                        duration=None,
-                        timing=DurationTiming.TARGET_TURN_END,
-                        modifiers=[],
-                        category="other"
-                    ))
+            # 3. 结算关卡环境机制 (按关卡入参动态挂载)
+            if stage_mechanics:
+                for mech in stage_mechanics:
+                    for e in self.entities:
+                        self.status_mgr.add_status(StatusInstance(
+                            id=f"Stage_Mechanic_{mech}_{e.name}",
+                            name=mech,
+                            source=e,
+                            target=e,
+                            duration=None,
+                            timing=DurationTiming.TARGET_TURN_END,
+                            modifiers=[],
+                            category="other",
+                            description="关卡全局环境机制"
+                        ))
 
             self.resolver.resolve_all()
 

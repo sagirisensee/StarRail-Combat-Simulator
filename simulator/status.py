@@ -79,6 +79,7 @@ class StatusInstance:
     stack_policy: StackPolicy = StackPolicy.REPLACE # 合并策略
     skip_current_clock: bool = False         # 施加当回合是否豁免扣减
     category: str = "buff"                   # 状态类别: "buff" (增益), "debuff" (负面), "other" (其他效果/结界)
+    description: Optional[str] = None        # 业务层定义的自解释说明文案 (非空时优先展示)
 
     @property
     def is_expired(self) -> bool:
@@ -296,16 +297,12 @@ class StatusManager:
                         mod_strs.append(f"生命上限 +{m.value * 100:.1f}%")
                     else:
                         mod_strs.append(f"生命上限 +{m.value:.0f}")
-                elif s.name == "星月漫天的明日" and m.value >= 7.0:
-                    mod_strs.append(f"追加攻击伤害提高 +{m.value * 100:.1f}%")
                 else:
                     op_str = "%" if (m.op == ModifierOp.PERCENT or m.stat in (StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST, StatType.VULNERABILITY, StatType.DEF_SHRED, StatType.BREAK_EFFECT, StatType.EFFECT_RES)) else ""
                     val_disp = m.value * 100 if op_str == "%" else m.value
                     mod_strs.append(f"{m.stat.name} +{val_disp:.1f}{op_str}")
 
-            if not mod_strs and s.name == "猜猜这里住着谁":
-                mod_strs.append("结界领域展开中：敌方在结界内受到伤害提高 +33.0%")
-
+            desc = getattr(s, "description", None) or (", ".join(mod_strs) if mod_strs else "特殊效果 / 机制生效中")
             source_name = getattr(s.source, "name", str(s.source))
             active_buffs.append({
                 "id": s.id,
@@ -315,7 +312,7 @@ class StatusManager:
                 "timing": s.timing.name if hasattr(s.timing, "name") else str(s.timing),
                 "stacks": s.stacks,
                 "category": getattr(s, "category", "buff"),
-                "modifiers_desc": ", ".join(mod_strs) if mod_strs else "特殊效果 / 机制生效中"
+                "modifiers_desc": desc
             })
 
         buffs_list = [b for b in active_buffs if b.get("category", "buff") == "buff"]
