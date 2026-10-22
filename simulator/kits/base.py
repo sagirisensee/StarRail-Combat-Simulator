@@ -86,10 +86,11 @@ class KitHandler(ABC):
         return True
 
     def get_energy_display(self, entity: Any) -> str:
-        """返回终结技充能状态的可读文本（如 '能量: 120/120' 或 '残梦: 9/9'）。"""
+        """返回终结技充能状态的可读文本（如 '能量: 120/120' 或 '残梦: 9/9'），遵循星铁向下截断规范。"""
         energy = getattr(entity, "energy", 0.0)
         max_energy = getattr(entity, "max_energy", 120.0)
-        return f"能量: {energy:.0f}/{max_energy:.0f}"
+        import math
+        return f"能量: {math.floor(energy)}/{math.floor(max_energy)}"
 
     def get_kit_state(self) -> dict:
         """返回该角色独有的机制层状态字典（如充能层数、印记、协奏状态等）。"""
