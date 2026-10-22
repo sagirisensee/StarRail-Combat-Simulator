@@ -160,6 +160,17 @@ class ChangyeyueKit(KitHandler):
             mult = 2.40 if self.eidolon >= 2 else 2.00  # E2 强化战技倍率
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Moonlight")
+            # 专属光锥【让告别，更美一些】(S1)：自身回合损失生命获得【冥花】，造成伤害无视目标 30% 防御力，持续 2 回合
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_LC_Flower",
+                name="冥花 (让告别更美一些S1无视防御30%)",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.30),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True
+            ))
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
             ult_mult = 3.60 if self.eidolon >= 2 else 3.00
@@ -218,6 +229,18 @@ class FengjinKit(KitHandler):
             mult = 2.20 if self.eidolon >= 1 else 1.80  # E1 狂岚增伤
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Windburst")
+            # 专属光锥【愿虹光永驻天空】(S1)：施法触发敌方全体易伤 18%，持续 2 回合
+            for e in self.port.enemies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key="Fengjin_LC_RainbowVuln",
+                    name="虹光易伤 (愿虹光永驻天空S1易伤18%)",
+                    source_id=self.owner_id,
+                    target_id=e,
+                    modifiers=(Modifier(StatType.DMG_VULNERABILITY, ModifierOp.ADD, 0.18),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
             ult_mult = 3.20 if self.eidolon >= 1 else 2.80

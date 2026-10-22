@@ -98,7 +98,7 @@ class RobinKit(KitHandler):
         self.port.gain_energy(self.owner_id, 20.0)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
-        # 全队增伤 50%，持续 3 回合 (施法者知更鸟行动结束衰减)
+        # 1. 战技本体: 全队增伤 50%，持续 3 回合 (施法者知更鸟行动结束衰减)
         allies = self.port.allies(self.owner_id)
         for ally in allies:
             self.port.upsert_status(BuffSpec(
@@ -107,6 +107,17 @@ class RobinKit(KitHandler):
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
+                duration=3,
+                timing=DurationTiming.CASTER_TURN_END,
+                skip_current_clock=True
+            ))
+            # 2. 光锥【记忆永不落幕】(S5)：施放战技后使我方全体造成的伤害提高 16%，持续 3 回合
+            self.port.upsert_status(BuffSpec(
+                key="Robin_LC_MemoryBuff",
+                name="收取 (记忆永不落幕S5全队增伤16%)",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.16),),
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True
