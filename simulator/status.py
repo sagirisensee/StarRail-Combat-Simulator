@@ -250,30 +250,38 @@ class StatusManager:
         name = entity.name
         base_atk = getattr(entity, "base_atk", 0.0)
         base_spd = getattr(entity, "base_speed", 0.0)
+        base_def = getattr(entity, "base_def", 0.0)
         base_cr = getattr(entity, "base_crit_rate", 0.05)
         base_cd = getattr(entity, "base_crit_dmg", 0.50)
+        base_be = getattr(entity, "base_break_effect", 0.0)
+        base_res = getattr(entity, "base_effect_res", 0.10)
+        base_ehr = getattr(entity, "base_effect_hit_rate", 0.0)
+        base_err = getattr(entity, "base_err", 1.0)
 
         # 采样各属性
         cur_atk = self.calculate_stat(name, base_atk, StatType.ATK_BASE)
         cur_spd = self.calculate_stat(name, base_spd, StatType.SPEED)
+        cur_def = self.calculate_stat(name, base_def, StatType.DEF_PERCENT)
         cur_cr = self.calculate_stat(name, base_cr, StatType.CRIT_RATE)
         cur_cd = self.calculate_stat(name, base_cd, StatType.CRIT_DMG)
-        dmg_boost = self.calculate_stat(name, 0.0, StatType.DMG_BOOST)
+        dmg_boost = self.calculate_stat(name, getattr(entity, "base_dmg_boost", 0.0), StatType.DMG_BOOST)
         res_pen = self.calculate_stat(name, 0.0, StatType.RES_PEN)
         vuln = self.calculate_stat(name, 0.0, StatType.VULNERABILITY)
         def_shred = self.calculate_stat(name, 0.0, StatType.DEF_SHRED)
-        break_eff = self.calculate_stat(name, 0.0, StatType.BREAK_EFFECT)
+        break_eff = self.calculate_stat(name, base_be, StatType.BREAK_EFFECT)
+        effect_res = self.calculate_stat(name, base_res, StatType.EFFECT_RES)
 
-        # 统计攻击力与速度的具体增量构成
+        # 统计百分比增量构成
         atk_pct = (cur_atk - base_atk) / base_atk if base_atk > 0 else 0.0
         spd_pct = (cur_spd - base_spd) / base_spd if base_spd > 0 else 0.0
+        def_pct = (cur_def - base_def) / base_def if base_def > 0 else 0.0
 
         # Buff 详情列表
         active_buffs = []
         for s in self.get_statuses(name):
             mod_strs = []
             for m in s.modifiers:
-                op_str = "%" if (m.op == ModifierOp.PERCENT or m.stat in (StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST, StatType.VULNERABILITY, StatType.DEF_SHRED)) else ""
+                op_str = "%" if (m.op == ModifierOp.PERCENT or m.stat in (StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST, StatType.VULNERABILITY, StatType.DEF_SHRED, StatType.BREAK_EFFECT, StatType.EFFECT_RES)) else ""
                 val_disp = m.value * 100 if op_str == "%" else m.value
                 mod_strs.append(f"{m.stat.name} +{val_disp:.1f}{op_str}")
 
@@ -283,26 +291,58 @@ class StatusManager:
                 "name": s.name,
                 "source": source_name,
                 "duration": s.duration,
-                "timing": s.timing.name,
+                "timing": s.timing.name if hasattr(s.timing, "name") else str(s.timing),
                 "stacks": s.stacks,
                 "modifiers_desc": ", ".join(mod_strs)
             })
 
+        # 套件机制独有状态提取
+        kit_state = {}
+        kit = getattr(entity, "kit", None)
+        if kit:
+            if hasattr(kit, "get_kit_state"):
+                kit_state = kit.get_kit_state()
+            else:
+                excluded = {"owner_id", "port", "skill_levels"}
+                for k, v in getattr(kit, "__dict__", {}).items():
+                    if k not in excluded and not k.startswith("_"):
+                        if isinstance(v, (int, float, bool, str, list, dict)):
+                            kit_state[k] = v
+
+        hp_pct = (entity.current_hp / entity.max_hp) if (entity.max_hp > 0 and entity.max_hp != float("inf")) else 1.0
+
         return {
+            # 基础身份元数据
             "name": name,
+            "avatar_id": getattr(entity, "avatar_id", 0),
             "eidolon": getattr(entity, "eidolon", 0),
+            "level": getattr(entity, "level", 80),
+            "element": getattr(entity, "element", ""),
+            "path": getattr(entity, "path", ""),
+            "is_enemy": getattr(entity, "is_enemy", False),
+
+            # 生存与行动资源
             "current_hp": entity.current_hp,
             "max_hp": entity.max_hp,
+            "hp_pct": hp_pct,
+            "is_infinite_hp": getattr(entity, "is_infinite_hp", False) or entity.max_hp == float("inf"),
+            "shield": getattr(entity, "shield", 0.0),
             "current_energy": getattr(entity, "energy", 0.0),
             "max_energy": getattr(entity, "max_energy", 0.0),
+            "energy_ready": getattr(entity, "energy", 0.0) >= getattr(entity, "max_energy", 120.0) if getattr(entity, "max_energy", 0.0) > 0 else False,
             "remaining_av": getattr(entity, "remaining_av", 0.0),
             "distance_remaining": getattr(entity, "distance_remaining", 0.0),
+
+            # 核心战斗面板
             "base_atk": base_atk,
             "current_atk": cur_atk,
             "atk_gain_pct": atk_pct,
             "base_speed": base_spd,
             "current_speed": cur_spd,
             "speed_gain_pct": spd_pct,
+            "base_def": base_def,
+            "current_def": cur_def,
+            "def_gain_pct": def_pct,
             "base_crit_rate": base_cr,
             "current_crit_rate": cur_cr,
             "base_crit_dmg": base_cd,
@@ -312,5 +352,34 @@ class StatusManager:
             "vulnerability": vuln,
             "def_shred": def_shred,
             "break_effect": break_eff,
-            "buffs": active_buffs
+            "effect_res": effect_res,
+            "effect_hit_rate": base_ehr,
+            "err": base_err,
+
+            # 韧性系统 (敌方)
+            "max_toughness": getattr(entity, "max_toughness", 0.0),
+            "current_toughness": getattr(entity, "current_toughness", 0.0),
+            "is_broken": getattr(entity, "is_broken", False),
+            "weaknesses": list(getattr(entity, "weaknesses", [])),
+
+            # Buff 与特有机制
+            "buffs": active_buffs,
+            "kit_state": kit_state,
+
+            # 结构化别名分组 (供链式查询与对账)
+            "stats": {
+                "atk": {"current": cur_atk, "base": base_atk, "gain_pct": atk_pct},
+                "speed": {"current": cur_spd, "base": base_spd, "gain_pct": spd_pct},
+                "def": {"current": cur_def, "base": base_def, "gain_pct": def_pct},
+                "crit_rate": cur_cr,
+                "crit_dmg": cur_cd,
+                "dmg_boost": dmg_boost,
+                "res_pen": res_pen,
+                "vulnerability": vuln,
+                "def_shred": def_shred,
+                "break_effect": break_eff,
+                "effect_res": effect_res,
+                "effect_hit_rate": base_ehr,
+                "err": base_err
+            }
         }

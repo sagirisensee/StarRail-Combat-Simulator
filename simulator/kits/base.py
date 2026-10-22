@@ -60,3 +60,13 @@ class KitHandler(ABC):
     def on_event(self, event: Any) -> None:
         """响应事件总线发布的事件（如友方耗点、击破、回合切换等）。"""
         pass
+
+    def get_kit_state(self) -> dict:
+        """返回该角色独有的机制层状态字典（如充能层数、印记、协奏状态等）。"""
+        excluded = {"owner_id", "port", "skill_levels"}
+        state = {}
+        for k, v in self.__dict__.items():
+            if k not in excluded and not k.startswith("_"):
+                if isinstance(v, (int, float, bool, str, list, dict)):
+                    state[k] = v
+        return state

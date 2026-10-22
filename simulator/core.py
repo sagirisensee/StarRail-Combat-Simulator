@@ -171,6 +171,15 @@ class Entity:
     max_energy: float = 120.0
     avatar_id: int = 0
     eidolon: int = 0
+    base_def: float = 600.0
+    base_effect_res: float = 0.10
+    base_effect_hit_rate: float = 0.0
+    base_break_effect: float = 0.0
+    base_err: float = 1.0
+    base_dmg_boost: float = 0.0
+    element: str = ""
+    path: str = ""
+    level: int = 80
     # 关联的技能套件 (Kit)
     kit: Optional[Any] = None
     # 韧性系统 (仅敌方有)
@@ -202,6 +211,13 @@ class Entity:
         if self.simulator and hasattr(self.simulator, "status_mgr"):
             return self.simulator.status_mgr.calculate_stat(self.name, self.base_atk, StatType.ATK_BASE)
         return self.base_atk
+
+    @property
+    def defense(self) -> float:
+        """从状态管理器动态计算实时防御力。"""
+        if self.simulator and hasattr(self.simulator, "status_mgr"):
+            return self.simulator.status_mgr.calculate_stat(self.name, self.base_def, StatType.DEF_PERCENT)
+        return self.base_def
 
     @property
     def crit_rate(self) -> float:
@@ -587,3 +603,101 @@ class TurnSimulator:
                 break
             actor = self.step()
             yield actor
+
+    def get_battle_status(self) -> Dict[str, Any]:
+        """获取当前全战场统一状态视图 (Single Source of Truth: status)。"""
+        timeline = []
+        for e in sorted(self.entities, key=lambda x: x.remaining_av):
+            timeline.append({
+                "name": e.name,
+                "remaining_av": round(e.remaining_av, 2),
+                "distance": round(e.distance_remaining, 1),
+                "speed": round(e.speed, 2),
+                "is_enemy": e.is_enemy
+            })
+
+        ready_ults = [u.name for u in self.get_ready_ultimates()]
+
+        meta = {
+            "av": round(self.current_av, 2),
+            "cycle": self.current_cycle,
+            "sp": {
+                "current": self.sp.current_sp,
+                "max": self.sp.max_sp
+            },
+            "current_actor": self.current_turn_entity.name if self.current_turn_entity else None,
+            "ready_ultimates": ready_ults,
+            "timeline": timeline
+        }
+
+        team = {}
+        enemies = {}
+
+        for e in self.entities:
+            snap = self.status_mgr.get_detailed_snapshot(e)
+            if e.is_enemy:
+                enemies[e.name] = snap
+            else:
+                team[e.name] = snap
+
+        return {
+            "meta": meta,
+            "team": team,
+            "enemies": enemies
+        }
+
+    @property
+    def status(self) -> Dict[str, Any]:
+        """战场全量实时状态字典属性，作为全系统事实真理源。"""
+        return self.get_battle_status()
+
+    def query_status(self, query: str = "") -> Any:
+        """从统一 status 中智能检索信息，支持快捷名称、属性名或点号路径。
+        例如:
+        - query_status("长夜月") -> 返回长夜月全量 snapshot
+        - query_status("长夜月.current_atk") -> 返回 1444.1
+        - query_status("长夜月.buffs") -> 返回 Buff 列表
+        - query_status("sp") -> {"current": 5, "max": 5}
+        - query_status("meta.av") -> 41.4
+        - query_status("boss") -> 返回首领状态
+        """
+        st = self.status
+        query = query.strip()
+        if not query:
+            return st
+
+        # 快捷别名支持
+        if query.lower() in ("sp", "skill_points", "战技点"):
+            return st["meta"]["sp"]
+        if query.lower() in ("av", "action_value", "行动值"):
+            return st["meta"]["av"]
+        if query.lower() in ("cycle", "轮次"):
+            return st["meta"]["cycle"]
+        if query.lower() in ("timeline", "跑道", "行动顺序"):
+            return st["meta"]["timeline"]
+        if query.lower() in ("boss", "enemy", "怪物", "首领"):
+            return next(iter(st["enemies"].values())) if st["enemies"] else None
+
+        # 检查是否是队伍中角色名
+        for name, data in st["team"].items():
+            if query == name or query.lower() in name.lower():
+                return data
+
+        # 点号分段遍历
+        parts = query.split(".")
+        curr: Any = st
+        for p in parts:
+            if isinstance(curr, dict) and p in curr:
+                curr = curr[p]
+            elif isinstance(curr, dict):
+                found = False
+                for k, v in curr.items():
+                    if k.lower() == p.lower():
+                        curr = v
+                        found = True
+                        break
+                if not found:
+                    return None
+            else:
+                return None
+        return curr

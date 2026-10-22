@@ -139,6 +139,35 @@ class TestManualMode(unittest.TestCase):
         self.assertEqual(inf_boss.current_hp, float("inf"))
         self.assertFalse(inf_boss.current_hp <= 0)
 
+    def test_unified_status_and_query(self):
+        # 验证统一状态字典 sim.status 与 query_status 的准确性
+        st = self.sim.status
+        self.assertIn("meta", st)
+        self.assertIn("team", st)
+        self.assertIn("enemies", st)
+        self.assertIn("花火", st["team"])
+        self.assertIn("黄泉", st["team"])
+        self.assertIn("Boss", st["enemies"])
+
+        # 验证 query_status 各种检索
+        sparkle_st = self.sim.query_status("花火")
+        self.assertIsNotNone(sparkle_st)
+        self.assertEqual(sparkle_st["name"], "花火")
+        self.assertIn("current_speed", sparkle_st)
+        self.assertIn("stats", sparkle_st)
+        self.assertEqual(sparkle_st["stats"]["speed"]["base"], 160.0)
+
+        # 验证 sp 快捷检索
+        sp_info = self.sim.query_status("sp")
+        self.assertEqual(sp_info["current"], 3)
+        self.assertEqual(sp_info["max"], 7)
+
+        # 验证 boss 快捷检索
+        boss_st = self.sim.query_status("boss")
+        self.assertIsNotNone(boss_st)
+        self.assertEqual(boss_st["name"], "Boss")
+        self.assertTrue(boss_st["is_enemy"])
+
 
 if __name__ == "__main__":
     unittest.main()

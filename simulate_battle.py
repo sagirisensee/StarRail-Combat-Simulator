@@ -199,14 +199,18 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
 
     snap = sim.status_mgr.get_detailed_snapshot(ent)
     print("\n" + "━" * 78)
-    role_tag = "👾 敌方首领" if getattr(ent, "is_enemy", False) else f"👥 队伍成员 (星魂: E{snap['eidolon']})"
+    elem_path = f"[{snap['element']}/{snap['path']}] " if snap['element'] else ""
+    role_tag = "👾 敌方首领" if getattr(ent, "is_enemy", False) else f"👥 队伍成员 (星魂: E{snap['eidolon']} │ Lv.{snap['level']} │ {elem_path})"
     print(f"🔍 【{snap['name']}】 实时属性与 Buff 全量透析 │ {role_tag}")
     print("━" * 78)
     print("📊 实时动态面板 (Dynamic Attributes):")
     hp_str = f"{snap['current_hp']:,.1f} / {snap['max_hp']:,.1f}" if snap['max_hp'] != float("inf") else "∞ / ∞ (无限生命测试木桩)"
+    if snap.get('shield', 0.0) > 0:
+        hp_str += f" │ 护盾: {snap['shield']:,.1f}"
     print(f"   • 生命值 (HP)       : {hp_str}")
     print(f"   • 行动速度 (SPD)    : {snap['current_speed']:6.2f} (基础 {snap['base_speed']:6.2f} │ 提速: +{snap['speed_gain_pct']*100:.1f}%) ➔ 距行动: {snap['remaining_av']:5.1f} AV")
     print(f"   • 实时攻击 (ATK)    : {snap['current_atk']:6.1f} (基础 {snap['base_atk']:6.1f} │ 攻击增量: +{snap['atk_gain_pct']*100:.1f}%)")
+    print(f"   • 实时防御 (DEF)    : {snap['current_def']:6.1f} (基础 {snap['base_def']:6.1f} │ 防御增量: +{snap['def_gain_pct']*100:.1f}%)")
     print(f"   • 暴击率 (CRIT)     : {snap['current_crit_rate']*100:5.1f}% (基础 {snap['base_crit_rate']*100:5.1f}%)")
     print(f"   • 暴击伤害 (CDMG)   : {snap['current_crit_dmg']*100:5.1f}% (基础 {snap['base_crit_dmg']*100:5.1f}%)")
     print(f"   • 全属性增伤 (DMG)  : +{snap['dmg_boost']*100:5.1f}%")
@@ -215,7 +219,15 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     if snap.get('def_shred', 0.0) > 0:
         print(f"   • 防御削减 (DEF SHRED): +{snap['def_shred']*100:5.1f}%")
     print(f"   • 击破特攻 (BE)     : +{snap['break_effect']*100:5.1f}%")
+    print(f"   • 效果抵抗 (RES)    : {snap['effect_res']*100:5.1f}%")
+    if snap.get('effect_hit_rate', 0.0) > 0:
+        print(f"   • 效果命中 (EHR)    : {snap['effect_hit_rate']*100:5.1f}%")
     print(f"   • 能量状态 (ENERGY) : {snap['current_energy']:.1f} / {snap['max_energy']:.1f}")
+
+    if snap.get("kit_state"):
+        print("\n⚙️ 角色专属机制与层数 (Kit Mechanics State):")
+        for k, v in snap["kit_state"].items():
+            print(f"   • {k}: {v}")
 
     print("\n🔮 当前身上生效 Buff / 状态列表 (Active Statuses):")
     if not snap["buffs"]:
