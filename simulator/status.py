@@ -120,6 +120,8 @@ class StatusManager:
                 existing.duration = status.duration if status.duration is not None else existing.duration
                 existing.stacks = min(existing.max_stacks, max(existing.stacks, status.stacks))
                 existing.skip_current_clock = status.skip_current_clock
+                if status.description is not None:
+                    existing.description = status.description
             elif status.stack_policy == StackPolicy.STACK:
                 existing.stacks = min(existing.max_stacks, existing.stacks + status.stacks)
                 if status.duration is not None:

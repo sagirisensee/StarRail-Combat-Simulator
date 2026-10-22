@@ -316,14 +316,16 @@ class TurnSimulator:
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
 
-        # 注册事件总线转发至各实体挂载的光锥与遗器
-        def _forward_event_to_light_cones_and_relics(evt: BattleEvent):
+        # 注册事件总线转发至各实体挂载的技能套件、光锥与遗器
+        def _forward_event_to_handlers(evt: BattleEvent):
             for ent in self.entities:
+                if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_event"):
+                    ent.kit.on_event(evt)
                 if getattr(ent, "light_cone", None) is not None:
                     ent.light_cone.on_event(evt)
                 for rh in getattr(ent, "relic_handlers", []):
                     rh.on_event(evt)
-        self.event_bus.subscribe(BattleEvent, _forward_event_to_light_cones_and_relics)
+        self.event_bus.subscribe(BattleEvent, _forward_event_to_handlers)
 
         if entities:
             for e in entities:

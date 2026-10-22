@@ -36,22 +36,65 @@ class RobinKit(KitHandler):
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.in_concerto: bool = False
+        self.vibes: int = 1        # 气氛值 (进战初始基线为 1 点)
+        self.max_vibes: int = 50   # 气氛值上限
 
     def on_battle_start(self) -> None:
-        """天赋行迹【偏离和弦】：我方目标暴击伤害提高 (风堇实机对齐 41.0%，其他队友 55.0%)。"""
+        """战斗开始：全队基于初始气氛值（1 点气氛值，暴伤 41.0%）挂载初始【偏离和弦】。"""
+        self.vibes = 1
         for ally in self.port.allies(self.owner_id):
-            cd_val = 0.41 if (ally == "风堇" or "风堇" in str(ally)) else 0.55
-            self.port.upsert_status(BuffSpec(
-                key=f"Robin_Talent_TonalChord_{ally}",
-                name="偏离和弦",
-                source_id=self.owner_id,
-                target_id=ally,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),),
-                duration=None,
-                timing=DurationTiming.TARGET_TURN_END,
-                category="buff",
-                description=f"暴击伤害 +{cd_val*100:.1f}%"
-            ))
+            self.apply_tonal_chord_to_ally(ally)
+
+    def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
+        """增加气氛值，并根据最新状态判定刷新对应行动队友的【偏离和弦】。"""
+        self.vibes = min(self.max_vibes, self.vibes + amount)
+        if trigger_ally_id:
+            self.apply_tonal_chord_to_ally(trigger_ally_id)
+
+    def apply_tonal_chord_to_ally(self, ally_id: str) -> None:
+        """行迹【偏离和弦】动态属性判定与分流计算。
+
+        官方 Nanoka 4.6 规范：
+        我方目标使知更鸟•晴歌获得气氛值时：
+        - 若该目标攻击力 > 知更鸟攻击力：攻击力提高等同于知更鸟生命上限的 (16% + 气氛值 * 0.4%)；
+        - 否则：暴击伤害提高 (40% + 气氛值 * 1.5%)，遵循星铁向下截断规范。
+        """
+        import math
+        target_atk = self.port.stat(ally_id, StatType.ATK_BASE)
+        robin_atk = self.port.stat(self.owner_id, StatType.ATK_BASE)
+        eff_vibes = min(10, self.vibes)
+
+        if target_atk > robin_atk:
+            atk_pct = 0.16 + eff_vibes * 0.004
+            mods = (Modifier(StatType.ATK_PERCENT, ModifierOp.PERCENT, atk_pct),)
+            desc = f"攻击力提高 +{atk_pct * 100:.1f}% (当前气氛值: {self.vibes} 点)"
+        else:
+            cd_val = math.floor((0.40 + eff_vibes * 0.015) * 100) / 100
+            mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
+            desc = f"暴击伤害 +{cd_val * 100:.1f}%"
+
+        self.port.upsert_status(BuffSpec(
+            key=f"Robin_Talent_TonalChord_{ally_id}",
+            name="偏离和弦",
+            source_id=self.owner_id,
+            target_id=ally_id,
+            modifiers=mods,
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description=desc
+        ))
+
+    def on_event(self, event: Any) -> None:
+        """监听队友行动与攻击事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
+        from ...events import ActionExecuteEvent
+        if isinstance(event, ActionExecuteEvent):
+            actor_name = event.actor_name
+            allies = self.port.allies(self.owner_id)
+            if actor_name in allies:
+                # 终结技与追加攻击使知更鸟获得气氛值（爆发阶段直接叠满至 10 点气氛值）
+                gained = 9 if ("Ultimate" in event.action_type or "FollowUp" in event.action_type) else 1
+                self.gain_vibes(gained, trigger_ally_id=actor_name)
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
