@@ -68,12 +68,29 @@ STAGE_CONFIG = {
     "name": "将杀王棋 (キングへの挑戦)",
     "level": 100,
     "url": "https://hsr.nanoka.cc/peak/10",
-    "buff": {
-        "id": 3033083,
-        "name": "领航誓言 (導き手の誓い)",
-        "desc": "我方编队中第 1 位角色 (长夜月) 造成的战技和终结技伤害的全属性抗性穿透提高 50%。",
-        "res_pen": 0.50
-    },
+    "buffs": [
+        {
+            "id": 3033082,
+            "name": "狂喜之夜",
+            "desc": "我方编队中第 1 位角色造成的欢愉伤害增效 50%（纯净对账：本队无欢愉伤害，等同属性零影响）。",
+            "effect_type": "none",
+            "modifiers": []
+        },
+        {
+            "id": 3033083,
+            "name": "领航誓言 (導き手の誓い)",
+            "desc": "我方编队中第 1 位角色 (长夜月) 造成的战技和终结技伤害的全属性抗性穿透提高 50%。",
+            "effect_type": "res_pen",
+            "modifiers": [("res_pen", 0.50)]
+        },
+        {
+            "id": 3033084,
+            "name": "胞吞作用",
+            "desc": "【稳态失衡】对【血脑屏障】造成的伤害提高 50%。",
+            "effect_type": "break_barrier",
+            "modifiers": []
+        }
+    ],
     "waves": [
         {
             "wave": 1,
@@ -403,6 +420,7 @@ def run_simulation(
     max_turns: int = 40,
     use_technique: bool = True,
     start_wave: int = 1,
+    stage_buff_idx: int = 0,
     interactive: bool = False,
     verbose: bool = True
 ):
@@ -428,8 +446,10 @@ def run_simulation(
         print(f"   • {ent.name:10} | 星魂: E{ent.eidolon} | 速度: {ent.base_speed:6.2f} | 攻击: {ent.base_atk:6.1f} | 暴率/暴伤: {ent.base_crit_rate*100:4.1f}%/{ent.base_crit_dmg*100:5.1f}% | 套件: {kit_name}")
 
     lead_char = entities[0]
+    buffs_list = STAGE_CONFIG.get("buffs", [])
+    selected_buff = buffs_list[stage_buff_idx] if 0 <= stage_buff_idx < len(buffs_list) else buffs_list[0]
     print(f"\n🏰 【对战关卡】: {STAGE_CONFIG['name']} (Lv.{STAGE_CONFIG['level']})")
-    print(f"   • 关卡祝福: 《{STAGE_CONFIG['buff']['name']}》 - {STAGE_CONFIG['buff']['desc']}")
+    print(f"   • 关卡祝福: 《{selected_buff['name']}》 - {selected_buff['desc']}")
 
     # 3. 创建首发波次敌方实体
     current_wave_idx = max(0, min(len(STAGE_CONFIG["waves"]) - 1, start_wave - 1))
@@ -455,16 +475,20 @@ def run_simulation(
     )
     sim.wave_info = {"current": current_wave_idx + 1, "total": len(STAGE_CONFIG["waves"]), "name": current_wave_cfg["name"]}
 
-    # 装配关卡祝福到 1 号位 (长夜月: 全属性抗穿+50%)
+    # 装配所选关卡祝福到 1 号位角色
     from simulator.status import StatusInstance, Modifier, ModifierOp, DurationTiming
+    buff_mods = []
+    for stat_name, val in selected_buff.get("modifiers", []):
+        if stat_name == "res_pen":
+            buff_mods.append(Modifier(StatType.RES_PEN, ModifierOp.ADD, val))
     sim.status_mgr.add_status(StatusInstance(
-        id="StageBuff_LeadOath",
-        name="领航誓言 (全属性抗穿+50%)",
+        id=f"StageBuff_{selected_buff['id']}",
+        name=f"关卡祝福: {selected_buff['name']}",
         source=lead_char,
         target=lead_char,
         duration=None,
         timing=DurationTiming.TARGET_TURN_END,
-        modifiers=[Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.50)]
+        modifiers=buff_mods
     ))
 
     reporter = BattleReporter(team_members)
@@ -851,6 +875,8 @@ def main():
     parser.add_argument("--turns", type=int, default=40, help="模拟最大行动回合数，默认 40 动")
     parser.add_argument("--wave", type=int, choices=[1, 2], default=1,
                         help="选择起始波次 (1: 精英双锋 月夜天马+灯塔, 2: 堕神之血•亚婆离)")
+    parser.add_argument("--stage-buff", type=int, choices=[1, 2, 3], default=1,
+                        help="关卡全局祝福选择 (1: 狂喜之夜 [默认/欢愉纯净对账], 2: 领航誓言 [抗穿+50%], 3: 胞吞作用)")
     parser.add_argument("--no-technique", action="store_true", help="禁用开战前秘技")
 
     args = parser.parse_args()
@@ -908,6 +934,19 @@ def main():
         except (EOFError, KeyboardInterrupt):
             wave_choice = 1
 
+    stage_buff_choice = args.stage_buff
+    if interactive_mode and sys.stdin.isatty() and args.stage_buff == 1:
+        print("\n🔮 请选择关卡全局祝福:")
+        print("  [1] 狂喜之夜 (欢愉伤害增效50% - 纯净对账模式，队伍无欢愉伤害) [默认]")
+        print("  [2] 领航誓言 (长夜月战技/终结技全属性抗穿+50%)")
+        print("  [3] 胞吞作用 (稳态失衡对血脑屏障伤害提高50%)")
+        try:
+            b_input = input("请选择关卡祝福 [1-3, 默认 1]: ").strip()
+            if b_input in ("1", "2", "3"):
+                stage_buff_choice = int(b_input)
+        except (EOFError, KeyboardInterrupt):
+            stage_buff_choice = 1
+
     run_simulation(
         team_members=team_members,
         policies=policies,
@@ -915,6 +954,7 @@ def main():
         max_turns=args.turns,
         use_technique=not args.no_technique,
         start_wave=wave_choice,
+        stage_buff_idx=stage_buff_choice - 1,
         interactive=interactive_mode
     )
 
