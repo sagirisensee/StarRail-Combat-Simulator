@@ -1,24 +1,21 @@
 """雪衣 (Xueyi) 战斗技能套件完整实现 (Character Kit).
 
-适配角色：雪衣 (ID 1214, 毁灭 / 量子, 用户导入 6 魂顶级配置)
-严格契合实机机制与公式：
-1. 普攻【破魔锥】：造成单体量子伤害，恢复 1 点战技点，回能 20 点；
-2. 战技【诸恶缚绝】：
-   - 消耗 1 点 SP，单体与扩散量子伤害，削韧 20 点；
-3. 终结技【天罚贯身】：
-   - 消耗 120 能量，对敌方单体造成 250% 量子伤害；
-   - 核心机制：无视敌方弱点属性直接削韧 40 点！
-   - 削韧量越高，伤害额外提高最多 60%！
-4. 天赋【十王敕死，归命刹那】：
-   - 我方削减敌方韧性时积攒【恶报】(Karma) 层数 (上限 8 层，E6 降至 6 层！)；
-   - 满层时立即发动全体 3 段弹射追加攻击，削韧 15 点；
-5. 星魂 1~6 完整实装：
-   - E1: 缚心开悟 (天赋追加攻击伤害提高 40%)；
-   - E2: 五蕴摧破 (天赋追加攻击无视弱点削韧，并回复雪衣 5% 生命)；
-   - E3: 止息苦轮 (战技+2，普攻+1)；
-   - E4: 断灭业根 (施放终结技时击破特攻提高 40%，持续 2 回合)；
-   - E5: 灵机应变 (终结技+2，天赋+2)；
-   - E6: 司死定命 (【恶报】层数上限由 8 层降低为 6 层！大幅加快追击频率)。
+严格契合 Nanoka 4.6 官方底层数据 (Character ID: 1214, 毁灭 / 量子)：
+1. 【普攻·破魔锥】(SingleAttack):
+   - 消耗 0 SP (恢复 1 点战技点)，对指定敌方单体造成等同于雪衣 140% 攻击力的量子属性伤害，削韧 10 点，恢复 20 点能量，叠加 1 层【恶报】。
+2. 【战技·摄伏诸恶】(Blast):
+   - 消耗 1 点 SP，对指定敌方单体造成等同于雪衣 140% 攻击力的量子属性伤害，并对其相邻目标造成 70% 攻击力的量子属性伤害，削韧 20/10 点，恢复 30 点能量，叠加 2 层【恶报】。
+3. 【终结技·天罚贯身】(SingleAttack):
+   - 消耗 120 点能量，对指定敌方单体造成等同于雪衣 250% 攻击力的量子属性伤害，削减韧性越多造成的伤害越高 (最多提高 60%)；
+   - 本次攻击无视弱点属性削减 40 点韧性，恢复 5 点能量，叠加 4 层【恶报】；
+   - 星魂 4【断业根】：施放终结技时，击破特攻提高 40%，持续 2 回合。
+4. 【天赋·十王圣断，业报恒常】(Bounce):
+   - 削减敌方韧性时叠加【恶报】(上限 8 层，星魂 6 降至 6 层)；
+   - 叠加至上限时立即消耗所有【恶报】，发动追加攻击进行 3 段随机单体弹射，每段造成 90% 攻击力的量子属性伤害；
+   - 星魂 1【缚心魔】：天赋追加攻击造成的伤害提高 40% (每段 126%)；
+   - 星魂 2【破五尘】：追加攻击无视弱点削韧，并回复等同于雪衣 5% 生命上限的生命值。
+5. 【秘技·斩立决】(MazeAttack):
+   - 进战后对敌方全体造成等同于雪衣 80% 攻击力的量子属性伤害，无视弱点削韧 20 点。
 """
 
 from typing import Optional, List, Any
@@ -59,7 +56,7 @@ class XueyiKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=1),
-                name="诸恶缚绝"
+                name="摄伏诸恶"
             )
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(
@@ -106,7 +103,7 @@ class XueyiKit(KitHandler):
             self.owner_id,
             target_id,
             element="Quantum",
-            atk_multiplier=1.0,
+            atk_multiplier=1.40,
             toughness_damage=10.0,
             damage_tag="BasicAttack"
         )
@@ -115,6 +112,7 @@ class XueyiKit(KitHandler):
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        # 主目标 140%
         self.port.attack(
             self.owner_id,
             target_id,
@@ -123,17 +121,28 @@ class XueyiKit(KitHandler):
             toughness_damage=20.0,
             damage_tag="Skill"
         )
+        # 扩散目标 70%
+        for e in self.port.enemies(self.owner_id):
+            if e != target_id:
+                self.port.attack(
+                    self.owner_id,
+                    e,
+                    element="Quantum",
+                    atk_multiplier=0.70,
+                    toughness_damage=10.0,
+                    damage_tag="Skill_Blast"
+                )
         self.add_karma(2)
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        
+
         # E4: 击破特攻提高 40% 持续 2 回合
         if self.eidolon >= 4:
             self.port.upsert_status(BuffSpec(
                 key=self.E4_BREAK_BUFF,
-                name="断灭业根 (雪衣E4击破特攻40%)",
+                name="断业根 (雪衣E4击破特攻40%)",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
                 modifiers=(Modifier(StatType.BREAK_EFFECT, ModifierOp.ADD, 0.40),),
@@ -142,14 +151,15 @@ class XueyiKit(KitHandler):
                 skip_current_clock=True
             ))
 
-        # 终结技无视弱点削韧 40 点并造成巨额伤害
+        # 终结技无视弱点削韧 40 点
         self.port.attack(
             self.owner_id,
             target_id,
             element="Quantum",
             atk_multiplier=2.50,
             toughness_damage=40.0,
-            damage_tag="Ultimate"
+            damage_tag="Ultimate",
+            ignore_weakness=True
         )
         self.add_karma(4)
         self.port.gain_energy(self.owner_id, 5.0)
@@ -159,12 +169,12 @@ class XueyiKit(KitHandler):
         self.karma_stacks += count
         if self.karma_stacks >= self.max_karma:
             self.karma_stacks = 0
-            # 满层发动追加攻击 (E1: 伤害提高 40%)
+            # 满层发动追加攻击 (E1: 伤害提高 40% -> 90% * 1.4 = 126%)
             mult = 0.90 * (1.40 if self.eidolon >= 1 else 1.0)
             enemies = self.port.enemies(self.owner_id)
             if enemies:
+                import random
                 for _ in range(3):
-                    import random
                     target = random.choice(enemies)
                     self.port.attack(
                         self.owner_id,
@@ -172,9 +182,11 @@ class XueyiKit(KitHandler):
                         element="Quantum",
                         atk_multiplier=mult,
                         toughness_damage=5.0,
-                        damage_tag="KarmaFollowUp"
+                        damage_tag="KarmaFollowUp",
+                        ignore_weakness=(self.eidolon >= 2)
                     )
 
-            # E2: 回血 5%
+            # E2: 回复 5% 生命上限
             if self.eidolon >= 2:
-                self.port.heal(self.owner_id, self.owner_id, 300.0)
+                max_hp = self.port.max_hp(self.owner_id)
+                self.port.heal(self.owner_id, self.owner_id, max_hp * 0.05)
