@@ -60,6 +60,7 @@ class DamageRequest:
     target_base_res: float = 0.20       # 敌方初始抗性 (通常非弱点 20%)
     target_is_broken: bool = False      # 敌方是否处于弱点击破状态 (未击破自带 10% 减伤)
     force_crit: Optional[bool] = None   # None: 随机/期望; True: 必暴; False: 不暴
+    scaling_stat: str = "atk"           # "atk" | "hp" | "def" 
 
 
 class DamageCalculator:
@@ -81,8 +82,22 @@ class DamageCalculator:
             def_shred = 0.0
             vuln = 0.0
 
-        # 1. 基础伤害区
-        base_dmg = atk_stat * req.skill_multiplier + req.flat_damage
+        # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
+        scaling = getattr(req, "scaling_stat", "atk")
+        if scaling == "hp":
+            hp_val = getattr(req.attacker, "max_hp", 0.0)
+            if hasattr(req.attacker, "simulator") and req.attacker.simulator:
+                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT)
+            base_stat = hp_val
+        elif scaling == "def":
+            def_val = getattr(req.attacker, "base_def", 0.0)
+            if hasattr(req.attacker, "simulator") and req.attacker.simulator:
+                def_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, def_val, StatType.DEF_PERCENT)
+            base_stat = def_val
+        else:
+            base_stat = atk_stat
+
+        base_dmg = base_stat * req.skill_multiplier + req.flat_damage
 
         # 2. 双暴区
         crit_rate = getattr(req.attacker, "crit_rate", 0.05)

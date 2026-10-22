@@ -67,7 +67,7 @@ from .characters.tohsaka_rin import TohsakaRinKit
 from .characters.archer import ArcherKit
 from .characters.xilian import XilianKit
 from .characters.danheng_tenghuang import DanHengTenghuangKit
-from .characters.changyeyue import ChangyeyueKit
+from .characters.changyeyue import ChangyeyueKit, ChangyeMemospriteKit
 from .characters.kelydra import KelydraKit
 from .characters.fengjin import FengjinKit
 from .characters.xiadie import XiadieKit
@@ -368,6 +368,7 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     # 长夜月
     "1413": ChangyeyueKit,
     "长夜月": ChangyeyueKit,
+    "长夜": ChangyeMemospriteKit,
 
     # 刻律德菈
     "1412": KelydraKit,

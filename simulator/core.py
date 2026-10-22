@@ -143,7 +143,8 @@ class SimulatorCombatPort:
         atk_multiplier: float,
         toughness_damage: float,
         damage_tag: str = "direct",
-        ignore_weakness: bool = False
+        ignore_weakness: bool = False,
+        scaling_stat: str = "atk"
     ) -> None:
         tgt = self._get_entity(target_id)
         src = self._get_entity(source_id)
@@ -160,7 +161,8 @@ class SimulatorCombatPort:
             target=tgt,
             skill_multiplier=atk_multiplier,
             target_base_res=base_res,
-            target_is_broken=tgt.is_broken
+            target_is_broken=tgt.is_broken,
+            scaling_stat=scaling_stat
         )
         if damage_tag == "FollowUpAttack":
             self.sim.event_bus.publish(ActionExecuteEvent(
@@ -177,6 +179,47 @@ class SimulatorCombatPort:
             element=element,
             ignore_weakness=ignore_weakness
         ))
+
+    def max_hp(self, entity_id: str) -> float:
+        ent = self._get_entity(entity_id)
+        if ent:
+            return getattr(ent, "max_hp", 0.0)
+        return 0.0
+
+    def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None:
+        ent = self._get_entity(entity_id)
+        if ent:
+            actual = min(ent.current_hp, amount)
+            ent.current_hp = max(1.0, ent.current_hp - actual)
+            for e in list(self.sim.entities):
+                if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
+                    e.kit.on_hp_lost(entity_id, actual, cause)
+
+    def summon_spirit(self, owner_id: str, name: str, base_speed: float, max_hp: float, kit_class: Any = None, kit_args: Optional[dict] = None) -> Any:
+        existing = self._get_entity(name)
+        if existing:
+            return existing
+        owner = self._get_entity(owner_id)
+        spirit = Entity(
+            name=name,
+            base_speed=base_speed,
+            base_atk=0.0,
+            max_hp=max_hp,
+            current_hp=max_hp,
+            base_crit_rate=owner.base_crit_rate if owner else 0.05,
+            base_crit_dmg=owner.base_crit_dmg if owner else 0.50,
+            is_enemy=False,
+            policy="A"
+        )
+        if kit_class:
+            spirit.kit = kit_class(name, self, **(kit_args or {}))
+        self.sim.add_entity(spirit, trigger_battle_start=False)
+        return spirit
+
+    def despawn_spirit(self, name: str, reason: str = "") -> None:
+        ent = self._get_entity(name)
+        if ent and ent in self.sim.entities:
+            self.sim.entities.remove(ent)
 
 
 @dataclass
