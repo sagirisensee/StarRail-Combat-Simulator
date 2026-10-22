@@ -1,0 +1,37 @@
+"""光锥：愿虹光永驻天空 (May Rainbows Remain in the Sky - ID 23042).
+
+命途：记忆 (风堇专属)
+核心效果【包容】：
+1. 装备者速度提高 18% / 21% / 24% / 27% / 30% (基础面板已计入)；
+2. 装备者施放普攻、战技和终结技时，消耗全队当前生命值 1.0% 并积累忆灵附加伤害；
+3. 忆灵施放技能时，使敌方全体受到的伤害提高 18.0% / 22.5% / 27.0% / 31.5% / 36.0%，持续 2 回合。
+"""
+from typing import Any
+from ..base import LightConeHandler
+from ...actions import ActionContext, ActionKind
+from ...combat_port import BuffSpec
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
+
+
+class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
+    """《愿虹光永驻天空》专属战斗逻辑处理器。"""
+
+    VULNERABILITY_VALUES = (0.18, 0.225, 0.27, 0.315, 0.36)
+
+    def on_action_after(self, ctx: ActionContext) -> None:
+        """施放普攻/战技/终结技时，消耗生命并使敌方全体受到伤害提高 (群体易伤)。"""
+        if not self.port or ctx.actor_id != self.owner_id:
+            return
+        if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.BASIC):
+            vuln_val = self.scale(self.VULNERABILITY_VALUES)
+            for enemy in self.port.enemies(self.owner_id):
+                self.port.upsert_status(BuffSpec(
+                    key="LC_RainbowSky_Vuln",
+                    name=f"虹光易伤 (愿虹光永驻天空S{self.superimposition}易伤{vuln_val*100:.1f}%)",
+                    source_id=self.owner_id,
+                    target_id=enemy,
+                    modifiers=(Modifier(StatType.DMG_VULNERABILITY, ModifierOp.ADD, vuln_val),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))

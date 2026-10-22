@@ -134,6 +134,10 @@ class EventBus:
 
     def publish(self, event: BattleEvent):
         self.history.append(event)
-        handlers = self._subscribers.get(type(event), [])
-        for handler in handlers:
-            handler(event)
+        called = set()
+        for cls in type(event).__mro__:
+            if issubclass(cls, BattleEvent):
+                for handler in self._subscribers.get(cls, []):
+                    if handler not in called:
+                        called.add(handler)
+                        handler(event)

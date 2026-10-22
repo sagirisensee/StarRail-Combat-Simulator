@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Dict, Any, Tuple
 
 from .events import (
-    EventBus, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, 
+    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, 
     ToughnessRecoverEvent, TechniqueExecuteEvent
 )
 from .effects import (
@@ -193,6 +193,8 @@ class Entity:
     level: int = 80
     # 关联的技能套件 (Kit)
     kit: Optional[Any] = None
+    # 关联的光锥独立运行时 (LightConeHandler)
+    light_cone: Optional[Any] = None
     # 韧性系统 (仅敌方有)
     max_toughness: float = 0.0
     current_toughness: float = 0.0
@@ -295,14 +297,23 @@ class TurnSimulator:
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
 
+        # 注册事件总线转发至各实体挂载的光锥
+        def _forward_event_to_light_cones(evt: BattleEvent):
+            for ent in self.entities:
+                if getattr(ent, "light_cone", None) is not None:
+                    ent.light_cone.on_event(evt)
+        self.event_bus.subscribe(BattleEvent, _forward_event_to_light_cones)
+
         if entities:
             for e in entities:
                 self.add_entity(e, trigger_battle_start=False)
 
-            # 1. 结算进场常态被动与基础光环 (如花火天赋扩展SP上限至7点)
+            # 1. 结算进场常态被动与基础光环 (如花火天赋扩展SP上限至7点、光锥进战回能与谕示)
             for e in self.entities:
                 if getattr(e, "kit", None) is not None:
                     e.kit.on_battle_start()
+                if getattr(e, "light_cone", None) is not None:
+                    e.light_cone.on_battle_start()
 
             # 2. 结算战前秘技 (Techniques)
             if use_techniques:
@@ -353,6 +364,10 @@ class TurnSimulator:
             entity.kit.port = self.port
             if trigger_battle_start:
                 entity.kit.on_battle_start()
+        if getattr(entity, "light_cone", None) is not None:
+            entity.light_cone.port = self.port
+            if trigger_battle_start:
+                entity.light_cone.on_battle_start()
 
     @property
     def current_cycle(self) -> int:
@@ -460,7 +475,11 @@ class TurnSimulator:
                 kind=actual_kind,
                 target_ids=target_ids if target_ids is not None else ()
             )
+            if getattr(active_entity, "light_cone", None) is not None:
+                active_entity.light_cone.on_action_before(ctx)
             active_entity.kit.execute(ctx)
+            if getattr(active_entity, "light_cone", None) is not None:
+                active_entity.light_cone.on_action_after(ctx)
         else:
             # 兼容模式：传统回调执行路径
             if not active_entity.is_enemy:
@@ -597,7 +616,11 @@ class TurnSimulator:
             kind=ActionKind.ULTIMATE,
             target_ids=target_ids if target_ids is not None else ()
         )
+        if getattr(ent, "light_cone", None) is not None:
+            ent.light_cone.on_action_before(ctx)
         ent.kit.execute(ctx)
+        if getattr(ent, "light_cone", None) is not None:
+            ent.light_cone.on_action_after(ctx)
         self.resolver.resolve_all()
         return True
 

@@ -415,6 +415,17 @@ class CharacterDB:
             except Exception:
                 pass
 
+        # 自动尝试装配对应的独立 LightConeHandler (若未注册则为 None)
+        lc_inst = None
+        if profile.light_cone:
+            try:
+                from ..light_cones import LightConeRegistry
+                s_val = int(profile.light_cone.superimposition) if hasattr(profile.light_cone, "superimposition") else 1
+                lc_name = profile.light_cone.name if hasattr(profile.light_cone, "name") else str(profile.light_cone)
+                lc_inst = LightConeRegistry.create(lc_name, owner_id=profile.name, port=None, superimposition=s_val)
+            except Exception:
+                pass
+
         entity = Entity(
             name=profile.name,
             base_speed=panel.spd,
@@ -437,6 +448,7 @@ class CharacterDB:
             avatar_id=profile.avatar_id,
             eidolon=profile.eidolon,
             kit=kit_inst,
+            light_cone=lc_inst,
             distance_remaining=10000.0,
             policy=policy,
             is_enemy=False

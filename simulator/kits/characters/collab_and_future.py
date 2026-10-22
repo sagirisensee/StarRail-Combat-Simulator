@@ -160,17 +160,6 @@ class ChangyeyueKit(KitHandler):
             mult = 2.40 if self.eidolon >= 2 else 2.00  # E2 强化战技倍率
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Moonlight")
-            # 专属光锥【让告别，更美一些】(S1)：自身回合损失生命获得【冥花】，造成伤害无视目标 30% 防御力，持续 2 回合
-            self.port.upsert_status(BuffSpec(
-                key="Changyeyue_LC_Flower",
-                name="冥花 (让告别更美一些S1无视防御30%)",
-                source_id=self.owner_id,
-                target_id=self.owner_id,
-                modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.30),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
-            ))
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
             ult_mult = 3.60 if self.eidolon >= 2 else 3.00
@@ -229,18 +218,6 @@ class FengjinKit(KitHandler):
             mult = 2.20 if self.eidolon >= 1 else 1.80  # E1 狂岚增伤
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Windburst")
-            # 专属光锥【愿虹光永驻天空】(S1)：施法触发敌方全体易伤 18%，持续 2 回合
-            for e in self.port.enemies(self.owner_id):
-                self.port.upsert_status(BuffSpec(
-                    key="Fengjin_LC_RainbowVuln",
-                    name="虹光易伤 (愿虹光永驻天空S1易伤18%)",
-                    source_id=self.owner_id,
-                    target_id=e,
-                    modifiers=(Modifier(StatType.DMG_VULNERABILITY, ModifierOp.ADD, 0.18),),
-                    duration=2,
-                    timing=DurationTiming.TARGET_TURN_END,
-                    skip_current_clock=True
-                ))
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
             ult_mult = 3.20 if self.eidolon >= 1 else 2.80
@@ -291,33 +268,10 @@ class TibaoKit(KitHandler):
     """缇宝 (Tribbie - ID 1403, 量子 / 同谐, E6)."""
 
     def on_battle_start(self):
-        """进战被动与专武结算：
-        1. 额外能力【岔路旁的小石头】：进入战斗时恢复 30 点能量。
-        2. 专属光锥【如果时间是一朵花】(S5)：
-           - 进入战斗时恢复 21 点能量。
-           - 获得【谕示】状态，持续 2 回合，持有【谕示】时我方全体暴击伤害提高 96% (S5) / 48% (S1)。
-        搭配充能绳 (ERR 119.4%)，进战回能达 (30 + 21) * 1.1944 = 60.9 点，
-        叠加开局保底 60 点能量直接达成 120/120 满能开局！
-        """
-        # 1. 进战回能 (基础30行迹 + 专武21) 享受能量恢复效率加成
+        """额外能力【岔路旁的小石头】：进入战斗时恢复 30 点能量 (受能量恢复效率加成)。"""
         ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-        err = getattr(ent, "err", 1.1944) if ent else 1.1944
-        bonus_energy = (30.0 + 21.0) * err
-        self.port.gain_energy(self.owner_id, bonus_energy)
-
-        # 2. 挂载专武【谕示】增益 (持有期间我方全体暴伤提升 96% [S5])
-        crit_dmg_val = 0.96 if self.eidolon >= 6 else 0.48
-        for ally in self.port.allies(self.owner_id):
-            self.port.upsert_status(BuffSpec(
-                key="Tribbie_LC_Oracle",
-                name="谕示 (如果时间是一朵花S5全队暴伤+96%)",
-                source_id=self.owner_id,
-                target_id=ally,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, crit_dmg_val),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
-            ))
+        err = getattr(ent, "err", 1.0) if ent else 1.0
+        self.port.gain_energy(self.owner_id, 30.0 * err)
 
     def definition(self, kind: ActionKind):
         if kind == ActionKind.BASIC:
@@ -371,24 +325,10 @@ class TibaoKit(KitHandler):
                 ))
             self.port.gain_energy(self.owner_id, 5.0)
 
-            # E6 星魂: 施放终结技时立即触发一次追加攻击
+            # E6 星魂: 施放终结技时立即触发一次追加攻击 (光锥被动由独立 LightConeHandler 响应)
             if self.eidolon >= 6:
                 for e in self.port.enemies(self.owner_id):
                     self.port.attack(self.owner_id, e, element="Quantum", atk_multiplier=1.20, toughness_damage=10.0, damage_tag="FollowUpAttack")
-                # 专武【如果时间是一朵花】施放追加攻击后回能 12 点并刷新【谕示】
-                self.port.gain_energy(self.owner_id, 12.0)
-                crit_dmg_val = 0.96 if self.eidolon >= 6 else 0.48
-                for ally in self.port.allies(self.owner_id):
-                    self.port.upsert_status(BuffSpec(
-                        key="Tribbie_LC_Oracle",
-                        name="谕示 (如果时间是一朵花S5全队暴伤+96%)",
-                        source_id=self.owner_id,
-                        target_id=ally,
-                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, crit_dmg_val),),
-                        duration=2,
-                        timing=DurationTiming.TARGET_TURN_END,
-                        skip_current_clock=True
-                    ))
         elif ctx.kind == ActionKind.TECHNIQUE:
             self.use_technique()
 
