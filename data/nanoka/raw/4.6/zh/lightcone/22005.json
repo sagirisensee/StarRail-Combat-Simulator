@@ -1,0 +1,230 @@
+{
+  "name": "永远的迷境饭",
+  "desc": "轰隆隆——\\n迷境之外，风雨无休无止。\\n咕噜噜——\\n妖精们的神奇大煮锅，火焰不熄。\\n\\n<i>「撒上特制香料……」</i>\\n<i>「放入新鲜的蔬菜！」</i>\\n<i>「这一次，一定能研发成功！」</i>\\n\\n大煮锅又咕噜噜了起来，妖精们眼巴巴地望着。\\n<i>「要来了要来了！」</i>\\n一束强烈的亮光自锅底生出——\\n\\n看，大家都围了过来！\\n\\n……\\n\\n在那香气四溢的宴会上，来客举杯共祝奇妙的岁月——\\n\\n愿这梦中的乐土，永远温暖，永远欢乐！",
+  "rarity": "CombatPowerLightconeRarity4",
+  "base_type": "Shaman",
+  "refinements": {
+    "name": "真香",
+    "desc": "使装备者的攻击力提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。装备者施放战技后，攻击力提高<color=#f29e38ff><unbreak>#2[i]%</unbreak></color>，该效果最多叠加<unbreak>#3[i]</unbreak>层。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.16,
+          0.08,
+          3
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.2,
+          0.1,
+          3
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.24,
+          0.12,
+          3
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.28,
+          0.14,
+          3
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.32,
+          0.16,
+          3
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 22005,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 4000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 5,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 43.2,
+      "base_hp_add": 6.48,
+      "base_attack": 21.6,
+      "base_attack_add": 3.24,
+      "base_defence": 15,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 22005,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 8000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110231,
+          "item_num": 3,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 10,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 95.04,
+      "base_hp_add": 6.48,
+      "base_attack": 47.52,
+      "base_attack_add": 3.24,
+      "base_defence": 33,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 22005,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 16000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110232,
+          "item_num": 3,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 6,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 164.16,
+      "base_hp_add": 6.48,
+      "base_attack": 82.08,
+      "base_attack_add": 3.24,
+      "base_defence": 57,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 22005,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 40000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110232,
+          "item_num": 6,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 9,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 233.28,
+      "base_hp_add": 6.48,
+      "base_attack": 116.64,
+      "base_attack_add": 3.24,
+      "base_defence": 81,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 22005,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 80000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110233,
+          "item_num": 4,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 302.4,
+      "base_hp_add": 6.48,
+      "base_attack": 151.2,
+      "base_attack_add": 3.24,
+      "base_defence": 105,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 22005,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 160000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110233,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 7,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 371.52,
+      "base_hp_add": 6.48,
+      "base_attack": 185.76,
+      "base_attack_add": 3.24,
+      "base_defence": 129,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 22005,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 440.64,
+      "base_hp_add": 6.48,
+      "base_attack": 220.32,
+      "base_attack_add": 3.24,
+      "base_defence": 153,
+      "base_defence_add": 2.25
+    }
+  ]
+}

@@ -1,0 +1,245 @@
+{
+  "name": "当她决定看见",
+  "desc": "又一次，在十方光映法界中，她看着命运如同闪烁的珠网，重叠相映，因果无穷。\\n\\n<i>「你看到了什么？」</i>\\n师傅曾如此问她。\\n\\n有些卜者看到了自己的渺小，不再相信人力可改变命运。\\n也有人看到将来的大势，顺势而为的最优解。\\n\\n彼时，少女凝视着法界，她看到了无边的黑暗，那是早已注定的未来。\\n她也看到了「星光」——那些微弱的可能性还没有被神明的目光吞没。\\n\\n那缕星光曾从她的手中溜走，留给方壶永远的黑夜。\\n她也曾抓住转瞬即逝的变数，翻转玉阙的吉凶。\\n\\n<i>「死局谓之死局，只因无人愿逆命而为。」</i>\\n她想得到自己的答案，哪怕迈入命定的凶地——\\n\\n<i>「我看到了什么并不重要，重要的是我能做到什么。」</i>",
+  "rarity": "CombatPowerLightconeRarity5",
+  "base_type": "Elation",
+  "refinements": {
+    "name": "破局",
+    "desc": "使装备者的速度提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。装备者进入战斗或对我方目标施放终结技时，使装备者获得【上上签】，持续<unbreak>#4[i]</unbreak>回合。当装备者持有【上上签】时，我方全体暴击率提高<color=#f29e38ff><unbreak>#2[i]%</unbreak></color>，暴击伤害提高<color=#f29e38ff><unbreak>#3[i]%</unbreak></color>，装备者自身能量恢复效率提高<color=#f29e38ff><unbreak>#5[i]%</unbreak></color>。\\n每个波次开始时，装备者固定恢复<unbreak>#6[i]</unbreak>点能量。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.18,
+          0.1,
+          0.3,
+          3,
+          0.12,
+          15
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.21,
+          0.11,
+          0.375,
+          3,
+          0.14,
+          15
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.24,
+          0.12,
+          0.45,
+          3,
+          0.16,
+          15
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.27,
+          0.13,
+          0.525,
+          3,
+          0.18,
+          15
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.3,
+          0.14,
+          0.6,
+          3,
+          0.2,
+          15
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 23054,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 5000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116001,
+          "item_num": 8,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 48,
+      "base_hp_add": 7.2,
+      "base_attack": 24,
+      "base_attack_add": 3.6,
+      "base_defence": 24,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23054,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 10000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110261,
+          "item_num": 4,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 116001,
+          "item_num": 12,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 105.6,
+      "base_hp_add": 7.2,
+      "base_attack": 52.8,
+      "base_attack_add": 3.6,
+      "base_defence": 52.8,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23054,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 20000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110262,
+          "item_num": 4,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116002,
+          "item_num": 8,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 182.4,
+      "base_hp_add": 7.2,
+      "base_attack": 91.2,
+      "base_attack_add": 3.6,
+      "base_defence": 91.2,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23054,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 50000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110262,
+          "item_num": 8,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116002,
+          "item_num": 12,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 259.2,
+      "base_hp_add": 7.2,
+      "base_attack": 129.6,
+      "base_attack_add": 3.6,
+      "base_defence": 129.6,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23054,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 100000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110263,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 116003,
+          "item_num": 6,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 336,
+      "base_hp_add": 7.2,
+      "base_attack": 168,
+      "base_attack_add": 3.6,
+      "base_defence": 168,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23054,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 200000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110263,
+          "item_num": 10,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 116003,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 412.8,
+      "base_hp_add": 7.2,
+      "base_attack": 206.4,
+      "base_attack_add": 3.6,
+      "base_defence": 206.4,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23054,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 489.6,
+      "base_hp_add": 7.2,
+      "base_attack": 244.8,
+      "base_attack_add": 3.6,
+      "base_defence": 244.8,
+      "base_defence_add": 3.6
+    }
+  ]
+}

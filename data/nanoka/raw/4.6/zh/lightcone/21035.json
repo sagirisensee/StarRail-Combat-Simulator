@@ -1,0 +1,230 @@
+{
+  "name": "何物为真",
+  "desc": "<i>「倘若所有的钟表都在指示错误的时刻……」</i>\\n<i>「倘若许下承诺的人以背誓完成诺言……」</i>\\n<i>「倘若沉入幻梦之人从未真正睡着……」</i>\\n<i>「倘若死者活着归来，发现姓名已被剥夺……」</i>\\n\\n<i>「倘若…倘若……」</i>\\n他吹灭火焰，黑暗中只余时钟永不停歇地滴答作响。",
+  "rarity": "CombatPowerLightconeRarity4",
+  "base_type": "Priest",
+  "refinements": {
+    "name": "假设",
+    "desc": "使装备者的击破特攻提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。施放普攻后，装备者回复等同于<color=#f29e38ff><unbreak>#2[f1]%</unbreak></color>生命上限+<unbreak>#3[i]</unbreak>点的生命值。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.24,
+          0.02,
+          800
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.3,
+          0.025,
+          800
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.36,
+          0.03,
+          800
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.42,
+          0.035,
+          800
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.48,
+          0.04,
+          800
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 21035,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 4000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 114001,
+          "item_num": 5,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 48,
+      "base_hp_add": 7.2,
+      "base_attack": 19.2,
+      "base_attack_add": 2.88,
+      "base_defence": 15,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21035,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 8000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110171,
+          "item_num": 3,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 114001,
+          "item_num": 10,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 105.6,
+      "base_hp_add": 7.2,
+      "base_attack": 42.24,
+      "base_attack_add": 2.88,
+      "base_defence": 33,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21035,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 16000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110172,
+          "item_num": 3,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 114002,
+          "item_num": 6,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 182.4,
+      "base_hp_add": 7.2,
+      "base_attack": 72.96,
+      "base_attack_add": 2.88,
+      "base_defence": 57,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21035,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 40000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110172,
+          "item_num": 6,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 114002,
+          "item_num": 9,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 259.2,
+      "base_hp_add": 7.2,
+      "base_attack": 103.68,
+      "base_attack_add": 2.88,
+      "base_defence": 81,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21035,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 80000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110173,
+          "item_num": 4,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 114003,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 336,
+      "base_hp_add": 7.2,
+      "base_attack": 134.4,
+      "base_attack_add": 2.88,
+      "base_defence": 105,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21035,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 160000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110173,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 114003,
+          "item_num": 7,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 412.8,
+      "base_hp_add": 7.2,
+      "base_attack": 165.12,
+      "base_attack_add": 2.88,
+      "base_defence": 129,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21035,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 489.6,
+      "base_hp_add": 7.2,
+      "base_attack": 195.84,
+      "base_attack_add": 2.88,
+      "base_defence": 153,
+      "base_defence_add": 2.25
+    }
+  ]
+}

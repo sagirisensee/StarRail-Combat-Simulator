@@ -51,6 +51,7 @@ class StatType(Enum):
     VULNERABILITY = "vulnerability" # 受到伤害提高 (易伤区)
     DMG_VULNERABILITY = "vulnerability" # 易伤区 (兼容别名)
     ERR = "err"                  # 能量恢复效率
+    EHR = "ehr"                  # 效果命中
 
 
 class ModifierOp(Enum):

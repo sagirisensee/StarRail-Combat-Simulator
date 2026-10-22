@@ -1,0 +1,245 @@
+{
+  "name": "愿虹光永驻天空",
+  "desc": "<i>「情绪就像云，而我们是承载它的天空。如果天空乌云密布，心绪就会阴晴不定。」</i>\\n医师关切地倾听来访者的苦楚，施以疗愈的轻语。\\n<i>「请闭上双眼，慢慢呼吸……想象自己，身处温暖而柔软的地方……」</i>\\n\\n言语如有魔力，那翼兽的双翼下七色的虹光洒落。\\n<i>「微风会顺着原野吹来，带着野花的清香。湿润的云飘过，满载阳光……」</i>\\n来客逐渐沉入美梦，只有均匀而细微的呼吸声作为回应。\\n\\n接诊完最后一位病人，医师轻轻带上病房的门。\\n\\n无边的永夜仍在远方涌动，一座座废墟如同大地的伤口。\\n\\n<i>「来世，愿黎明照拂众人……」</i>\\n启程之前，她向着天空许下心愿——\\n<i>「愿天空，虹光永驻。」</i>",
+  "rarity": "CombatPowerLightconeRarity5",
+  "base_type": "Memory",
+  "refinements": {
+    "name": "包容",
+    "desc": "使装备者的速度提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。装备者施放普攻、战技和终结技时消耗我方全体等同于当前生命值<color=#f29e38ff><unbreak>#2[f1]%</unbreak></color>的生命值并使装备者的忆灵下一次攻击后额外对攻击目标造成1次等同于<color=#f29e38ff><unbreak>#6[f1]%</unbreak></color>生命值消耗总量的基于装备者的忆灵属性的附加伤害，随后清空生命值消耗总量。装备者的忆灵施放忆灵技时，使敌方全体受到的伤害提高<color=#f29e38ff><unbreak>#4[f1]%</unbreak></color>，持续<unbreak>#5[i]</unbreak>回合。同类效果无法叠加。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.18,
+          0.01,
+          0,
+          0.18,
+          2,
+          2.5
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.21,
+          0.0125,
+          0,
+          0.225,
+          2,
+          3.125
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.24,
+          0.015,
+          0,
+          0.27,
+          2,
+          3.75
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.27,
+          0.0175,
+          0,
+          0.315,
+          2,
+          4.375
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.3,
+          0.02,
+          0,
+          0.36,
+          2,
+          5
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 23042,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 5000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 8,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 52.8,
+      "base_hp_add": 7.92,
+      "base_attack": 21.6,
+      "base_attack_add": 3.24,
+      "base_defence": 24,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23042,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 10000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110251,
+          "item_num": 4,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 12,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 116.16,
+      "base_hp_add": 7.92,
+      "base_attack": 47.52,
+      "base_attack_add": 3.24,
+      "base_defence": 52.8,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23042,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 20000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110252,
+          "item_num": 4,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 8,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 200.64,
+      "base_hp_add": 7.92,
+      "base_attack": 82.08,
+      "base_attack_add": 3.24,
+      "base_defence": 91.2,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23042,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 50000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110252,
+          "item_num": 8,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 12,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 285.12,
+      "base_hp_add": 7.92,
+      "base_attack": 116.64,
+      "base_attack_add": 3.24,
+      "base_defence": 129.6,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23042,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 100000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110253,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 6,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 369.6,
+      "base_hp_add": 7.92,
+      "base_attack": 151.2,
+      "base_attack_add": 3.24,
+      "base_defence": 168,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23042,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 200000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110253,
+          "item_num": 10,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 454.08,
+      "base_hp_add": 7.92,
+      "base_attack": 185.76,
+      "base_attack_add": 3.24,
+      "base_defence": 206.4,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23042,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 538.56,
+      "base_hp_add": 7.92,
+      "base_attack": 220.32,
+      "base_attack_add": 3.24,
+      "base_defence": 244.8,
+      "base_defence_add": 3.6
+    }
+  ]
+}

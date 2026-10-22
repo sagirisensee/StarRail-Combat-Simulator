@@ -1,0 +1,220 @@
+{
+  "name": "鼹鼠党欢迎你",
+  "desc": "<i>「鼹鼠党，鼹鼠党」\\n「我们马上出发」\\n「机智鼹鼠不怕不怕」\\n「鼹鼠党，鼹鼠党」\\n「鼹鼠党开始冒险！」</i>",
+  "rarity": "CombatPowerLightconeRarity4",
+  "base_type": "Warrior",
+  "refinements": {
+    "name": "奇妙冒险",
+    "desc": "装备者施放普攻、战技或终结技攻击敌方目标后，分别获取一层【淘气值】。每层使装备者的攻击力提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.12
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.15
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.18
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.21
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.24
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 21005,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 4000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 111011,
+          "item_num": 5,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 48,
+      "base_hp_add": 7.2,
+      "base_attack": 21.6,
+      "base_attack_add": 3.24,
+      "base_defence": 12,
+      "base_defence_add": 1.8
+    },
+    {
+      "equipment_id": 21005,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 8000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110111,
+          "item_num": 3,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 111011,
+          "item_num": 10,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 105.6,
+      "base_hp_add": 7.2,
+      "base_attack": 47.52,
+      "base_attack_add": 3.24,
+      "base_defence": 26.4,
+      "base_defence_add": 1.8
+    },
+    {
+      "equipment_id": 21005,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 16000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110112,
+          "item_num": 3,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 111012,
+          "item_num": 6,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 182.4,
+      "base_hp_add": 7.2,
+      "base_attack": 82.08,
+      "base_attack_add": 3.24,
+      "base_defence": 45.6,
+      "base_defence_add": 1.8
+    },
+    {
+      "equipment_id": 21005,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 40000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110112,
+          "item_num": 6,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 111012,
+          "item_num": 9,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 259.2,
+      "base_hp_add": 7.2,
+      "base_attack": 116.64,
+      "base_attack_add": 3.24,
+      "base_defence": 64.8,
+      "base_defence_add": 1.8
+    },
+    {
+      "equipment_id": 21005,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 80000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110113,
+          "item_num": 4,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 111013,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 336,
+      "base_hp_add": 7.2,
+      "base_attack": 151.2,
+      "base_attack_add": 3.24,
+      "base_defence": 84,
+      "base_defence_add": 1.8
+    },
+    {
+      "equipment_id": 21005,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 160000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110113,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 111013,
+          "item_num": 7,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 412.8,
+      "base_hp_add": 7.2,
+      "base_attack": 185.76,
+      "base_attack_add": 3.24,
+      "base_defence": 103.2,
+      "base_defence_add": 1.8
+    },
+    {
+      "equipment_id": 21005,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 489.6,
+      "base_hp_add": 7.2,
+      "base_attack": 220.32,
+      "base_attack_add": 3.24,
+      "base_defence": 122.4,
+      "base_defence_add": 1.8
+    }
+  ]
+}

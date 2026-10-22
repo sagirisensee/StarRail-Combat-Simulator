@@ -1,0 +1,240 @@
+{
+  "name": "献给明日的色彩",
+  "desc": "<i>「错笔已修正，参数已调整。」</i>\\n她曾试图拟合画作中海的曲线，萃取水的形意，解析星星点点的浮沫。\\n一次又一次，绘笔下开出无数朵浪花，但都不是她想象中的那朵。\\n\\n<i>「我想为众人作画：并非描摹他们的脚步，而是为他们绘出前路。」</i>\\n一笔挥出，她为饥渴的孩子带去庇护。\\n墨色晕染，她用笔触织补天地的裂缝。\\n而她最遥远的一笔，穿透此世的画布，延伸向浩渺银河。\\n\\n无数个昨日，她为他人描绘未来——\\n苍白的，黯淡的，染上希望的色彩。\\n恍然回首，她落下的每一笔，也刻画着她心中的「真珠」。",
+  "rarity": "CombatPowerLightconeRarity5",
+  "base_type": "Elation",
+  "refinements": {
+    "name": "挥墨",
+    "desc": "使装备者的防御力提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。装备者对我方全体施放欢愉技时，使敌方全体受到的伤害提高<color=#f29e38ff><unbreak>#4[i]%</unbreak></color>，持续<unbreak>#3[i]</unbreak>回合，为装备者固定恢复<unbreak>#2[i]</unbreak>点能量，并为我方全体回复等同于装备者防御力<color=#f29e38ff><unbreak>#5[i]%</unbreak></color>的生命值。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.48,
+          10,
+          3,
+          0.22,
+          0.1
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.6,
+          10,
+          3,
+          0.275,
+          0.125
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.72,
+          10,
+          3,
+          0.33,
+          0.15
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.84,
+          10,
+          3,
+          0.385,
+          0.175
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.96,
+          10,
+          3,
+          0.44,
+          0.2
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 23055,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 5000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116001,
+          "item_num": 8,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 48,
+      "base_hp_add": 7.2,
+      "base_attack": 21.6,
+      "base_attack_add": 3.24,
+      "base_defence": 27,
+      "base_defence_add": 4.05
+    },
+    {
+      "equipment_id": 23055,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 10000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110261,
+          "item_num": 4,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 116001,
+          "item_num": 12,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 105.6,
+      "base_hp_add": 7.2,
+      "base_attack": 47.52,
+      "base_attack_add": 3.24,
+      "base_defence": 59.4,
+      "base_defence_add": 4.05
+    },
+    {
+      "equipment_id": 23055,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 20000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110262,
+          "item_num": 4,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116002,
+          "item_num": 8,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 182.4,
+      "base_hp_add": 7.2,
+      "base_attack": 82.08,
+      "base_attack_add": 3.24,
+      "base_defence": 102.6,
+      "base_defence_add": 4.05
+    },
+    {
+      "equipment_id": 23055,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 50000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110262,
+          "item_num": 8,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116002,
+          "item_num": 12,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 259.2,
+      "base_hp_add": 7.2,
+      "base_attack": 116.64,
+      "base_attack_add": 3.24,
+      "base_defence": 145.8,
+      "base_defence_add": 4.05
+    },
+    {
+      "equipment_id": 23055,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 100000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110263,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 116003,
+          "item_num": 6,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 336,
+      "base_hp_add": 7.2,
+      "base_attack": 151.2,
+      "base_attack_add": 3.24,
+      "base_defence": 189,
+      "base_defence_add": 4.05
+    },
+    {
+      "equipment_id": 23055,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 200000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110263,
+          "item_num": 10,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 116003,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 412.8,
+      "base_hp_add": 7.2,
+      "base_attack": 185.76,
+      "base_attack_add": 3.24,
+      "base_defence": 232.2,
+      "base_defence_add": 4.05
+    },
+    {
+      "equipment_id": 23055,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 489.6,
+      "base_hp_add": 7.2,
+      "base_attack": 220.32,
+      "base_attack_add": 3.24,
+      "base_defence": 275.4,
+      "base_defence_add": 4.05
+    }
+  ]
+}

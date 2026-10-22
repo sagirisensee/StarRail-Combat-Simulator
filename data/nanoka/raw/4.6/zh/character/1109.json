@@ -1,0 +1,3350 @@
+{
+  "name": "虎克",
+  "desc": "地底冒险团队「鼹鼠党」的老大（自封）。\\n热爱自由，将生活视为一场又一场冒险。",
+  "chara_info": {
+    "camp": "贝洛伯格",
+    "va": {
+      "chinese": "王晓彤",
+      "japanese": "徳井青空",
+      "korean": "이재현",
+      "english": "Felecia Angelle"
+    },
+    "stories": {
+      "0": "冒险集团「鼹鼠党」的头头，自称「漆黑的虎克大人」。\\n不喜欢被人称作小家伙，认为自己不依靠大人也能独挡一面。\\n大人们去裂界里冒险，桑博先生去地面上冒险，病人们冒险接受娜塔莎的治疗…在虎克的带领下，孩子们也要有自己的冒险！",
+      "1": "<i>「██年██月██日  天气：非常好  心情：非常不好」\\n\\n「今天，我打破了老巫婆的一个 <s> 式管</s> <s> 试官 </s> 试管，被批评了一顿。」\\n\\n「老巫婆好凶！她总是不让我们中午一起玩，只能睡午觉，太讨厌了！」\\n\\n「我们应该反抗她的 <s> 抱正 </s> <s> 抱政 </s><s> 饱政 </s> 暴政！不能让她<s> 为为所所 </s> <s> 为所为欲 </s> 为所欲为！」\\n\\n「我要成立一个『鼹鼠党』，把诊所里的小朋友全都 <s> 抓 </s> <s> 逮捕 </s> <s> 要请 </s> 邀请进来！一起反抗那个老巫婆！然后，我们就一起吃好吃的、玩好玩的，没有人可以阻止我们！」\\n\\n「我就是这个鼹鼠党的老大！还有，是诊所的老大！我要每天狠狠批评老巫婆，还要让她每天做 <s> 清务 </s> <s> 家洁 </s> 清洁！哈哈哈哈哈！」</i>",
+      "2": "<i>「██年██月██日  天气：好冷 心情：很开心」\\n\\n「今天，我去了『机械 <s> 木 </s> <s> 慕 </s> 墓场』，想要找一个合适的兵器。作为老大，必须要有一个厉害的兵器！」\\n\\n「我在那里认识了一个女孩子。她比我大几岁（但我还是老大！），穿着一件很漂亮的红色外套，但是没有穿鞋子。我不知道她为什么不穿鞋子，我觉得那样会很冷！可能她不会觉得很冷吧。」\\n\\n「她的头发是白色的，就像雪一样，非常好看！我也想有白色的、长长的头发。」\\n\\n「她很害羞，一开始不敢和我说话。但是没关系！我 <s> 超级喜欢说话 </s> 超级会交朋友！我和她聊天，聊了很久。我知道了她叫克拉拉，而且，她的爸爸原来是一台好大的机器人！」\\n\\n「她的爸爸很帅气，但是没有费斯曼老爹帅气！我和她成为了好朋友，她还帮我找到了很厉害的『洞洞机』！她现在是鼹鼠党的荣誉队员啦！」</i>",
+      "3": "<i>「██年██月██日  天气：还是好冷  心情：<s> 不好 </s> 普通」\\n\\n「今天，阿丽娜的爸爸妈妈来看她了。阿丽娜很开心，看到阿丽娜这么开心，我也很开心。」\\n\\n「我想起了爸爸妈妈，我已经好久都没有见过他们了！虽然费斯曼老爹对我非常非常非常好了，但我还是好想爸爸妈妈！」\\n\\n「晚上，老爹又给我解释了一遍爸爸妈妈回不来的原因。但其实我都记得…因为老爹已经讲过好几次了！」「我发现，老爹最近好像很容易忘记自己说过的话！我去问了娜塔莎姐姐，她说这是因为老爹年龄太大了。我又问她，能不能帮老爹治病。但是，她说自己也没有办法治好老爹的病，还对我说了对不起。」\\n\\n「我想，肯定是老巫婆觉得我最近表现不好，所以才骗我！她可是镇上最厉害的医生，什么病都会治，怎么可能治不好老爹的病呢？」\\n\\n「好吧，我决定，只要老爹讲过一次的话，我全都要替老爹记下来！因为我可是最厉害的鼹鼠党的老大呀！」</i>",
+      "4": "<i>「██年██月██日 ，地点：诊所，与虎克谈心，内容记录如下：」\\n\\n「费斯曼老爹很早之前就是爸爸妈妈的好朋友。那时候，我们住在北方的一个小镇上。有一天，妈妈去了裂界里，再也没有回来。妈妈最喜欢吃岩烧洞螈了。爸爸很想她，所以每天都给我做岩烧洞螈吃。」\\n\\n「后来有一天，当我回家时，我看到爸爸躺在床上，看起来很难受。我急哭了，赶紧去找住在隔壁的费斯曼老爹。他说爸爸是生病了，就带着爸爸和我去找镇上的医生。」\\n\\n「我们陪着爸爸在医生那里住了好几天。最后，钱全都快花光了，但爸爸偷偷对我说，让我把钱存着，他觉得那里待着不舒服，想要回家。于是我就去找老爹，想要把爸爸送回家。结果，我和老爹回来的时候，他就不说话了。」\\n\\n「老爹一直跪在地上哭，可我不明白怎么回事。老爹解释说，是爸爸太想妈妈，就在梦里去找妈妈了。我问老爹，他什么时候会醒。老爹就只是一直哭，没有回答我……」\\n\\n「虎、虎克才没哭呢！不用…娜塔莎姐姐…不用给我纸巾……」\\n\\n「…其实，我后来偷偷问了医生。我知道，爸爸其实是死了，永远不会回来了，妈妈也一样…我知道，老爹是不想让我伤心，所以才一直对我说谎……」\\n\\n「我知道，老爹是世界上最好的人，我也最喜欢老爹了……」\\n\\n「所以，我要和大家一起找到宝藏，然后给老爹盖一间大房子，还要帮老爹把病治好！」</i>"
+    },
+    "voicelines": [
+      {
+        "voice_id": 1,
+        "voice_title": "初次见面",
+        "voice_m": "下层区的大人归地火管，小孩归鼹鼠党管，而我就是鼹鼠党的老大，你可以称呼我为——漆黑的虎克大人！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 2,
+        "voice_title": "问候",
+        "voice_m": "鼹鼠党，出动！勇敢鼹鼠向前冲！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 3,
+        "voice_title": "道别",
+        "voice_m": "鼹鼠党，解散！各回各家睡大觉！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 4,
+        "voice_title": "关于自己•洞洞机",
+        "voice_m": "洞洞机曾是一位勤劳的挖矿好手，退休后，它听从了虎克大人的召唤，成为了打败坏蛋的无情铁手！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 5,
+        "voice_title": "闲谈•鼹鼠党的成员",
+        "voice_m": "在我的带领下，鼹鼠党还招募了「千面尤利安」，「铁臂卢卡」，「狡猾的小孩子」等数位得力干将！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 6,
+        "voice_title": "爱好",
+        "voice_m": "去矿区冒险，去诊所冒险，去地上冒险，去，去…虎克也不知道的地方冒险！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 7,
+        "voice_title": "烦恼",
+        "voice_m": "听说一直烦恼的话，头会变得很重很重，那不就更长不高了吗…呜……",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 8,
+        "voice_title": "分享",
+        "voice_m": "大人们总是用「长大以后就明白的道理」来糊弄虎克…虎克反倒觉得，大人们有很多「长大以后就忘记了的道理」！不信，就来比比谁的道理多！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 9,
+        "voice_title": "见闻",
+        "voice_m": "虎克感兴趣的可多了，像是背着地髓矿石的蜥蜴，还有不吃东西就能活下来的洞螈…听娜塔莎姐姐说，地上还有一年只开一次的花，真想去看一看呀……",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 10,
+        "voice_title": "关于娜塔莎",
+        "voice_m": "老巫…温柔美丽的娜塔莎姐姐一旦生起气来…呃，依旧美丽，但不怎么温柔了……",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 11,
+        "voice_title": "关于克拉拉",
+        "voice_m": "呜…克拉拉，我的克拉拉…什么时候才能加入鼹鼠党……",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 12,
+        "voice_title": "关于史瓦罗",
+        "voice_m": "虎克的洞洞机，比史瓦罗的拳头还要大！哼！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 13,
+        "voice_title": "关于桑博",
+        "voice_m": "哪里都能碰见桑博叔叔，他也在到处冒险么？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 14,
+        "voice_title": "关于希儿",
+        "voice_m": "希儿姐姐说话声音很大，但有时却说不过虎克呢，嘿嘿~",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 15,
+        "voice_title": "关于费斯曼",
+        "voice_m": "虎克最喜欢老爹了！等虎克挖到了宝藏，要给老爹盖一间大房子！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 16,
+        "voice_title": "关于卢卡",
+        "voice_m": "卢卡哥哥，喜欢吃肉！虎克也喜欢吃肉！所以，卢卡哥哥跟虎克是好朋友！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 17,
+        "voice_title": "星魂激活",
+        "voice_m": "还有什么宝物在等着虎克呢。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 18,
+        "voice_title": "角色晋阶",
+        "voice_m": "让你瞧瞧「鼹鼠党」老大的厉害吧！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 19,
+        "voice_title": "角色满级",
+        "voice_m": "嘿嘿嘿，已经没有人比漆黑的虎克大人更强啦！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 20,
+        "voice_title": "行迹激活",
+        "voice_m": "嘿嘿，见识见识…虎克大人漆黑的手段！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 21,
+        "voice_title": "队伍编成•希儿",
+        "voice_m": "希儿姐姐，虎克这次一定会赢过你！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 22,
+        "voice_title": "队伍编成•娜塔莎",
+        "voice_m": "哎呀，老巫…娜塔莎姐姐！虎克会乖乖听话哒！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 23,
+        "voice_title": "队伍编成•克拉拉",
+        "voice_m": "荣誉队员克拉拉！准备好一起大冒险了吗？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 24,
+        "voice_title": "队伍编成•桑博",
+        "voice_m": "是蓝色头发的叔叔！这次我们去哪里玩？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 25,
+        "voice_title": "队伍编成•卢卡",
+        "voice_m": "卢卡哥哥，我们一起去打坏人吧！",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 51,
+        "voice_title": "战斗开始•弱点击破",
+        "voice_m": "现在投降还来得及！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 52,
+        "voice_title": "战斗开始•危险预警",
+        "voice_m": "虎克…虎克可不好欺负！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 53,
+        "voice_title": "回合开始•一",
+        "voice_m": "哈！虎克来捣蛋！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 54,
+        "voice_title": "回合开始•二",
+        "voice_m": "坏蛋，报上名来！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 55,
+        "voice_title": "回合待机",
+        "voice_m": "喂！别无视我！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 56,
+        "voice_title": "普攻",
+        "voice_m": "你说谁是小家伙！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 57,
+        "voice_title": "战技•一",
+        "voice_m": "诶嘿嘿…没想到吧？",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 58,
+        "voice_title": "战技•二",
+        "voice_m": "我来了…我又走咯~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 59,
+        "voice_title": "轻受击",
+        "voice_m": "你打我！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 60,
+        "voice_title": "重受击",
+        "voice_m": "疼死啦！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 61,
+        "voice_title": "终结技•激活",
+        "voice_m": "跟着我，有肉吃！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 62,
+        "voice_title": "终结技•施放",
+        "voice_m": "漆黑的虎克大人驾到，让开让开让开…呜呼~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 63,
+        "voice_title": "无法战斗",
+        "voice_m": "老爹…都没打过我……",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 64,
+        "voice_title": "重回战斗",
+        "voice_m": "真拿你没办法~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 65,
+        "voice_title": "回复生命",
+        "voice_m": "好样的！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 66,
+        "voice_title": "秘技",
+        "voice_m": "哦呼呼呼~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 67,
+        "voice_title": "战斗胜利",
+        "voice_m": "我宣布，本次冒险，顺利结束！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 68,
+        "voice_title": "开启战利品•一",
+        "voice_m": "通通——拿走~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 69,
+        "voice_title": "解谜成功•一",
+        "voice_m": "诶？还没玩够呢！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 70,
+        "voice_title": "发现敌方目标",
+        "voice_m": "吓、吓我一跳。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 71,
+        "voice_title": "返回城镇",
+        "voice_m": "找一找呀跑一跑呀跳一跳~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 72,
+        "voice_title": "开启战利品•二",
+        "voice_m": "是给虎克的吗？",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 73,
+        "voice_title": "开启贵重战利品",
+        "voice_m": "哇…送给老爹吧！",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 74,
+        "voice_title": "解谜成功•二",
+        "voice_m": "虎克闭着眼睛都能搞定~",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      }
+    ]
+  },
+  "rarity": "CombatPowerAvatarRarityType4",
+  "avatar_vo_tag": "hook",
+  "sp_need": 120,
+  "base_type": "Warrior",
+  "damage_type": "Fire",
+  "ranks": {
+    "1": {
+      "id": 110901,
+      "name": "早睡早起很健康",
+      "desc": "战技强化后造成的伤害提高<unbreak>#1[i]%</unbreak>。",
+      "icon": "SkillIcon_1109_Rank1.png",
+      "param_list": [
+        0.2
+      ],
+      "extra": {}
+    },
+    "2": {
+      "id": 110902,
+      "name": "吃好喝好长身体",
+      "desc": "战技使敌方目标陷入的灼烧状态持续时间增加<unbreak>#1[i]</unbreak>回合。",
+      "icon": "SkillIcon_1109_Rank2.png",
+      "param_list": [
+        1
+      ],
+      "extra": {}
+    },
+    "3": {
+      "id": 110903,
+      "name": "不挑不选全都要",
+      "desc": "战技等级+2，最多不超过<unbreak>15</unbreak>级；普攻等级+1，最多不超过<unbreak>10</unbreak>级。",
+      "icon": "SkillIcon_1109_BP.png",
+      "param_list": [],
+      "extra": {}
+    },
+    "4": {
+      "id": 110904,
+      "name": "稀里糊涂没关系",
+      "desc": "触发天赋时，有<unbreak>#1[i]%</unbreak><u>基础概率</u>使指定敌方目标的相邻目标也陷入等同于战技的灼烧状态。",
+      "icon": "SkillIcon_1109_Rank4.png",
+      "param_list": [
+        1
+      ],
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      }
+    },
+    "5": {
+      "id": 110905,
+      "name": "好事留名鼹鼠党",
+      "desc": "终结技等级+2，最多不超过<unbreak>15</unbreak>级；天赋等级+2，最多不超过<unbreak>15</unbreak>级。",
+      "icon": "SkillIcon_1109_Ultra.png",
+      "param_list": [],
+      "extra": {}
+    },
+    "6": {
+      "id": 110906,
+      "name": "随时准备打坏人",
+      "desc": "虎克对灼烧状态下的敌方目标造成的伤害提高<unbreak>#1[i]%</unbreak>。",
+      "icon": "SkillIcon_1109_Rank6.png",
+      "param_list": [
+        0.2
+      ],
+      "extra": {}
+    }
+  },
+  "skills": {
+    "110901": {
+      "id": 110901,
+      "name": "喂！小心火烛",
+      "desc": "对指定敌方单体造成等同于虎克<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的火属性伤害。",
+      "simple_desc": "对敌方单体造成少量火属性伤害。",
+      "type": "Normal",
+      "type_name": "普攻",
+      "tag": "SingleAttack",
+      "sp_base": 20,
+      "bp_need": -1,
+      "bp_add": 1,
+      "show_stance_list": [
+        30,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": 10,
+      "extra": {},
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            0.5
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            0.6
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            0.7
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            0.8
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            0.9
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            1
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            1.1
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            1.2
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            1.3
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            1.4
+          ]
+        }
+      }
+    },
+    "110902": {
+      "id": 110902,
+      "name": "嘿！记得虎克吗",
+      "desc": "对指定敌方单体造成等同于虎克<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的火属性伤害，同时有<unbreak>#2[i]%</unbreak>的<u>基础概率</u>使其陷入灼烧状态，持续<unbreak>#3[i]</unbreak>回合。\\n灼烧状态下，敌方目标每回合开始时受到等同于虎克<color=#f29e38ff><unbreak>#4[i]%</unbreak></color>攻击力的火属性持续伤害。",
+      "simple_desc": "对敌方单体造成火属性伤害，大概率对目标施加灼烧状态。",
+      "type": "BPSkill",
+      "type_name": "战技",
+      "tag": "SingleAttack",
+      "sp_base": 30,
+      "bp_need": 1,
+      "bp_add": null,
+      "show_stance_list": [
+        60,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": 20,
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            1.2,
+            1,
+            2,
+            0.25
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            1.32,
+            1,
+            2,
+            0.275
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            1.44,
+            1,
+            2,
+            0.3
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            1.56,
+            1,
+            2,
+            0.325
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            1.68,
+            1,
+            2,
+            0.35
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            1.8,
+            1,
+            2,
+            0.3875
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            1.95,
+            1,
+            2,
+            0.4375
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            2.1,
+            1,
+            2,
+            0.5
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            2.25,
+            1,
+            2,
+            0.575
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            2.4,
+            1,
+            2,
+            0.65
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            2.52,
+            1,
+            2,
+            0.6825
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            2.64,
+            1,
+            2,
+            0.715
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            2.76,
+            1,
+            2,
+            0.7475
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            2.88,
+            1,
+            2,
+            0.78
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            3,
+            1,
+            2,
+            0.8125
+          ]
+        }
+      }
+    },
+    "110903": {
+      "id": 110903,
+      "name": "轰！飞来焰火",
+      "desc": "对指定敌方单体造成等同于虎克<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的火属性伤害。\\n施放终结技后，下一次施放的战技得到强化，强化后的战技能够同时对指定敌方单体及其相邻目标造成伤害。",
+      "simple_desc": "对敌方单体造成大量火属性伤害，并<color=#f29e38ff>强化自身下一次的战技</color>。",
+      "type": "Ultra",
+      "type_name": "终结技",
+      "tag": "SingleAttack",
+      "sp_base": 5,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        90,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": 30,
+      "extra": {},
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            2.4
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            2.56
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            2.72
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            2.88
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            3.04
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            3.2
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            3.4
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            3.6
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            3.8
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            4
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            4.16
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            4.32
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            4.48
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            4.64
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            4.8
+          ]
+        }
+      }
+    },
+    "110904": {
+      "id": 110904,
+      "name": "哈！火上浇油",
+      "desc": "攻击处于灼烧状态的敌方目标时，追加1次等同于虎克<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的火属性<u>附加伤害</u>，并额外恢复<unbreak>#2[i]</unbreak>点能量。",
+      "simple_desc": "攻击处于灼烧状态的敌方目标时，<color=#f29e38ff>造成少量火属性<u>附加伤害</u></color>并额外恢复能量。",
+      "type": null,
+      "type_name": "天赋",
+      "tag": "Enhance",
+      "sp_base": null,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        0,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": 10,
+      "extra": {
+        "10000005": {
+          "name": "附加伤害",
+          "desc": "使受击者额外受到1次伤害，本次伤害不视为造成了1次攻击。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            0.5,
+            5
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            0.55,
+            5
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            0.6,
+            5
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            0.65,
+            5
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            0.7,
+            5
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            0.75,
+            5
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            0.8125,
+            5
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            0.875,
+            5
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            0.9375,
+            5
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            1,
+            5
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            1.05,
+            5
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            1.1,
+            5
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            1.15,
+            5
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            1.2,
+            5
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            1.25,
+            5
+          ]
+        }
+      }
+    },
+    "110906": {
+      "id": 110906,
+      "name": "攻击",
+      "desc": "攻击敌人，进入战斗后削弱敌方目标对应属性韧性。",
+      "simple_desc": null,
+      "type": "MazeNormal",
+      "type_name": "",
+      "tag": "MazeAttack",
+      "sp_base": null,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        30,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {},
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": []
+        }
+      }
+    },
+    "110907": {
+      "id": 110907,
+      "name": "哎！瞧这一团糟",
+      "desc": "立即攻击敌人，进入战斗后对敌方随机单体造成等同于虎克<unbreak>#4[i]%</unbreak>攻击力的火属性伤害，同时有<unbreak>#1[i]%</unbreak>的<u>基础概率</u>使敌方每个单体目标陷入灼烧状态，持续<unbreak>#3[i]</unbreak>回合。\\n灼烧状态下，敌方目标每回合开始时受到等同于虎克<unbreak>#2[i]%</unbreak>攻击力的火属性持续伤害。",
+      "simple_desc": "攻击敌人，进战后对敌方随机单体造成少量火属性伤害，大概率使敌方每个单体陷入灼烧状态。",
+      "type": "Maze",
+      "type_name": "秘技",
+      "tag": "MazeAttack",
+      "sp_base": null,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        60,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            1,
+            0.5,
+            3,
+            0.5
+          ]
+        }
+      }
+    },
+    "110909": {
+      "id": 110909,
+      "name": "嘿！记得虎克吗",
+      "desc": "对指定敌方单体造成等同于虎克<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的火属性伤害，同时有<unbreak>#2[i]%</unbreak>的<u>基础概率</u>使其陷入灼烧状态，持续<unbreak>#3[i]</unbreak>回合。此外对其相邻目标造成等同于虎克<color=#f29e38ff><unbreak>#5[i]%</unbreak></color>攻击力的火属性伤害。\\n灼烧状态下，敌方目标每回合开始时受到等同于虎克<color=#f29e38ff><unbreak>#4[i]%</unbreak></color>攻击力的火属性持续伤害。",
+      "simple_desc": "对敌方单体造成火属性伤害，大概率对目标施加灼烧状态，对相邻目标造成少量火属性伤害。",
+      "type": "BPSkill",
+      "type_name": "战技",
+      "tag": "Blast",
+      "sp_base": 30,
+      "bp_need": 1,
+      "bp_add": null,
+      "show_stance_list": [
+        60,
+        0,
+        30
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            1.4,
+            1,
+            2,
+            0.25,
+            0.4
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            1.54,
+            1,
+            2,
+            0.275,
+            0.44
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            1.68,
+            1,
+            2,
+            0.3,
+            0.48
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            1.82,
+            1,
+            2,
+            0.325,
+            0.52
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            1.96,
+            1,
+            2,
+            0.35,
+            0.56
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            2.1,
+            1,
+            2,
+            0.3875,
+            0.6
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            2.275,
+            1,
+            2,
+            0.4375,
+            0.65
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            2.45,
+            1,
+            2,
+            0.5,
+            0.7
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            2.625,
+            1,
+            2,
+            0.575,
+            0.75
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            2.8,
+            1,
+            2,
+            0.65,
+            0.8
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            2.94,
+            1,
+            2,
+            0.6825,
+            0.84
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            3.08,
+            1,
+            2,
+            0.715,
+            0.88
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            3.22,
+            1,
+            2,
+            0.7475,
+            0.92
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            3.36,
+            1,
+            2,
+            0.78,
+            0.96
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            3.5,
+            1,
+            2,
+            0.8125,
+            1
+          ]
+        }
+      }
+    }
+  },
+  "skill_trees": {
+    "point01": {
+      "1": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1109_Normal.png",
+        "level_up_skill_id": [
+          110901
+        ],
+        "material_list": [],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1109001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Normal.png",
+        "level_up_skill_id": [
+          110901
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 4000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110111,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 4,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1109001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Normal.png",
+        "level_up_skill_id": [
+          110901
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 8000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 2,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 2,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1109001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Normal.png",
+        "level_up_skill_id": [
+          110901
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 16000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 4,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1109001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Normal.png",
+        "level_up_skill_id": [
+          110901
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 36000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1109001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Normal.png",
+        "level_up_skill_id": [
+          110901
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1109001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point02": {
+      "1": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 1,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 4000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110111,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 4,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 8000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 2,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 2,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 16000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 4,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 24000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 6,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 5,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "7": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 36000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "8": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 64000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "9": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "10": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_BP.png",
+        "level_up_skill_id": [
+          110902,
+          110909
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 240000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 11,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point03": {
+      "1": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 1,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 4000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110111,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 4,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 8000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 2,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 2,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 16000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 4,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 24000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 6,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 5,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "7": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 36000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "8": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 64000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "9": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "10": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Ultra.png",
+        "level_up_skill_id": [
+          110903
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 240000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 11,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point04": {
+      "1": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 1,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 4000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110111,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 4,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 8000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 2,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 2,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 16000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 4,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 24000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 6,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 5,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "7": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 36000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "8": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 64000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "9": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "10": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_Passive.png",
+        "level_up_skill_id": [
+          110904
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 240000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 11,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1109004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point05": {
+      "1": {
+        "anchor": "Point05",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1109_Maze.png",
+        "level_up_skill_id": [
+          110907
+        ],
+        "material_list": [],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109007,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 5,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point06": {
+      "1": {
+        "anchor": "Point06",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_SkillTree1.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 4000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110111,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [
+          0.05
+        ],
+        "point_id": 1109101,
+        "point_name": "童真",
+        "point_desc": "触发天赋时，回复等同于虎克生命上限<unbreak>#1[i]%</unbreak>的生命值。",
+        "point_trigger_key": 6,
+        "point_type": 3,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point07": {
+      "1": {
+        "anchor": "Point07",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_SkillTree2.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 16000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 4,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [
+          0.35
+        ],
+        "point_id": 1109102,
+        "point_name": "无邪",
+        "point_desc": "抵抗<u>控制类负面状态</u>的概率提高<unbreak>#1[i]%</unbreak>。",
+        "point_trigger_key": 7,
+        "point_type": 3,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {
+          "10000011": {
+            "name": "控制类负面状态",
+            "desc": "冻结，纠缠，禁锢，支配，怒噪，强烈震荡，异梦，缠禁，恐惧，行动锁定，幸福傀儡，怨火灼身。",
+            "param": []
+          }
+        }
+      }
+    },
+    "point08": {
+      "1": {
+        "anchor": "Point08",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1109_SkillTree3.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110502,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [
+          5,
+          0.2
+        ],
+        "point_id": 1109103,
+        "point_name": "玩火",
+        "point_desc": "施放终结技后，虎克的<u>行动提前</u><unbreak>#2[i]%</unbreak>并额外恢复<unbreak>#1[i]</unbreak>点能量。",
+        "point_trigger_key": 8,
+        "point_type": 3,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {
+          "10000001": {
+            "name": "行动提前",
+            "desc": "使目标在下次行动前的等待间隔缩短。",
+            "param": []
+          }
+        }
+      }
+    },
+    "point09": {
+      "1": {
+        "anchor": "Point09",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": 1,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109201,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 9,
+        "point_type": 1,
+        "pre_point": [],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.04,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point10": {
+      "1": {
+        "anchor": "Point10",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconMaxHP.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 4000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110111,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 112011,
+            "item_num": 4,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109202,
+        "point_name": "生命强化",
+        "point_desc": null,
+        "point_trigger_key": 10,
+        "point_type": 1,
+        "pre_point": [
+          1109101
+        ],
+        "status_add_list": [
+          {
+            "property_type": "HPAddedRatio",
+            "value": 0.04,
+            "name": "生命值"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point11": {
+      "1": {
+        "anchor": "Point11",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 8000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 2,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 2,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109203,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 11,
+        "point_type": 1,
+        "pre_point": [
+          1109202
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.04,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point12": {
+      "1": {
+        "anchor": "Point12",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconCriticalDamage.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 8000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 2,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 2,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109204,
+        "point_name": "暴击伤害强化",
+        "point_desc": null,
+        "point_trigger_key": 12,
+        "point_type": 1,
+        "pre_point": [
+          1109203
+        ],
+        "status_add_list": [
+          {
+            "property_type": "CriticalDamageBase",
+            "value": 0.053,
+            "name": "暴击伤害"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point13": {
+      "1": {
+        "anchor": "Point13",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 16000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110112,
+            "item_num": 4,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 112012,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109205,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 13,
+        "point_type": 1,
+        "pre_point": [
+          1109102
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.06,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point14": {
+      "1": {
+        "anchor": "Point14",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconMaxHP.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 36000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109206,
+        "point_name": "生命强化",
+        "point_desc": null,
+        "point_trigger_key": 14,
+        "point_type": 1,
+        "pre_point": [
+          1109205
+        ],
+        "status_add_list": [
+          {
+            "property_type": "HPAddedRatio",
+            "value": 0.06,
+            "name": "生命值"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point15": {
+      "1": {
+        "anchor": "Point15",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 36000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 2,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109207,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 15,
+        "point_type": 1,
+        "pre_point": [
+          1109206
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.06,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point16": {
+      "1": {
+        "anchor": "Point16",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconCriticalDamage.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109208,
+        "point_name": "暴击伤害强化",
+        "point_desc": null,
+        "point_trigger_key": 16,
+        "point_type": 1,
+        "pre_point": [
+          1109103
+        ],
+        "status_add_list": [
+          {
+            "property_type": "CriticalDamageBase",
+            "value": 0.08,
+            "name": "暴击伤害"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point17": {
+      "1": {
+        "anchor": "Point17",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": 75,
+        "default_unlock": false,
+        "icon": "IconMaxHP.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109209,
+        "point_name": "生命强化",
+        "point_desc": null,
+        "point_trigger_key": 17,
+        "point_type": 1,
+        "pre_point": [
+          1109208
+        ],
+        "status_add_list": [
+          {
+            "property_type": "HPAddedRatio",
+            "value": 0.08,
+            "name": "生命值"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point18": {
+      "1": {
+        "anchor": "Point18",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": 80,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 128000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110113,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 112013,
+            "item_num": 6,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1109210,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 18,
+        "point_type": 1,
+        "pre_point": [
+          1109208
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.08,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    }
+  },
+  "enhanced": {},
+  "memosprite": {},
+  "unique": {},
+  "stats": {
+    "0": {
+      "attack_base": 84,
+      "attack_add": 4.2,
+      "defence_base": 48,
+      "defence_add": 2.4,
+      "hp_base": 182.4,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 3200,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 112011,
+          "item_num": 4,
+          "rarity": "NotNormal"
+        }
+      ]
+    },
+    "1": {
+      "attack_base": 117.6,
+      "attack_add": 4.2,
+      "defence_base": 67.2,
+      "defence_add": 2.4,
+      "hp_base": 255.36,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 6400,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 112011,
+          "item_num": 8,
+          "rarity": "NotNormal"
+        }
+      ]
+    },
+    "2": {
+      "attack_base": 151.2,
+      "attack_add": 4.2,
+      "defence_base": 86.4,
+      "defence_add": 2.4,
+      "hp_base": 328.32,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 12800,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 112012,
+          "item_num": 5,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110402,
+          "item_num": 2,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "3": {
+      "attack_base": 184.8,
+      "attack_add": 4.2,
+      "defence_base": 105.6,
+      "defence_add": 2.4,
+      "hp_base": 401.28,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 32000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 112012,
+          "item_num": 8,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110402,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "4": {
+      "attack_base": 218.4,
+      "attack_add": 4.2,
+      "defence_base": 124.8,
+      "defence_add": 2.4,
+      "hp_base": 474.24,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 64000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 112013,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 110402,
+          "item_num": 15,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "5": {
+      "attack_base": 252,
+      "attack_add": 4.2,
+      "defence_base": 144,
+      "defence_add": 2.4,
+      "hp_base": 547.2,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 128000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 112013,
+          "item_num": 7,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 110402,
+          "item_num": 28,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "6": {
+      "attack_base": 285.6,
+      "attack_add": 4.2,
+      "defence_base": 163.2,
+      "defence_add": 2.4,
+      "hp_base": 620.16,
+      "hp_add": 9.12,
+      "speed_base": 94,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 125,
+      "cost": []
+    }
+  },
+  "relics": {
+    "avatar_id": 1109,
+    "set4_id_list": [
+      117,
+      122,
+      107
+    ],
+    "set2_id_list": [
+      301,
+      309,
+      305
+    ],
+    "property_list3": [
+      "CriticalChanceBase",
+      "CriticalDamageBase"
+    ],
+    "property_list4": [
+      "SpeedDelta"
+    ],
+    "property_list5": [
+      "FireAddedRatio"
+    ],
+    "property_list6": [
+      "AttackAddedRatio"
+    ],
+    "property_list": [
+      {
+        "relic_type": "BODY",
+        "property_type": "CriticalChanceBase"
+      },
+      {
+        "relic_type": "FOOT",
+        "property_type": "SpeedDelta"
+      },
+      {
+        "relic_type": "NECK",
+        "property_type": "FireAddedRatio"
+      },
+      {
+        "relic_type": "OBJECT",
+        "property_type": "AttackAddedRatio"
+      }
+    ],
+    "sub_affix_property_list": [
+      "CriticalChanceBase",
+      "CriticalDamageBase",
+      "AttackAddedRatio",
+      "SpeedDelta"
+    ],
+    "score_rank_list": [
+      346,
+      287
+    ]
+  },
+  "lightcones": [
+    21005,
+    21026,
+    24000
+  ],
+  "teams": [
+    {
+      "avatar_id": 1109,
+      "team_id": 1,
+      "position": 1,
+      "member_list": [
+        1313,
+        1403,
+        1409
+      ],
+      "backup_list1": [
+        1403,
+        8007
+      ],
+      "backup_list2": [
+        1309,
+        8007,
+        1306
+      ],
+      "backup_list3": [
+        1414,
+        1222,
+        1304,
+        1217,
+        1208,
+        1203,
+        1301
+      ],
+      "backup_group_list1": [
+        104
+      ],
+      "backup_group_list2": [
+        104
+      ],
+      "backup_group_list3": [
+        101
+      ]
+    }
+  ],
+  "skin": {}
+}

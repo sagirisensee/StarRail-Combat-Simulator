@@ -1,0 +1,3440 @@
+{
+  "name": "海瑟音",
+  "desc": "斯缇科西亚，醉与梦的海滨之城，旧日的歌声仍在浮浪间回荡。\\n大海的女儿海列屈拉，清洗「海洋」火种的黄金裔，驱散污浊的暗流，为天外的英雄奏响不醉不归的盛宴\\n——散场之时未到，纵然希望如泡沫般易碎，浪花也将一往无前。",
+  "chara_info": {
+    "camp": "翁法罗斯",
+    "va": {
+      "chinese": "浮梦若薇",
+      "japanese": "石見舞菜香",
+      "korean": "오은수",
+      "english": "Rosie Day"
+    },
+    "stories": {
+      "0": "斯缇科西亚，醉与梦的海滨之城，旧日的歌声仍在浮浪间回荡。\\n大海的女儿海列屈拉，清洗「海洋」火种的黄金裔，驱散污浊的暗流，为天外的英雄奏响不醉不归的盛宴\\n——散场之时未到，纵然希望如泡沫般易碎，浪花也将一往无前。",
+      "1": "阳光穿透进来时，大海的呼吸会变得五彩斑斓，这是海妖们一天中最为欢悦的时刻。\\n<i>「♫啪嗒♫」「♫皮咔♫」「♫波砰♫」</i>\\n海妖的公主雀跃地追逐着泡泡，她最喜欢它们在鼻尖短暂停留然后碎裂的片刻，此时水波会荡漾出七彩的光。\\n\\n在那万顷的珊瑚丛中，海妖们歌唱着，那里的珠贝熠熠生光，正适合装点于琴弓之上。\\n乐音从海列屈拉的指尖流淌，如同和缓的水流，拂过惬意畅饮蜜酿的伙伴。\\n\\n<i>「♫瞧，那辉煌热闹的航船上，人类该有多么欢畅♫」\\n「♫你思念救起的那人，他的声音定然在你心中回荡♫」\\n「♫尊贵的公主，无忧无虑的海列屈拉，你会去向何方？是那北境寒冷的冰海，还是人世的苍茫？♫」</i>\\n\\n饮醉了的海妖们围在她身旁，好奇心就像摇曳的海草缠住她。\\n<i>「♫尘世嘈杂，极地冰凉……♫」</i>\\n她轻轻拂过泡泡，微笑着摇头回答：\\n<i>「♫我愿栖身，在那能欢唱的……♫」</i>\\n\\n然而警戒的号角很快自深海传出，终止了欢宴。\\n海妖们随海列屈拉游向深处，海洋的女王向子民宣告——\\n\\n<i>「♫黑色的潮水将污染那清澈的洋流，我们要调动灵水的波涛，将污水涌引入巨杯，直至『纷争』抵御黑潮的光芒……♫\\n「♫海洋的宠儿，你可有心之所向？等到黑潮退尽，去往斯缇科西亚，自有陆上的人们为尔等设宴歌唱！♫」</i>\\n\\n日复一日，海列屈拉带领海妖穿梭在那逐渐昏黑的海洋，清洗污浊的暗流。\\n\\n<i>「♫伙伴们，别放弃，那不醉不归的辉煌♫\\n「♫伙伴们，别忘记，我们将要游向远方♫\\n「♫伙伴们，向前啊，斑斓的希望正荡漾♫」</i>\\n\\n日复一日，海列屈拉歌唱着。身为眷属，她深知守护这片大海是自己生来的使命——\\n\\n海列屈拉向深渊游去，那歌声逐渐化作漆黑深海中，唯一的一束光。",
+      "2": "广袤的珊瑚礁已成一片死地。\\n\\n第一次将剑刺入黑潮造物的身体时，她的双手仍会轻轻地颤抖。\\n第一百次与腐朽的昔日伙伴相向，那暗哑的弦已能毫不费力地割开喉咙。\\n第一千次，第一万次…提琴的珠光零落在海面，而深海已成血色——\\n\\n在那寂然无声的宫殿废墟，只剩海列屈拉与她一个人的欢宴。\\n\\n<i>「♫陆地上的人们呐，会举办永不散场的欢宴，将我们的牺牲奖赏……♫」</i>\\n哀婉的歌声回荡，当「纷争」的泰坦接过抵御黑潮的使命，欣喜的海列屈拉第一次踏出昏黑的海水。\\n\\n她用珠贝妆点面容，她的尾鳍变为双腿，身上的泡沫化作盛装。波澜不再在她的头顶怒吼，而是在脚下呻吟。\\n海鸟围绕着大海盘旋，声声凄厉。波涛息止了一瞬，又再次滚滚而逝去。\\n就像是泡影破裂之后，什么都不曾存在过一样。\\n她忍受着每一步锥心刺骨的疼痛，前往应许的斯缇科西亚——\\n\\n这片大地有刺鼻的空气，堆积如山的尸骨，纷争与战火…却唯独没有那场神明许诺的欢宴之地。\\n\\n<i>「我……海……瑟……」</i>\\n在那污浊的空气中，她的声音喑哑。\\n她学习人类的话语，但那些喧嚣的字眼让她无法再如歌般吟唱。她逐渐学会以沉默代替言语。\\n「一柄不会锈蚀的刀剑」，「一曲冷酷的琴音」…终日与她相伴的，是刺穿肌体的弹响，是生命洒血的悲鸣——\\n\\n他们说，那来自海洋的剑士明明极善演奏，却缄默疏离，从不言明心迹。\\n她看见向自己伸来的许多双手，有些意图将她抹杀，有些则声称会为她提供援助，它们曾点燃一盏盏灯火，然后一盏盏熄灭。\\n\\n<i>「海瑟音，你在往何处去？」</i>\\n\\n她无法回答。\\n旧日的琴已化为两把利剑，唯有锋利的挽歌流淌弦上。\\n即便渴望有一日会有人听懂其中向往，但她逐渐意识到人世也与寂寞的深海无异。\\n每个人都像是迷失的鱼儿，每个人都在盲目地朝着光芒游去。",
+      "3": "<i>「海瑟音，追随我，我会赐予你所求的一切。」</i>\\n她对那从娇小身躯里发出的响亮声音印象深刻，却仍心有怀疑：\\n<i>「她…又会在什么时候熄灭呢？」</i>\\n\\n然而这簇灯火像射入深海的天光，愈燃愈烈，持久不熄。\\n人们见蓝色的烈焰征战无数，次次凯旋，见巨浪如火燎原，见那卷起风浪的剑旗，也化作鲸鲨将腥风血雨尽数吞咽。\\n她听到炽烈的心跳，激昂的战鼓，雨点般的脚步，潮涌般的悲伤…纯粹如歌的心声自黄金裔的血中流淌，也同样拨动她尘封已久的心弦。\\n\\n凯撒应许的盛宴在即，年轻的织者与孩童附耳私语，不知那淡漠的剑旗是否愿拨冗出席。\\n在众人的惊呼声中，织者踮起脚尖，屏住呼吸，想要将这一刻尽收眼底。\\n她鎏金的裙摆掠过地砖的光色，竟如阳光下的浪花般晶莹剔透。\\n火烛银花下，人们再次看见了大海的光晕。\\n\\n「她应下我的心愿，为我们歌唱世界早已遗失的海湾。」\\n君王的话语落下，乐池亮起，灯光与人影在她眼前荡成海的涟漪。\\n乐声乘着杯盏中摇曳的泡影，人海中，她发现自己的声音不再空有回响。\\n\\n拉比努斯和塞涅卡的比斗是清脆的鼓点，维吉妮娅暗藏心意的诗句是律动的词。\\n缇里西庇俄丝笑了，于是乐曲有了轻灵的复调，阿格莱雅的舞步扬起，那是最优美动人的和音……\\n\\n<i>「此战胜利之后，剑旗爵，你可有想要之物？」</i>\\n那冷静的君主竟也有些微醺。\\n她饮下蜜酿，向君主私语，笑声飞翔在宴会的角落。\\n这里多么悦耳，多么光亮。\\n世界旋转着，酒杯相撞的声音，冰块滑动的声音。\\n久未开口的海妖，她的歌声仍如蜜酿泼洒——\\n\\n<i>「♫宴席的烛火如此耀眼\\n一片新的大海\\n它摇荡在我们举杯碰撞间……♫」</i>",
+      "4": "她曾以为，「逐火」便是她寻找的、永不散席的盛宴。\\n可在那不断失却的旅途中，光芒也终如泡沫般碎裂。\\n\\n她是凯撒的锋刃，她的剑尖总是蜿蜒流淌鲜血。\\n可当凯撒滚烫的金血滴落在她的指尖，恍惚之间，她又坠落回那孤独的深海。\\n<i>「呵，为什么…我为之游动的火，由我亲手熄灭……」</i>\\n在那痛苦的千年迷醉中，她逃避着那迷离光彩的泡沫，但那些已然片片碎裂的过往如今却像海草缠绕不休。\\n\\n<i>「啪嗒……」</i>\\n棋子落下。执棋的君王神意自若，可王冠上时而平静时而浓烈的光焰却透露出她真实的情绪。\\n<i>「我不懂如何下棋。」\\n「来，我教你。」</i>\\n她不太熟练地拿起棋子。不过是又一场厮杀而已，她想。\\n\\n<i>「啪嗒……」 </i>\\n那陡然亢奋的蓝色火焰使她的身边如热泉般温暖。她随意移动着棋子，问道：\\n<i>「既然终要从棋局上消失，为何它们要不停前进？」</i>\\n\\n<i>「啪嗒……」</i>\\n君主啜饮杯中蜜酿，满足地伸展着双臂，又畅然地喟叹着：\\n<i>「前进本身，不已经足够快意？」</i>\\n……\\n\\n千年的等待，她为逐火开辟新的天地，可也知晓那也并非最终的归宿。\\n<i>「鱼儿需要的，终究只是一片栖身的海……」</i>\\n在君主留下的一页记忆中，她走向清澈的海水。\\n\\n<i>♫啪嗒♫，♫皮咔♫，♫波砰♫…</i>五颜六色的泡沫倒影过往岁月，凝结碎裂，碎裂凝结。\\n<i>「海洋的宠儿，你可有什么心愿想要实现？」\\n「海瑟音，你在往何处去？」\\n「剑旗爵，你可有想要之物？」</i>\\n……\\n故乡，欢宴，逐火…它们都曾在她的生命中闪耀，然后迅速化为泡影…只剩下一声叹息回荡天际。\\n从始至终，这便是她拥有的全部——在人世与大海中，都是泡沫破碎的痕迹。\\n\\n<i>「可它们…多么美丽……」</i>\\n\\n<i>「♫……♫」\\n「♫……♫」\\n「♫……♫」</i>\\n\\n翁法罗斯的黎明将要升起。\\n在最后的泡沫破碎前，她微笑着，仿佛已唱尽…那已无需言语表达的心声。"
+    },
+    "voicelines": [
+      {
+        "voice_id": 1,
+        "voice_title": "初次见面",
+        "voice_m": "海列屈拉？那个名字早已随往日沉入了深海…原来是你，灰色的小鱼苗…还是叫我海瑟音吧。作为圣城的骑士统领，我会驻守于此，绝不允许命运的乱流扰乱你的视线。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 2,
+        "voice_title": "问候",
+        "voice_m": "盛宴在即，想来共演一曲么？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 3,
+        "voice_title": "道别",
+        "voice_m": "人世如海，记得别被咬人的浪尾追上了，更别丢了方向。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 4,
+        "voice_title": "关于自己•过去",
+        "voice_m": "被黑潮吞噬的剧场中，一场独奏持续了数百年之久…只是待到落幕，只剩下满地的骸骨，与仍在哀叹的浪潮。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 5,
+        "voice_title": "关于自己•现在",
+        "voice_m": "我循着一盏最明亮、最灼热的灯火，一路游到了圣城。逐火的王要我成为剑旗，而我也在寻找挥剑的方向——无论是向那迷离的泡沫，还是搅扰我们欢宴的杂音。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 6,
+        "voice_title": "闲谈•剑与琴",
+        "voice_m": "很久之前，我以海螺与珠贝精心打造了提琴。历经数次浴血，它变成了这般锋利的模样。如今，即便没有琴弦，洒血的悲鸣与潮汐的涌动已足以交织成悦耳的篇章。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 7,
+        "voice_title": "闲谈•鲸歌",
+        "voice_m": "有些鲸鱼的歌声，终其一生无法被同类听见…但它们的心跳，却比寻常更为炽热。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 8,
+        "voice_title": "闲谈•沉默",
+        "voice_m": "那些多嘴的虾蟹们偶尔会对我的沉默表示不满。但我更爱用琴「诉说」…不必害怕，除去生命临终的悲鸣，我更愿奏响凯旋的乐章。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 9,
+        "voice_title": "爱好•泡泡",
+        "voice_m": "当阳光照进海面，绕着光柱追逐那些五彩斑斓的水泡——那是海洋尚且清澈时，我们最喜欢的游戏。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 10,
+        "voice_title": "爱好",
+        "voice_m": "深海裂谷的千年蜜酿，浅酌一口便会沉醉，仿佛融化于洋流之中…地上的汁水确实稍逊一筹，大抵千杯，方能捕捉到一丝相似的体验。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 11,
+        "voice_title": "烦恼",
+        "voice_m": "生命本如泡沫，何不趁早在宴会上尽情举杯呢？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 12,
+        "voice_title": "分享",
+        "voice_m": "法吉娜唯一惧怕之事，便是那空无一物的寂寞。所以它成为一切江河的母亲、一切蜜酿的制造者、一切欢宴的主人，就像一尾孤浪永远无法拒绝与海水相伴…人类，也一样吧？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 13,
+        "voice_title": "见闻",
+        "voice_m": "隐匿在水面之下的国度曾为世界背负了最初的黑潮，但海妖们得到的许诺已和浪涛一同逝去。纵然明天虚假，却依旧醉人。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 14,
+        "voice_title": "关于{NICKNAME}",
+        "voice_m": "灰色的小鱼苗，想必有许多人愿意围绕在你身边吧？你游动时的尾流如此独特，仿佛让人回到港湾般温暖，又如登上岛屿般轻松。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 15,
+        "voice_title": "关于刻律德菈",
+        "voice_m": "我曾见过的君主，大多擅在酒杯里下蛊，但凯撒则选择在王旗上浇油。那面燃烧的旗帜，即便在深海之中，也能感受到它的炙热和光芒。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 16,
+        "voice_title": "关于阿格莱雅",
+        "voice_m": "自继承神权以来，她便罹受人性流逝的痛苦。然而，她宁可清醒地忍受这一切，也不愿沉醉麻痹自己…我怕是做不到呢……",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 17,
+        "voice_title": "关于缇宝•缇安•缇宁",
+        "voice_m": "即便在我讲述幽怖的深海见闻时，她们也会发出海豚一般可爱的声音。只有这般纯粹的心性，才能彻底涤荡世间的污浊吧。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 18,
+        "voice_title": "关于赛飞儿",
+        "voice_m": "一尾身姿灵巧的小猫鱼，还不会被鲜美的鱼饵钓起…或许有一天，它会成长为一条了不起的大鱼呢。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 19,
+        "voice_title": "关于昔涟",
+        "voice_m": "她就像一首…美妙的暖洋协奏曲，融汇所有的冰川和泥泞。若有这只小海兔的陪伴，想必连深海也不愿增加一丝寒意吧。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 20,
+        "voice_title": "星魂激活",
+        "voice_m": "每一座孤岛，都会被潮汐拥抱。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 21,
+        "voice_title": "角色晋阶",
+        "voice_m": "该游向下一片海洋了。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 22,
+        "voice_title": "角色满级",
+        "voice_m": "听，那风暴的喧响在呼唤。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 23,
+        "voice_title": "行迹激活",
+        "voice_m": "水迹稍纵即逝，却能汇成浪花。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 24,
+        "voice_title": "队伍编成•{NICKNAME}",
+        "voice_m": "小灰鱼，准备合奏一曲了么？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 25,
+        "voice_title": "队伍编成•阿格莱雅",
+        "voice_m": "请继续吧。以金丝拨动的旋律，格外动人心弦。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 26,
+        "voice_title": "队伍编成•缇宝",
+        "voice_m": "这次的神谕，是悦耳，还是嘈杂？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 27,
+        "voice_title": "队伍编成•刻律德菈",
+        "voice_m": "凯撒，这一局会在第几手结束？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 28,
+        "voice_title": "队伍编成•赛飞儿",
+        "voice_m": "小猫鱼，既然跃入了浪中，就别被吓跑呀。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 29,
+        "voice_title": "关于丹恒•腾荒",
+        "voice_m": "群山往往沉默少言，但那背负一切的决心，已无需喧嚣的语言明示。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 30,
+        "voice_title": "队伍编成•丹恒•腾荒",
+        "voice_m": "愿凯旋的乐音传遍大地。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 31,
+        "voice_title": "关于万敌",
+        "voice_m": "我曾尝试这尾小海狮热衷的红色琼浆…对鱼儿来说，那粉红汁水的味道，确实…淡薄了些。至于「法吉娜」的蜜酿，小海狮尝过一杯后也不愿再饮，似乎是觉得…于健康不利？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 32,
+        "voice_title": "关于遐蝶",
+        "voice_m": "紫色的小蝶鱼…我喜欢她写下的诗歌，还为它们编写了深海的曲调。来日，让我们一同在重聚的欢宴上，唱起那些优美的歌曲吧。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 33,
+        "voice_title": "关于那刻夏",
+        "voice_m": "那位如绿海豚般灵动的智者，他的「表演」令人叹为观止——不过，若能加上一些音乐与深海蜜酿，定然会更让听众沉醉。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 34,
+        "voice_title": "关于风堇",
+        "voice_m": "那尾如珍珠般温柔的小医师鱼喜欢挥动法杖，为我带来一场盛大的泡泡游戏。那孩童般的欢乐…我有幸得以再次体验。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 35,
+        "voice_title": "关于白厄",
+        "voice_m": "即便下一刻就是黑夜，那尾蓝金色的太阳鱼也会燃烧自己，成为众人的光。但愿在如今清澈的天地之海中，他能游得更轻松些。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 36,
+        "voice_title": "关于三月七",
+        "voice_m": "这尾粉色的小水母，竟能驯服岁月的逆流…她的光芒是如此活泼温暖，连我也会不由自主地一同随她遨游呢。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 37,
+        "voice_title": "队伍编成•万敌",
+        "voice_m": "我闻见血的气息…小海狮，浪已来袭。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 38,
+        "voice_title": "队伍编成•遐蝶",
+        "voice_m": "小蝶鱼，来共舞一曲吧，蝴蝶的翅膀…也能煽动海洋的潮汐。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 39,
+        "voice_title": "队伍编成•那刻夏",
+        "voice_m": "这次又有何妙计？愿闻其详。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 40,
+        "voice_title": "队伍编成•风堇",
+        "voice_m": "若需要我的歌声，请不要犹豫。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 41,
+        "voice_title": "队伍编成•白厄",
+        "voice_m": "以胜利的呐喊，为来日奏响序曲吧。",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 42,
+        "voice_title": "队伍编成•三月七",
+        "voice_m": "小水母，想来些深海蜜酿助助兴吗？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 43,
+        "voice_title": "队伍编成•昔涟",
+        "voice_m": "记忆的涟漪…与我一同荡漾，如何？",
+        "unlock_desc": null,
+        "is_battle_voice": false
+      },
+      {
+        "voice_id": 51,
+        "voice_title": "战斗开始•弱点击破",
+        "voice_m": "张牙舞爪的虾蟹，还不足为惧。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 52,
+        "voice_title": "战斗开始•危险预警",
+        "voice_m": "眼下，不失为助兴的好时机。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 53,
+        "voice_title": "回合开始•一",
+        "voice_m": "小心被那无声的浪花划开咽喉。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 54,
+        "voice_title": "回合开始•二",
+        "voice_m": "献上一曲锋利的挽歌。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 55,
+        "voice_title": "回合待机",
+        "voice_m": "休止的沉默，稍稍有些久了。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 56,
+        "voice_title": "普攻",
+        "voice_m": "迷醉吧。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 57,
+        "voice_title": "战技•一",
+        "voice_m": "潮汐，与我沉沦。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 58,
+        "voice_title": "战技•二",
+        "voice_m": "盛典，不醉不归。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 59,
+        "voice_title": "轻受击",
+        "voice_m": "有些喧闹。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 60,
+        "voice_title": "重受击",
+        "voice_m": "不堪入耳。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 61,
+        "voice_title": "终结技•激活",
+        "voice_m": "嘘，请在此驻足静听。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 62,
+        "voice_title": "终结技•施放",
+        "voice_m": "这场永不餍足的深海欢宴中，来自各位的悲鸣。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 63,
+        "voice_title": "无法战斗",
+        "voice_m": "终究落幕了……",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 64,
+        "voice_title": "重回战斗",
+        "voice_m": "洋流将我送回了此处。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 65,
+        "voice_title": "回复生命",
+        "voice_m": "像暖流一般，多谢。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 66,
+        "voice_title": "秘技",
+        "voice_m": "看看有鱼儿上钩么？",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 67,
+        "voice_title": "战斗胜利",
+        "voice_m": "愉快的捕食就此告一段落。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 68,
+        "voice_title": "开启战利品•一",
+        "voice_m": "拿它换些蜜酿如何？",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 69,
+        "voice_title": "开启战利品•二",
+        "voice_m": "多年后，它会沾染上海底的气味么…",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 70,
+        "voice_title": "开启贵重战利品",
+        "voice_m": "足以媲美珍珠的光泽。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 71,
+        "voice_title": "解谜成功•一",
+        "voice_m": "不算难…莫非是放水了吗？",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 72,
+        "voice_title": "解谜成功•二",
+        "voice_m": "是潮湿的空气向我透露了谜底。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 73,
+        "voice_title": "发现敌方目标",
+        "voice_m": "别担心，让它再游过来些吧。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      },
+      {
+        "voice_id": 74,
+        "voice_title": "返回城镇",
+        "voice_m": "偶尔在港湾停泊的时光…就像泡沫般令人怀念。",
+        "unlock_desc": null,
+        "is_battle_voice": true
+      }
+    ]
+  },
+  "rarity": "CombatPowerAvatarRarityType5",
+  "avatar_vo_tag": "hysilens",
+  "sp_need": 110,
+  "base_type": "Warlock",
+  "damage_type": "Physical",
+  "ranks": {
+    "1": {
+      "id": 141001,
+      "name": "你问我心为何悲伤",
+      "desc": "海瑟音在场时，我方目标造成的持续伤害为原伤害的<unbreak>#1[i]%</unbreak>，当海瑟音通过天赋使敌人陷入风化/裂伤/灼烧/触电状态时，有<unbreak>#2[i]%</unbreak>的<u>基础概率</u>额外使其陷入一次与原天赋效果相同，且可同时存在的风化/裂伤/灼烧/触电状态。",
+      "icon": "SkillIcon_1410_Rank1.png",
+      "param_list": [
+        1.16,
+        1
+      ],
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      }
+    },
+    "2": {
+      "id": 141002,
+      "name": "你说浪花为何喧响",
+      "desc": "结界持续期间，行迹【珍珠的琴弦】的造成伤害提高效果对我方全体生效。",
+      "icon": "SkillIcon_1410_Rank2.png",
+      "param_list": [],
+      "extra": {}
+    },
+    "3": {
+      "id": 141003,
+      "name": "可知灯火为何遗忘",
+      "desc": "终结技等级+2，最多不超过<unbreak>15</unbreak>级；普攻等级+1，最多不超过<unbreak>10</unbreak>级。",
+      "icon": "SkillIcon_1410_Ultra.png",
+      "param_list": [],
+      "extra": {}
+    },
+    "4": {
+      "id": 141004,
+      "name": "看呀，时间为何流淌",
+      "desc": "结界持续期间，使敌方全体全属性抗性降低<unbreak>#1[i]%</unbreak>。",
+      "icon": "SkillIcon_1410_Rank4.png",
+      "param_list": [
+        0.2
+      ],
+      "extra": {}
+    },
+    "5": {
+      "id": 141005,
+      "name": "于梳洗中，我轻吟浅唱",
+      "desc": "战技等级+2，最多不超过<unbreak>15</unbreak>级；天赋等级+2，最多不超过<unbreak>15</unbreak>级。",
+      "icon": "SkillIcon_1410_BP.png",
+      "param_list": [],
+      "extra": {}
+    },
+    "6": {
+      "id": 141006,
+      "name": "沉没的你，何日返乡",
+      "desc": "结界持续期间，每回合开始时或我方目标单次攻击后，触发海瑟音物理持续伤害效果的次数上限提高至<unbreak>#1[i]</unbreak>次，且造成的伤害倍率提高<unbreak>#2[i]%</unbreak>。",
+      "icon": "SkillIcon_1410_Rank6.png",
+      "param_list": [
+        12,
+        0.2
+      ],
+      "extra": {}
+    }
+  },
+  "skills": {
+    "141001": {
+      "id": 141001,
+      "name": "小调，止水中回响",
+      "desc": "对指定敌方单体造成等同于海瑟音<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的物理属性伤害。",
+      "simple_desc": "对敌方单体造成少量物理属性伤害。",
+      "type": "Normal",
+      "type_name": "普攻",
+      "tag": "SingleAttack",
+      "sp_base": 20,
+      "bp_need": -1,
+      "bp_add": 1,
+      "show_stance_list": [
+        30,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {},
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            0.5,
+            1,
+            3
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            0.6,
+            1,
+            3
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            0.7,
+            1,
+            3
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            0.8,
+            1,
+            3
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            0.9,
+            1,
+            3
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            1,
+            1,
+            3
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            1.1,
+            1,
+            3
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            1.2,
+            1,
+            3
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            1.3,
+            1,
+            3
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            1.4,
+            1,
+            3
+          ]
+        }
+      }
+    },
+    "141002": {
+      "id": 141002,
+      "name": "泛音，暗流后齐鸣",
+      "desc": "有<unbreak>#2[i]%</unbreak>的<u>基础概率</u>使敌方全体受到的伤害提高<color=#f29e38ff><unbreak>#3[i]%</unbreak></color>，持续<unbreak>#4[i]</unbreak>回合，同时对敌方全体造成等同于海瑟音<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的物理属性伤害。",
+      "simple_desc": "大概率使敌方全体受到的伤害提高，并对其造成物理属性伤害。",
+      "type": "BPSkill",
+      "type_name": "战技",
+      "tag": "AoEAttack",
+      "sp_base": 30,
+      "bp_need": 1,
+      "bp_add": null,
+      "show_stance_list": [
+        0,
+        30,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            0.7,
+            1,
+            0.1,
+            3
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            0.77,
+            1,
+            0.11,
+            3
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            0.84,
+            1,
+            0.12,
+            3
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            0.91,
+            1,
+            0.13,
+            3
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            0.98,
+            1,
+            0.14,
+            3
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            1.05,
+            1,
+            0.15,
+            3
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            1.1375,
+            1,
+            0.1625,
+            3
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            1.225,
+            1,
+            0.175,
+            3
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            1.3125,
+            1,
+            0.1875,
+            3
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            1.4,
+            1,
+            0.2,
+            3
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            1.47,
+            1,
+            0.21,
+            3
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            1.54,
+            1,
+            0.22,
+            3
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            1.61,
+            1,
+            0.23,
+            3
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            1.68,
+            1,
+            0.24,
+            3
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            1.75,
+            1,
+            0.25,
+            3
+          ]
+        }
+      }
+    },
+    "141003": {
+      "id": 141003,
+      "name": "绝海回涛，噬魂舞曲",
+      "desc": "海瑟音展开结界，使敌方目标攻击力降低<unbreak>#6[f1]%</unbreak>，防御力降低<color=#f29e38ff><unbreak>#3[f1]%</unbreak></color>，对敌方全体造成等同于海瑟音<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>攻击力的物理属性伤害。\\n处于结界中的敌方目标每受到1次持续伤害，海瑟音对其造成等同于自身<color=#f29e38ff><unbreak>#4[f1]%</unbreak></color>攻击力的物理属性持续伤害，该伤害在每回合开始时或我方目标单次攻击后触发，且最多触发<unbreak>#5[i]</unbreak>次。该伤害不会重复触发此效果。\\n结界持续<unbreak>#2[i]</unbreak>回合，自身每回合开始时结界持续回合数减1。当海瑟音陷入<u>无法战斗状态</u>时，结界也会被解除。",
+      "simple_desc": "展开结界使敌方全体<color=#f29e38ff>攻击力、防御力降低</color>，并对其造成物理属性伤害。结界存在时，敌方目标每受到1次持续伤害，对其<color=#f29e38ff>造成1次物理属性持续伤害</color>。",
+      "type": "Ultra",
+      "type_name": "终结技",
+      "tag": "AoEAttack",
+      "sp_base": 5,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        0,
+        60,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {
+        "10000007": {
+          "name": "无法战斗状态",
+          "desc": "当我方目标的当前生命值被削减至0时进入的特殊状态，处于该状态的目标无法继续战斗。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            1.2,
+            3,
+            0.15,
+            0.32,
+            8,
+            0.15
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            1.28,
+            3,
+            0.16,
+            0.3728,
+            8,
+            0.15
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            1.36,
+            3,
+            0.17,
+            0.4256,
+            8,
+            0.15
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            1.44,
+            3,
+            0.18,
+            0.4784,
+            8,
+            0.15
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            1.52,
+            3,
+            0.19,
+            0.5312,
+            8,
+            0.15
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            1.6,
+            3,
+            0.2,
+            0.584,
+            8,
+            0.15
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            1.7,
+            3,
+            0.2125,
+            0.632,
+            8,
+            0.15
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            1.8,
+            3,
+            0.225,
+            0.68,
+            8,
+            0.15
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            1.9,
+            3,
+            0.2375,
+            0.74,
+            8,
+            0.15
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            2,
+            3,
+            0.25,
+            0.8,
+            8,
+            0.15
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            2.08,
+            3,
+            0.26,
+            0.84,
+            8,
+            0.15
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            2.16,
+            3,
+            0.27,
+            0.88,
+            8,
+            0.15
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            2.24,
+            3,
+            0.28,
+            0.92,
+            8,
+            0.15
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            2.32,
+            3,
+            0.29,
+            0.96,
+            8,
+            0.15
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            2.4,
+            3,
+            0.3,
+            1,
+            8,
+            0.15
+          ]
+        }
+      }
+    },
+    "141004": {
+      "id": 141004,
+      "name": "海妖在欢唱",
+      "desc": "我方目标攻击时，海瑟音有<unbreak>#1[i]%</unbreak>的<u>基础概率</u>使被击中的敌方目标陷入风化/裂伤/灼烧/触电其中1种状态，且会优先陷入不同的状态。\\n风化/灼烧/触电状态下，敌方目标每回合开始时受到等同于海瑟音<color=#f29e38ff><unbreak>#2[f1]%</unbreak></color>攻击力的风/火/雷属性的持续伤害，持续<unbreak>#5[i]</unbreak>回合。\\n裂伤状态下，敌方目标每回合开始时受到等同于自身<unbreak>#3[f1]%</unbreak>生命上限的物理属性持续伤害，最多不超过海瑟音攻击力的<color=#f29e38ff><unbreak>#4[f1]%</unbreak></color>，持续<unbreak>#5[i]</unbreak>回合。",
+      "simple_desc": "我方目标攻击时，海瑟音有大概率使被击中的敌方目标<color=#f29e38ff>陷入风化/裂伤/灼烧/触电</color>其中1种状态。",
+      "type": null,
+      "type_name": "天赋",
+      "tag": "Impair",
+      "sp_base": null,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        0,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            1,
+            0.1,
+            0.2,
+            0.1,
+            2
+          ]
+        },
+        "2": {
+          "level": 2,
+          "param_list": [
+            1,
+            0.1165,
+            0.2,
+            0.1165,
+            2
+          ]
+        },
+        "3": {
+          "level": 3,
+          "param_list": [
+            1,
+            0.133,
+            0.2,
+            0.133,
+            2
+          ]
+        },
+        "4": {
+          "level": 4,
+          "param_list": [
+            1,
+            0.1495,
+            0.2,
+            0.1495,
+            2
+          ]
+        },
+        "5": {
+          "level": 5,
+          "param_list": [
+            1,
+            0.166,
+            0.2,
+            0.166,
+            2
+          ]
+        },
+        "6": {
+          "level": 6,
+          "param_list": [
+            1,
+            0.1825,
+            0.2,
+            0.1825,
+            2
+          ]
+        },
+        "7": {
+          "level": 7,
+          "param_list": [
+            1,
+            0.1975,
+            0.2,
+            0.1975,
+            2
+          ]
+        },
+        "8": {
+          "level": 8,
+          "param_list": [
+            1,
+            0.2125,
+            0.2,
+            0.2125,
+            2
+          ]
+        },
+        "9": {
+          "level": 9,
+          "param_list": [
+            1,
+            0.23125,
+            0.2,
+            0.23125,
+            2
+          ]
+        },
+        "10": {
+          "level": 10,
+          "param_list": [
+            1,
+            0.25,
+            0.2,
+            0.25,
+            2
+          ]
+        },
+        "11": {
+          "level": 11,
+          "param_list": [
+            1,
+            0.2625,
+            0.2,
+            0.2625,
+            2
+          ]
+        },
+        "12": {
+          "level": 12,
+          "param_list": [
+            1,
+            0.275,
+            0.2,
+            0.275,
+            2
+          ]
+        },
+        "13": {
+          "level": 13,
+          "param_list": [
+            1,
+            0.2875,
+            0.2,
+            0.2875,
+            2
+          ]
+        },
+        "14": {
+          "level": 14,
+          "param_list": [
+            1,
+            0.3,
+            0.2,
+            0.3,
+            2
+          ]
+        },
+        "15": {
+          "level": 15,
+          "param_list": [
+            1,
+            0.3125,
+            0.2,
+            0.3125,
+            2
+          ]
+        }
+      }
+    },
+    "141006": {
+      "id": 141006,
+      "name": "攻击",
+      "desc": "攻击敌人，进入战斗后削弱敌方目标对应属性韧性。",
+      "simple_desc": null,
+      "type": "MazeNormal",
+      "type_name": "",
+      "tag": "MazeAttack",
+      "sp_base": null,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        30,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {},
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": []
+        }
+      }
+    },
+    "141007": {
+      "id": 141007,
+      "name": "于海的栖息地",
+      "desc": "使用秘技后，制造一个持续<unbreak>#1[i]</unbreak>秒并自动向前移动的特殊领域，处于特殊领域内的敌人陷入【醉心】状态。【醉心】状态下的敌人不会对我方目标发动攻击，且在领域持续期间跟随领域。\\n与处于【醉心】状态下的敌人进入战斗后，有<unbreak>#2[i]%</unbreak>的<u>基础概率</u>使敌方每个单体目标陷入与海瑟音天赋效果相同的风化/裂伤/灼烧/触电其中<unbreak>#3[i]</unbreak>种状态。我方制造的领域效果最多存在1个。",
+      "simple_desc": "制造特殊领域。领域内敌人不会攻击我方目标。与领域内敌人进入战斗后，大概率使敌方每个单体目标<color=#f29e38ff>陷入风化/裂伤/灼烧/触电</color>其中<color=#f29e38ff><unbreak>#3[i]</unbreak></color>种状态。",
+      "type": "Maze",
+      "type_name": "秘技",
+      "tag": "Impair",
+      "sp_base": null,
+      "bp_need": -1,
+      "bp_add": null,
+      "show_stance_list": [
+        0,
+        0,
+        0
+      ],
+      "skill_combo_value_delta": null,
+      "extra": {
+        "30000001": {
+          "name": "基础概率",
+          "desc": "给受击者添加负面效果的基础概率。\\n最终概率会被攻击者的效果命中和敌方目标的效果抵抗所影响。",
+          "param": []
+        }
+      },
+      "level": {
+        "1": {
+          "level": 1,
+          "param_list": [
+            20,
+            1,
+            2
+          ]
+        }
+      }
+    }
+  },
+  "skill_trees": {
+    "point01": {
+      "1": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1410_Normal.png",
+        "level_up_skill_id": [
+          141001
+        ],
+        "material_list": [],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1410001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Normal.png",
+        "level_up_skill_id": [
+          141001
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 5000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110221,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 6,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1410001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Normal.png",
+        "level_up_skill_id": [
+          141001
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 10000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 3,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1410001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Normal.png",
+        "level_up_skill_id": [
+          141001
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 20000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 5,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 4,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1410001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Normal.png",
+        "level_up_skill_id": [
+          141001
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 45000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1410001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point01",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Normal.png",
+        "level_up_skill_id": [
+          141001
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 6,
+        "param_list": [],
+        "point_id": 1410001,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 1,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point02": {
+      "1": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 1,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2500,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 5000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110221,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 6,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 10000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 3,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 20000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 5,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 4,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 30000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 7,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 6,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "7": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 45000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "8": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 80000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 5,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "9": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "10": {
+        "anchor": "Point02",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_BP.png",
+        "level_up_skill_id": [
+          141002
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 300000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 14,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410002,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 2,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point03": {
+      "1": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 1,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2500,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 5000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110221,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 6,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 10000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 3,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 20000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 5,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 4,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 30000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 7,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 6,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "7": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 45000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "8": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 80000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 5,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "9": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "10": {
+        "anchor": "Point03",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Ultra.png",
+        "level_up_skill_id": [
+          141003
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 300000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 14,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410003,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 3,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point04": {
+      "1": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "2": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 1,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2500,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "3": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 5000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110221,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 6,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "4": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 10000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 3,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "5": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 20000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 5,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 4,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "6": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 30000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 7,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 6,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "7": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 45000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "8": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 80000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 5,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 4,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "9": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      },
+      "10": {
+        "anchor": "Point04",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_Passive.png",
+        "level_up_skill_id": [
+          141004
+        ],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 300000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 14,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 10,
+        "param_list": [],
+        "point_id": 1410004,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 4,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point05": {
+      "1": {
+        "anchor": "Point05",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": null,
+        "default_unlock": true,
+        "icon": "SkillIcon_1410_Maze.png",
+        "level_up_skill_id": [
+          141007
+        ],
+        "material_list": [],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410007,
+        "point_name": null,
+        "point_desc": null,
+        "point_trigger_key": 5,
+        "point_type": 2,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point06": {
+      "1": {
+        "anchor": "Point06",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_SkillTree1.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 5000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110221,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [
+          3,
+          1
+        ],
+        "point_id": 1410101,
+        "point_name": "征服的剑旗",
+        "point_desc": "战斗开始时，海瑟音展开与终结技效果相同的结界，结界持续<unbreak>#1[i]</unbreak>回合。每当海瑟音展开结界时，恢复<unbreak>#2[i]</unbreak>个战技点。",
+        "point_trigger_key": 6,
+        "point_type": 3,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point07": {
+      "1": {
+        "anchor": "Point07",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_SkillTree2.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 20000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 5,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [
+          1.5
+        ],
+        "point_id": 1410102,
+        "point_name": "盛会的泡沫",
+        "point_desc": "海瑟音施放终结技时，若敌方目标处于持续伤害状态，使其当前承受的所有持续伤害立即产生相当于原伤害<unbreak>#1[i]%</unbreak>的伤害。",
+        "point_trigger_key": 7,
+        "point_type": 3,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point08": {
+      "1": {
+        "anchor": "Point08",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "SkillIcon_1410_SkillTree3.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 241,
+            "item_num": 1,
+            "rarity": "SuperRare"
+          },
+          {
+            "item_id": 110507,
+            "item_num": 1,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [
+          0.6,
+          0.1,
+          0.15,
+          0.9
+        ],
+        "point_id": 1410103,
+        "point_name": "珍珠的琴弦",
+        "point_desc": "若海瑟音的效果命中高于<unbreak>#1[i]%</unbreak>，每超过<unbreak>#2[i]%</unbreak>可使自身造成的伤害提高<unbreak>#3[i]%</unbreak>，最多提高<unbreak>#4[i]%</unbreak>。",
+        "point_trigger_key": 8,
+        "point_type": 3,
+        "pre_point": [],
+        "status_add_list": [],
+        "extra": {}
+      }
+    },
+    "point09": {
+      "1": {
+        "anchor": "Point09",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": 1,
+        "default_unlock": false,
+        "icon": "IconSpeed.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 2500,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 2,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410201,
+        "point_name": "速度强化",
+        "point_desc": null,
+        "point_trigger_key": 9,
+        "point_type": 1,
+        "pre_point": [],
+        "status_add_list": [
+          {
+            "property_type": "SpeedDelta",
+            "value": 2,
+            "name": "速度"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point10": {
+      "1": {
+        "anchor": "Point10",
+        "avatar_promotion_limit": 2,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 5000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110221,
+            "item_num": 3,
+            "rarity": "NotNormal"
+          },
+          {
+            "item_id": 115001,
+            "item_num": 6,
+            "rarity": "NotNormal"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410202,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 10,
+        "point_type": 1,
+        "pre_point": [
+          1410101
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.04,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point11": {
+      "1": {
+        "anchor": "Point11",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconSpeed.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 10000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 3,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410203,
+        "point_name": "速度强化",
+        "point_desc": null,
+        "point_trigger_key": 11,
+        "point_type": 1,
+        "pre_point": [
+          1410202
+        ],
+        "status_add_list": [
+          {
+            "property_type": "SpeedDelta",
+            "value": 2,
+            "name": "速度"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point12": {
+      "1": {
+        "anchor": "Point12",
+        "avatar_promotion_limit": 3,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconStatusProbability.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 10000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 3,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 3,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410204,
+        "point_name": "效果命中强化",
+        "point_desc": null,
+        "point_trigger_key": 12,
+        "point_type": 1,
+        "pre_point": [
+          1410203
+        ],
+        "status_add_list": [
+          {
+            "property_type": "StatusProbabilityBase",
+            "value": 0.04,
+            "name": "效果命中"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point13": {
+      "1": {
+        "anchor": "Point13",
+        "avatar_promotion_limit": 4,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconSpeed.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 20000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110222,
+            "item_num": 5,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 115002,
+            "item_num": 4,
+            "rarity": "Rare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410205,
+        "point_name": "速度强化",
+        "point_desc": null,
+        "point_trigger_key": 13,
+        "point_type": 1,
+        "pre_point": [
+          1410102
+        ],
+        "status_add_list": [
+          {
+            "property_type": "SpeedDelta",
+            "value": 3,
+            "name": "速度"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point14": {
+      "1": {
+        "anchor": "Point14",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 45000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410206,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 14,
+        "point_type": 1,
+        "pre_point": [
+          1410205
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.06,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point15": {
+      "1": {
+        "anchor": "Point15",
+        "avatar_promotion_limit": 5,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconSpeed.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 45000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 3,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410207,
+        "point_name": "速度强化",
+        "point_desc": null,
+        "point_trigger_key": 15,
+        "point_type": 1,
+        "pre_point": [
+          1410206
+        ],
+        "status_add_list": [
+          {
+            "property_type": "SpeedDelta",
+            "value": 3,
+            "name": "速度"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point16": {
+      "1": {
+        "anchor": "Point16",
+        "avatar_promotion_limit": 6,
+        "avatar_level_limit": null,
+        "default_unlock": false,
+        "icon": "IconStatusProbability.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410208,
+        "point_name": "效果命中强化",
+        "point_desc": null,
+        "point_trigger_key": 16,
+        "point_type": 1,
+        "pre_point": [
+          1410103
+        ],
+        "status_add_list": [
+          {
+            "property_type": "StatusProbabilityBase",
+            "value": 0.06,
+            "name": "效果命中"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point17": {
+      "1": {
+        "anchor": "Point17",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": 75,
+        "default_unlock": false,
+        "icon": "IconAttack.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410209,
+        "point_name": "攻击强化",
+        "point_desc": null,
+        "point_trigger_key": 17,
+        "point_type": 1,
+        "pre_point": [
+          1410103
+        ],
+        "status_add_list": [
+          {
+            "property_type": "AttackAddedRatio",
+            "value": 0.08,
+            "name": "攻击力"
+          }
+        ],
+        "extra": {}
+      }
+    },
+    "point18": {
+      "1": {
+        "anchor": "Point18",
+        "avatar_promotion_limit": null,
+        "avatar_level_limit": 80,
+        "default_unlock": false,
+        "icon": "IconSpeed.png",
+        "level_up_skill_id": [],
+        "material_list": [
+          {
+            "item_id": 2,
+            "item_num": 160000,
+            "rarity": "Rare"
+          },
+          {
+            "item_id": 110223,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          },
+          {
+            "item_id": 115003,
+            "item_num": 8,
+            "rarity": "VeryRare"
+          }
+        ],
+        "max_level": 1,
+        "param_list": [],
+        "point_id": 1410210,
+        "point_name": "速度强化",
+        "point_desc": null,
+        "point_trigger_key": 18,
+        "point_type": 1,
+        "pre_point": [
+          1410201
+        ],
+        "status_add_list": [
+          {
+            "property_type": "SpeedDelta",
+            "value": 4,
+            "name": "速度"
+          }
+        ],
+        "extra": {}
+      }
+    }
+  },
+  "enhanced": {},
+  "memosprite": {},
+  "unique": {},
+  "stats": {
+    "0": {
+      "attack_base": 81.84,
+      "attack_add": 4.092,
+      "defence_base": 66,
+      "defence_add": 3.3,
+      "hp_base": 163.68,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 4000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 5,
+          "rarity": "NotNormal"
+        }
+      ]
+    },
+    "1": {
+      "attack_base": 114.576,
+      "attack_add": 4.092,
+      "defence_base": 92.4,
+      "defence_add": 3.3,
+      "hp_base": 229.152,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 8000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 10,
+          "rarity": "NotNormal"
+        }
+      ]
+    },
+    "2": {
+      "attack_base": 147.312,
+      "attack_add": 4.092,
+      "defence_base": 118.8,
+      "defence_add": 3.3,
+      "hp_base": 294.624,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 16000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 6,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110431,
+          "item_num": 3,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "3": {
+      "attack_base": 180.048,
+      "attack_add": 4.092,
+      "defence_base": 145.2,
+      "defence_add": 3.3,
+      "hp_base": 360.096,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 40000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 9,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110431,
+          "item_num": 7,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "4": {
+      "attack_base": 212.784,
+      "attack_add": 4.092,
+      "defence_base": 171.6,
+      "defence_add": 3.3,
+      "hp_base": 425.568,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 80000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 6,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 110431,
+          "item_num": 20,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "5": {
+      "attack_base": 245.52,
+      "attack_add": 4.092,
+      "defence_base": 198,
+      "defence_add": 3.3,
+      "hp_base": 491.04,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": [
+        {
+          "item_id": 2,
+          "item_num": 160000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 9,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 110431,
+          "item_num": 35,
+          "rarity": "VeryRare"
+        }
+      ]
+    },
+    "6": {
+      "attack_base": 278.256,
+      "attack_add": 4.092,
+      "defence_base": 224.4,
+      "defence_add": 3.3,
+      "hp_base": 556.512,
+      "hp_add": 8.184,
+      "speed_base": 102,
+      "critical_chance": 0.05,
+      "critical_damage": 0.5,
+      "base_aggro": 100,
+      "cost": []
+    }
+  },
+  "relics": {
+    "avatar_id": 1410,
+    "set4_id_list": [
+      116,
+      105,
+      102
+    ],
+    "set2_id_list": [
+      322,
+      301,
+      311
+    ],
+    "property_list3": [
+      "StatusProbabilityBase",
+      "AttackAddedRatio"
+    ],
+    "property_list4": [
+      "SpeedDelta",
+      "AttackAddedRatio"
+    ],
+    "property_list5": [
+      "PhysicalAddedRatio"
+    ],
+    "property_list6": [
+      "SPRatioBase",
+      "AttackAddedRatio"
+    ],
+    "property_list": [
+      {
+        "relic_type": "BODY",
+        "property_type": "StatusProbabilityBase"
+      },
+      {
+        "relic_type": "FOOT",
+        "property_type": "SpeedDelta"
+      },
+      {
+        "relic_type": "NECK",
+        "property_type": "PhysicalAddedRatio"
+      },
+      {
+        "relic_type": "OBJECT",
+        "property_type": "SPRatioBase"
+      }
+    ],
+    "sub_affix_property_list": [
+      "StatusProbabilityBase",
+      "SpeedDelta",
+      "AttackAddedRatio"
+    ],
+    "score_rank_list": [
+      323,
+      268
+    ]
+  },
+  "lightcones": [
+    23047,
+    22000,
+    21061
+  ],
+  "teams": [
+    {
+      "avatar_id": 1410,
+      "team_id": 1,
+      "position": 1,
+      "member_list": [
+        1005,
+        1307,
+        1409
+      ],
+      "backup_list1": [],
+      "backup_list2": [
+        1403,
+        1309,
+        1303
+      ],
+      "backup_list3": [
+        1217,
+        1222,
+        1304,
+        1414,
+        1208,
+        1203,
+        1301
+      ],
+      "backup_group_list1": [
+        106,
+        104
+      ],
+      "backup_group_list2": [
+        106,
+        104
+      ],
+      "backup_group_list3": [
+        101
+      ]
+    }
+  ],
+  "skin": {}
+}

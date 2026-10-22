@@ -1,0 +1,240 @@
+{
+  "name": "比阳光更明亮的",
+  "desc": "自他生时，眼前便只有无光的地牢，\\n无关的罪孽将他缚于此地，无关的记忆将他浸没。\\n他挣扎着，尽其所能地呼吸，\\n试图在无边的海洋中抓住一束光的缝隙。\\n\\n直到将军进入这不见天日的牢时，\\n他看到比阳光更明亮的，是少年的眼神。",
+  "rarity": "CombatPowerLightconeRarity5",
+  "base_type": "Warrior",
+  "refinements": {
+    "name": "抵死",
+    "desc": "使装备者的暴击率提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。当装备者施放普攻时，获得1层【龙吟】，持续<unbreak>#2[i]</unbreak>回合。每层【龙吟】使装备者的攻击力提高<color=#f29e38ff><unbreak>#4[i]%</unbreak></color>，能量恢复效率提高<color=#f29e38ff><unbreak>#5[f1]%</unbreak></color>。【龙吟】最多叠加<unbreak>#3[i]</unbreak>层。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.18,
+          2,
+          2,
+          0.18,
+          0.06
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.21,
+          2,
+          2,
+          0.21,
+          0.07
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.24,
+          2,
+          2,
+          0.24,
+          0.08
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.27,
+          2,
+          2,
+          0.27,
+          0.09
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.3,
+          2,
+          2,
+          0.3,
+          0.1
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 23015,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 5000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 113001,
+          "item_num": 8,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 48,
+      "base_hp_add": 7.2,
+      "base_attack": 28.8,
+      "base_attack_add": 4.32,
+      "base_defence": 18,
+      "base_defence_add": 2.7
+    },
+    {
+      "equipment_id": 23015,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 10000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110111,
+          "item_num": 4,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 113001,
+          "item_num": 12,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 105.6,
+      "base_hp_add": 7.2,
+      "base_attack": 63.36,
+      "base_attack_add": 4.32,
+      "base_defence": 39.6,
+      "base_defence_add": 2.7
+    },
+    {
+      "equipment_id": 23015,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 20000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110112,
+          "item_num": 4,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 113002,
+          "item_num": 8,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 182.4,
+      "base_hp_add": 7.2,
+      "base_attack": 109.44,
+      "base_attack_add": 4.32,
+      "base_defence": 68.4,
+      "base_defence_add": 2.7
+    },
+    {
+      "equipment_id": 23015,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 50000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110112,
+          "item_num": 8,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 113002,
+          "item_num": 12,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 259.2,
+      "base_hp_add": 7.2,
+      "base_attack": 155.52,
+      "base_attack_add": 4.32,
+      "base_defence": 97.2,
+      "base_defence_add": 2.7
+    },
+    {
+      "equipment_id": 23015,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 100000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110113,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 113003,
+          "item_num": 6,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 336,
+      "base_hp_add": 7.2,
+      "base_attack": 201.6,
+      "base_attack_add": 4.32,
+      "base_defence": 126,
+      "base_defence_add": 2.7
+    },
+    {
+      "equipment_id": 23015,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 200000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110113,
+          "item_num": 10,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 113003,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 412.8,
+      "base_hp_add": 7.2,
+      "base_attack": 247.68,
+      "base_attack_add": 4.32,
+      "base_defence": 154.8,
+      "base_defence_add": 2.7
+    },
+    {
+      "equipment_id": 23015,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 489.6,
+      "base_hp_add": 7.2,
+      "base_attack": 293.76,
+      "base_attack_add": 4.32,
+      "base_defence": 183.6,
+      "base_defence_add": 2.7
+    }
+  ]
+}

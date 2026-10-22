@@ -36,7 +36,31 @@ class RelicRegistry:
         pieces: int = 4
     ) -> Optional[RelicSetHandler]:
         entry = cls.get(key)
-        if not entry:
-            return None
-        spec, handler_cls = entry
-        return handler_cls(owner_id=owner_id, port=port, pieces=pieces, spec=spec)
+        if entry:
+            spec, handler_cls = entry
+            return handler_cls(owner_id=owner_id, port=port, pieces=pieces, spec=spec)
+
+        # 优雅回退：全量 62 套官方资产通用运行时
+        try:
+            from ..assets import AssetRepository
+            from .generic import GenericRelicSetHandler
+            repo = AssetRepository.get_instance()
+            asset = repo.get_relic_set(key)
+            if asset:
+                set_id_int = int(asset.id) if asset.id.isdigit() else 0
+                spec = RelicSetSpec(
+                    set_id=set_id_int,
+                    name=asset.name,
+                    set_type="cavern" if set_id_int < 300 else "planar"
+                )
+                return GenericRelicSetHandler(
+                    owner_id=owner_id,
+                    port=port,
+                    pieces=pieces,
+                    spec=spec,
+                    asset=asset
+                )
+        except Exception:
+            pass
+
+        return None

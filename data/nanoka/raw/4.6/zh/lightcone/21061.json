@@ -1,0 +1,235 @@
+{
+  "name": "假日浴场大冒险",
+  "desc": "<i>「小风堇，我们一起去试试最近新开的特色浴场！」</i>\\n\\n女孩在奥赫玛完成诊治，好奇地同孩童走进那形形色色的浴池。\\n\\n<i>「试试水果汁按摩？」</i>\\n看着那鲜红的双手，女孩抱住跃跃欲试的小伊卡向后退去——\\n<i>「我还是喜欢…喝的……」</i>\\n\\n<i>「大地兽踩背，限时优惠喽！」</i>\\n好奇的驮兽低下头颅，鼻息吹动女孩的头发。\\n<i>「下…下次一定！」</i>\\n\\n<i>「药草浴池，强身健体，您几位？」</i>\\n闻着馨香的草药香味，女孩试探着踏入池水。\\n<i>「这应该很养生吧……」</i>\\n\\n<i>「嘟，嘟嘟！」</i>\\n小伊卡在水中欢快地仰泳。\\n<i>「这些天来，它也累坏了呢……」</i>\\n\\n在这难得的假期，女孩喝着葡萄汁，与红发孩童一直从睡眠的秘诀聊到点心的做法。\\n\\n<i>「不好，小…小伊卡！」</i>\\n孩童的惊呼打破了浴池的平静。\\n\\n<i>「嘟……」\\n「小伊卡，坚持住！」</i>",
+  "rarity": "CombatPowerLightconeRarity4",
+  "base_type": "Warlock",
+  "refinements": {
+    "name": "冷静一下",
+    "desc": "使装备者造成的伤害提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>。装备者攻击后，有<unbreak>#2[i]%</unbreak>基础概率使受到攻击的目标陷入易伤状态，受到的伤害提高<color=#f29e38ff><unbreak>#3[i]%</unbreak></color>，持续<unbreak>#4[i]</unbreak>回合。同类效果无法叠加。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.16,
+          1,
+          0.1,
+          2
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.2,
+          1,
+          0.115,
+          2
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.24,
+          1,
+          0.13,
+          2
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.28,
+          1,
+          0.145,
+          2
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.32,
+          1,
+          0.16,
+          2
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 21061,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 4000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 5,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 48,
+      "base_hp_add": 7.2,
+      "base_attack": 24,
+      "base_attack_add": 3.6,
+      "base_defence": 15,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21061,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 8000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110221,
+          "item_num": 3,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 115001,
+          "item_num": 10,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 105.6,
+      "base_hp_add": 7.2,
+      "base_attack": 52.8,
+      "base_attack_add": 3.6,
+      "base_defence": 33,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21061,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 16000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110222,
+          "item_num": 3,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 6,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 182.4,
+      "base_hp_add": 7.2,
+      "base_attack": 91.2,
+      "base_attack_add": 3.6,
+      "base_defence": 57,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21061,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 40000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110222,
+          "item_num": 6,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 115002,
+          "item_num": 9,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 259.2,
+      "base_hp_add": 7.2,
+      "base_attack": 129.6,
+      "base_attack_add": 3.6,
+      "base_defence": 81,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21061,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 80000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110223,
+          "item_num": 4,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 336,
+      "base_hp_add": 7.2,
+      "base_attack": 168,
+      "base_attack_add": 3.6,
+      "base_defence": 105,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21061,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 160000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110223,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 115003,
+          "item_num": 7,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 412.8,
+      "base_hp_add": 7.2,
+      "base_attack": 206.4,
+      "base_attack_add": 3.6,
+      "base_defence": 129,
+      "base_defence_add": 2.25
+    },
+    {
+      "equipment_id": 21061,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 489.6,
+      "base_hp_add": 7.2,
+      "base_attack": 244.8,
+      "base_attack_add": 3.6,
+      "base_defence": 153,
+      "base_defence_add": 2.25
+    }
+  ]
+}

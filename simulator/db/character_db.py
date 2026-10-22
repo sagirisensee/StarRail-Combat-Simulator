@@ -382,6 +382,14 @@ class CharacterDB:
             char_name = str(avatar_id_or_name_or_profile)
             kit_cls = get_kit_class(char_name) if get_kit_class else None
             kit_inst = kit_cls(owner_id=char_name, port=None, eidolon=0) if kit_cls else None
+            if kit_inst:
+                try:
+                    from ..scaling import SkillScalingFactory
+                    scaling = SkillScalingFactory.create(char_name, eidolon=0)
+                    if scaling:
+                        kit_inst.bind_scaling(scaling)
+                except Exception:
+                    pass
             max_energy = 120.0
             if kit_inst:
                 try:
@@ -418,6 +426,13 @@ class CharacterDB:
                 kit_cls = GenericKit
             if kit_cls:
                 kit_inst = kit_cls(owner_id=profile.name, port=None, eidolon=profile.eidolon)
+                try:
+                    from ..scaling import SkillScalingFactory
+                    scaling = SkillScalingFactory.create(profile.name or str(profile.avatar_id), eidolon=profile.eidolon)
+                    if scaling:
+                        kit_inst.bind_scaling(scaling)
+                except Exception:
+                    pass
 
         max_energy = 120.0
         if kit_inst:

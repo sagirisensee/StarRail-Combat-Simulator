@@ -22,4 +22,5 @@ class LightConeSpec:
     cone_id: str
     name: str
     path: str
+    rarity: int = 4
     aliases: Tuple[str, ...] = field(default_factory=tuple)

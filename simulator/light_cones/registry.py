@@ -50,17 +50,43 @@ class LightConeRegistry:
     ) -> Optional[LightConeHandler]:
         """实例化并返回指定光锥的独立处理器。"""
         entry = cls.get(cone_id_or_name)
-        if not entry:
-            return None
-        spec, handler_cls = entry
-        handler = handler_cls(
-            owner_id=owner_id,
-            port=port,
-            superimposition=superimposition,
-            spec=spec
-        )
-        handler.on_attach()
-        return handler
+        if entry:
+            spec, handler_cls = entry
+            handler = handler_cls(
+                owner_id=owner_id,
+                port=port,
+                superimposition=superimposition,
+                spec=spec
+            )
+            handler.on_attach()
+            return handler
+
+        # 优雅回退：全量 170 顶官方光锥通用运行时
+        try:
+            from ..assets import AssetRepository
+            from .generic import GenericLightConeHandler
+            repo = AssetRepository.get_instance()
+            asset = repo.get_light_cone(cone_id_or_name)
+            if asset:
+                spec = LightConeSpec(
+                    cone_id=asset.id,
+                    name=asset.name,
+                    path=asset.path,
+                    rarity=asset.rarity,
+                )
+                handler = GenericLightConeHandler(
+                    owner_id=owner_id,
+                    port=port,
+                    superimposition=superimposition,
+                    spec=spec,
+                    asset=asset
+                )
+                handler.on_attach()
+                return handler
+        except Exception:
+            pass
+
+        return None
 
     @classmethod
     def list_all(cls) -> List[LightConeSpec]:

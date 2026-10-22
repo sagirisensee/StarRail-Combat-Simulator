@@ -1,0 +1,235 @@
+{
+  "name": "欢迎来到银河城",
+  "desc": "城市上空，少女张扬的身影自传送门中脱出。\\n车马洪流，人影绰绰，喧闹一如既往。\\n<i>「看着确实热闹，不过——」</i>\\n\\n面前的屏幕亮起，人们的喜怒哀乐化成星星点点流向其中。\\n<i>「连NPC的疲惫值都快登顶了…」</i>\\n<i>「无聊到爆的副本，我可不玩。」</i>\\n\\n跟随手指划动，城市灯光忽明忽灭。\\n不为人知的角落中传出一声惊呼，而后，呼声震震，响彻天际。\\n<i>「所有玩家幸运值翻倍，特别天赋随机，奖励拉满…」</i>\\n<i>「载入游戏成功！就现在，玩转全场！」</i>\\n\\n少女纵身跃下，熟悉的提示音环绕在耳畔。\\n属于她的游戏时刻，已然开启。",
+  "rarity": "CombatPowerLightconeRarity5",
+  "base_type": "Elation",
+  "refinements": {
+    "name": "稳赢",
+    "desc": "使装备者的速度提高<color=#f29e38ff><unbreak>#1[i]%</unbreak></color>，造成的欢愉伤害无视目标<color=#f29e38ff><unbreak>#2[i]%</unbreak></color>的防御力。当装备者对自身单体施放终结技时，获得<color=#f29e38ff><unbreak>#3[i]</unbreak></color>点【笑点】。该效果最多触发1次，施放<unbreak>#4[i]</unbreak>次普攻后重置可触发次数。",
+    "level": {
+      "1": {
+        "param_list": [
+          0.18,
+          0.2,
+          20,
+          3
+        ]
+      },
+      "2": {
+        "param_list": [
+          0.21,
+          0.24,
+          25,
+          3
+        ]
+      },
+      "3": {
+        "param_list": [
+          0.24,
+          0.28,
+          30,
+          3
+        ]
+      },
+      "4": {
+        "param_list": [
+          0.27,
+          0.32,
+          35,
+          3
+        ]
+      },
+      "5": {
+        "param_list": [
+          0.3,
+          0.36,
+          40,
+          3
+        ]
+      }
+    }
+  },
+  "stats": [
+    {
+      "equipment_id": 23057,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 5000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116001,
+          "item_num": 8,
+          "rarity": "NotNormal"
+        }
+      ],
+      "player_level_require": 15,
+      "max_level": 20,
+      "base_hp": 52.8,
+      "base_hp_add": 7.92,
+      "base_attack": 21.6,
+      "base_attack_add": 3.24,
+      "base_defence": 24,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23057,
+      "promotion": 1,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 10000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110261,
+          "item_num": 4,
+          "rarity": "NotNormal"
+        },
+        {
+          "item_id": 116001,
+          "item_num": 12,
+          "rarity": "NotNormal"
+        }
+      ],
+      "world_level_require": 1,
+      "max_level": 30,
+      "base_hp": 116.16,
+      "base_hp_add": 7.92,
+      "base_attack": 47.52,
+      "base_attack_add": 3.24,
+      "base_defence": 52.8,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23057,
+      "promotion": 2,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 20000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110262,
+          "item_num": 4,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116002,
+          "item_num": 8,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 2,
+      "max_level": 40,
+      "base_hp": 200.64,
+      "base_hp_add": 7.92,
+      "base_attack": 82.08,
+      "base_attack_add": 3.24,
+      "base_defence": 91.2,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23057,
+      "promotion": 3,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 50000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110262,
+          "item_num": 8,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 116002,
+          "item_num": 12,
+          "rarity": "Rare"
+        }
+      ],
+      "world_level_require": 3,
+      "max_level": 50,
+      "base_hp": 285.12,
+      "base_hp_add": 7.92,
+      "base_attack": 116.64,
+      "base_attack_add": 3.24,
+      "base_defence": 129.6,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23057,
+      "promotion": 4,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 100000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110263,
+          "item_num": 5,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 116003,
+          "item_num": 6,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 4,
+      "max_level": 60,
+      "base_hp": 369.6,
+      "base_hp_add": 7.92,
+      "base_attack": 151.2,
+      "base_attack_add": 3.24,
+      "base_defence": 168,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23057,
+      "promotion": 5,
+      "promotion_cost_list": [
+        {
+          "item_id": 2,
+          "item_num": 200000,
+          "rarity": "Rare"
+        },
+        {
+          "item_id": 110263,
+          "item_num": 10,
+          "rarity": "VeryRare"
+        },
+        {
+          "item_id": 116003,
+          "item_num": 8,
+          "rarity": "VeryRare"
+        }
+      ],
+      "world_level_require": 5,
+      "max_level": 70,
+      "base_hp": 454.08,
+      "base_hp_add": 7.92,
+      "base_attack": 185.76,
+      "base_attack_add": 3.24,
+      "base_defence": 206.4,
+      "base_defence_add": 3.6
+    },
+    {
+      "equipment_id": 23057,
+      "promotion": 6,
+      "promotion_cost_list": [],
+      "world_level_require": 5,
+      "max_level": 80,
+      "base_hp": 538.56,
+      "base_hp_add": 7.92,
+      "base_attack": 220.32,
+      "base_attack_add": 3.24,
+      "base_defence": 244.8,
+      "base_defence_add": 3.6
+    }
+  ]
+}

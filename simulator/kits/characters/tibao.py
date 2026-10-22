@@ -67,7 +67,8 @@ class TibaoKit(KitHandler):
                 ))
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
-            # 1. 展开结界领域【猜猜这里住着谁】(其他效果，Lv.12敌方受击伤害+33%)
+            # 1. 展开结界领域【猜猜这里住着谁】(根据当前终结技等级动态读取易伤参数)
+            zone_vuln = self.skill_param("ultra", 1, default=0.33)
             self.port.upsert_status(BuffSpec(
                 key="Tribbie_Ult_Zone_GuessWhoLivesHere",
                 name="猜猜这里住着谁",
@@ -77,7 +78,7 @@ class TibaoKit(KitHandler):
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
                 category="other",
-                description="结界领域展开中：敌方在结界内受到伤害提高 +33.0%"
+                description=f"结界领域展开中：敌方在结界内受到伤害提高 +{zone_vuln*100:.1f}%"
             ))
             for e in self.port.enemies(self.owner_id):
                 self.port.upsert_status(BuffSpec(
@@ -85,15 +86,16 @@ class TibaoKit(KitHandler):
                     name="结界易伤 (猜猜这里住着谁)",
                     source_id=self.owner_id,
                     target_id=e,
-                    modifiers=(Modifier(StatType.VULNERABILITY, ModifierOp.ADD, 0.33),),
+                    modifiers=(Modifier(StatType.VULNERABILITY, ModifierOp.ADD, zone_vuln),),
                     duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
                     category="debuff",
-                    description="结界领域内受到伤害提高 +33.0%"
+                    description=f"结界领域内受到伤害提高 +{zone_vuln*100:.1f}%"
                 ))
 
-            # 2. 为我方全体附加终结技核心增益【神启】(12级技能全属性抗穿 26.4%)，并为队友回能
+            # 2. 为我方全体附加战技核心增益【神启】(根据当前战技等级动态读取抗穿参数)，并为队友回能
+            res_pen = self.skill_param("skill", 0, default=0.264)
             for a in self.port.allies(self.owner_id):
                 if a != self.owner_id:
                     self.port.gain_energy(a, 35.0 if self.eidolon >= 6 else 30.0)
@@ -102,12 +104,12 @@ class TibaoKit(KitHandler):
                     name="神启",
                     source_id=self.owner_id,
                     target_id=a,
-                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.264),),
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, res_pen),),
                     duration=3,
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True,
                     category="buff",
-                    description="全属性抗性穿透 +26.4%"
+                    description=f"全属性抗性穿透 +{res_pen*100:.1f}%"
                 ))
 
             # 3. 星魂 4【心意相契的安宁】：结界期间我方全体造成的伤害无视目标 18% 防御

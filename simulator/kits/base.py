@@ -22,6 +22,17 @@ class KitHandler(ABC):
         self.port = port
         self.eidolon = eidolon
         self.skill_levels = skill_levels or {}
+        self.scaling: Optional[Any] = None
+
+    def bind_scaling(self, scaling: Any) -> None:
+        """绑定官方数据驱动的技能等级缩放器。"""
+        self.scaling = scaling
+
+    def skill_param(self, skill_key: str, index: int = 0, default: float = 0.0) -> float:
+        """获取指定技能在当前星魂/等级下的官方实机数值。"""
+        if self.scaling is not None:
+            return self.scaling.value(skill_key, index, default)
+        return default
 
     @abstractmethod
     def definition(self, kind: ActionKind) -> AbilityDefinition:
