@@ -245,6 +245,13 @@ class Entity:
         return self.base_crit_dmg
 
     @property
+    def err(self) -> float:
+        """动态计算实时能量恢复效率。"""
+        if self.simulator and hasattr(self.simulator, "status_mgr"):
+            return self.simulator.status_mgr.calculate_stat(self.name, self.base_err, StatType.ERR)
+        return self.base_err
+
+    @property
     def remaining_av(self) -> float:
         """到达终点所需的剩余行动值 (Action Value)。"""
         return self.distance_remaining / self.speed
