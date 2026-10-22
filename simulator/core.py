@@ -188,6 +188,7 @@ class Entity:
     base_crit_dmg: float = 0.50           # 基础 50% 暴伤
     max_hp: float = 10000.0
     current_hp: float = 10000.0
+    base_white_hp: float = 0.0            # 基础白字生命 (角色白字+光锥白字，用于百分比生命加成)
     shield: float = 0.0
     energy: float = 0.0
     max_energy: float = 120.0

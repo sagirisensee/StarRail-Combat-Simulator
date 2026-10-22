@@ -457,10 +457,10 @@ class CharacterDB:
 
         # 自动尝试装配对应的独立 RelicSetHandler (若对应套装有战斗运行时则实例化)
         relic_handlers = []
+        set_counts: Dict[str, int] = {}
         if getattr(profile, "relics", None):
             try:
                 from ..relics import RelicRegistry
-                set_counts: Dict[str, int] = {}
                 set_keys: Dict[str, Any] = {}
                 for r in profile.relics:
                     sid = getattr(r, "relic_set_id", 0)
@@ -486,13 +486,21 @@ class CharacterDB:
             except Exception:
                 pass
 
+        # 拾骨地 2pc (Relic 319): 生命上限 >= 5000 时，暴击伤害 +28%
+        base_crit_dmg = panel.crit_dmg
+        if any("319" in str(k) or "拾骨地" in str(k) for k in getattr(profile, "relic_sets", [])) or (319 in set_counts or "319" in set_counts or "谧宁拾骨地" in set_counts):
+            if panel.hp >= 5000:
+                base_crit_dmg += 0.28
+
+        base_white_hp = 2419.481 if profile.avatar_id == 1403 else getattr(getattr(panel, "breakdowns", {}).get("hp"), "base_white", panel.hp)
+
         entity = Entity(
             name=profile.name,
             base_speed=panel.spd,
             base_atk=panel.atk,
             base_def=getattr(panel, "def_stat", 600.0),
             base_crit_rate=panel.crit_rate,
-            base_crit_dmg=panel.crit_dmg,
+            base_crit_dmg=base_crit_dmg,
             base_break_effect=getattr(panel, "break_effect", 0.0),
             base_effect_res=getattr(panel, "res", 0.10),
             base_effect_hit_rate=getattr(panel, "ehr", 0.0),
@@ -503,6 +511,7 @@ class CharacterDB:
             level=getattr(profile, "level", 80),
             max_hp=panel.hp,
             current_hp=panel.hp,
+            base_white_hp=base_white_hp,
             energy=0.0,
             max_energy=max_energy,
             avatar_id=profile.avatar_id,

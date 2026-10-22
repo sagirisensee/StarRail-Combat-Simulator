@@ -32,8 +32,9 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         ult_success = sim.cast_ultimate("缇宝")
         self.assertTrue(ult_success, "终结技施放应成功")
 
-        # 3. 验证回能：大招 5 点保底 + E6 追击触发 S5 专武回能 12 * 1.1944 = 19.33
-        self.assertAlmostEqual(tibao.energy, 19.328, places=2)
+        # 3. 验证回能：大招 5 点 + E6 追击 5 点 + S5 专武追击 12 点 = 22 * 1.1944 = 26.27 (实机截断/显示为 26)
+        self.assertAlmostEqual(tibao.energy, 26.268, places=2)
+        self.assertEqual(round(tibao.energy), 26)
 
         # 4. 获取真理源 status 快照
         snap = sim.query_status("缇宝")
@@ -73,13 +74,19 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         # 验证负面效果数量为 0
         self.assertEqual(len(debuff_names), 0, "开局我方应无负面效果")
 
-        # 5. 动态属性数值校验
-        self.assertAlmostEqual(snap["current_crit_dmg"], snap["base_crit_dmg"] + 0.96 + 0.55 + 0.15, places=2)
-        self.assertAlmostEqual(snap["current_crit_rate"], snap["base_crit_rate"] + 0.32, places=2)
+        # 5. 动态属性数值校验 (实机严格对齐)
+        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟55% + 女武神15% = 518.2%
+        self.assertAlmostEqual(snap["current_crit_dmg"], 5.182, places=3)
+        # 暴击率: 基础 61.3% + 诗人32% = 93.3%
+        self.assertAlmostEqual(snap["current_crit_rate"], 0.933, places=3)
+        # 全抗穿: 26.4%
         self.assertAlmostEqual(snap["res_pen"], 0.264, places=3)
+        # 防御无视: 18.0%
         self.assertAlmostEqual(snap["def_shred"], 0.18, places=2)
-        # 生命上限 = 6505.1 * 1.20 + 2527 = 10333.1
-        self.assertAlmostEqual(snap["max_hp"], snap["base_max_hp"] * 1.20 + 2527.0 if "base_max_hp" in snap else 10333.1, delta=1.0)
+        # 通用属性增伤: 诗人10% + 知更鸟秘技30% + 羊羔儿72% = 112% (E6为必杀专属追加增伤，不污染通用增伤)
+        self.assertAlmostEqual(snap["dmg_boost"], 1.12, places=2)
+        # 生命上限 = 6505.1 + 基础白字生命2419.5 * 20% + 2527 = 9516.0
+        self.assertEqual(round(snap["max_hp"]), 9516)
 
 
 if __name__ == "__main__":

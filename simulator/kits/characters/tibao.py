@@ -17,14 +17,14 @@ class TibaoKit(KitHandler):
         err = getattr(ent, "err", 1.0) if ent else 1.0
         self.port.gain_energy(self.owner_id, 30.0 * err)
 
-        # 星魂 6 常驻质变状态【星月漫天的明日】(天赋追加增伤 729%)
+        # 星魂 6 常驻质变状态【星月漫天的明日】(仅专属强化天赋追加攻击，不污染常态通用属性增伤面板)
         if self.eidolon >= 6:
             self.port.upsert_status(BuffSpec(
                 key="Tribbie_E6_StarsAndMoonTomorrow",
                 name="星月漫天的明日",
                 source_id=self.owner_id,
                 target_id=self.owner_id,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 7.29),),
+                modifiers=(),
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff",
@@ -142,8 +142,11 @@ class TibaoKit(KitHandler):
                 description="生命上限提升 +2527"
             ))
 
-            # 5. 施放大招自身固定回能 5 点
-            self.port.gain_energy(self.owner_id, 5.0)
+            # 5. 施放大招自身固定回能 5 点 + E6 天赋追加攻击回能 5 点 (专武追加攻击额外回能 12 点由光锥处理器触发)
+            ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
+            err = getattr(ent, "err", 1.0) if ent else 1.0
+            base_energy = 5.0 + (5.0 if self.eidolon >= 6 else 0.0)
+            self.port.gain_energy(self.owner_id, base_energy * err)
 
             # 6. 星魂 6【星月漫天的明日】：施放终结技时立即触发一次追加攻击
             if self.eidolon >= 6:

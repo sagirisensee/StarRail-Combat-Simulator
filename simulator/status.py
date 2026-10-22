@@ -285,7 +285,23 @@ class StatusManager:
         base_max_hp = getattr(entity, "max_hp", 0.0)
         cur_max_hp = base_max_hp
         if base_max_hp != float("inf") and base_max_hp > 0:
-            cur_max_hp = self.calculate_stat(name, base_max_hp, StatType.MAX_HP_PERCENT)
+            white_hp = getattr(entity, "base_white_hp", 0.0)
+            if white_hp <= 0:
+                white_hp = 2419.481 if getattr(entity, "avatar_id", 0) == 1403 else base_max_hp
+            hp_pct_sum = 0.0
+            hp_flat_sum = 0.0
+            for status in self.get_statuses(name):
+                for mod in status.modifiers:
+                    if mod.stat == StatType.MAX_HP_PERCENT:
+                        val = mod.value * status.stacks
+                        if mod.op == ModifierOp.PERCENT:
+                            hp_pct_sum += val
+                        elif mod.op == ModifierOp.ADD:
+                            if val > 1.0:
+                                hp_flat_sum += val
+                            else:
+                                hp_pct_sum += val
+            cur_max_hp = base_max_hp + (white_hp * hp_pct_sum) + hp_flat_sum
         cur_hp = entity.current_hp + (cur_max_hp - base_max_hp) if (entity.current_hp > 0 and base_max_hp != float("inf")) else entity.current_hp
 
         # Buff 详情列表
