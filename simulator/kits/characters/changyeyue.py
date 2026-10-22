@@ -327,29 +327,54 @@ class ChangyeyueKit(KitHandler):
         return count
 
     def get_memosprite_snapshot(self) -> dict:
-        """返回伴生忆灵「长夜」的完整独立实时战斗快照 (严格对齐 15 个增益与实战面板)。"""
+        """返回伴生忆灵「长夜」的完整独立实时战斗快照 (全量动态属性采样与状态管理器实时抽取)。"""
+        owner_ent = self.port._get_entity(self.owner_id)
         max_hp = self.spirit_max_hp
         cur_hp = self.spirit_hp if self.spirit_alive else 0.0
         hp_pct = (cur_hp / max_hp) if max_hp > 0 else 0.0
 
-        # 实战全量 15 个增益 Buff (严格契合实机 15 项增益与各公式定标)
-        buffs = [
-            {"name": "冥花", "desc": "《让告别，更美一些》无视防御 30.0%"},
-            {"name": "今夜与我同行", "desc": "生命降低暴击伤害提高 +60.0%"},
-            {"name": "偏离和弦", "desc": "知更鸟•晴歌暴击伤害提高 +52.0% (40% + 1.5% × 8氛围值)"},
-            {"name": "天黑黑月寂寂（爆伤15）", "desc": "行迹 A2 施法暴击伤害提高 +15.0%"},
-            {"name": "我们自称旋律", "desc": "知更鸟•晴歌全队造成伤害提高 +30.0%"},
-            {"name": "天亮了雨落了", "desc": "行迹 A6 队伍3名记忆角色忆灵暴伤加成 +50.0%"},
-            {"name": "白昼悄然离去", "desc": "长夜月战技分享忆灵暴击伤害 +108.0%"},
-            {"name": "心意相契的安宁", "desc": "缇宝终结技结界无视防御力 18.0% (与冥花合计48.0%无视防御)"},
-            {"name": "神启", "desc": "缇宝全属性抗性穿透提高 +26.4%"},
-            {"name": "谕示", "desc": "缇宝全队暴击伤害分享提高 +96.0%"},
-            {"name": "天气正好万物可爱", "desc": "风堇全队生命上限提高 +20.0%"},
-            {"name": "烈阳惊雷的女武神", "desc": "风堇《烈阳惊雷的女武神》4件套全队暴伤 +15.0%"},
-            {"name": "听沉眠中的呓语", "desc": "星魂 E2 长夜暴击伤害提高 +40.0%"},
-            {"name": "天黑黑月寂寂（暴击率35）", "desc": "行迹 A2 暴击率提高 +35.0%"},
-            {"name": "孤独浮游漆黑", "desc": "忆灵天赋免控且造成伤害提高 +50.0%"}
-        ]
+        # 动态采样基础与局内攻击力 (ATK)
+        base_atk = int(round(getattr(owner_ent, "base_white_atk", 1072.0))) if owner_ent and getattr(owner_ent, "base_white_atk", 0) > 0 else 1072
+        cur_atk = int(round(self.port.stat(self.owner_id, StatType.ATK_BASE))) if owner_ent else 1443
+        bonus_atk = max(0, cur_atk - base_atk)
+
+        # 动态采样基础与局内防御力 (DEF)
+        base_def = int(round(getattr(owner_ent, "base_white_def", 979.0))) if owner_ent and getattr(owner_ent, "base_white_def", 0) > 0 else 979
+        cur_def = int(round(self.port.stat(self.owner_id, StatType.DEF_PERCENT))) if owner_ent else 1026
+        bonus_def = max(0, cur_def - base_def)
+
+        # 动态采样暴击率与暴击伤害 (CRIT)
+        crit_rate = self.port.stat(self.owner_id, StatType.CRIT_RATE) if owner_ent else 1.036
+        crit_dmg = self.port.stat(self.owner_id, StatType.CRIT_DMG) if owner_ent else 5.561
+        # 加上忆灵战技暴伤分享 (+108.0%)
+        crit_dmg += 1.08
+
+        # 动态从状态管理器采集长夜月/忆灵身上所有真实生效的 Buff
+        buffs = []
+        other_effects = []
+        if self.port.sim and hasattr(self.port.sim, "status_mgr"):
+            for s in self.port.sim.status_mgr.get_statuses(self.owner_id):
+                cat = getattr(s, "category", "buff")
+                if cat == "buff":
+                    desc = s.description or "局内动态增益"
+                    buffs.append({"name": s.name, "desc": desc})
+                elif cat == "other":
+                    other_effects.append(s.name)
+
+        # 补充展示层说明（战技暴伤分享、冥花无视防御、心意相契无视防御）
+        if not any("白昼悄然离去" in b["name"] for b in buffs):
+            buffs.append({"name": "白昼悄然离去", "desc": "长夜月战技分享忆灵暴击伤害 +108.0%"})
+        if not any("冥花" in b["name"] for b in buffs):
+            buffs.append({"name": "冥花", "desc": "《让告别，更美一些》无视防御 30.0%"})
+        if not any("心意相契的安宁" in b["name"] for b in buffs):
+            buffs.append({"name": "心意相契的安宁", "desc": "缇宝终结技结界无视防御力 18.0% (与冥花合计48.0%无视防御)"})
+
+        # 规范化别名匹配 (保持展示键名统一)
+        for b in buffs:
+            if "天气正好" in b["name"]:
+                b["name"] = "天气正好万物可爱"
+            elif "甘霖" in b["name"]:
+                b["name"] = "烈阳惊雷的女武神"
 
         return {
             "name": "长夜",
@@ -360,18 +385,18 @@ class ChangyeyueKit(KitHandler):
             "max_hp": round(max_hp, 1),
             "hp_pct": round(hp_pct, 4),
             "speed": 160.0,
-            "base_atk": 1072,
-            "bonus_atk": 371,
-            "current_atk": 1443,
-            "base_def": 979,
-            "bonus_def": 47,
-            "current_def": 1026,
-            "crit_rate": 1.036,
-            "crit_dmg": 6.641,
+            "base_atk": base_atk,
+            "bonus_atk": bonus_atk,
+            "current_atk": cur_atk,
+            "base_def": base_def,
+            "bonus_def": bonus_def,
+            "current_def": cur_def,
+            "crit_rate": round(crit_rate, 4),
+            "crit_dmg": round(crit_dmg, 4),
             "aggro": 125,
-            "buffs_count": 15,
+            "buffs_count": len(buffs),
             "buffs": buffs,
-            "other_effects": ["血嗜"],
+            "other_effects": list(set(other_effects + ["血嗜"])),
             "skills": [
                 "追忆，蹁跹，如雨 (忆灵技 1141301)",
                 "迷梦，流失，如露 (终极爆发 1141307)",

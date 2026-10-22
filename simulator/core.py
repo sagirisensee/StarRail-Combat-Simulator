@@ -61,8 +61,10 @@ class SimulatorCombatPort:
             base_val = ent.base_crit_rate
         elif stat == StatType.SPEED:
             base_val = ent.base_speed
-        elif stat == StatType.ATK_BASE:
+        elif stat in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
             base_val = ent.base_atk
+        elif stat in (StatType.DEF, StatType.DEF_PERCENT, StatType.DEF_BASE):
+            base_val = getattr(ent, "base_def", 0.0)
         return self.sim.status_mgr.calculate_stat(ent.name, base_val, stat)
 
     def has_status(self, target_id: str, key: str) -> bool:
