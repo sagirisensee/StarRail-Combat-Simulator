@@ -116,7 +116,7 @@ STAGE_CONFIG = {
                     "id": 4023020,
                     "hp": 550000.0,
                     "toughness": 160.0,
-                    "speed": 100.0,
+                    "speed": 132.0,
                     "weaknesses": ["Fire", "Quantum", "Imaginary"],
                     "damage_res": {"Fire": 0.0, "Quantum": 0.0, "Imaginary": 0.0, "Physical": 0.2, "Wind": 0.2, "Thunder": 0.2, "Ice": 0.2},
                     "infinite_hp": False
