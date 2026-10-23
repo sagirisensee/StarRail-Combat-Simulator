@@ -304,7 +304,6 @@ class TurnSimulator:
                     target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))
                     req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
                     self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
-                    self.port.gain_energy(target.name, 10.0)
 
         self.resolver.resolve_all()
 

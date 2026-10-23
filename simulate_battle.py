@@ -264,11 +264,11 @@ def render_hud(sim: TurnSimulator, enemies: List[Entity], team_members: List[str
         if not ent:
             continue
 
-        # 能量与就绪状态显示 (通过协议解耦)
+        # 能量与就绪状态显示 (遵循星铁实机向下截断规范)
         if getattr(ent, "kit", None) and hasattr(ent.kit, "get_energy_display"):
             energy_str = f"{ent.kit.get_energy_display(ent):>11}"
         else:
-            energy_str = f"能量: {ent.energy:3.0f}/{ent.max_energy:3.0f}"
+            energy_str = f"能量: {floor_int(ent.energy):3d}/{floor_int(ent.max_energy):3d}"
         ready = sim.can_cast_ultimate(ent.name)
 
         ready_tag = " 🔥[READY!]" if ready else "          "
@@ -640,7 +640,7 @@ def run_simulation(
                 m_ent = sim.get_entity(m_name)
                 if m_ent:
                     buff_cnt = len(sim.status_mgr.get_statuses(m_name))
-                    print(f"   [{idx+1}] 【{m_ent.name}】(E{m_ent.eidolon}) │ 速度: {m_ent.speed:.1f} │ 能量: {m_ent.energy:.0f}/{m_ent.max_energy:.0f} │ 距行动: {m_ent.remaining_av:.1f} AV │ Buff: {buff_cnt}个")
+                    print(f"   [{idx+1}] 【{m_ent.name}】(E{m_ent.eidolon}) │ 速度: {m_ent.speed:.1f} │ 能量: {floor_int(m_ent.energy)}/{floor_int(m_ent.max_energy)} │ 距行动: {m_ent.remaining_av:.1f} AV │ Buff: {buff_cnt}个")
 
             if ready_ults:
                 print("\n🔥【队伍就绪终结技 (可立即先手施放)】:")
@@ -648,7 +648,7 @@ def run_simulation(
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
                     t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {floor_int(u.energy)}/{floor_int(u.max_energy)}"
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
             print("\n【可选决策】:")
@@ -767,7 +767,7 @@ def run_simulation(
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
                     t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {floor_int(u.energy)}/{floor_int(u.max_energy)}"
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc})")
 
                 print("\n【可选决策】:")
@@ -845,7 +845,7 @@ def run_simulation(
                     u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
                     u_name = u_defn.name if u_defn else "终结技"
                     t_desc = TARGET_MODE_NAMES.get(getattr(u_defn, "target_mode", None), "敌方全体")
-                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {u.energy:.0f}/{u.max_energy:.0f}"
+                    e_desc = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"能量: {floor_int(u.energy)}/{floor_int(u.max_energy)}"
                     is_self_tag = " (当前行动者)" if u.name == actor.name else ""
                     print(f"  [U{i+1}] 【{u.name}】 · 《{u_name}》 ({e_desc} │ 目标: {t_desc}){is_self_tag}")
 

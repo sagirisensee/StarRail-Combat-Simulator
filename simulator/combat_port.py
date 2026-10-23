@@ -90,6 +90,7 @@ class CombatPort(Protocol):
     def change_sp(self, source_id: str, amount: int, reason: str) -> None: ...
     def set_sp_cap(self, new_cap: int) -> None: ...
     def gain_energy(self, entity_id: str, amount: float) -> None: ...
+    def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0) -> float: ...
     def heal(self, source_id: str, target_id: str, amount: float) -> None: ...
     def add_shield(self, source_id: str, target_id: str, amount: float, duration: int = 3) -> None: ...
     def attack(
@@ -382,6 +383,16 @@ class SimulatorCombatPort:
         ent = self._get_entity(entity_id)
         if ent:
             ent.energy = min(ent.max_energy, ent.energy + amount)
+
+    def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0) -> float:
+        """受击回能标准接口：严格按角色【能量恢复效率 (ERR)】进行放大。"""
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return 0.0
+        err = self.stat(entity_id, StatType.ERR) or getattr(ent, "base_err", 1.0) or 1.0
+        actual = base_amount * err
+        self.gain_energy(entity_id, actual)
+        return actual
 
     def heal(self, source_id: str, target_id: str, amount: float) -> None:
         tgt = self._get_entity(target_id)

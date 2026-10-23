@@ -98,7 +98,7 @@ class BattleInspector:
         for u in self.sim.get_ready_ultimates():
             u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
             u_name = u_defn.name if u_defn else "终结技"
-            e_raw = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"{u.energy:.0f}/{u.max_energy:.0f}"
+            e_raw = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"{math.floor(u.energy)}/{math.floor(u.max_energy)}"
             e_desc = e_raw.replace("能量:", "").replace("能量", "").strip()
             ready_ults.append({
                 "name": u.name,

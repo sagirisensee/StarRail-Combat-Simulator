@@ -279,7 +279,18 @@ class EffectResolver:
                 damage_tag=getattr(effect, "damage_tag", "direct")
             ))
 
-            # 4. 如果携带削韧属性，入队削韧请求
+            # 4. 敌方直接攻击命中我方角色时触发标准受击回能 (严格受目标 ERR 能量恢复效率放大)
+            if (
+                getattr(effect.request.attacker, "is_enemy", False)
+                and not getattr(target, "is_enemy", False)
+                and not getattr(target, "is_memosprite", False)
+                and getattr(effect, "damage_tag", "direct") == "direct"
+            ):
+                hit_base = getattr(effect.request, "hit_energy", 0.0) or 5.0
+                if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
+                    self.simulator.port.gain_hit_energy(target.name, hit_base)
+
+            # 5. 如果携带削韧属性，入队削韧请求
             if effect.toughness_reduction > 0:
                 self.enqueue(ReduceToughnessEffect(
                     attacker=effect.request.attacker,
