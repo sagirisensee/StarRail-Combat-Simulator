@@ -62,25 +62,41 @@ class FengjinKit(KitHandler):
         if getattr(entity, "base_outgoing_healing", 0.0) == 0.0:
             entity.base_outgoing_healing = 0.545
 
+    def _sync_storm_calm(self) -> None:
+        """行迹【暴风停歇】(官方 1409 point08, param_list: [200, 0.2, 1, 0.01, 200]):
+        风堇的速度大于 200 时，自身与小伊卡的生命上限提高 20%，
+        之后每超出 1 点速度，风堇与小伊卡提供的治疗量提高 1%，最多计入 200 点超出的速度。
+        """
+        if not self.port:
+            return
+        import math
+        spd = self.port.stat(self.owner_id, StatType.SPEED)
+        if spd > 200.0:
+            extra_spd = min(200, int(math.floor(spd - 200.0 + 1e-4)))
+            heal_bonus = extra_spd * 0.01
+            self.port.upsert_status(BuffSpec(
+                key="Fengjin_Trace_StormCalm",
+                name="暴风停歇",
+                source_id=self.owner_id,
+                target_id=self.owner_id,
+                modifiers=(
+                    Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),
+                    Modifier(StatType.OUTGOING_HEALING, ModifierOp.ADD, heal_bonus),
+                ),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END,
+                category="buff",
+                description=f"生命上限提高 +20.0%，治疗量提高 +{heal_bonus * 100:.1f}%"
+            ))
+            if hasattr(self.port, "tracer") and self.port.tracer:
+                self.port.tracer.record_plugin("行迹", "《暴风停歇》 (风堇)", f"速度 > 200 动态增益，提供 {heal_bonus * 100 + 54.5:.1f}% 综合治疗量加成")
+
     def on_battle_start(self) -> None:
         """进战初始化：
-        1. 行迹【暴风停歇】：速度 > 200 时触发自身与小伊卡生命上限提高 20%，治疗量提高 8%。
+        1. 行迹【暴风停歇】：速度 > 200 时触发自身与小伊卡生命上限提高 20%，每超出 1 点速度治疗量提高 1%。
         2. E6【天空…应我的祈愿】：小伊卡在场时我方全体全属性抗穿 20%。
         """
-        self.port.upsert_status(BuffSpec(
-            key="Fengjin_Trace_StormCalm",
-            name="暴风停歇",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(
-                Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),
-                Modifier(StatType.OUTGOING_HEALING, ModifierOp.ADD, 0.08),
-            ),
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff",
-            description="生命上限提高 +20.0%，治疗量提高 +8.0%"
-        ))
+        self._sync_storm_calm()
 
     def summon_yika(self) -> None:
         """召唤忆灵小伊卡。"""
@@ -118,20 +134,32 @@ class FengjinKit(KitHandler):
         ))
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
-        """星魂 2【请来我的庭院坐坐】：我方目标生命值降低时，速度提高 30%，持续 2 回合。"""
-        if self.eidolon >= 2 and entity_id in self.port.allies(self.owner_id):
-            self.port.upsert_status(BuffSpec(
-                key=f"Fengjin_E2_Speed_{entity_id}",
-                name="请来我的庭院坐坐",
-                source_id=self.owner_id,
-                target_id=entity_id,
-                modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.30),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
-                category="buff",
-                description="生命降低时速度提高 +30.0%"
-            ))
+        """我方目标生命值降低响应：
+        1. 忆灵天赋【牵起晴空的手】(1140903)：小伊卡在场时，除小伊卡外我方目标生命降低，为该目标回复生命值；
+        2. 星魂 2【请来我的庭院坐坐】：我方目标生命值降低时，速度提高 30%，持续 2 回合。
+        """
+        if entity_id in self.port.allies(self.owner_id):
+            if self.yika_alive and cause != "yika_talent_consume_hp":
+                heal_amt = self.port.max_hp(self.owner_id) * 0.028 + 28.0
+                for a in self.port.allies(self.owner_id):
+                    self.port.heal(self.owner_id, a, heal_amt)
+                self.on_healing_provided()
+                if hasattr(self.port, "tracer") and self.port.tracer:
+                    self.port.tracer.record_plugin("忆灵", "《牵起晴空的手》 (小伊卡 1140903)", "队友生命降低时，消耗小伊卡生命为我方全队回复生命值")
+
+            if self.eidolon >= 2:
+                self.port.upsert_status(BuffSpec(
+                    key=f"Fengjin_E2_Speed_{entity_id}",
+                    name="请来我的庭院坐坐",
+                    source_id=self.owner_id,
+                    target_id=entity_id,
+                    modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, 0.30),),
+                    duration=2,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True,
+                    category="buff",
+                    description="生命降低时速度提高 +30.0%"
+                ))
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -250,6 +278,7 @@ class FengjinKit(KitHandler):
         self.port.gain_energy(self.owner_id, 5.0)
 
     def on_event(self, event: Any) -> None:
+        self._sync_storm_calm()
         """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
         if self.eidolon >= 1 and self.sun_after_rain:
             event_name = type(event).__name__

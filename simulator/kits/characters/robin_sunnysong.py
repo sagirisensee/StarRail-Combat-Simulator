@@ -304,15 +304,50 @@ class RobinSunnySongKit(KitHandler):
         - 若已处于【Fever】状态，实时同步结界无视防御、增伤与 E4 乐手速度；
         - 检测并推进伴生忆灵「晴空乐手」登台阶梯 (贝茜在场时，6 点啾米，12 点派丁)。
         """
+        old_val = self.vibes
         self.vibes = min(self.max_vibes, self.vibes + amount)
+
+        if hasattr(self.port, "tracer") and self.port.tracer:
+            hp_cause = getattr(self.port.tracer, "current_hp_cause", "")
+            if getattr(self, "_healed_this_turn", False):
+                if hp_cause == "stage_mechanic_bleed_turn_begin":
+                    cause_str = "长夜月回合内受到关卡《血噬》扣血引发小伊卡回复全队 ➔ 首次受治疗获得气氛值 +1 点"
+                else:
+                    cause_str = f"队友回合内首次提供治疗效果 (来源: {trigger_ally_id or '队友'}) ➔ +{amount} 点"
+            else:
+                cause_str = f"施放技能/攻击获得气氛值 ➔ +{amount} 点"
+
+            note = "🌟 阈值激活: 气氛达 12 点! 第三位乐手「派丁」登台 ➔ 全员登台开启 Fever，全队造成的伤害无视 21% 防御!" if (self.vibes >= 12 and old_val < 12) else ""
+            self.port.tracer.record_var_change(
+                entity=self.owner_id,
+                var_name="气氛值",
+                old_val=old_val,
+                new_val=self.vibes,
+                source_plugin="知更鸟天赋《偏离和弦》",
+                cause_desc=cause_str,
+                extra_note=note
+            )
+            if self.in_fever:
+                self.port.tracer.record_plugin("天赋", "《偏离和弦 / 全员登台》 (知更鸟•晴歌)", "回合首治获气氛、12 气氛召唤派丁进入 Fever、全队 21% 无视防御")
 
         # 行迹【即兴蓝调】回能与律动消耗 (仅在实战回合或动作内有效，排除战前秘技)
         if self.port.is_in_turn() and not getattr(self, "_rhythm_consumed_in_current_turn", False):
             if self.rhythm_stacks > 0:
+                old_r = self.rhythm_stacks
                 self._rhythm_consumed_in_current_turn = True
                 self.rhythm_stacks -= 1
                 self.port.gain_energy(self.owner_id, 3.0)
                 self._sync_rhythm_status()
+                if hasattr(self.port, "tracer") and self.port.tracer:
+                    self.port.tracer.record_var_change(
+                        entity=self.owner_id,
+                        var_name="律动层数",
+                        old_val=old_r,
+                        new_val=self.rhythm_stacks,
+                        source_plugin="知更鸟行迹《即兴蓝调》",
+                        cause_desc="回合内首次获得气氛值且持有律动，消耗 1 层律动并恢复 3 点能量 ➔ -1 层"
+                    )
+                    self.port.tracer.record_plugin("行迹", "《即兴蓝调》 (知更鸟•晴歌)", "获气氛消耗 1 层律动回能 3 点")
 
         # 行迹【偏离和弦】
         if trigger_ally_id:
@@ -615,22 +650,35 @@ class RobinSunnySongKit(KitHandler):
             self._e2_vibe_bonus_in_turn = False
 
         elif isinstance(event, (HealAppliedEvent, ShieldAppliedEvent)):
-            # 行迹【即兴蓝调】：知更鸟•晴歌或「晴空乐手」受到队友提供的治疗或护盾时，获得 12 层【律动】
             is_target_robin = (event.target_name == self.owner_id) or (
                 self.port.is_own_memosprite(self.owner_id, event.target_name)
             )
             is_teammate_source = self.port.is_ally(event.source_name) and event.source_name != self.owner_id
+            
+            # 行迹【即兴蓝调】：知更鸟•晴歌或「晴空乐手」受到队友提供的治疗或护盾时，获得 12 层【律动】
             if is_target_robin and is_teammate_source:
+                old_r = self.rhythm_stacks
                 self.rhythm_stacks = 12
                 self._sync_rhythm_status()
-                # 天赋：在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值 (排除战前非回合治疗)
-                if not getattr(self, "_healed_this_turn", False):
-                    self._healed_this_turn = True
-                    extra = 0
-                    if self.eidolon >= 2 and not self._e2_vibe_bonus_in_turn:
-                        self._e2_vibe_bonus_in_turn = True
-                        extra += int(self.eidolon_param(2, 1, default=2.0))
-                    self.gain_vibes(1 + extra, trigger_ally_id=event.source_name)
+                if hasattr(self.port, "tracer") and self.port.tracer and old_r != 12:
+                    self.port.tracer.record_var_change(
+                        entity=self.owner_id,
+                        var_name="律动层数",
+                        old_val=old_r,
+                        new_val=12,
+                        source_plugin="知更鸟行迹《即兴蓝调》",
+                        cause_desc="受到队友提供的治疗，【律动】层数瞬间回满至上限 ➔ 重置为 12 层"
+                    )
+                    self.port.tracer.record_plugin("行迹", "《即兴蓝调》 (知更鸟•晴歌)", "受治疗重置 12 层律动")
+
+            # 天赋：在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值 (排除战前非回合治疗)
+            if is_teammate_source and not getattr(self, "_healed_this_turn", False):
+                self._healed_this_turn = True
+                extra = 0
+                if self.eidolon >= 2 and not self._e2_vibe_bonus_in_turn:
+                    self._e2_vibe_bonus_in_turn = True
+                    extra += int(self.eidolon_param(2, 1, default=2.0))
+                self.gain_vibes(1 + extra, trigger_ally_id=event.source_name)
 
         elif isinstance(event, ActionExecuteEvent):
             # 若为新行动者的普攻或战技，保证重置回合门禁

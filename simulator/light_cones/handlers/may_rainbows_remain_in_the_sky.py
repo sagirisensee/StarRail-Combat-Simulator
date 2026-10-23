@@ -19,10 +19,17 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
     VULNERABILITY_VALUES = (0.18, 0.225, 0.27, 0.315, 0.36)
 
     def on_action_after(self, ctx: ActionContext) -> None:
-        """施放普攻/战技/终结技时，消耗生命并使敌方全体受到伤害提高 (群体易伤)。"""
+        """施放普攻/战技/终结技时，消耗全队当前生命值 1.0%，并使敌方全体受到伤害提高 (群体易伤)。"""
         if not self.port or ctx.actor_id != self.owner_id:
             return
         if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.BASIC):
+            # 1. 消耗全队当前生命值 1.0% (经由 lose_hp 派发 HPLostEvent 驱动全队生命降低被动)
+            for ally in self.port.allies(self.owner_id):
+                cur_hp = self.port.current_hp(ally)
+                drain_amt = max(1.0, cur_hp * 0.01)
+                self.port.lose_hp(ally, drain_amt, cause="LC_MayRainbows_HP_Drain")
+
+            # 2. 敌方全体陷入虹光易伤
             vuln_val = self.scale(self.VULNERABILITY_VALUES)
             for enemy in self.port.enemies(self.owner_id):
                 self.port.upsert_status(BuffSpec(

@@ -111,6 +111,8 @@ class CombatPort(Protocol):
         fixed_crit_dmg: Optional[float] = None
     ) -> None: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None: ...
+    @property
+    def tracer(self) -> Any: ...
     def is_countdown(self, entity_id: str) -> bool: ...
     def summon_spirit(
         self,
@@ -133,6 +135,10 @@ class SimulatorCombatPort:
         self.sim = simulator
         self._last_followup_frame = None
         self._last_followup_actor = None
+
+    @property
+    def tracer(self):
+        return getattr(self.sim, 'tracer', None)
 
     def is_in_turn(self) -> bool:
         """判定当前是否处于正规战斗回合或动作执行期（排除战前秘技阶段）。"""
@@ -580,6 +586,8 @@ class SimulatorCombatPort:
                     hp_left=ent.current_hp,
                     cause=cause
                 ))
+                if hasattr(self.sim, "tracer") and self.sim.tracer:
+                    self.sim.tracer.record_hp_lost(ent.name, actual, cause)
             for e in list(self.sim.entities):
                 if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
                     e.kit.on_hp_lost(entity_id, actual, cause)

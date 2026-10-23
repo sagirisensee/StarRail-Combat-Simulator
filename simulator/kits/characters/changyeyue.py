@@ -258,11 +258,35 @@ class ChangyeyueKit(KitHandler):
         self._execute_memosprite_skill()
 
     def gain_yizhi(self, amount: int) -> None:
-        """获取【忆质】，E2 额外提高 2 点。若达到 16 点且长夜在场，触发天赋【立即行动】。"""
+        """获取忆质。E2 额外 +2 点。达到 16 点且长夜在场触发立即行动。"""
         if amount <= 0:
             return
+        old_val = self.yizhi
         bonus = 2 if self.eidolon >= 2 else 0
-        self.yizhi += amount + bonus
+        total_gain = amount + bonus
+        self.yizhi += total_gain
+
+        if hasattr(self.port, "tracer") and self.port.tracer:
+            hp_cause = getattr(self.port.tracer, "current_hp_cause", "")
+            from ...tracer import CAUSE_PLUGIN_MAP
+            if hp_cause in CAUSE_PLUGIN_MAP:
+                _, p_name, p_desc = CAUSE_PLUGIN_MAP[hp_cause]
+                cause_str = f"响应 [{p_name}]: {p_desc} (生命降低)"
+            else:
+                cause_str = "生命降低或技能联动获得"
+
+            note = "🌟 已达成 16 质阈值! 解除并免疫控制 / 忆灵「长夜」行动提前 100%" if (self.yizhi >= 16 and old_val < 16) else ""
+            self.port.tracer.record_var_change(
+                entity=self.owner_id,
+                var_name="忆质",
+                old_val=old_val,
+                new_val=self.yizhi,
+                source_plugin="长夜月天赋《今夜与我同行》",
+                cause_desc=f"{cause_str} ➔ 获得 {amount} 点忆质{' (星魂2额外+2)' if self.eidolon >= 2 else ''}",
+                extra_note=note
+            )
+            self.port.tracer.record_plugin("天赋", "《今夜与我同行》 (长夜月 E2)", f"自身生命降低获得 2 点忆质 (星魂 2 额外 +2，实际 +{total_gain} 质)")
+
         self._check_threshold()
 
     def _check_threshold(self) -> None:

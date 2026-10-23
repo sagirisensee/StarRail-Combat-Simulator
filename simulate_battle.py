@@ -333,7 +333,8 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
             print("━" * 78)
             print("📊 忆灵动态面板 (遵循星铁实机面板规范):")
             print(f"   • 在场状态          : {'🟢 在场战斗中' if msnap['is_alive'] else '🔴 已离场'}")
-            print(f"   • 生命值 (HP)       : {floor_int(msnap['current_hp']):,d} / {floor_int(msnap['max_hp']):,d} ({msnap['hp_pct']*100:.1f}%)")
+            hp_pct = msnap.get('hp_pct', (msnap['current_hp'] / max(1.0, msnap['max_hp'])))
+            print(f"   • 生命值 (HP)       : {floor_int(msnap['current_hp']):,d} / {floor_int(msnap['max_hp']):,d} ({hp_pct*100:.1f}%)")
             print(f"   • 行动速度 (SPD)    : {round_int(msnap['speed']):d} (精算: {msnap['speed']:.2f})")
             print(f"   • 实时攻击 (ATK)    : {msnap.get('base_atk', 1072)} + {msnap.get('bonus_atk', 371)} ({msnap.get('current_atk', 1443)})")
             print(f"   • 实时防御 (DEF)    : {msnap.get('base_def', 979)} + {msnap.get('bonus_def', 47)} ({msnap.get('current_def', 1026)})")
@@ -472,6 +473,14 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
             print(f"       • 来源: {b['source']} │ 剩余: {dur_str} │ 结算时序: {b['timing']}")
             print(f"       • 效果: {b['modifiers_desc']}")
     print("━" * 78)
+
+
+def render_variable_audit_panel(sim: TurnSimulator, action_name: Optional[str] = None):
+    """通过底层 ActionCausalTracer 真实运行时数据动态渲染因果拓扑面板 (100% 运行时真实追踪)。"""
+    if hasattr(sim, "tracer") and sim.tracer:
+        sim.tracer.render_audit_panel()
+    else:
+        print("⚠️ 当前模拟器未启用 ActionCausalTracer 追踪器。")
 
 
 def prompt_enemy_target(sim: TurnSimulator, actor: Entity, action_name: str = "攻击") -> Tuple[str, ...]:
@@ -707,6 +716,9 @@ def run_simulation(
 
             if not cmd:
                 break
+            elif cmd in ("V", "AUDIT", "AUD"):
+                render_variable_audit_panel(sim)
+                continue
             elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
                 target_key = raw_cmd[1:].strip()
                 render_inspect_panel(sim, target_key, team_members)
@@ -826,6 +838,9 @@ def run_simulation(
                     sim.execute_current_turn()
                     turn_count += 1
                     break
+                elif cmd in ("V", "AUDIT", "AUD"):
+                    render_variable_audit_panel(sim)
+                    continue
                 elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
                     target_key = raw_cmd[1:].strip()
                     render_inspect_panel(sim, target_key, team_members, current_actor=actor)
@@ -887,6 +902,7 @@ def run_simulation(
 
             print("\n【透析与控制】:")
             print("  [I <目标>] 透析属性与Buff (直接按 I 查当前角色，或 I 1 / I 2 / I boss)")
+            print("  [V]        查看【核心机制变量与插件审计面板】 (忆质/气氛/律动/和弦)")
             if current_wave_idx + 1 < len(STAGE_CONFIG["waves"]):
                 print("  [NW]       跳过当前波次直接进入下一波 (Next Wave)")
             print("  [A]        本回合托管自动 (Auto)")
@@ -927,6 +943,9 @@ def run_simulation(
             elif cmd == "NW":
                 skip_wave = True
                 break
+            elif cmd in ("V", "AUDIT", "AUD"):
+                render_variable_audit_panel(sim)
+                continue
             elif cmd == "I" or cmd.startswith("I ") or (len(cmd) > 1 and cmd[0] == "I" and cmd[1:].strip()):
                 target_key = raw_cmd[1:].strip()
                 render_inspect_panel(sim, target_key, team_members, current_actor=actor)

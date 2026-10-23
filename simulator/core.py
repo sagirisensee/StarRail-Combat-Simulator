@@ -45,6 +45,8 @@ class TurnSimulator:
         self.resolver: EffectResolver = EffectResolver(self)
         self.port: SimulatorCombatPort = SimulatorCombatPort(self)
         self.inspector: BattleInspector = BattleInspector(self)
+        from .tracer import ActionCausalTracer
+        self.tracer: ActionCausalTracer = ActionCausalTracer(self)
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
         self.stage_mechanics: List[str] = list(stage_mechanics or [])
@@ -222,9 +224,6 @@ class TurnSimulator:
 
         self.status_mgr.tick_on_turn_begin(active_entity)
 
-        for plugin in getattr(self, "stage_plugins", []):
-            plugin.on_turn_begin(active_entity, self)
-
         self.event_bus.publish(TurnBeginEvent(
             av=round(self.current_av, 2),
             cycle=self.current_cycle,
@@ -232,6 +231,9 @@ class TurnSimulator:
             actor_name=active_entity.name,
             speed=round(active_entity.speed, 1)
         ))
+
+        for plugin in getattr(self, "stage_plugins", []):
+            plugin.on_turn_begin(active_entity, self)
 
         self._current_turn_entity = active_entity
         return active_entity
