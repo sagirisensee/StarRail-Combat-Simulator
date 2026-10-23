@@ -603,7 +603,7 @@ class ChangyeMemospriteKit(KitHandler):
     def definition(self, kind: ActionKind):
         if self.master_kit and self.master_kit.yizhi >= 16:
             return AbilityDefinition(
-                kind=ActionKind.SKILL,
+                kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(sp=0),
                 name="迷梦，流失，如露",
@@ -612,7 +612,7 @@ class ChangyeMemospriteKit(KitHandler):
             )
         else:
             return AbilityDefinition(
-                kind=ActionKind.SKILL,
+                kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=0),
                 name="追忆，蹁跹，如雨",
