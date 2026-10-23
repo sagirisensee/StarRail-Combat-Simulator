@@ -396,7 +396,14 @@ class ChangyeyueKit(KitHandler):
                 if m.stat == StatType.CRIT_DMG:
                     crit_dmg += m.value
 
-        # 4. 纯动态从 CombatPort 采集长夜月/忆灵身上所有真实生效的 Buff 与环境状态 (基于 StatusTag 语义过滤)
+        # 4. 动态采样增伤、抗性穿透与防御削减 (DMG, RES PEN, DEF SHRED)
+        total_dmg = self.port.stat(self.owner_id, StatType.DMG_BOOST)
+        elem_dmg = self.port.white_stat(self.owner_id, StatType.DMG_BOOST)
+        all_dmg = max(0.0, total_dmg - elem_dmg)
+        res_pen = self.port.stat(self.owner_id, StatType.RES_PEN)
+        def_shred = self.port.stat(self.owner_id, StatType.DEF_SHRED)
+
+        # 5. 纯动态从 CombatPort 采集长夜月/忆灵身上所有真实生效的 Buff 与环境状态 (基于 StatusTag 语义过滤)
         buffs = []
         other_effects = []
         all_statuses = list(self.port.statuses(self.owner_id)) + list(self.port.statuses(self.spirit_name))
@@ -436,6 +443,11 @@ class ChangyeyueKit(KitHandler):
             "current_def": cur_def,
             "crit_rate": round(crit_rate, 4),
             "crit_dmg": round(crit_dmg, 4),
+            "elem_dmg_boost": round(elem_dmg, 4),
+            "all_dmg_boost": round(all_dmg, 4),
+            "dmg_boost": round(total_dmg, 4),
+            "res_pen": round(res_pen, 4),
+            "def_shred": round(def_shred, 4),
             "aggro": 125,
             "buffs_count": len(buffs),
             "buffs": buffs,

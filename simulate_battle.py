@@ -303,6 +303,18 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
             print(f"   • 实时防御 (DEF)    : {msnap.get('base_def', 979)} + {msnap.get('bonus_def', 47)} ({msnap.get('current_def', 1026)})")
             print(f"   • 暴击率 (CRIT)     : {msnap.get('crit_rate', 1.036)*100:.1f}%")
             print(f"   • 暴击伤害 (CDMG)   : {msnap.get('crit_dmg', 6.641)*100:.1f}%")
+            elem_dmg = msnap.get("elem_dmg_boost", 0.388)
+            all_dmg = msnap.get("all_dmg_boost", 0.80)
+            total_dmg = msnap.get("dmg_boost", elem_dmg + all_dmg)
+            if elem_dmg > 0:
+                print(f"   • 实时增伤 (DMG)     : {floor_str(elem_dmg*100, 1)}% 冰伤 + {floor_str(all_dmg*100, 1)}% 全属性 (总计 +{floor_str(total_dmg*100, 1)}%)")
+            else:
+                print(f"   • 全属性增伤 (DMG)  : +{floor_str(all_dmg*100, 1)}%")
+            res_pen = msnap.get("res_pen", 0.264)
+            print(f"   • 属性抗性穿透(PEN) : +{floor_str(res_pen*100, 1)}%")
+            def_shred = msnap.get("def_shred", 0.48)
+            if def_shred > 0:
+                print(f"   • 防御削减 (DEF SHRED): +{floor_str(def_shred*100, 1)}% (无视防御)")
             print(f"   • 基础嘲讽值        : {msnap.get('aggro', 125)}")
             buff_list = msnap.get("buffs", [])
             print(f"\n🛡️ 忆灵生效增益列表 ({len(buff_list)}项):")
@@ -367,7 +379,19 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     print(f"   • 暴击伤害 (CDMG)   : {floor_str(snap['current_crit_dmg']*100, 1)}% (基础 {floor_str(snap['base_crit_dmg']*100, 1)}%)")
     if snap.get('outgoing_healing', 0.0) > 0:
         print(f"   • 治疗量加成 (HEAL) : +{floor_str(snap['outgoing_healing']*100, 1)}% (基础 +{floor_str(snap.get('base_outgoing_healing', 0.0)*100, 1)}%)")
-    print(f"   • 全属性增伤 (DMG)  : +{floor_str(snap['dmg_boost']*100, 1)}%")
+    base_dmg = getattr(ent, "base_dmg_boost", 0.0)
+    total_dmg = snap.get("dmg_boost", 0.0)
+    all_dmg = max(0.0, total_dmg - base_dmg)
+    elem = snap.get("element", "")
+    elem_cn_map = {
+        "ICE": "冰伤", "QUANTUM": "量子", "WIND": "风伤",
+        "PHYSICAL": "物伤", "FIRE": "火伤", "LIGHTNING": "雷伤", "THUNDER": "雷伤", "IMAGINARY": "虚数"
+    }
+    elem_cn = elem_cn_map.get(str(elem).upper(), elem)
+    if base_dmg > 0:
+        print(f"   • 实时增伤 (DMG)     : {floor_str(base_dmg*100, 1)}% {elem_cn} + {floor_str(all_dmg*100, 1)}% 全属性 (总计 +{floor_str(total_dmg*100, 1)}%)")
+    else:
+        print(f"   • 全属性增伤 (DMG)  : +{floor_str(all_dmg*100, 1)}%")
     print(f"   • 属性抗性穿透(PEN) : +{floor_str(snap['res_pen']*100, 1)}%")
     print(f"   • 受到易伤加深(VULN): +{floor_str(snap['vulnerability']*100, 1)}%")
     if snap.get('def_shred', 0.0) > 0:

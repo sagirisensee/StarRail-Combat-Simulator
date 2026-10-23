@@ -240,6 +240,8 @@ class SimulatorCombatPort:
             return getattr(ent, "base_white_hp", 0.0) or getattr(ent, "max_hp", 0.0)
         elif stat == StatType.SPEED:
             return getattr(ent, "base_white_speed", 0.0) or getattr(ent, "base_speed", 0.0)
+        elif stat == StatType.DMG_BOOST:
+            return getattr(ent, "base_dmg_boost", 0.0)
         return 0.0
 
     def stat(
