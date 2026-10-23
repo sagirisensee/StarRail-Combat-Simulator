@@ -617,7 +617,12 @@ class ChangyeyueKit(KitHandler):
                 description="全属性伤害提高 +60.0%"
             ))
 
+            # 终结技基础回能 5 点 (官方数据源 141303 sp_base: 5)
             self.port.gain_energy(self.owner_id, 5.0)
+
+            # 行迹【烛火起，烛火熄】：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
+            self.port.gain_energy(self.owner_id, 5.0)
+            self.gain_yizhi(1)
             self._check_threshold()
 
         elif ctx.kind == ActionKind.TECHNIQUE:

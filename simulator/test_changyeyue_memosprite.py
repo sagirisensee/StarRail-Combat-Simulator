@@ -168,6 +168,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         buff_names = [b["name"] for b in cyy_snap["buffs"]]
         self.assertTrue(any("至暗之谜" in b for b in buff_names), "长夜月应挂载至暗之谜Buff")
 
+        # 验证大招结算后能量：基础回能 5 点 + 行迹【烛火起，烛火熄】施放技能回能 5 点 = 10 点能量
+        self.assertEqual(self.changyeyue.energy, 10.0, "长夜月施放大招后能量应精准为 10 点 (5基础 + 5行迹)")
+
 
     def test_06_memosprite_full_team_panel_verification(self):
         """验证在实战队伍【长夜月, 缇宝, 知更鸟•晴歌, 风堇】与血噬关卡下，长夜的15项增益、血量与面板全量对账。"""
