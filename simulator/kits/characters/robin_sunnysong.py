@@ -681,13 +681,12 @@ class RobinSunnySongKit(KitHandler):
                 self.gain_vibes(1 + extra, trigger_ally_id=event.source_name)
 
         elif isinstance(event, ActionExecuteEvent):
-            # 若为新行动者的普攻或战技，保证重置回合门禁
-            if getattr(event, "action_kind", None) in (ActionKind.BASIC, ActionKind.SKILL):
-                if getattr(self, "_last_turn_actor", None) != event.actor_name:
-                    self._last_turn_actor = event.actor_name
-                    self._rhythm_consumed_in_current_turn = False
-                    self._healed_this_turn = False
-                    self._e2_vibe_bonus_in_turn = False
+            # 若行动者发生切换 (无论是常规回合还是终结技插队)，保证重置动作与律动门禁
+            if getattr(self, "_last_turn_actor", None) != event.actor_name:
+                self._last_turn_actor = event.actor_name
+                self._rhythm_consumed_in_current_turn = False
+                self._healed_this_turn = False
+                self._e2_vibe_bonus_in_turn = False
             # 天赋：我方目标施放攻击时获得 1 点气氛值 (排除纯辅助技能与 Fever 倒计时实体)
             if (
                 self.port.is_ally(event.actor_name)
