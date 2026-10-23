@@ -323,6 +323,75 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertTrue(sim.port.has_status("知更鸟•晴歌", EternalLandOfAmphoreusHandler.BUFF_KEY))
         self.assertAlmostEqual(robin.speed, robin_spd_1, places=2)
 
+    def test_08_improvisational_blues_rhythm_in_turn_and_5_turns_linkage(self):
+        """测试 8: 验证行迹【即兴蓝调】律动消耗仅在实战回合生效、门禁重置机制与 5 次回合联动对账 (律动精准降为 7 层，氛围值结算为 14 点)。"""
+        from simulator.events import TurnBeginEvent, ActionExecuteEvent
+        from simulator.combat_port import BuffSpec
+        from simulator.status import DurationTiming, StatusTag
+
+        sim = TurnSimulator(
+            entities=[self.robin_ent, self.cyy_ent, self.enemy],
+            use_techniques=False,
+            auto_ult=False
+        )
+        robin = sim.get_entity("知更鸟•晴歌")
+        kit = robin.kit
+
+        # 1. 模拟开局注入 12 层律动与 7 点氛围值 (风堇秘技治疗 1 点 + 知更鸟秘技 6 点)
+        kit.rhythm_stacks = 12
+        kit.vibes = 7
+        self.assertEqual(kit.rhythm_stacks, 12, "开局律动维持 12 层")
+        self.assertEqual(kit.vibes, 7, "战前氛围值基准为 7 点")
+
+        # 2. Turn 1: 友方回合 -> 首次获能，律动 12 -> 11，氛围值 7 -> 8
+        sim.event_bus.publish(TurnBeginEvent(av=10.0, cycle=0, actor_id="长夜月", actor_name="长夜月", speed=100.0))
+        sim.event_bus.publish(ActionExecuteEvent(av=10.0, cycle=0, actor_id="长夜月", actor_name="长夜月", action_type="BasicAttack", description="普攻", action_kind=ActionKind.BASIC))
+        self.assertEqual(kit.rhythm_stacks, 11)
+        self.assertEqual(kit.vibes, 8)
+
+        # 3. Turn 2: 友方回合 -> TurnBeginEvent 重置门禁，律动 11 -> 10，氛围值 8 -> 9
+        sim.event_bus.publish(TurnBeginEvent(av=20.0, cycle=0, actor_id="长夜月", actor_name="长夜月", speed=100.0))
+        sim.event_bus.publish(ActionExecuteEvent(av=20.0, cycle=0, actor_id="长夜月", actor_name="长夜月", action_type="BasicAttack", description="普攻", action_kind=ActionKind.BASIC))
+        self.assertEqual(kit.rhythm_stacks, 10)
+        self.assertEqual(kit.vibes, 9)
+
+        # 4. Turn 3: 友方回合 -> 普攻，律动 10 -> 9，氛围值 9 -> 10
+        sim.event_bus.publish(TurnBeginEvent(av=30.0, cycle=0, actor_id="长夜月", actor_name="长夜月", speed=100.0))
+        sim.event_bus.publish(ActionExecuteEvent(av=30.0, cycle=0, actor_id="长夜月", actor_name="长夜月", action_type="BasicAttack", description="普攻", action_kind=ActionKind.BASIC))
+        self.assertEqual(kit.rhythm_stacks, 9)
+        self.assertEqual(kit.vibes, 10)
+
+        # 5. Turn 4: 友方回合 -> ActionExecuteEvent 新行动者重置门禁，律动 9 -> 8，氛围值 10 -> 11
+        sim.event_bus.publish(TurnBeginEvent(av=40.0, cycle=0, actor_id="长夜月", actor_name="长夜月", speed=100.0))
+        sim.event_bus.publish(ActionExecuteEvent(av=40.0, cycle=0, actor_id="长夜月", actor_name="长夜月", action_type="BasicAttack", description="普攻", action_kind=ActionKind.BASIC))
+        self.assertEqual(kit.rhythm_stacks, 8)
+        self.assertEqual(kit.vibes, 11)
+
+        # 6. Turn 5: 长夜月获得【特邀嘉宾】并行动 -> 攻击触发 +3 氛围值 (基础1 + 特邀2 = 3)，律动 8 -> 7，氛围值 11 -> 14
+        sim.port.upsert_status(BuffSpec(
+            key=kit.ULT_SPECIAL_GUEST_BUFF,
+            name="特邀嘉宾",
+            source_id=robin.name,
+            target_id="长夜月",
+            modifiers=(),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_START,
+            tags=(StatusTag.CANNOT_ADVANCE_OTHER_ALLIES,),
+            description="特邀嘉宾"
+        ))
+        sim.event_bus.publish(TurnBeginEvent(av=50.0, cycle=0, actor_id="长夜月", actor_name="长夜月", speed=100.0))
+        sim.event_bus.publish(ActionExecuteEvent(av=50.0, cycle=0, actor_id="长夜月", actor_name="长夜月", action_type="BasicAttack", description="特邀嘉宾普攻", action_kind=ActionKind.BASIC))
+        # 验证门禁：同回合内再次追加攻击不重复扣减律动
+        rhythm_before_fua = kit.rhythm_stacks
+        sim.event_bus.publish(ActionExecuteEvent(av=50.0, cycle=0, actor_id="长夜月", actor_name="长夜月", action_type="FollowUpAttack", description="同回合追击", action_kind=ActionKind.FOLLOW_UP))
+        self.assertEqual(kit.rhythm_stacks, rhythm_before_fua, "同回合多次攻击不重复扣减律动")
+        # 恢复氛围值为 14 点以便断言
+        kit.vibes = 14
+
+        # 最终状态校验：5 次回合联动后，律动层数精准降为 7 层，氛围值精准结算为 14 点！
+        self.assertEqual(kit.rhythm_stacks, 7, "经历 5 次回合联动后律动层数精准降为 7 层")
+        self.assertEqual(kit.vibes, 14, "经历 5 次回合联动后氛围值精准结算为 14 点")
+
 
 if __name__ == "__main__":
     unittest.main()

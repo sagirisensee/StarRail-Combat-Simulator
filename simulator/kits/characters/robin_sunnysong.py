@@ -307,7 +307,7 @@ class RobinSunnySongKit(KitHandler):
         self.vibes = min(self.max_vibes, self.vibes + amount)
 
         # 行迹【即兴蓝调】回能与律动消耗 (仅在实战回合或动作内有效，排除战前秘技)
-        if not getattr(self, "_rhythm_consumed_in_current_turn", False):
+        if self.port.is_in_turn() and not getattr(self, "_rhythm_consumed_in_current_turn", False):
             if self.rhythm_stacks > 0:
                 self._rhythm_consumed_in_current_turn = True
                 self.rhythm_stacks -= 1
