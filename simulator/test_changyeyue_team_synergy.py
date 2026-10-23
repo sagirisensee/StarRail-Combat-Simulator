@@ -2,7 +2,7 @@
 
 验证点覆盖：
 1. 四人队伍初始化与开局秘技联动 (长夜召唤、风堇生命提升、知更鸟气氛值、缇宝充能就绪)
-2. 知更鸟•晴歌【协奏】全员 100% 立即行动拉条与全队攻击力增益
+2. 知更鸟•晴歌【跃入这片蔚蓝狂想】指定单体 100% 立即行动拉条、20% 回能与【特邀嘉宾】
 3. 长夜月与忆灵「长夜」的完整循环 (忆质累积满 16 层 -> 触发忆灵爆发 -> 自毁加速 -> 回复 SP)
 4. 风堇大招生命增益对长夜月 HP 上限与缩放基础区的动态放大
 5. 队伍在首领木桩下的 150 AV 连续跑条完整推演 (13 动全流程零死锁、零异常)
@@ -54,35 +54,41 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         # 4. 知更鸟秘技气氛值初始化
         self.assertGreaterEqual(robin.kit.vibes, 6, "知更鸟进战秘技应获得至少 6 点气氛值")
 
-    def test_02_robin_concerto_advance_allies(self):
-        """测试 2: 验证知更鸟施放终结技后，除自身外全队 100% 立即行动拉条并获得攻击力加成。"""
+    def test_02_robin_ultimate_single_ally_advance_and_special_guest(self):
+        """测试 2: 验证知更鸟施放终结技【跃入这片蔚蓝狂想】使指定单体我方行动提前 100%、回能 20% 并赋予【特邀嘉宾】。"""
         sim = TurnSimulator(
             entities=self.team_entities + self.enemies,
             use_techniques=True,
             auto_ult=False
         )
         robin = sim.get_entity("知更鸟•晴歌")
+        cyy = sim.get_entity("长夜月")
 
-        # 模拟给知更鸟充能并直接施放大招
+        # 记录长夜月施放大招前的能量
+        cyy_energy_before = cyy.energy
+        expected_energy_gain = cyy.max_energy * 0.20
+
+        # 模拟给知更鸟充能并指定长夜月施放大招
         robin.energy = robin.max_energy
-        ult_success = sim.cast_ultimate("知更鸟•晴歌")
+        ult_success = sim.cast_ultimate("知更鸟•晴歌", target_ids=("长夜月",))
         self.assertTrue(ult_success, "知更鸟终结技施放应成功")
-        self.assertTrue(robin.kit.in_concerto, "知更鸟应进入协奏状态")
 
-        # 验证队友拉条 (距离被推进 10000 距离，即 remaining_av 与 distance_remaining 归零)
-        for ally_name in ["长夜月", "缇宝", "风堇"]:
-            ally = sim.get_entity(ally_name)
-            self.assertEqual(ally.distance_remaining, 0.0, msg=f"{ally_name} distance_remaining 应为 0")
-            self.assertEqual(ally.remaining_av, 0.0, msg=f"{ally_name} remaining_av 应为 0")
+        # 1. 验证目标长夜月 100% 拉条 (distance_remaining 与 remaining_av 归零)
+        self.assertEqual(cyy.distance_remaining, 0.0, "长夜月 distance_remaining 应被推进至 0")
+        self.assertEqual(cyy.remaining_av, 0.0, "长夜月 remaining_av 应被推进至 0")
 
-        # 验证全队获得知更鸟攻击力增益
-        for ally_name in ["长夜月", "缇宝", "风堇"]:
-            snap = sim.query_status(ally_name)
-            buff_names = [b["name"] for b in snap["buffs"]]
-            self.assertTrue(
-                any("知更鸟大招攻击" in b or "协奏" in b for b in buff_names),
-                f"{ally_name} 应获得协奏攻击力加成"
-            )
+        # 2. 验证目标长夜月固定恢复 20% 能量上限的能量
+        self.assertAlmostEqual(cyy.energy, cyy_energy_before + expected_energy_gain, places=2)
+
+        # 3. 验证目标长夜月获得【特邀嘉宾】增益，持续 2 回合
+        snap_cyy = sim.query_status("长夜月")
+        buff_names = [b["name"] for b in snap_cyy["buffs"]]
+        self.assertIn("特邀嘉宾", buff_names, "长夜月应获得【特邀嘉宾】增益")
+
+        # 4. 验证特邀嘉宾攻击时，额外使知更鸟获得 2 点气氛值 (基础 1 点 + 额外 2 点 = 3 点)
+        vibes_before = robin.kit.vibes
+        sim.step()
+        self.assertEqual(robin.kit.vibes, vibes_before + 3, "特邀嘉宾攻击应额外提供 2 点气氛值 (共 +3 点)")
 
     def test_03_changyeyue_yizhi_burst_and_self_destruction(self):
         """测试 3: 验证长夜月忆质累积满 16 层触发忆灵立即爆发并自毁加速。"""
