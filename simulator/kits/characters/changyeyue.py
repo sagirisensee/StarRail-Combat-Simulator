@@ -28,6 +28,7 @@ from typing import Optional, Any
 from ..base import KitHandler
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 from ...combat_port import BuffSpec, CombatPort
+from ...events import ActionExecuteEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
 
@@ -45,6 +46,7 @@ class ChangyeyueKit(KitHandler):
         self.threshold_issued: bool = False
         self.bursting: bool = False
         self.technique_active: bool = False
+        self._spirit_candle_triggered_by_event: bool = False
 
     def apply_trace_passives(self, entity: Any) -> None:
         """战前静态基线校准：注入长夜月角色白字与面板基线，消除数据库模块中的角色 ID 硬编码。"""
@@ -58,6 +60,64 @@ class ChangyeyueKit(KitHandler):
     def spirit_max_hp(self) -> float:
         """忆灵「长夜」生命上限为长夜月实时生命上限的 50% (满血 4313 点)。"""
         return float(round(0.50 * self.port.max_hp(self.owner_id)))
+
+    def _trigger_trace_candle_on_skill(self) -> None:
+        """行迹【烛火起，烛火熄】(point07)：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】。"""
+        self.port.gain_energy(self.owner_id, 5.0)
+        self.gain_yizhi(1)
+
+    def _trigger_trace_a2_on_skill(self, caster_id: str) -> None:
+        """行迹【天黑黑，月寂寂】(point06)：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15% (持续 2 回合)。"""
+        if caster_id == self.spirit_name:
+            if self.spirit_hp <= 0:
+                self.spirit_hp = self.spirit_max_hp
+            hp_loss = round(self.spirit_hp * 0.05, 2)
+            cause = "memosprite_skill_cost"
+        else:
+            hp_loss = 0.05 * self.port.max_hp(self.owner_id)
+            cause = "evernight_a2_cost"
+
+        self.port.lose_hp(caster_id, hp_loss, cause=cause)
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_A2_Skill_CritDmg",
+            name="天黑黑，月寂寂 (施法暴伤+15%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="暴击伤害提高 +15.0%"
+        ))
+
+    def on_event(self, event: Any) -> None:
+        """监听全局动作执行事件，统一驱动行迹【烛火起，烛火熄】(长夜月或我方忆灵施放技能时回能 5 点并获得 1 点忆质)。"""
+        if not self.port:
+            return
+        if isinstance(event, ActionExecuteEvent):
+            actor_name = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
+            action_kind = getattr(event, "action_kind", None)
+            action_type = str(getattr(event, "action_type", ""))
+
+            # 1. 长夜月自身施放技能 (战技 / 终结技)
+            is_owner_skill = (
+                actor_name == self.owner_id
+                and action_kind in (ActionKind.SKILL, ActionKind.ULTIMATE)
+            )
+            # 2. 我方任意忆灵施放技能 (含伴生忆灵「长夜」及队友忆灵，排除倒计时等机制实体)
+            is_ally_memosprite_skill = (
+                self.port.is_ally(actor_name)
+                and self.port.is_memosprite(actor_name)
+                and "倒计时" not in actor_name
+                and "Countdown" not in action_type
+            )
+
+            if is_owner_skill or is_ally_memosprite_skill:
+                if actor_name == self.spirit_name:
+                    self._spirit_candle_triggered_by_event = True
+                    if "追忆" in action_type:
+                        self.in_initial_action = True
+                self._trigger_trace_candle_on_skill()
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
@@ -163,29 +223,16 @@ class ChangyeyueKit(KitHandler):
         target = ctx.target_ids[0] if (ctx and ctx.target_ids) else enemies[0]
         self.in_initial_action = True
 
-        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值
-        if self.spirit_hp <= 0:
-            self.spirit_hp = self.spirit_max_hp
-        hp_loss = round(self.spirit_hp * 0.05, 2)
-        self.port.lose_hp(self.spirit_name, hp_loss, cause="memosprite_skill_cost")
-
-        self.port.upsert_status(BuffSpec(
-            key="Changyeyue_A2_Skill_CritDmg",
-            name="天黑黑，月寂寂 (施法暴伤+15%)",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
-            duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff",
-            description="暴击伤害提高 +15.0%"
-        ))
+        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15%
+        self._trigger_trace_a2_on_skill(self.spirit_name)
 
         # 忆灵技【追忆，蹁跹，如雨】(1141301) 施放回能 20 点 (官方数据源 sp_base: 20)
         self.port.gain_energy(self.owner_id, 20.0)
-        # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
-        self.port.gain_energy(self.owner_id, 5.0)
-        self.gain_yizhi(1)
+        # 若通过单元测试直接调用未经过 EventBus，兜底触发一次行迹【烛火起，烛火熄】
+        if self._spirit_candle_triggered_by_event:
+            self._spirit_candle_triggered_by_event = False
+        else:
+            self._trigger_trace_candle_on_skill()
 
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
         extra_ratio = (self.yizhi // 4) * 0.14
@@ -243,28 +290,15 @@ class ChangyeyueKit(KitHandler):
 
         # 1. 忆灵施放技能阶段触发：
         # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15%
-        if self.spirit_hp <= 0:
-            self.spirit_hp = self.spirit_max_hp
-        hp_loss = round(self.spirit_hp * 0.05, 2)
-        self.port.lose_hp(self.spirit_name, hp_loss, cause="memosprite_skill_cost")
-
-        self.port.upsert_status(BuffSpec(
-            key="Changyeyue_A2_Skill_CritDmg",
-            name="天黑黑，月寂寂 (施法暴伤+15%)",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
-            duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff",
-            description="暴击伤害提高 +15.0%"
-        ))
+        self._trigger_trace_a2_on_skill(self.spirit_name)
 
         # 忆灵终极爆发【迷梦，流失，如露】(1141307) 施放回能 10 点 (官方数据源 sp_base: 10)
         self.port.gain_energy(self.owner_id, 10.0)
-        # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】(E2为3点)
-        self.port.gain_energy(self.owner_id, 5.0)
-        self.gain_yizhi(1)
+        # 若通过单元测试直接调用未经过 EventBus，兜底触发一次行迹【烛火起，烛火熄】
+        if self._spirit_candle_triggered_by_event:
+            self._spirit_candle_triggered_by_event = False
+        else:
+            self._trigger_trace_candle_on_skill()
 
         # 2. 快照本次爆发消耗的忆质总量 (从 24 增长到 31)
         spent_memory = self.yizhi
@@ -546,18 +580,7 @@ class ChangyeyueKit(KitHandler):
             self.port.lose_hp(self.owner_id, 0.10 * cur_hp, cause="evernight_skill_cost")
 
             # 行迹【天黑黑，月寂寂】：施放技能时，消耗自身当前生命值的 5% 使双方的暴击伤害提高 15%，持续 2 回合
-            self.port.lose_hp(self.owner_id, 0.05 * cur_hp, cause="evernight_a2_cost")
-            self.port.upsert_status(BuffSpec(
-                key="Changyeyue_A2_Skill_CritDmg",
-                name="天黑黑，月寂寂 (施法暴伤+15%)",
-                source_id=self.owner_id,
-                target_id=self.owner_id,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                category="buff",
-                description="暴击伤害提高 +15.0%"
-            ))
+            self._trigger_trace_a2_on_skill(self.owner_id)
 
             if self.spirit_alive:
                 self.spirit_hp = min(self.spirit_max_hp, self.spirit_hp + 0.50 * self.spirit_max_hp)
@@ -569,11 +592,8 @@ class ChangyeyueKit(KitHandler):
             direct_yizhi = 2 + (12 if self.darkness else 0)
             self.gain_yizhi(direct_yizhi)
 
-            # 行迹【烛火起，烛火熄】：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
-            self.port.gain_energy(self.owner_id, 5.0)
-            self.gain_yizhi(1)
-
             self.port.gain_energy(self.owner_id, 30.0)
+            self._check_threshold()
 
         elif ctx.kind == ActionKind.ULTIMATE:
             self.summon_spirit()
@@ -617,12 +637,8 @@ class ChangyeyueKit(KitHandler):
                 description="全属性伤害提高 +60.0%"
             ))
 
-            # 终结技基础回能 5 点 (官方数据源 141303 sp_base: 5)
+            # 终结技基础回能 5 点 (官方数据源 141303 sp_base: 5；行迹【烛火起，烛火熄】回能 5 点与忆质由 on_event 统一结算)
             self.port.gain_energy(self.owner_id, 5.0)
-
-            # 行迹【烛火起，烛火熄】：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
-            self.port.gain_energy(self.owner_id, 5.0)
-            self.gain_yizhi(1)
             self._check_threshold()
 
         elif ctx.kind == ActionKind.TECHNIQUE:
@@ -640,9 +656,12 @@ class ChangyeMemospriteKit(KitHandler):
     def __init__(self, owner_id: str, port: CombatPort, master_kit: Any = None):
         super().__init__(owner_id, port)
         self.master_kit = master_kit
+        self._pending_burst: Optional[bool] = None
 
     def definition(self, kind: ActionKind):
-        if self.master_kit and self.master_kit.yizhi >= 16:
+        is_burst = bool(self.master_kit and self.master_kit.yizhi >= 16)
+        self._pending_burst = is_burst
+        if is_burst:
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
@@ -664,7 +683,9 @@ class ChangyeMemospriteKit(KitHandler):
     def execute(self, ctx: ActionContext):
         if not self.master_kit:
             return
-        if self.master_kit.yizhi >= 16:
+        is_burst = self._pending_burst if self._pending_burst is not None else (self.master_kit.yizhi >= 16)
+        self._pending_burst = None
+        if is_burst:
             self.master_kit.trigger_spirit_burst()
         else:
             self.master_kit._execute_memosprite_skill(ctx)

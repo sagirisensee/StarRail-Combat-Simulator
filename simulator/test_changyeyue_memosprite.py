@@ -278,6 +278,49 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertIsNotNone(tonal_chord)
         self.assertIn(StatusTag.MEMOSPRITE_ONLY, tonal_chord.tags)
 
+    def test_09_ally_memosprite_skill_triggers_candle_trace(self):
+        """验证行迹【烛火起，烛火熄】通过统一事件总线驱动：队友忆灵施放技能时同样为长夜月恢复 5 点能量并获得忆质，且倒计时实体不误触发。"""
+        from simulator.events import ActionExecuteEvent
+
+        robin = self.db.to_combat_entity("知更鸟•晴歌")
+        sim = TurnSimulator(entities=[self.changyeyue, robin, self.boss], use_techniques=False, auto_ult=False)
+        cyy_kit = self.changyeyue.kit
+
+        # 知更鸟召唤伴生忆灵「晴空乐手」并进入 Fever 生成「晴空乐手•倒计时」
+        robin.kit.summon_musicians()
+        robin.kit.gain_vibes(12)
+        self.assertTrue(sim.port.is_memosprite("晴空乐手"))
+        self.assertTrue(sim.port.is_memosprite("晴空乐手•倒计时"))
+
+        energy_before = self.changyeyue.energy
+        yizhi_before = cyy_kit.yizhi
+
+        # 1. 队友忆灵「晴空乐手」施放忆灵技 -> 触发长夜月【烛火起，烛火熄】(+5 能量，E2 下 +3 忆质)
+        sim.event_bus.publish(ActionExecuteEvent(
+            av=sim.current_av,
+            cycle=sim.current_cycle,
+            actor_id="晴空乐手",
+            actor_name="晴空乐手",
+            action_type="叽叽啾啾四重奏",
+            description="施放【叽叽啾啾四重奏】",
+            action_kind=ActionKind.SKILL
+        ))
+        self.assertEqual(self.changyeyue.energy, energy_before + 5.0, "队友忆灵施放技能应触发长夜月恢复 5 点能量")
+        self.assertEqual(cyy_kit.yizhi, yizhi_before + 3, "队友忆灵施放技能应触发长夜月获得 1+2=3 点忆质")
+
+        # 2. 机制实体「晴空乐手•倒计时」结算 -> 不应误触发长夜月【烛火起，烛火熄】
+        sim.event_bus.publish(ActionExecuteEvent(
+            av=sim.current_av,
+            cycle=sim.current_cycle,
+            actor_id="晴空乐手•倒计时",
+            actor_name="晴空乐手•倒计时",
+            action_type="Fever倒计时结算",
+            description="Fever倒计时结算",
+            action_kind=ActionKind.SKILL
+        ))
+        self.assertEqual(self.changyeyue.energy, energy_before + 5.0, "倒计时实体行动不应误触发长夜月回能")
+        self.assertEqual(cyy_kit.yizhi, yizhi_before + 3, "倒计时实体行动不应误触发长夜月获得忆质")
+
 
 if __name__ == "__main__":
     unittest.main()
