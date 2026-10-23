@@ -2,6 +2,10 @@
 
 一个高度解耦、完全独立、高精度的《崩坏：星穹铁道》回合制战斗模拟器与全角色属性数据库引擎。
 
+> 📘 **研发人员与 AI 开发者必读**：
+> - **规范手册**：[《星穹铁道战斗模拟器·研发工程规范与新人开发指引 (DEVELOPER_GUIDE.md)》](file:///Users/yunkaichen/Downloads/starrail/DEVELOPER_GUIDE.md) —— 包含 5 大红线戒律与公式化 SOP 骨架。
+> - **速查索引**：[《代码索引与架构速查表 (CODEBASE_INDEX.md)》](file:///Users/yunkaichen/Downloads/starrail/CODEBASE_INDEX.md) —— 秒级定位角色 Kit、光锥与测试。
+
 ---
 
 ## 🌟 核心设计哲学：双层架构隔离
