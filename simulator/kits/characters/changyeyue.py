@@ -63,7 +63,7 @@ class ChangyeyueKit(KitHandler):
 
     def _trigger_trace_candle_on_skill(self) -> None:
         """行迹【烛火起，烛火熄】(point07)：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】。"""
-        self.port.gain_energy(self.owner_id, 5.0)
+        self.port.gain_energy(self.owner_id, 5.0, cause="行迹《烛火起，烛火熄》施法回能 (+5.0 点)", source_plugin="长夜月行迹")
         self.gain_yizhi(1)
 
     def _trigger_trace_a2_on_skill(self, caster_id: str) -> None:
@@ -662,7 +662,7 @@ class ChangyeyueKit(KitHandler):
             ))
 
             # 终结技基础回能 5 点 (官方数据源 141303 sp_base: 5；行迹【烛火起，烛火熄】回能 5 点与忆质由 on_event 统一结算)
-            self.port.gain_energy(self.owner_id, 5.0)
+            self.port.gain_energy(self.owner_id, 5.0, cause="终结技《晚安，全世界无眠》施放基础回能 (+5.0 点)", source_plugin="长夜月终结技")
             self._check_threshold()
 
         elif ctx.kind == ActionKind.TECHNIQUE:

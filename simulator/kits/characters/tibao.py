@@ -404,7 +404,7 @@ class TibaoKit(KitHandler):
                 energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
                 # 星铁底层机制：未标明“固定能量”的回能严格享受角色能量恢复效率 (ERR) 放大
                 err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                self.port.gain_energy(self.owner_id, energy_per_hit * err)
+                self.port.gain_energy(self.owner_id, energy_per_hit * err, cause=f"天赋《好忙好忙的缇宝》队友命中[{target}]回能 (基础 {energy_per_hit} × ERR {err*100:.1f}%)", source_plugin="缇宝天赋")
 
         elif isinstance(event, ActionExecuteEvent):
             actor_id = event.actor_name or event.actor_id
@@ -427,4 +427,4 @@ class TibaoKit(KitHandler):
                                 scaling_stat="hp"
                             )
                         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                        self.port.gain_energy(self.owner_id, 5.0 * err)
+                        self.port.gain_energy(self.owner_id, 5.0 * err, cause=f"队友[{actor_id}]施放大招触发天赋追击回能 (基础 5.0 × ERR {err*100:.1f}%)", source_plugin="缇宝天赋")
