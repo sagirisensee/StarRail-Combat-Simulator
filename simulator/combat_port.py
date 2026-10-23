@@ -92,8 +92,8 @@ class CombatPort(Protocol):
     def set_base_speed(self, entity_id: str, speed: float) -> None: ...
     def change_sp(self, source_id: str, amount: int, reason: str) -> None: ...
     def set_sp_cap(self, new_cap: int) -> None: ...
-    def gain_energy(self, entity_id: str, amount: float) -> None: ...
-    def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0) -> float: ...
+    def gain_energy(self, entity_id: str, amount: float, cause: str = "", source_plugin: str = "") -> None: ...
+    def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0, cause: str = "") -> float: ...
     def heal(self, source_id: str, target_id: str, amount: float) -> None: ...
     def add_shield(self, source_id: str, target_id: str, amount: float, duration: int = 3) -> None: ...
     def attack(
@@ -439,19 +439,42 @@ class SimulatorCombatPort:
         if new_cap is not None and new_cap > 0:
             self.sim.sp.set_max_sp(new_cap)
 
-    def gain_energy(self, entity_id: str, amount: float) -> None:
+    def gain_energy(self, entity_id: str, amount: float, cause: str = "", source_plugin: str = "") -> None:
         ent = self._get_entity(entity_id)
-        if ent:
+        if ent and getattr(ent, "max_energy", 0.0) > 0:
+            old_e = ent.energy
             ent.energy = min(ent.max_energy, ent.energy + amount)
+            actual = ent.energy - old_e
+            if hasattr(self.sim, "tracer") and self.sim.tracer and actual > 0:
+                if not cause:
+                    if abs(amount - 30.0) < 1e-4:
+                        desc = "施放战技回能 (+30.0 点)"
+                    elif abs(amount - 20.0) < 1e-4:
+                        desc = "施放普攻回能 (+20.0 点)"
+                    elif abs(amount - 5.0) < 1e-4:
+                        desc = "施放终结技固定回能 (+5.0 点)"
+                    else:
+                        desc = f"获得能量 (+{actual:.1f} 点)"
+                else:
+                    desc = cause
+                self.sim.tracer.record_energy_change(
+                    entity=ent.name,
+                    old_val=old_e,
+                    new_val=ent.energy,
+                    max_energy=ent.max_energy,
+                    cause_desc=desc,
+                    source_plugin=source_plugin
+                )
 
-    def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0) -> float:
+    def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0, cause: str = "") -> float:
         """受击回能标准接口：严格按角色【能量恢复效率 (ERR)】进行放大。"""
         ent = self._get_entity(entity_id)
         if not ent:
             return 0.0
         err = self.stat(entity_id, StatType.ERR) or getattr(ent, "base_err", 1.0) or 1.0
         actual = base_amount * err
-        self.gain_energy(entity_id, actual)
+        hit_cause = cause or f"受到攻击受击回能 (基础 {base_amount:.1f} × ERR {err*100:.1f}%)"
+        self.gain_energy(entity_id, actual, cause=hit_cause, source_plugin="受击机制")
         return actual
 
     def heal(self, source_id: str, target_id: str, amount: float) -> None:

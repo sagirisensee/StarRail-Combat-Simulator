@@ -2,8 +2,8 @@
 """星穹铁道战斗模拟系统 - 核心机制变量流转与插件审计追踪器 (Action Causal Tracer)
 
 职责边界：
-1. 监听与捕获每回合/每次行动中核心机制变量的流转 (如长夜月【忆质】、知更鸟【气氛值】与【律动】)；
-2. 自动记录触发该变量变动的底层插件源 (光锥/天赋/行迹/关卡机制/忆灵技能)；
+1. 监听与捕获每回合/每次行动中核心机制变量的流转 (长夜月【忆质】、知更鸟【气氛值】与【律动】、全队【能量 Energy】)；
+2. 自动记录触发该变量变动的底层插件源 (光锥/天赋/行迹/关卡机制/忆灵技能/受击机制)；
 3. 输出高可视度、函数级别的因果流转拓扑树，用于深度对账与机制调试。
 """
 
@@ -32,6 +32,18 @@ class VariableDelta:
 
 
 @dataclass
+class EnergyDelta:
+    entity: str
+    old_val: float
+    new_val: float
+    delta: float
+    max_energy: float
+    cause_desc: str
+    source_plugin: str = ""
+    is_ult_ready: bool = False
+
+
+@dataclass
 class PluginRecord:
     plugin_type: str
     plugin_name: str
@@ -45,6 +57,7 @@ class ActionTrace:
     av: float
     cycle: int
     deltas: List[VariableDelta] = field(default_factory=list)
+    energy_deltas: List[EnergyDelta] = field(default_factory=list)
     plugins: List[PluginRecord] = field(default_factory=list)
 
 
@@ -77,7 +90,7 @@ class ActionCausalTracer:
         cause_desc: str,
         extra_note: str = ""
     ) -> None:
-        """捕获变量数值跃迁。"""
+        """捕获变量数值跃迁 (忆质/气氛/律动)。"""
         delta = new_val - old_val
         rec = VariableDelta(
             entity=entity,
@@ -91,6 +104,33 @@ class ActionCausalTracer:
         )
         if self.current_trace is not None:
             self.current_trace.deltas.append(rec)
+
+    def record_energy_change(
+        self,
+        entity: str,
+        old_val: float,
+        new_val: float,
+        max_energy: float,
+        cause_desc: str,
+        source_plugin: str = ""
+    ) -> None:
+        """捕获角色能量数值变动 (获取/受击/消耗/扣除)。"""
+        delta = new_val - old_val
+        if abs(delta) < 1e-4:
+            return
+        is_ready = (new_val >= max_energy and old_val < max_energy)
+        rec = EnergyDelta(
+            entity=entity,
+            old_val=old_val,
+            new_val=new_val,
+            delta=delta,
+            max_energy=max_energy,
+            cause_desc=cause_desc,
+            source_plugin=source_plugin,
+            is_ult_ready=is_ready
+        )
+        if self.current_trace is not None:
+            self.current_trace.energy_deltas.append(rec)
 
     def record_plugin(self, plugin_type: str, plugin_name: str, summary: str) -> None:
         """记录本次行动中生效或被激活的核心插件 (去重)。"""
@@ -176,14 +216,39 @@ class ActionCausalTracer:
             r = robin.kit.rhythm_stacks if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "rhythm_stacks")) else 11
             print(f"   • 本次行动律动无变动，维持 {r} 层")
 
-        # 4. 全队偏离和弦 Buff 矩阵
+        # 4. 全队各角色能量流转 (Energy Flow)
+        energy_deltas = t.energy_deltas
+        print("\n4️⃣  【全队角色 · 能量流转审计 (Energy Flow)】:")
+        if energy_deltas:
+            from collections import defaultdict
+            by_entity = defaultdict(list)
+            for ed in energy_deltas:
+                by_entity[ed.entity].append(ed)
+
+            for ent_name, ed_list in by_entity.items():
+                start_e = ed_list[0].old_val
+                end_e = ed_list[-1].new_val
+                max_e = ed_list[-1].max_energy
+                total_d = sum(x.delta for x in ed_list)
+                sign = "+" if total_d > 0 else ""
+                ready_tag = " [🔥 终结技就绪!]" if end_e >= max_e else ""
+                print(f"   • 【{ent_name}】: {start_e:.1f} ➔ {end_e:.1f} / {max_e:.0f} 点 ({sign}{total_d:.1f} 点){ready_tag}")
+                for ed in ed_list:
+                    d_sign = "+" if ed.delta > 0 else ""
+                    src_str = f"[{ed.source_plugin}] " if ed.source_plugin else ""
+                    note_str = " [🔥 能量满格!]" if ed.is_ult_ready else ""
+                    print(f"     └─ {src_str}{ed.cause_desc} ➔ {d_sign}{ed.delta:.1f} 点 (当前: {ed.new_val:.1f}/{ed.max_energy:.0f}){note_str}")
+        else:
+            print("   • 本次行动全队能量无变动")
+
+        # 5. 全队偏离和弦 Buff 矩阵
         robin = self.sim.get_entity("知更鸟•晴歌") if self.sim else None
         cur_vibes = robin.kit.vibes if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "vibes")) else 13
         cdmg_val = 0.40 + cur_vibes * 0.015
         atk_val = 0.16 + cur_vibes * 0.004
         robin_atk = 1947.0
 
-        print("\n4️⃣  【全队各角色 · 偏离和弦 Buff 矩阵 (Tonal Chord Matrix)】:")
+        print("\n5️⃣  【全队各角色 · 偏离和弦 Buff 矩阵 (Tonal Chord Matrix)】:")
         print(f"   • 判定准则: 目标攻击力 > 知更鸟 ({robin_atk:,.0f}) ? 攻击力加成 (16% + 气氛×0.4% = +{atk_val*100:.1f}%) : 暴击伤害加成 (40% + 气氛×1.5% = +{cdmg_val*100:.1f}%)")
         print(f"   • 当前气氛: {cur_vibes} 点 ➔ 暴伤基准: 40.0% + {cur_vibes} × 1.5% = +{cdmg_val*100:.1f}%")
         print("   " + "─" * 74)
@@ -204,8 +269,8 @@ class ActionCausalTracer:
             print(f"   {name:<16} │ {cur_atk:>8.0f}   │ {mode:<14} │ {buff_desc}{note}")
         print("   " + "─" * 74)
 
-        # 5. 核心插件清单
-        print("\n5️⃣  【本次行动过程中激活的核心插件清单 (Active Plugins)】:")
+        # 6. 核心插件清单
+        print("\n6️⃣  【本次行动过程中激活的核心插件清单 (Active Plugins)】:")
         if t.plugins:
             for p in t.plugins:
                 print(f"   [{p.plugin_type}] {p.plugin_name} ➔ {p.summary}")

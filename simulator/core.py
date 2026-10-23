@@ -418,7 +418,17 @@ class TurnSimulator:
         else:
             if ent.max_energy > 0 and ent.energy < ent.max_energy:
                 return False
+            old_e = ent.energy
             ent.energy = 0.0
+            if hasattr(self, "tracer") and self.tracer and old_e > 0:
+                self.tracer.record_energy_change(
+                    entity=ent.name,
+                    old_val=old_e,
+                    new_val=0.0,
+                    max_energy=ent.max_energy,
+                    cause_desc=f"施放终结技《{defn.name}》消耗全额能量",
+                    source_plugin="终结技施放"
+                )
 
         self.event_bus.publish(ActionExecuteEvent(
             av=round(self.current_av, 2),

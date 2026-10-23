@@ -45,5 +45,28 @@ class TestActionCausalTracer(unittest.TestCase):
         sim.tracer.end_action()
         self.assertEqual(len(sim.tracer.history), 1)
 
+    def test_tracer_records_energy_flow(self):
+        db = CharacterDB().load('data/character_db_export.json')
+        team = [db.to_combat_entity('长夜月'), db.to_combat_entity('风堇')]
+        sim = TurnSimulator(entities=team)
+
+        sim.tracer.start_action("风堇", "战技与受击", av=48.0, cycle=0)
+        sim.port.gain_energy("风堇", 30.0, cause="战技回能", source_plugin="风堇战技")
+        sim.port.gain_hit_energy("长夜月", 5.0)
+
+        self.assertEqual(len(sim.tracer.current_trace.energy_deltas), 2)
+        ed1 = sim.tracer.current_trace.energy_deltas[0]
+        self.assertEqual(ed1.entity, "风堇")
+        self.assertEqual(ed1.delta, 30.0)
+        self.assertEqual(ed1.source_plugin, "风堇战技")
+
+        ed2 = sim.tracer.current_trace.energy_deltas[1]
+        self.assertEqual(ed2.entity, "长夜月")
+        self.assertEqual(ed2.delta, 5.0)
+        self.assertEqual(ed2.source_plugin, "受击机制")
+
+        sim.tracer.end_action()
+        self.assertEqual(len(sim.tracer.history), 1)
+
 if __name__ == '__main__':
     unittest.main()
