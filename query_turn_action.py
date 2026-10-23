@@ -31,7 +31,7 @@ from simulator.core import TurnSimulator, Entity
 from simulate_battle import STAGE_CONFIG, create_enemy_from_config, render_inspect_panel
 
 
-def run_query(step_count: int = 0, team_names: list = None, enemy_type: str = "boss", inspect_target: str = ""):
+def run_query(step_count: int = 0, team_names: list = None, enemy_type: str = "boss", inspect_target: str = "", interactive: bool = False):
     if team_names is None:
         team_names = ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]
 
@@ -71,11 +71,19 @@ def run_query(step_count: int = 0, team_names: list = None, enemy_type: str = "b
         stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
     )
 
-    # 推进指定步数
-    for i in range(step_count):
-        actor = sim.step()
-        if not actor:
-            break
+    # 推进模式：若指定 --interactive 则跳过非玩家交互动作，直达首个玩家决策点
+    if interactive:
+        sim.advance_to_interactive_turn()
+        for i in range(step_count):
+            actor = sim.step()
+            if not actor:
+                break
+    else:
+        # 推进指定步数
+        for i in range(step_count):
+            actor = sim.step()
+            if not actor:
+                break
 
     # 输出当前决策窗口信息
     sim.print_turn_action_info()
@@ -87,13 +95,14 @@ def run_query(step_count: int = 0, team_names: list = None, enemy_type: str = "b
 def main():
     parser = argparse.ArgumentParser(description="星穹铁道回合与行动状态机械查询工具")
     parser.add_argument("--step", type=int, default=0, help="推进指定步数后查询 (默认0: 开局顶轴)")
+    parser.add_argument("--interactive", action="store_true", help="跳过系统自动施放动作(如长夜入场自动喷水)，直达首个玩家可操作决策回合")
     parser.add_argument("--team", type=str, default="长夜月,缇宝,知更鸟•晴歌,风堇", help="队伍角色名 (逗号分隔)")
     parser.add_argument("--enemy", type=str, default="boss", choices=["boss", "wave1"], help="对战敌方配置")
     parser.add_argument("--status", type=str, default="", help="查询指定角色或忆灵的实时状态透析面板 (如 '长夜月' 或 '长夜')")
     args = parser.parse_args()
 
     team_members = [n.strip() for n in args.team.split(",") if n.strip()]
-    run_query(step_count=args.step, team_names=team_members, enemy_type=args.enemy, inspect_target=args.status)
+    run_query(step_count=args.step, team_names=team_members, enemy_type=args.enemy, inspect_target=args.status, interactive=args.interactive)
 
 
 if __name__ == "__main__":

@@ -167,6 +167,41 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
         self.assertEqual(len(alive_enemies), 0, "Wave 1 敌方目标应全部阵亡")
 
+    def test_07_robin_sunnysong_full_panel_verification(self):
+        """测试 7: 验证知更鸟•晴歌实战全量对账：双暴 91.3% / 234.1%、能量 76/140、8 项增益与律动 10 层 (消耗 2 层)。"""
+        sim = TurnSimulator(
+            entities=self.team_entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
+        )
+        snap = sim.query_status("知更鸟•晴歌")
+
+        # 1. 双暴对账：暴击率 91.3% (基础 41.3% + 重构谐乐 50.0%)，暴击伤害 234.1%
+        self.assertAlmostEqual(snap["current_crit_rate"], 0.913, places=3)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.341, places=3)
+
+        # 2. 能量对账：76 / 140 (初始 70 + 消耗 2 层律动回能 6 点)
+        self.assertEqual(int(snap["current_energy"]), 76)
+        self.assertEqual(int(snap["max_energy"]), 140)
+
+        # 3. 增益列表 (8 项增益，包含《重构谐乐》)
+        self.assertEqual(len(snap["buffs"]), 8, f"增益数量应为 8，实际为 {len(snap['buffs'])}")
+        buff_names = [b["name"] for b in snap["buffs"]]
+        expected_8_buffs = [
+            "天气正好，万物可爱！", "神启", "偏离和弦", "我们自成旋律",
+            "心意相契的安宁", "谕示", "重构谐乐", "烈阳惊雷的女武神"
+        ]
+        for b_name in expected_8_buffs:
+            self.assertIn(b_name, buff_names, f"知更鸟应包含增益: {b_name}")
+
+        # 4. 其他效果列表 (3 项：律动、血噬、好忙好忙的缇宝)
+        other_names = [b["name"] for b in snap["other_effects"]]
+        self.assertIn("律动", other_names, "其他效果应包含【律动】")
+        robin_kit = sim.get_entity("知更鸟•晴歌").kit
+        self.assertEqual(robin_kit.rhythm_stacks, 10, "律动开局获得 12 层并已消耗 2 层，当前应精准为 10 层")
+        self.assertEqual(robin_kit.vibes, 7, "知更鸟进战气氛值应精准为 7 点")
+
 
 if __name__ == "__main__":
     unittest.main()

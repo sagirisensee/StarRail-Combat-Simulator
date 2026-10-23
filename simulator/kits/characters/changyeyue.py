@@ -596,7 +596,8 @@ class ChangyeMemospriteKit(KitHandler):
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(sp=0),
                 name="迷梦，流失，如露",
-                tag="终极爆发"
+                tag="终极爆发",
+                is_auto=False
             )
         else:
             return AbilityDefinition(
@@ -604,7 +605,8 @@ class ChangyeMemospriteKit(KitHandler):
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=0),
                 name="追忆，蹁跹，如雨",
-                tag="忆灵技"
+                tag="忆灵技",
+                is_auto=True
             )
 
     def execute(self, ctx: ActionContext):

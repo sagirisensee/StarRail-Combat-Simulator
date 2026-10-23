@@ -46,16 +46,60 @@ class RobinSunnySongKit(KitHandler):
         self.in_concerto: bool = False
         self.vibes: int = 0        # 气氛值
         self.max_vibes: int = 50   # 气氛值上限
+        self.rhythm_stacks: int = 0 # 律动层数 (上限 12 层)
+
+    def apply_trace_passives(self, entity: Any) -> None:
+        """行迹常驻被动属性注入与基线对齐：
+        知更鸟•晴歌能量上限为 140 点。
+        """
+        entity.max_energy = 140.0
+
+    def _sync_rhythm_status(self) -> None:
+        """同步【律动】机制层数至 Status 视图。"""
+        self.port.upsert_status(BuffSpec(
+            key="Robin_Talent_Rhythm",
+            name="律动",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(),
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="other",
+            stacks=self.rhythm_stacks,
+            max_stacks=12,
+            description=f"知更鸟•晴歌专属机制，当前持有 {self.rhythm_stacks} 层"
+        ))
 
     def on_battle_start(self) -> None:
-        """战斗开始：仅为使知更鸟获得气氛值的角色挂载【偏离和弦】。
-        未行动、未攻击且未提供治疗的目标 (如长夜月) 绝不挂载此 Buff。
+        """战斗开始：
+        1. 挂载行迹【重构谐乐】：自身与伴生忆灵暴击率提高 50%
+        2. 同步专属机制【律动】至其他效果列表
         """
-        pass
+        # 行迹【重构谐乐】：暴击率提高 50%
+        self.port.upsert_status(BuffSpec(
+            key="Robin_A6_HarmonicReconstruction",
+            name="重构谐乐",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_RATE, ModifierOp.ADD, 0.50),),
+            duration=None,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="知更鸟•晴歌与「晴空乐手」的暴击率提高 +50.0%"
+        ))
+
+        if self.rhythm_stacks > 0:
+            self._sync_rhythm_status()
 
     def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
-        """增加气氛值，并仅为【使知更鸟获得气氛值的行动目标】动态挂载/刷新【偏离和弦】。"""
+        """增加气氛值；若处于任意目标回合内首次获得气氛值且持有【律动】，消耗 1 层律动并固定恢复 3 点能量 (行迹【即兴蓝调】)。"""
         self.vibes = min(self.max_vibes, self.vibes + amount)
+        if not getattr(self, "_rhythm_consumed_in_current_turn", False):
+            if self.rhythm_stacks > 0:
+                self._rhythm_consumed_in_current_turn = True
+                self.rhythm_stacks -= 1
+                self.port.gain_energy(self.owner_id, 3.0)
+                self._sync_rhythm_status()
         if trigger_ally_id:
             self.apply_tonal_chord_to_ally(trigger_ally_id)
 
@@ -75,7 +119,7 @@ class RobinSunnySongKit(KitHandler):
             mods = (Modifier(StatType.ATK_PERCENT, ModifierOp.PERCENT, atk_pct),)
             desc = f"攻击力提高 +{atk_pct * 100:.1f}% (当前气氛值: {self.vibes} 点)"
         else:
-            cd_val = math.floor((0.40 + self.vibes * 0.015) * 100) / 100
+            cd_val = round(0.40 + self.vibes * 0.015, 4)
             mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
             desc = f"暴击伤害 +{cd_val * 100:.1f}%"
 
@@ -95,24 +139,36 @@ class RobinSunnySongKit(KitHandler):
         ))
 
     def on_event(self, event: Any) -> None:
-        """监听我方目标 (角色/忆灵) 的行动与治疗事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
-        from ...events import ActionExecuteEvent, HealAppliedEvent
-        if isinstance(event, HealAppliedEvent):
-            # 我方目标提供治疗时知更鸟获得 1 点气氛值
-            if hasattr(self.port, "is_ally") and self.port.is_ally(event.source_name) and event.source_name != self.owner_id:
-                if not getattr(self, "_healed_this_phase", False):
-                    self._healed_this_phase = True
+        """监听我方目标 (角色/忆灵) 的行动、治疗、护盾与回合开始事件，严格按官方规范管理【律动】与【气氛值】时机。"""
+        from ...events import ActionExecuteEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent
+        if isinstance(event, TurnBeginEvent):
+            # 新回合开始：重置本回合【首次获得气氛值消耗律动】门禁与治疗气氛值门禁
+            self._rhythm_consumed_in_current_turn = False
+            self._healed_this_turn = False
+
+        elif isinstance(event, (HealAppliedEvent, ShieldAppliedEvent)):
+            # 官方规范：知更鸟•晴歌或「晴空乐手」受到队友提供的治疗效果或护盾时，使知更鸟•晴歌获得 12 层【律动】(上限 12 层)
+            is_target_robin = (event.target_name == self.owner_id) or (
+                hasattr(self.port, "is_own_memosprite") and self.port.is_own_memosprite(self.owner_id, event.target_name)
+            )
+            is_teammate_source = hasattr(self.port, "is_ally") and self.port.is_ally(event.source_name) and event.source_name != self.owner_id
+            if is_target_robin and is_teammate_source:
+                self.rhythm_stacks = 12
+                self._sync_rhythm_status()
+                # 天赋规范：在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值
+                if not getattr(self, "_healed_this_turn", False):
+                    self._healed_this_turn = True
                     self.gain_vibes(1, trigger_ally_id=event.source_name)
+
         elif isinstance(event, ActionExecuteEvent):
-            self._healed_this_phase = False
             # 我方角色或忆灵每次行动/施放攻击，知更鸟获得 1 点气氛值
             if hasattr(self.port, "is_ally") and self.port.is_ally(event.actor_name):
                 self.gain_vibes(1, trigger_ally_id=event.actor_name)
 
     def use_technique(self) -> None:
-        """秘技【我们自成旋律】：进战行动提前，立即获得 6 点气氛值 (自身暴伤50%)，全队增伤 30%。"""
+        """秘技【我们自成旋律】：进战行动提前，立即获得 6 点气氛值 (首次获得气氛值消耗 1 层律动回能 3 点)，全队增伤 30%。"""
+        self._rhythm_consumed_in_current_turn = False
         self.gain_vibes(6, trigger_ally_id=self.owner_id)
-        self.port.gain_energy(self.owner_id, 5.0)
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
                 key="Robin_Tech_WeAreTheMelody",
@@ -147,7 +203,7 @@ class RobinSunnySongKit(KitHandler):
             return AbilityDefinition(
                 kind=kind,
                 target_mode=TargetMode.ALL_ALLIES,
-                cost=ResourceCost(energy=160.0),
+                cost=ResourceCost(energy=140.0),
                 allow_self=True,
                 name="千音赋，共咏的团聚"
             )
@@ -280,3 +336,11 @@ class RobinSunnySongKit(KitHandler):
                     timing=DurationTiming.CASTER_TURN_END,
                     skip_current_clock=True
                 ))
+
+    def get_kit_state(self) -> dict:
+        return {
+            "in_concerto": self.in_concerto,
+            "vibes": self.vibes,
+            "max_vibes": self.max_vibes,
+            "rhythm_stacks": self.rhythm_stacks,
+        }

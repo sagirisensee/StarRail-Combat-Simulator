@@ -79,7 +79,8 @@ class BattleInspector:
                             "cost_sp": sp_cost,
                             "available": can_afford,
                             "target": target_desc,
-                            "tag": tag
+                            "tag": tag,
+                            "is_auto": getattr(defn, "is_auto", False)
                         })
                 except Exception:
                     pass
@@ -125,13 +126,18 @@ class BattleInspector:
             except Exception:
                 pass
         info = self.get_turn_action_info()
+        all_auto = len(info['actions']) > 0 and all(a.get('is_auto', False) for a in info['actions'])
+        actor_state = f"{info['actor_type']} · 自动行动中(不可手动操作)" if all_auto else f"{info['actor_type']} · 玩家可操作回合"
         print("=" * 70)
         print(f"[行动时钟]: {info['av']:.1f} AV (第 {info['cycle']} 轮) | 战技点: {info['sp']['current']}/{info['sp']['max']}")
-        print(f"[目前是谁的回合]: 【{info['current_actor']}】 ({info['actor_type']})")
+        print(f"[目前是谁的回合]: 【{info['current_actor']}】 ({actor_state})")
         print("-" * 70)
         print("[本回合可行动的 Action]:")
         for idx, act in enumerate(info['actions'], 1):
-            avail_tag = "[可施放]" if act['available'] else "[战技点不足]"
+            if act.get('is_auto'):
+                avail_tag = "[系统自动施放 · 官方设定不可手动操作]"
+            else:
+                avail_tag = "[玩家可操作]" if act['available'] else "[战技点不足]"
             sp_tag = f"消耗 {act['cost_sp']} SP" if act['cost_sp'] > 0 else "无消耗"
             print(f"  [{idx}] 【{act['tag']}】《{act['name']}》 ({sp_tag} | 目标: {act['target']} | {avail_tag})")
         if info['ready_ultimates']:

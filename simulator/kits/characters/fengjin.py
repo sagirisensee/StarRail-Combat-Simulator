@@ -50,11 +50,11 @@ class FengjinKit(KitHandler):
         """行迹常驻被动属性注入与实机面板校准：
         - 行迹【阴云莞尔】：暴击率提高 100% (+1.00)
         - 行迹【雷雨轻柔】：效果抵抗提高 50% (+0.50)
-        - 实机面板精算基线：攻击力 1336、防御力 1527、暴击伤害 90.6%
+        - 实机面板精算基线：攻击力 1336、防御力 1527、暴击伤害 90.1%
         """
         entity.base_crit_rate += 1.00
         entity.base_effect_res += 0.50
-        entity.base_crit_dmg = 0.906
+        entity.base_crit_dmg = 0.901
         entity.base_atk = 1336.0
         entity.base_def = 1527.0
         entity.base_white_hp = 2250.0

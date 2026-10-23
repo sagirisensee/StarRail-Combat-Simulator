@@ -36,6 +36,8 @@ class BuffSpec:
     category: str = "buff"
     description: Optional[str] = None
     tags: Tuple[str, ...] = ()
+    stacks: int = 1
+    max_stacks: int = 1
 
 
 class CombatPort(Protocol):
@@ -297,7 +299,9 @@ class SimulatorCombatPort:
             skip_current_clock=spec.skip_current_clock,
             category=getattr(spec, "category", "buff"),
             description=getattr(spec, "description", None),
-            tags=list(getattr(spec, "tags", ()))
+            tags=list(getattr(spec, "tags", ())),
+            stacks=getattr(spec, "stacks", 1),
+            max_stacks=getattr(spec, "max_stacks", 1)
         )
         self.sim.status_mgr.add_status(status)
 

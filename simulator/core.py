@@ -74,19 +74,18 @@ class TurnSimulator:
 
             # 1. 战前秘技 (Techniques 在入场前按 priority 排序生效)
             if use_techniques:
-                target_users = technique_users or [e.name for e in self.entities if not e.is_enemy]
-                if not technique_users:
-                    def _tech_order(uid):
-                        ent = self._get_entity(uid)
-                        if ent and getattr(ent, "kit", None):
-                            try:
-                                d = ent.kit.definition(ActionKind.TECHNIQUE)
-                                if d:
-                                    return getattr(d, "priority", 1)
-                            except Exception:
-                                pass
-                        return 1
-                    target_users = sorted(target_users, key=_tech_order)
+                target_users = list(technique_users or [e.name for e in self.entities if not e.is_enemy])
+                def _tech_order(uid):
+                    ent = self._get_entity(uid)
+                    if ent and getattr(ent, "kit", None):
+                        try:
+                            d = ent.kit.definition(ActionKind.TECHNIQUE)
+                            if d:
+                                return getattr(d, "priority", 1)
+                        except Exception:
+                            pass
+                    return 1
+                target_users = sorted(target_users, key=_tech_order)
                 for user_id in target_users:
                     self.use_technique(user_id)
             elif technique_users:
@@ -333,6 +332,21 @@ class TurnSimulator:
         active_entity.reset_distance()
         self._current_turn_entity = None
         return active_entity
+
+    def is_current_turn_auto(self) -> bool:
+        """判断当前准备行动的实体动作是否为全自动非交互式动作 (如长夜开局由天赋拉条的自动喷水《追忆，蹁跹，如雨》)。"""
+        info = self.inspector.get_turn_action_info()
+        actions = info.get("actions", [])
+        return len(actions) > 0 and all(a.get("is_auto", False) for a in actions)
+
+    def advance_to_interactive_turn(self, max_auto_steps: int = 10) -> Optional[Entity]:
+        """自动顺次执行所有全自动非交互式动作，直接推进并停在第一个真正需要玩家手动操作决策的回合。"""
+        for _ in range(max_auto_steps):
+            if self.is_current_turn_auto():
+                self.step()
+            else:
+                break
+        return self._current_turn_entity or self.advance_to_next_turn()
 
     def step(
         self, 

@@ -1,16 +1,19 @@
 """【新人开发标准脚手架模板】角色与伴生忆灵技能套件 (_template.py)。
 
+本文件提供两套完整可复制的标准模板：
+- 模板 A (`ExampleCharacterKit`)：常规角色技能套件（普攻/战技/终结技/秘技/天赋光环/事件监听）；
+- 模板 B (`ExampleMemospriteKit`)：记忆命途「伴生忆灵」独立技能套件及主从召唤联动。
+
 使用方式：
 1. 复制本文件为 `simulator/kits/characters/<character_pinyin>.py`（注意去掉开头的下划线 `_`）；
 2. 取消 `@register_kit(...)` 装饰器注释并填写角色 ID、中文名、英文名；
 3. 系统会自动扫描 `characters/` 目录并完成注册，**无需手动修改 `registry.py`**！
 
-核心架构守则（五大红线）：
-- 严禁在技能逻辑中写死倍率：必须通过 `self.skill_param("basic"|"skill"|"ultra"|"talent", idx, default=...)` 动态读取；
-- 严禁访问 `self.port.sim` 或 `self.port._get_entity` 内部私有结构：一律调用 `self.port.*` 标准契约方法；
-- 严禁跨插件硬编码耦合（如角色代码直接调用某把专属光锥的方法）：通过 `self.port.lose_hp` / `heal` / `attack` 产生标准 `BattleEvent`，由光锥/遗器自行监听；
-- 严禁通过技能中文名子串判断动作类型：在 `on_event` 中使用 `isinstance(event, HealAppliedEvent | HPLostEvent | ActionExecuteEvent)`；
-- 伴生忆灵专属 Buff 必须打上 `StatusTag.MEMOSPRITE_ONLY` 与 `StatusTag.EXCLUDE_FROM_STAT_TRANSFERS` 标签。
+核心避坑提醒（详见 DEVELOPER_GUIDE.md 第二节）：
+- 查倍率：用 `self.skill_param("basic"|"skill"|"ultra"|"talent", idx, default=...)`，其中 `idx=0` 对应官方描述 `#1`；
+- 选操作符：百分比提速/加攻/加血用 `ModifierOp.PERCENT`，暴击/暴伤/增伤/抗穿/减防/易伤/固定数值用 `ModifierOp.ADD`；
+- 防掉回合：当前回合内给自身或队友施加的 `TARGET_TURN_END` / `CASTER_TURN_END` Buff，务必加 `skip_current_clock=True`；
+- 防死循环：基于自身属性比例分享给队友/忆灵的 Buff，务必加 `tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,)`。
 """
 from typing import Optional, Any
 from ..base import KitHandler
@@ -21,8 +24,11 @@ from ...events import ActionExecuteEvent, HealAppliedEvent, HPLostEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
 
+# ============================================================================
+# 模板 A：角色本体技能套件 (包含普通角色与记忆命途召唤者通用范式)
 # 复制后取消下方装饰器注释即可自动注册，无需修改 registry.py：
 # @register_kit("9999", "示例角色", "example_character")
+# ============================================================================
 class ExampleCharacterKit(KitHandler):
     """示例角色 (ID 9999, 冰 / 记忆) 标准技能套件实现参考。"""
 
@@ -36,6 +42,7 @@ class ExampleCharacterKit(KitHandler):
     ):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.spirit_name: str = f"{owner_id}的忆灵"
+        self.spirit_alive: bool = False
         self.charge_points: int = 0
 
     def apply_trace_passives(self, entity: Any) -> None:
@@ -103,6 +110,20 @@ class ExampleCharacterKit(KitHandler):
             category="buff",
             description=f"造成伤害提高 +{dmg_val * 100:.1f}%"
         ))
+
+    def summon_companion_spirit(self) -> Any:
+        """【记忆命途专用】召唤伴生忆灵入场并绑定独立 Kit。"""
+        self.spirit_alive = True
+        spirit_max_hp = round(0.50 * self.port.max_hp(self.owner_id))
+        spirit = self.port.summon_spirit(
+            owner_id=self.owner_id,
+            name=self.spirit_name,
+            base_speed=160.0,
+            max_hp=spirit_max_hp,
+            kit_class=ExampleMemospriteKit,
+            kit_args={"master_kit": self}
+        )
+        return spirit
 
     def execute(self, ctx: ActionContext) -> None:
         """【必填契约】动作执行主分发。"""
@@ -182,3 +203,38 @@ class ExampleCharacterKit(KitHandler):
                 self.charge_points += 1
         elif isinstance(event, ActionExecuteEvent):
             pass
+
+
+# ============================================================================
+# 模板 B：伴生忆灵独立技能套件 (仅「记忆」命途等拥有召唤物的角色需要)
+# ============================================================================
+class ExampleMemospriteKit(KitHandler):
+    """伴生忆灵独立技能套件模板。"""
+
+    def __init__(self, owner_id: str, port: CombatPort, master_kit: Optional[ExampleCharacterKit] = None):
+        super().__init__(owner_id, port)
+        self.master_kit = master_kit
+
+    def definition(self, kind: ActionKind) -> AbilityDefinition:
+        return AbilityDefinition(
+            kind=ActionKind.SKILL,
+            target_mode=TargetMode.SINGLE_ENEMY,
+            cost=ResourceCost(sp=0),
+            name="示例忆灵技",
+            tag="忆灵技"
+        )
+
+    def execute(self, ctx: ActionContext) -> None:
+        enemies = self.port.enemies(self.owner_id)
+        if not enemies or not self.master_kit:
+            return
+        target = ctx.target_ids[0] if ctx.target_ids else enemies[0]
+        self.port.attack(
+            self.master_kit.owner_id,
+            target,
+            element="Ice",
+            atk_multiplier=0.80,
+            toughness_damage=10.0,
+            damage_tag="MemospriteSkill",
+            scaling_stat="hp"
+        )
