@@ -75,8 +75,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(len(debuff_names), 0, "开局我方应无负面效果")
 
         # 5. 动态属性数值校验 (实机严格对齐)
-        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟55%~56%(10~11点气氛值) + 女武神15% = 518.2% ~ 519.2%
-        self.assertAlmostEqual(snap["current_crit_dmg"], 5.182, delta=0.02)
+        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟59.5%(5怪命中达13点气氛值) + 女武神15% = 522.7%
+        self.assertAlmostEqual(snap["current_crit_dmg"], 5.227, delta=0.02)
         # 暴击率: 基础 61.3% + 诗人32% = 93.3%
         self.assertAlmostEqual(snap["current_crit_rate"], 0.933, places=3)
         # 全抗穿: 26.4%

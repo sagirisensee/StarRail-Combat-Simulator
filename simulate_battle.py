@@ -109,7 +109,7 @@ STAGE_CONFIG = {
     "waves": [
         {
             "wave": 1,
-            "name": "Wave 1/2 - 精英双锋前驱 (月夜天马 + 「灯塔」)",
+            "name": "Wave 1/2 - 精英双锋前驱 (月夜天马 + 「灯塔」 + 千星戍卫)",
             "enemies": [
                 {
                     "name": "月夜天马 (Lv.100)",
@@ -126,9 +126,39 @@ STAGE_CONFIG = {
                     "id": 8033020,
                     "hp": 650000.0,
                     "toughness": 160.0,
-                    "speed": 144.0,
+                    "speed": 190.0,
                     "weaknesses": ["Fire", "Wind", "Quantum"],
                     "damage_res": {"Fire": 0.0, "Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2},
+                    "infinite_hp": False
+                },
+                {
+                    "name": "千星戍卫 A (Lv.100)",
+                    "id": 8032040,
+                    "hp": 180000.0,
+                    "toughness": 90.0,
+                    "speed": 110.0,
+                    "weaknesses": ["Wind", "Quantum"],
+                    "damage_res": {"Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2},
+                    "infinite_hp": False
+                },
+                {
+                    "name": "千星戍卫 B (Lv.100)",
+                    "id": 8032040,
+                    "hp": 180000.0,
+                    "toughness": 90.0,
+                    "speed": 110.0,
+                    "weaknesses": ["Wind", "Quantum"],
+                    "damage_res": {"Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2},
+                    "infinite_hp": False
+                },
+                {
+                    "name": "千星戍卫 C (Lv.100)",
+                    "id": 8032040,
+                    "hp": 180000.0,
+                    "toughness": 90.0,
+                    "speed": 110.0,
+                    "weaknesses": ["Wind", "Quantum"],
+                    "damage_res": {"Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2},
                     "infinite_hp": False
                 }
             ]
