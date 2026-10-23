@@ -170,7 +170,15 @@ class TurnSimulator:
 
     def get_action_order(self) -> List[Entity]:
         alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
-        return sorted(alive, key=lambda e: e.remaining_av)
+        if not alive:
+            return []
+        current = self._current_turn_entity
+        def sort_key(e: Entity):
+            # 若当前实体正在其回合内进行决策，其严格排在第 1 位
+            is_current = 0 if (current and e.name == current.name) else 1
+            # 紧随其后的是在本回合内获得立即行动的实体 (如终结技唤出的长夜，0 距离)，随后按剩余 AV 升序
+            return (is_current, round(e.remaining_av, 4))
+        return sorted(alive, key=sort_key)
 
     @property
     def current_turn_entity(self) -> Optional[Entity]:
@@ -178,6 +186,10 @@ class TurnSimulator:
 
     def advance_to_next_turn(self) -> Optional[Entity]:
         """将跑道推进至最快到达终点的实体 (0.0 AV)，结算【回合开始】状态时钟并发布 TurnBeginEvent。"""
+        # 遵循星铁回合状态机：若当前实体正在进行其自然回合，不可被插队/立即行动强行剥夺，必须先完成本回合动作
+        if self._current_turn_entity is not None:
+            return self._current_turn_entity
+
         alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
         if not alive:
             return None

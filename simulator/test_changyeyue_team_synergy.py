@@ -219,6 +219,49 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         self.assertEqual(robin_kit.rhythm_stacks, 10, "到达首个玩家决策点时，律动精准为 10 层")
         self.assertEqual(robin_kit.vibes, 8, "长夜自动攻击后，知更鸟气氛值精准为 8 点")
 
+    def test_08_mid_turn_ultimate_summon_action_priority(self):
+        """测试 8: 验证星铁底层行动优先级——在当前角色(知更鸟)回合内开大招召唤忆灵，长夜立即行动严格排在知更鸟之后。"""
+        sim = TurnSimulator(
+            entities=self.team_entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
+        )
+
+        # 1. 推进至 0 AV 开局忆灵动作结束
+        sim.step()
+        sim.step()
+
+        # 2. 跑道推进至首个自然行动回合 (知更鸟•晴歌 · 45.10 AV)
+        actor = sim.advance_to_next_turn()
+        self.assertEqual(actor.name, "知更鸟•晴歌")
+        self.assertEqual(sim.current_turn_entity.name, "知更鸟•晴歌")
+
+        # 3. 在知更鸟回合内，插队施放长夜月终结技
+        cyy = sim.get_entity("长夜月")
+        cyy.energy = 240.0
+        success = sim.cast_ultimate("长夜月")
+        self.assertTrue(success, "长夜月大招施放应成功")
+
+        # 核心断言 1: 知更鸟正在进行中的自然回合不可被强行剥夺，当前行动实体依然是知更鸟
+        self.assertEqual(sim.current_turn_entity.name, "知更鸟•晴歌")
+
+        # 核心断言 2: 行动队列优先级严格判定：
+        # - 第 1 顺位: 当前行动中的知更鸟•晴歌
+        # - 第 2 顺位: 插队立即行动的长夜 (排在知更鸟后面)
+        # - 第 3 顺位: 风堇
+        action_order = sim.get_action_order()
+        self.assertEqual(action_order[0].name, "知更鸟•晴歌", "第 1 顺位必须为当前正在行动的知更鸟")
+        self.assertEqual(action_order[1].name, "长夜", "第 2 顺位必须为大招唤出立即行动的长夜")
+        self.assertEqual(action_order[2].name, "风堇", "第 3 顺位应为下一顺位风堇")
+
+        # 核心断言 3: 知更鸟执行完当前动作后，伴生忆灵「长夜」紧接着立即行动
+        robin_acted = sim.execute_current_turn()
+        self.assertEqual(robin_acted.name, "知更鸟•晴歌")
+
+        next_actor = sim.advance_to_next_turn()
+        self.assertEqual(next_actor.name, "长夜", "知更鸟回合结束后，长夜应立刻行动")
+
 
 if __name__ == "__main__":
     unittest.main()
