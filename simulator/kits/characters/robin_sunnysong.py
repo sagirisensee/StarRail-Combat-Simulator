@@ -373,14 +373,14 @@ class RobinSunnySongKit(KitHandler):
             self.has_drummie = True
             self.member_count = max(self.member_count, 2)
             # 1151205 贴近海的心跳：被召唤时为知更鸟恢复 20 点能量
-            self.port.gain_energy(self.owner_id, summon_energy)
+            self.port.gain_energy(self.owner_id, summon_energy, cause="忆灵天赋《贴近海的心跳》召唤「啾米」登台回能 (+20.0 点)", source_plugin="晴空乐手天赋")
             self._update_musician_aura()
 
         if self.vibes >= paddie_threshold and not self.has_paddie:
             self.has_paddie = True
             self.member_count = 3
             # 1151205 贴近海的心跳：被召唤时为知更鸟恢复 20 点能量
-            self.port.gain_energy(self.owner_id, summon_energy)
+            self.port.gain_energy(self.owner_id, summon_energy, cause="忆灵天赋《贴近海的心跳》召唤「派丁」登台回能 (+20.0 点)", source_plugin="晴空乐手天赋")
             self._update_musician_aura()
 
         # 全员登台 -> 开启【Fever】状态与结界
@@ -398,7 +398,7 @@ class RobinSunnySongKit(KitHandler):
 
         # 1151205 贴近海的心跳：召唤贝茜为知更鸟恢复 20 点能量
         summon_energy = self.skill_param("1151205", 0, default=20.0)
-        self.port.gain_energy(self.owner_id, summon_energy)
+        self.port.gain_energy(self.owner_id, summon_energy, cause="忆灵天赋《贴近海的心跳》召唤「贝茜」登台回能 (+20.0 点)", source_plugin="晴空乐手天赋")
 
         # 注册实体至跑道
         musician_ent = self.port.summon_spirit(
@@ -812,7 +812,7 @@ class RobinSunnySongKit(KitHandler):
         召唤忆灵「晴空乐手」贝茜。若已在场，解除控制状态，回复 100% 生命上限并获得 6 点气氛值。
         回能 30 点。
         """
-        self.port.gain_energy(self.owner_id, 30.0)
+        self.port.gain_energy(self.owner_id, 30.0, cause="施放战技《盛夏是灵魂的乐手》回能", source_plugin="知更鸟•晴歌战技")
         if not self.musicians_alive:
             self.summon_musicians()
         else:
