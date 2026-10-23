@@ -115,6 +115,13 @@ class SkillScaling:
             return p[index]
         return default
 
+    def eidolon_value(self, rank: int, index: int, default: float = 0.0) -> float:
+        """获取指定星魂 (1~6) 的第 index 项官方参数。"""
+        eid = self.character.eidolons.get(int(rank))
+        if eid and 0 <= index < len(eid.params):
+            return float(eid.params[index])
+        return default
+
     def dump_status(self) -> Dict[str, Any]:
         """输出所有技能的当前生效等级与参数概览。"""
         res = {}

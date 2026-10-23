@@ -46,6 +46,12 @@ class KitHandler(ABC):
             return self.scaling.value(skill_key, index, default)
         return default
 
+    def eidolon_param(self, rank: int, index: int = 0, default: float = 0.0) -> float:
+        """获取指定星魂阶数 (1~6) 的第 index 项官方参数。"""
+        if self.scaling is not None and hasattr(self.scaling, "eidolon_value"):
+            return self.scaling.eidolon_value(rank, index, default)
+        return default
+
     @abstractmethod
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         """声明指定动作类型的目标模式与资源消耗。"""

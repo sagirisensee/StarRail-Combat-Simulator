@@ -78,6 +78,7 @@ class StatusTag:
     MEMOSPRITE_ONLY = "memosprite_only"                          # 伴生忆灵专享
     CHARACTER_ONLY = "character_only"                            # 仅角色本体专享 (不继承/不投影至伴生忆灵)
     AURA_SHARED = "aura_shared"                                  # 全队共享光环
+    CANNOT_ADVANCE_OTHER_ALLIES = "cannot_advance_other_allies"  # 无法使其他友方目标获得行动提前效果 (如【特邀嘉宾】)
 
 
 @dataclass

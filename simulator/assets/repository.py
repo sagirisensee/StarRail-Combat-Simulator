@@ -144,6 +144,43 @@ class AssetRepository:
                 for b in raw.get("eidolon_skill_bonuses", [])
             )
 
+            # 补充加载原始资产中的伴生忆灵技能 (memosprite.skills) 与星魂参数 (ranks.param_list)
+            raw_char_path = ROOT_DIR / "data" / "nanoka" / "raw" / self.version / "zh" / "character" / f"{cid}.json"
+            if raw_char_path.exists():
+                try:
+                    with open(raw_char_path, "r", encoding="utf-8") as rf:
+                        raw_detail = json.load(rf)
+                    for msid, msraw in raw_detail.get("memosprite", {}).get("skills", {}).items():
+                        if str(msid) not in skills:
+                            lvl_map = msraw.get("level", {})
+                            ms_pbl = {
+                                int(lvl): tuple(lvl_map[lvl].get("param_list", []))
+                                for lvl in lvl_map
+                            }
+                            skills[str(msid)] = CharacterSkillAsset(
+                                id=str(msid),
+                                name=msraw.get("name", ""),
+                                type=msraw.get("type") or "ServantTalent",
+                                type_name=msraw.get("type_name", "忆灵天赋"),
+                                tag=msraw.get("tag", ""),
+                                sp_base=msraw.get("sp_base"),
+                                bp_need=msraw.get("bp_need"),
+                                bp_add=msraw.get("bp_add"),
+                                desc=msraw.get("desc", ""),
+                                params_by_level=ms_pbl,
+                            )
+                    for rk_str, rk_raw in raw_detail.get("ranks", {}).items():
+                        rk_int = int(rk_str)
+                        if rk_int in eidolons and not eidolons[rk_int].params and rk_raw.get("param_list"):
+                            eidolons[rk_int] = EidolonAsset(
+                                rank=rk_int,
+                                name=eidolons[rk_int].name,
+                                desc=eidolons[rk_int].desc,
+                                params=tuple(rk_raw.get("param_list", [])),
+                            )
+                except Exception:
+                    pass
+
             asset = CharacterAsset(
                 id=str(cid),
                 name=raw.get("name", ""),

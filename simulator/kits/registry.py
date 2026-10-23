@@ -11,6 +11,29 @@ import pkgutil
 from pathlib import Path
 from typing import Dict, Type, Optional, Any, Union
 from .base import KitHandler
+
+_KIT_REGISTRY: Dict[str, Type[KitHandler]] = {}
+_DISCOVERED = False
+
+
+def register_kit(*args: Any):
+    """支持两种调用形态的动态注册入口：
+    1. 类装饰器：`@register_kit("1413", "长夜月", "evernight")`
+    2. 函数调用：`register_kit("长夜月", ChangyeyueKit)`
+    """
+    if len(args) == 2 and isinstance(args[1], type) and issubclass(args[1], KitHandler):
+        name_or_id, kit_cls = args[0], args[1]
+        _KIT_REGISTRY[str(name_or_id).lower()] = kit_cls
+        return kit_cls
+
+    names = [str(a).lower() for a in args]
+    def _decorator(kit_cls: Type[KitHandler]) -> Type[KitHandler]:
+        for key in names:
+            _KIT_REGISTRY[key] = kit_cls
+        return kit_cls
+    return _decorator
+
+
 from .characters.sparkle import SparkleKit
 from .characters.robin import RobinKit
 from .characters.robin_sunnysong import RobinSunnySongKit

@@ -60,6 +60,7 @@ class DamageRequest:
     target_base_res: float = 0.20       # 敌方初始抗性 (通常非弱点 20%)
     target_is_broken: bool = False      # 敌方是否处于弱点击破状态 (未击破自带 10% 减伤)
     force_crit: Optional[bool] = None   # None: 随机/期望; True: 必暴; False: 不暴
+    fixed_crit_dmg: Optional[float] = None # 若指定固定暴击伤害 (如知更鸟协奏附加伤害 150%)，覆盖面板暴伤
     scaling_stat: str = "atk"           # "atk" | "hp" | "def" 
 
 
@@ -104,7 +105,7 @@ class DamageCalculator:
 
         # 2. 双暴区
         crit_rate = getattr(req.attacker, "crit_rate", 0.05)
-        crit_dmg = getattr(req.attacker, "crit_dmg", 0.50)
+        crit_dmg = req.fixed_crit_dmg if req.fixed_crit_dmg is not None else getattr(req.attacker, "crit_dmg", 0.50)
 
         if req.force_crit is not None:
             is_crit = req.force_crit

@@ -7,7 +7,7 @@
 """
 from dataclasses import dataclass
 from typing import Protocol, Tuple, Optional, Any, TYPE_CHECKING
-from .actions import ActionKind
+from .actions import ActionKind, TargetMode
 from .effects import (
     AdvanceActionEffect, DelayActionEffect, ModifySPEffect, ApplyDamageEffect, DamageRequest
 )
@@ -15,7 +15,7 @@ from .events import (
     ActionExecuteEvent, HealAppliedEvent, ShieldAppliedEvent, HPLostEvent,
     SpiritSummonedEvent, SpiritDespawnEvent
 )
-from .status import Modifier, ModifierOp, DurationTiming, StatType, StackPolicy, StatusInstance
+from .status import Modifier, ModifierOp, DurationTiming, StatType, StackPolicy, StatusInstance, StatusTag
 
 if TYPE_CHECKING:
     from .core import TurnSimulator
@@ -43,10 +43,12 @@ class BuffSpec:
 class CombatPort(Protocol):
     """技能/光锥/遗器处理器调用的安全基础设施端口契约。"""
     # --- 1. 阵营与从属关系查询 ---
+    def entity_exists(self, entity_id: str) -> bool: ...
     def is_ally(self, actor_id: str) -> bool: ...
     def is_memosprite(self, entity_id: str) -> bool: ...
     def get_master_name(self, entity_id: str) -> Optional[str]: ...
     def is_own_memosprite(self, master_id: str, entity_id: str) -> bool: ...
+    def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool: ...
     def allies(self, actor_id: str) -> Tuple[str, ...]: ...
     def enemies(self, actor_id: str) -> Tuple[str, ...]: ...
     def count_allies_by_path(self, actor_id: str, path_name: str) -> int: ...
@@ -83,6 +85,8 @@ class CombatPort(Protocol):
     # --- 4. 战斗动作与资源指令 ---
     def advance(self, source_id: str, target_id: str, ratio: float) -> None: ...
     def delay(self, source_id: str, target_id: str, ratio: float) -> None: ...
+    def set_distance(self, entity_id: str, distance: float) -> None: ...
+    def set_base_speed(self, entity_id: str, speed: float) -> None: ...
     def change_sp(self, source_id: str, amount: int, reason: str) -> None: ...
     def set_sp_cap(self, new_cap: int) -> None: ...
     def gain_energy(self, entity_id: str, amount: float) -> None: ...
@@ -98,7 +102,9 @@ class CombatPort(Protocol):
         toughness_damage: float,
         damage_tag: str = "direct",
         ignore_weakness: bool = False,
-        scaling_stat: str = "atk"
+        scaling_stat: str = "atk",
+        force_crit: Optional[bool] = None,
+        fixed_crit_dmg: Optional[float] = None
     ) -> None: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None: ...
     def summon_spirit(
@@ -124,6 +130,9 @@ class SimulatorCombatPort:
                 return e
         return None
 
+    def entity_exists(self, entity_id: str) -> bool:
+        return self._get_entity(entity_id) is not None
+
     def is_memosprite(self, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "is_memosprite", False))
@@ -142,6 +151,27 @@ class SimulatorCombatPort:
     def is_own_memosprite(self, master_id: str, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None) == master_id)
+
+    def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool:
+        """判定指定实体的某次动作是否属于【攻击】行为（排除纯辅助技能与倒计时实体）。"""
+        if "倒计时" in str(actor_id) or "Countdown" in str(action_type):
+            return False
+        if action_kind in (ActionKind.BASIC, ActionKind.FOLLOW_UP) or action_type in ("BasicAttack", "FollowUpAttack"):
+            return True
+        ent = self._get_entity(actor_id)
+        if ent and getattr(ent, "kit", None) is not None and action_kind is not None:
+            try:
+                defn = ent.kit.definition(action_kind)
+                if defn and getattr(defn, "target_mode", None) is not None:
+                    return defn.target_mode in (
+                        TargetMode.SINGLE_ENEMY,
+                        TargetMode.ALL_ENEMIES,
+                        TargetMode.BLAST,
+                        TargetMode.BOUNCE,
+                    )
+            except Exception:
+                pass
+        return True
 
     def allies(self, actor_id: str) -> Tuple[str, ...]:
         actor = self._get_entity(actor_id)
@@ -313,6 +343,13 @@ class SimulatorCombatPort:
     def advance(self, source_id: str, target_id: str, ratio: float) -> None:
         tgt = self._get_entity(target_id)
         if tgt:
+            if (
+                source_id
+                and source_id != target_id
+                and not self.is_own_memosprite(source_id, target_id)
+                and self.statuses(source_id, include_tags=(StatusTag.CANNOT_ADVANCE_OTHER_ALLIES,))
+            ):
+                return
             if ratio >= 1.0 and (self.sim.current_turn_entity == tgt or getattr(tgt, "extra_immediate_action", False)):
                 tgt.extra_immediate_action = True
             self.sim.resolver.enqueue(AdvanceActionEffect(source_id, tgt, ratio))
@@ -321,6 +358,16 @@ class SimulatorCombatPort:
         tgt = self._get_entity(target_id)
         if tgt:
             self.sim.resolver.enqueue(DelayActionEffect(source_id, tgt, ratio))
+
+    def set_distance(self, entity_id: str, distance: float) -> None:
+        ent = self._get_entity(entity_id)
+        if ent:
+            ent.distance_remaining = max(0.0, float(distance))
+
+    def set_base_speed(self, entity_id: str, speed: float) -> None:
+        ent = self._get_entity(entity_id)
+        if ent:
+            ent.base_speed = float(speed)
 
     def change_sp(self, source_id: str, amount: int, reason: str) -> None:
         self.sim.resolver.enqueue(ModifySPEffect(source_id, amount, reason))
@@ -391,7 +438,9 @@ class SimulatorCombatPort:
         toughness_damage: float,
         damage_tag: str = "direct",
         ignore_weakness: bool = False,
-        scaling_stat: str = "atk"
+        scaling_stat: str = "atk",
+        force_crit: Optional[bool] = None,
+        fixed_crit_dmg: Optional[float] = None
     ) -> None:
         tgt = self._get_entity(target_id)
         src = self._get_entity(source_id)
@@ -408,6 +457,8 @@ class SimulatorCombatPort:
             skill_multiplier=atk_multiplier,
             target_base_res=base_res,
             target_is_broken=tgt.is_broken,
+            force_crit=force_crit,
+            fixed_crit_dmg=fixed_crit_dmg,
             scaling_stat=scaling_stat
         )
         if damage_tag == "FollowUpAttack":

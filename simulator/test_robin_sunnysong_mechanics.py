@@ -1,18 +1,18 @@
 """知更鸟•晴歌 (Robin: Sunny Song - ID 1512, 风 / 记忆) 官方机制全量专项单元测试。
 
-验证点覆盖 (对照 Nanoka 4.6 官方实机规范 1512.json)：
+验证点覆盖 (严格对照 Nanoka 4.6 官方实机规范 1512.json)：
 1. 普攻【音浪，为海风定调】：生命上限 HP 缩放 (70%)、风属性、回 1 SP 与回能 20 点；
 2. 战技【盛夏是灵魂的乐手】与伴生忆灵【晴空乐手】阶梯登台：
    - 贝茜登台 (回能 20 点，易伤 11.2%)；
    - 气氛值 >= 6 啾米登台 (回能 20 点，易伤 16.8%)；
    - 气氛值 >= 12 派丁登台 (回能 20 点，易伤 22.4%)；
 3. 【Fever】状态与倒计时机制：
-   - 全员登台触发【Fever】与结界无视防御 (15% + 气氛值 * 0.5%)；
-   - 晴空乐手施放【叽叽啾啾四重奏】(210% HP 风属性全体伤害)；
-   - 倒计时 (SPD 140) 扣除 50% 气氛值 (至少 12 点)；
-   - 气氛值归零退出【Fever】，乐手与倒计时离场，知更鸟行动提前 50%；
-4. 行迹【偏离和弦】(加攻 vs 暴伤动态分流，持续 2 回合) 与终结技【特邀嘉宾】(+2 气氛值)；
-5. 星魂完整性验证 (E1 真实伤害、E2 抗穿与上限、E4 提速、E6 倍率翻倍与回能)。
+   - 全员登台触发【Fever】与结界无视防御 (15% + 气氛值 * 0.5%)，气氛值变动实时刷新结界；
+   - 晴空乐手施放【叽叽啾啾四重奏】(210% HP 风属性全体伤害，回能 20 点)；
+   - 倒计时 (SPD 140) 扣除 50% 气氛值 (至少 12 点)，且倒计时行动本身不触发友方攻击气氛值；
+   - 气氛值归零退出【Fever】，清除全部 Fever 增益，乐手与倒计时离场，知更鸟行动提前 50%；
+4. 行迹【偏离和弦】(加攻 vs 暴伤动态分流，持续 2 回合) 与终结技【特邀嘉宾】(+2 气氛值、禁止拉条其他友方)；
+5. 星魂完整性验证 (E1 记录100%/11%+0.1%真伤/清空50%、E2 抗穿18%/上限70/首技能+2、E4 进Fever+12气氛值与提速、E6 倍率翻倍与140回能)。
 """
 import unittest
 from simulator.db.character_db import CharacterDB
@@ -48,7 +48,6 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertEqual(defn.cost.sp, -1)
 
         # 执行普攻
-        sp_before = sim.sp.current_sp
         energy_before = robin.energy
         robin.kit.execute(ActionContext(
             action_id="robin_basic",
@@ -58,11 +57,11 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         ))
         sim.resolver.resolve_all()
 
-        # 验证回能 20 点与恢复 1 点 SP (sp 由 resolver 结算或定义标记)
+        # 验证回能 20 点
         self.assertEqual(robin.energy, energy_before + 20.0)
 
     def test_02_skill_summon_bessie_and_progression_to_fever(self):
-        """测试 2: 验证战技召唤贝茜、回能 20 点、易伤光环阶梯与进入【Fever】。"""
+        """测试 2: 验证战技召唤贝茜、回能 20 点、易伤光环阶梯、进 Fever 实时刷新与结界清理。"""
         sim = TurnSimulator(
             entities=[self.robin_ent, self.cyy_ent, self.enemy],
             use_techniques=False,
@@ -107,10 +106,17 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertEqual(kit.member_count, 3)
         self.assertTrue(kit.in_fever, "全员登台应开启【Fever】状态")
 
-        # 验证 Fever 结界防御无视与增伤挂载
+        # 验证 Fever 结界防御无视 (15% + 12 * 0.5% = 21.0%)
         snap_cyy = sim.query_status("长夜月")
         def_ignore = next((b for b in snap_cyy["buffs"] if "巡游在无界的天空" in b["name"]), None)
         self.assertIsNotNone(def_ignore, "全队应获得 Fever 结界无视防御加成")
+        self.assertIn("21.0%", def_ignore["modifiers_desc"])
+
+        # Fever 期间再获得 4 点气氛值 (至 16 点)，验证结界无视防御实时刷新至 23.0%
+        kit.gain_vibes(4)
+        snap_cyy = sim.query_status("长夜月")
+        def_ignore = next((b for b in snap_cyy["buffs"] if "巡游在无界的天空" in b["name"]), None)
+        self.assertIn("23.0%", def_ignore["modifiers_desc"])
 
         # 验证场景中存在倒计时实体
         countdown = sim.get_entity("晴空乐手•倒计时")
@@ -118,7 +124,7 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertEqual(countdown.speed, 140.0)
 
     def test_03_fever_countdown_and_exit_advance(self):
-        """测试 3: 验证倒计时扣除 50% 气氛值，归零退出 Fever 并使知更鸟拉条 50%。"""
+        """测试 3: 验证倒计时扣除 50% 气氛值，归零退出 Fever、清除全部 Fever 增益并使知更鸟拉条 50%。"""
         sim = TurnSimulator(
             entities=[self.robin_ent, self.enemy],
             use_techniques=False,
@@ -145,11 +151,15 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertFalse(kit.musicians_alive)
         self.assertIsNone(sim.get_entity("晴空乐手"))
         self.assertIsNone(sim.get_entity("晴空乐手•倒计时"))
+        # 验证退出 Fever 后知更鸟身上的 Fever 增伤与减防已彻底移除
+        snap_robin = sim.query_status("知更鸟•晴歌")
+        self.assertFalse(any("Fever增伤" in b["name"] for b in snap_robin["buffs"]))
+        self.assertFalse(any("巡游在无界的天空" in b["name"] for b in snap_robin["buffs"]))
         # 验证 1151206 知更鸟拉条 50% (distance_remaining = 5000.0)
         self.assertEqual(robin.distance_remaining, 5000.0)
 
     def test_04_tonal_chord_and_special_guest_mechanics(self):
-        """测试 4: 验证行迹【偏离和弦】加攻/暴伤分流与终结技【特邀嘉宾】。"""
+        """测试 4: 验证行迹【偏离和弦】加攻/暴伤分流、终结技【特邀嘉宾】额外气氛值及禁拉条其他友方限制。"""
         sim = TurnSimulator(
             entities=[self.robin_ent, self.cyy_ent, self.enemy],
             use_techniques=False,
@@ -174,6 +184,12 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         guest_buff = next((b for b in snap["buffs"] if "特邀嘉宾" in b["name"]), None)
         self.assertIsNotNone(guest_buff)
 
+        # 验证持有【特邀嘉宾】的角色无法使其他友方目标获得行动提前效果
+        robin_dist_before = robin.distance_remaining
+        sim.port.advance("长夜月", "知更鸟•晴歌", 0.50)
+        sim.resolver.resolve_all()
+        self.assertEqual(robin.distance_remaining, robin_dist_before, "持有【特邀嘉宾】的角色不应能拉条其他友方角色")
+
         # 3. 特邀嘉宾攻击触发额外 +2 气氛值
         vibes_before = kit.vibes
         from simulator.events import ActionExecuteEvent
@@ -189,10 +205,9 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertEqual(kit.vibes, vibes_before + 3)
 
     def test_05_eidolons_progression(self):
-        """测试 5: 验证 E1 真实伤害记录与结算、E2 抗穿与上限、E4 提速与 E6 倍率翻倍。"""
+        """测试 5: 严格对照 1512.json 验证 E1(100%记录/11%+0.1%真伤/清空50%)、E2(抗穿18%/上限70/+2气氛值)、E4(进Fever+12/提速) 与 E6(倍率翻倍/140回能)。"""
         robin_e6 = self.db.to_combat_entity("知更鸟•晴歌")
         robin_e6.kit.eidolon = 6
-        robin_e6.kit.max_vibes = 70 # E2 提升上限
 
         sim = TurnSimulator(
             entities=[robin_e6, self.enemy],
@@ -201,14 +216,14 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         )
         kit = robin_e6.kit
 
-        # 验证 E2 气氛值上限为 70 点
+        # 1. 验证 E2 气氛值上限自动动态计算为 70 点 (无需手动赋值 max_vibes)
         self.assertEqual(kit.max_vibes, 70)
 
-        # 验证 E2 全队全属性抗穿 +18%
+        # 2. 验证 E2 全队全属性抗穿 +18%
         snap_robin = sim.query_status("知更鸟•晴歌")
         self.assertTrue(any("心似一片湖水" in b["name"] for b in snap_robin["buffs"]))
 
-        # 验证 E1 记录伤害并在施放忆灵技时造成真实伤害
+        # 3. 验证 E1 记录 100% 伤害，并在施放忆灵技时造成 (11% + 气氛值*0.1%) 真实伤害，随后清空 50% 记录值
         kit.summon_musicians()
         from simulator.events import DamageAppliedEvent
         sim.event_bus.publish(DamageAppliedEvent(
@@ -221,10 +236,10 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
             breakdown=None,
             target_hp_left=490000.0
         ))
-        # 记录 15% = 1500 点
-        self.assertEqual(kit.recorded_damage, 1500.0)
+        # E1 #3 = 1.0 -> 记录 100% = 10000.0 点
+        self.assertEqual(kit.recorded_damage, 10000.0)
 
-        # 忆灵施放【叽叽啾啾四重奏】：倍率因 E6 翻倍至 4.20，并清空 E1 记录伤害
+        # 忆灵施放【叽叽啾啾四重奏】：倍率因 E6 翻倍至 4.20，并清空 50% 的 E1 记录伤害 (剩余 5000.0)
         m_ent = sim.get_entity("晴空乐手")
         m_ent.kit.execute(ActionContext(
             action_id="musician_skill",
@@ -232,7 +247,14 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
             kind=ActionKind.SKILL,
             target_ids=()
         ))
-        self.assertEqual(kit.recorded_damage, 0.0, "施放忆灵技后记录伤害应清零")
+        self.assertEqual(kit.recorded_damage, 5000.0, "施放忆灵技后应清空 50% 记录伤害")
+
+        # 4. 验证进入 Fever 时：E4 立即获得 12 点气氛值，E6 首次进入 Fever 固定恢复 140 点能量
+        robin_e6.energy = 0.0
+        kit.gain_vibes(12)  # 触发全员登台进入 Fever (12 + E4赠送12 = 24 点气氛值)
+        self.assertTrue(kit.in_fever)
+        self.assertEqual(kit.vibes, 24, "12点触发进Fever后应立即获得E4的12点气氛值，共24点")
+        self.assertEqual(robin_e6.energy, 140.0, "E6 首次进入 Fever 应固定恢复 140 点能量满能")
 
 
 if __name__ == "__main__":
