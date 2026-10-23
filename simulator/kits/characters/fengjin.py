@@ -163,7 +163,8 @@ class FengjinKit(KitHandler):
                 target_mode=TargetMode.ALL_ALLIES,
                 cost=ResourceCost(technique_points=1),
                 allow_self=True,
-                name="天气正好，万物可爱！"
+                name="天气正好，万物可爱！",
+                priority=0
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 

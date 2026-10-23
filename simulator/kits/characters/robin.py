@@ -106,7 +106,8 @@ class RobinKit(KitHandler):
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(technique_points=1),
                 allow_self=True,
-                name="酣醉序曲"
+                name="酣醉序曲",
+                priority=2
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 

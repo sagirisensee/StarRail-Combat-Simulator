@@ -79,6 +79,8 @@ class RobinSunnySongKit(KitHandler):
             mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
             desc = f"暴击伤害 +{cd_val * 100:.1f}%"
 
+        from ...status import StatusTag
+        tags = (StatusTag.MEMOSPRITE_ONLY,) if hasattr(self.port, "is_memosprite") and self.port.is_memosprite(ally_id) else ()
         self.port.upsert_status(BuffSpec(
             key=f"Robin_Talent_TonalChord_{ally_id}",
             name="偏离和弦",
@@ -88,24 +90,24 @@ class RobinSunnySongKit(KitHandler):
             duration=None,
             timing=DurationTiming.TARGET_TURN_END,
             category="buff",
-            description=desc
+            description=desc,
+            tags=tags
         ))
 
     def on_event(self, event: Any) -> None:
-        """监听队友行动、攻击与秘技事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
-        from ...events import ActionExecuteEvent, TechniqueExecuteEvent
-        allies = self.port.allies(self.owner_id)
-        if isinstance(event, TechniqueExecuteEvent):
-            actor_name = event.actor_name
-            if actor_name in allies and actor_name != self.owner_id:
-                # 仅当队友秘技提供治疗或护盾时响应知更鸟天赋 (如风堇《天气正好，万物可爱！》)
-                if "天气正好" in event.technique_name or "治" in event.technique_name or "盾" in event.technique_name:
-                    self.gain_vibes(1, trigger_ally_id=actor_name)
+        """监听我方目标 (角色/忆灵) 的行动与治疗事件，动态累加气氛值并依据状态判定刷新【偏离和弦】。"""
+        from ...events import ActionExecuteEvent, HealAppliedEvent
+        if isinstance(event, HealAppliedEvent):
+            # 我方目标提供治疗时知更鸟获得 1 点气氛值
+            if hasattr(self.port, "is_ally") and self.port.is_ally(event.source_name) and event.source_name != self.owner_id:
+                if not getattr(self, "_healed_this_phase", False):
+                    self._healed_this_phase = True
+                    self.gain_vibes(1, trigger_ally_id=event.source_name)
         elif isinstance(event, ActionExecuteEvent):
-            actor_name = event.actor_name
-            # 我方角色或忆灵每次施放攻击，知更鸟获得 1 点气氛值
-            if actor_name in allies or "长夜" in actor_name or actor_name.startswith("忆灵"):
-                self.gain_vibes(1, trigger_ally_id=actor_name)
+            self._healed_this_phase = False
+            # 我方角色或忆灵每次行动/施放攻击，知更鸟获得 1 点气氛值
+            if hasattr(self.port, "is_ally") and self.port.is_ally(event.actor_name):
+                self.gain_vibes(1, trigger_ally_id=event.actor_name)
 
     def use_technique(self) -> None:
         """秘技【我们自成旋律】：进战行动提前，立即获得 6 点气氛值 (自身暴伤50%)，全队增伤 30%。"""
@@ -155,7 +157,8 @@ class RobinSunnySongKit(KitHandler):
                 target_mode=TargetMode.SELF,
                 cost=ResourceCost(technique_points=1),
                 allow_self=True,
-                name="我们自成旋律"
+                name="我们自成旋律",
+                priority=2
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 

@@ -70,6 +70,13 @@ class Modifier:
     value: float
 
 
+class StatusTag:
+    """状态元数据语义标签（用于通用过滤与属性转化隔离，杜绝硬编码状态ID）。"""
+    EXCLUDE_FROM_STAT_TRANSFERS = "exclude_from_stat_transfers"  # 排除属性二次转化/分享 (防自循环)
+    MEMOSPRITE_ONLY = "memosprite_only"                          # 伴生忆灵专享
+    AURA_SHARED = "aura_shared"                                  # 全队共享光环
+
+
 @dataclass
 class StatusInstance:
     id: str                                  # 唯一标识符，如 "MatrixOfPrescience"
@@ -85,6 +92,7 @@ class StatusInstance:
     skip_current_clock: bool = False         # 施加当回合是否豁免扣减
     category: str = "buff"                   # 状态类别: "buff" (增益), "debuff" (负面), "other" (其他效果/结界)
     description: Optional[str] = None        # 业务层定义的自解释说明文案 (非空时优先展示)
+    tags: List[str] = field(default_factory=list) # 语义标签列表，用于插件化无耦合过滤
 
     @property
     def is_expired(self) -> bool:
@@ -124,6 +132,8 @@ class StatusManager:
                 existing.skip_current_clock = status.skip_current_clock
                 if status.description is not None:
                     existing.description = status.description
+                if status.tags:
+                    existing.tags = list(status.tags)
             elif status.stack_policy == StackPolicy.STACK:
                 existing.stacks = min(existing.max_stacks, existing.stacks + status.stacks)
                 if status.duration is not None:

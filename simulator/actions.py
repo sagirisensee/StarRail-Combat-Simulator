@@ -35,6 +35,7 @@ class AbilityDefinition:
     cost: ResourceCost = ResourceCost()
     allow_self: bool = True
     name: str = ""
+    priority: int = 1                   # 秘技/动作准备执行优先级 (值越小越先结算，如全队增益=0, 默认=1, 领域展开=2)
 
 
 @dataclass(frozen=True)

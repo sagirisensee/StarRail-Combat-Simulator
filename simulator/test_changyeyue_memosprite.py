@@ -209,10 +209,71 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         ]
         for name in expected_15:
             self.assertTrue(any(name in b for b in buff_names), f"长夜应包含增益: {name}")
-        # 验证长夜作为伴生忆灵绝不挂载角色专属标记【好忙好忙的缇宝】，其他效果精准仅有关卡环境【血嗜】
+        # 验证长夜作为伴生忆灵绝不挂载角色专属标记【好忙好忙的缇宝】，其他效果精准反映关卡环境机制
         self.assertFalse(any("好忙好忙" in o for o in msnap["other_effects"]), "长夜作为伴生忆灵不应挂载角色专属标记【好忙好忙的缇宝】")
-        self.assertFalse(any("好忙好忙" in o for o in msnap["other_effects"]), "长夜作为伴生忆灵不应挂载角色专属标记【好忙好忙的缇宝】")
-        self.assertEqual(msnap["other_effects"], ["血嗜"], "长夜特殊效果应精准仅有【血嗜】")
+        self.assertEqual(msnap["other_effects"], STAGE_CONFIG["mechanics"], f"长夜特殊效果应精准反映关卡环境配置: {STAGE_CONFIG['mechanics']}")
+
+    def test_07_pluggable_stage_mechanics_and_renaming_extensibility(self):
+        """验证关卡机制纯插件化：更换机制名称为【流血环境】或动态注册自定义插件时，引擎核心零硬编码且正常驱动。"""
+        from simulate_battle import create_enemy_from_config, STAGE_CONFIG
+        from simulator.stage_mechanics import StageMechanicRegistry, StageMechanicPlugin
+
+        # 1. 验证别名换名（如换成「流血环境」）：语义分发仍能命中扣血逻辑，且快照状态名称精准为「流血环境」
+        team = [self.db.to_combat_entity(n) for n in ["长夜月", "风堇"]]
+        enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
+        sim_renamed = TurnSimulator(entities=team + enemies, use_techniques=False, stage_mechanics=["流血环境"])
+        snap = sim_renamed.query_status("长夜")
+        self.assertIn("流血环境", snap["other_effects"], "关卡机制换名为【流血环境】后应能被插件注册中心动态实例化挂载")
+
+        # 2. 验证第三方自定义插件完全插拔（无需改动任何 core.py 源码）
+        hook_log = []
+        class CustomDomainPlugin(StageMechanicPlugin):
+            def __init__(self, name: str = "自定义虚数裂隙"):
+                self.name = name
+            def on_battle_start(self, sim):
+                hook_log.append("battle_start")
+            def on_turn_begin(self, active_entity, sim):
+                hook_log.append(f"turn_begin_{active_entity.name}")
+            def on_entity_summoned(self, entity, sim):
+                hook_log.append(f"summoned_{entity.name}")
+
+        StageMechanicRegistry.register("自定义虚数裂隙", CustomDomainPlugin)
+        sim_custom = TurnSimulator(entities=team + enemies, use_techniques=False, stage_mechanics=["自定义虚数裂隙"])
+        self.assertIn("battle_start", hook_log)
+        self.assertIn("summoned_长夜", hook_log)
+
+    def test_08_dynamic_relationship_queries_and_status_tags(self):
+        """验证 CombatPort 的实体从属关系与 StatusTag 语义过滤，确保消除任何角色名硬编码黑名单。"""
+        from simulate_battle import create_enemy_from_config, STAGE_CONFIG
+        from simulator.status import StatusTag
+
+        team = [self.db.to_combat_entity(n) for n in ["长夜月", "风堇", "知更鸟•晴歌"]]
+        enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
+        sim = TurnSimulator(entities=team + enemies, use_techniques=False)
+
+        port = sim.port
+        # 1. 验证动态身份判定
+        self.assertTrue(port.is_memosprite("长夜"))
+        self.assertFalse(port.is_memosprite("长夜月"))
+        self.assertEqual(port.get_master_name("长夜"), "长夜月")
+        self.assertTrue(port.is_own_memosprite("长夜月", "长夜"))
+        self.assertFalse(port.is_own_memosprite("风堇", "长夜"))
+        self.assertTrue(port.is_ally("长夜"))
+        self.assertTrue(port.is_ally("风堇"))
+        self.assertFalse(port.is_ally(enemies[0].name))
+
+        # 2. 验证 StatusTag 语义过滤 (天亮了雨落了具有 MEMOSPRITE_ONLY 标签)
+        spirit_statuses = sim.status_mgr.get_statuses("长夜")
+        rain_buff = next((s for s in spirit_statuses if "天亮了，雨落了" in s.name), None)
+        self.assertIsNotNone(rain_buff)
+        self.assertIn(StatusTag.MEMOSPRITE_ONLY, rain_buff.tags)
+
+        # 忆灵行动攻击后触发知更鸟偏离和弦，和弦同样动态携带 MEMOSPRITE_ONLY 标签
+        sim.step()
+        spirit_statuses = sim.status_mgr.get_statuses("长夜")
+        tonal_chord = next((s for s in spirit_statuses if "偏离和弦" in s.name), None)
+        self.assertIsNotNone(tonal_chord)
+        self.assertIn(StatusTag.MEMOSPRITE_ONLY, tonal_chord.tags)
 
 
 if __name__ == "__main__":

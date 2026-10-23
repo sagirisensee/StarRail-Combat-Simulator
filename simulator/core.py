@@ -32,11 +32,26 @@ class SimulatorCombatPort:
         for e in self.sim.entities:
             if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
                 return e
-        if name_or_id in ("长夜", "忆灵", "memosprite"):
-            for e in self.sim.entities:
-                if "长夜月" in e.name:
-                    return e
         return None
+
+    def is_memosprite(self, entity_id: str) -> bool:
+        ent = self._get_entity(entity_id)
+        return bool(ent and getattr(ent, "is_memosprite", False))
+
+    def is_ally(self, actor_id: str) -> bool:
+        ent = self._get_entity(actor_id)
+        if ent:
+            return not ent.is_enemy
+        enemies = [e.name for e in self.sim.entities if e.is_enemy]
+        return bool(actor_id) and actor_id not in enemies
+
+    def get_master_name(self, entity_id: str) -> Optional[str]:
+        ent = self._get_entity(entity_id)
+        return getattr(ent, "master_name", None) if ent else None
+
+    def is_own_memosprite(self, master_id: str, entity_id: str) -> bool:
+        ent = self._get_entity(entity_id)
+        return bool(ent and getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None) == master_id)
 
     def allies(self, actor_id: str) -> Tuple[str, ...]:
         actor = self._get_entity(actor_id)
@@ -87,7 +102,8 @@ class SimulatorCombatPort:
             stack_policy=spec.stack_policy,
             skip_current_clock=spec.skip_current_clock,
             category=getattr(spec, "category", "buff"),
-            description=getattr(spec, "description", None)
+            description=getattr(spec, "description", None),
+            tags=list(getattr(spec, "tags", ()))
         )
         self.sim.status_mgr.add_status(status)
 
@@ -123,11 +139,27 @@ class SimulatorCombatPort:
         tgt = self._get_entity(target_id)
         if tgt and hasattr(tgt, "current_hp"):
             tgt.current_hp = min(tgt.max_hp, tgt.current_hp + amount)
+            from .events import HealAppliedEvent
+            self.sim.event_bus.publish(HealAppliedEvent(
+                av=getattr(self.sim, "current_av", 0.0),
+                cycle=getattr(self.sim, "current_cycle", 0),
+                source_name=source_id,
+                target_name=tgt.name,
+                amount=amount
+            ))
 
     def add_shield(self, source_id: str, target_id: str, amount: float, duration: int = 3) -> None:
         tgt = self._get_entity(target_id)
         if tgt and hasattr(tgt, "shield"):
             tgt.shield = max(tgt.shield, amount)
+            from .events import ShieldAppliedEvent
+            self.sim.event_bus.publish(ShieldAppliedEvent(
+                av=getattr(self.sim, "current_av", 0.0),
+                cycle=getattr(self.sim, "current_cycle", 0),
+                source_name=source_id,
+                target_name=tgt.name,
+                amount=amount
+            ))
 
     def dispel(self, target_id: str, is_debuff: bool = True) -> None:
         pass
@@ -241,9 +273,9 @@ class SimulatorCombatPort:
         if kit_class:
             spirit.kit = kit_class(name, self, **(kit_args or {}))
         self.sim.add_entity(spirit, trigger_battle_start=False)
-        # 关卡环境机制：若关卡配置了入场环境生命削减 (如【血噬】)，对新入场实体统一调用 lose_hp 扣减生命并通知生命降低事件
-        if hasattr(self.sim, "stage_mechanics") and any("血" in m for m in self.sim.stage_mechanics):
-            self.lose_hp(name, 500.0, cause="stage_mechanic_bleed_summon")
+        # 关卡环境机制插件响应：通知实体入场召唤
+        for plugin in getattr(self.sim, "stage_plugins", []):
+            plugin.on_entity_summoned(spirit, self.sim)
         return spirit
 
     def despawn_spirit(self, name: str, reason: str = "") -> None:
@@ -398,6 +430,10 @@ class TurnSimulator:
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
         self.stage_mechanics: List[str] = list(stage_mechanics or [])
+        from .stage_mechanics import StageMechanicRegistry, StageMechanicPlugin
+        self.stage_plugins: List[StageMechanicPlugin] = [
+            StageMechanicRegistry.create(m) for m in (stage_mechanics or [])
+        ]
 
         # 注册事件总线转发至各实体挂载的技能套件、光锥与遗器
         def _forward_event_to_handlers(evt: BattleEvent):
@@ -413,10 +449,9 @@ class TurnSimulator:
         if entities:
             for e in entities:
                 self.add_entity(e, trigger_battle_start=False)
-                # 角色固有队伍被动（如花火战技点上限提升至7/8点）在战前秘技生效前预初始化
-                if "花火" in e.name or "Sparkle" in e.name:
-                    sp_cap = 8 if getattr(e, "eidolon", 0) >= 4 else 7
-                    self.port.set_sp_cap(sp_cap)
+                # 角色固有队伍被动（如战技点上限提升等）在战前秘技生效前预初始化
+                if getattr(e, "kit", None) and hasattr(e.kit, "get_initial_sp_cap"):
+                    self.port.set_sp_cap(e.kit.get_initial_sp_cap())
 
             # 1. 战前秘技 (Techniques 在入场前生效)
             if use_techniques:
@@ -427,13 +462,10 @@ class TurnSimulator:
                         if ent and getattr(ent, "kit", None):
                             try:
                                 d = ent.kit.definition(ActionKind.TECHNIQUE)
-                                name = d.name if d else ""
+                                if d:
+                                    return getattr(d, "priority", 1)
                             except Exception:
-                                name = ""
-                            if "银狼" in name or "瓦尔特" in name or "卡芙卡" in name or "黑天鹅" in name:
-                                return 0
-                            if "自律" in name or "知更鸟" in name or "星期日" in name:
-                                return 2
+                                pass
                         return 1
                     target_users = sorted(target_users, key=_tech_order)
                 for user_id in target_users:
@@ -442,21 +474,9 @@ class TurnSimulator:
                 for user_id in technique_users:
                     self.use_technique(user_id)
 
-            # 2. 关卡环境机制 (Stage Mechanics 环境效果在进战时挂载)
-            if stage_mechanics:
-                for mech in stage_mechanics:
-                    for e in self.entities:
-                        self.status_mgr.add_status(StatusInstance(
-                            id=f"Stage_Mechanic_{mech}_{e.name}",
-                            name=mech,
-                            source=e,
-                            target=e,
-                            duration=None,
-                            timing=DurationTiming.TARGET_TURN_END,
-                            modifiers=[],
-                            category="other",
-                            description="关卡全局环境机制"
-                        ))
+            # 2. 关卡环境机制插件初始化 (Stage Mechanics Plugins)
+            for plugin in self.stage_plugins:
+                plugin.on_battle_start(self)
 
             # 3. 战斗开始被动与光环 (on_battle_start)
             for e in self.entities:
@@ -477,10 +497,7 @@ class TurnSimulator:
         return None
 
     def _get_entity(self, name_or_id: str) -> Optional[Entity]:
-        ent = self.get_entity(name_or_id)
-        if not ent and name_or_id in ("长夜", "忆灵", "memosprite"):
-            return self.get_entity("长夜月")
-        return ent
+        return self.get_entity(name_or_id)
 
     def use_technique(self, actor_id: str) -> None:
         """在开战前执行指定角色的秘技。"""
@@ -563,9 +580,9 @@ class TurnSimulator:
         # 3. 状态时钟：结算【目标回合开始】类型状态 (如持续伤害)
         self.status_mgr.tick_on_turn_begin(active_entity)
 
-        # 关卡环境机制：若关卡配置了行动回合开始环境生命削减 (如【血噬】)，对当前我方行动实体统一结算扣血
-        if hasattr(self, "stage_mechanics") and any("血" in m for m in self.stage_mechanics) and not active_entity.is_enemy:
-            self.port.lose_hp(active_entity.name, 500.0, cause="stage_mechanic_bleed_turn_begin")
+        # 关卡环境机制插件响应：通知当前实体回合开始
+        for plugin in getattr(self, "stage_plugins", []):
+            plugin.on_turn_begin(active_entity, self)
 
         # 4. 发布【回合开始】事件
         self.event_bus.publish(TurnBeginEvent(

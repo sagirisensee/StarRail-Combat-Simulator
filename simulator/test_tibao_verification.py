@@ -142,7 +142,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(int(snap["current_def"]), 1527)
         self.assertEqual(round(snap["current_speed"]), 208)
         self.assertAlmostEqual(snap["current_crit_rate"], 1.05, places=2)
-        self.assertAlmostEqual(snap["current_crit_dmg"], 2.516, places=3)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.426, places=3)
         self.assertAlmostEqual(snap["outgoing_healing"], 0.625, places=3)
         self.assertAlmostEqual(snap["effect_res"], 0.917, places=3)
 

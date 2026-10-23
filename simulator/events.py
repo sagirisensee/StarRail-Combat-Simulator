@@ -98,6 +98,20 @@ class DamageAppliedEvent(BattleEvent):
 
 
 @dataclass(frozen=True)
+class HealAppliedEvent(BattleEvent):
+    source_name: str
+    target_name: str
+    amount: float
+
+
+@dataclass(frozen=True)
+class ShieldAppliedEvent(BattleEvent):
+    source_name: str
+    target_name: str
+    amount: float
+
+
+@dataclass(frozen=True)
 class ToughnessReduceEvent(BattleEvent):
     attacker_name: str
     target_name: str

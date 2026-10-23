@@ -51,6 +51,10 @@ class SparkleKit(KitHandler):
         self.max_talent_stacks: int = 3
         self.preferred_dps_id: Optional[str] = None
 
+    def get_initial_sp_cap(self) -> int:
+        """天赋【叙事狂】：我方战技点上限提高 2 点 (普通 7 点，E4 提升至 8 点)。"""
+        return 8 if self.eidolon >= 4 else 7
+
     def on_battle_start(self) -> None:
         """战斗开始：
         1. 天赋【叙述性诡计】：战技点上限提高 2 点 (常态 7 点，E4 为 8 点)。
