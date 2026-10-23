@@ -241,33 +241,42 @@ class ActionCausalTracer:
         else:
             print("   • 本次行动全队能量无变动")
 
-        # 5. 全队偏离和弦 Buff 矩阵
+        # 5. 全队偏离和弦 Buff 快照矩阵 (真实快照读取，非全局粗暴覆盖)
         robin = self.sim.get_entity("知更鸟•晴歌") if self.sim else None
-        cur_vibes = robin.kit.vibes if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "vibes")) else 13
-        cdmg_val = 0.40 + cur_vibes * 0.015
-        atk_val = 0.16 + cur_vibes * 0.004
-        robin_atk = 1947.0
+        cur_vibes = robin.kit.vibes if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "vibes")) else 11
+        robin_atk = 1948.0
+        if robin and hasattr(self.sim, "status_mgr"):
+            robin_atk = self.sim.status_mgr.get_detailed_snapshot(robin).get("current_atk", 1948.0)
 
-        print("\n5️⃣  【全队各角色 · 偏离和弦 Buff 矩阵 (Tonal Chord Matrix)】:")
-        print(f"   • 判定准则: 目标攻击力 > 知更鸟 ({robin_atk:,.0f}) ? 攻击力加成 (16% + 气氛×0.4% = +{atk_val*100:.1f}%) : 暴击伤害加成 (40% + 气氛×1.5% = +{cdmg_val*100:.1f}%)")
-        print(f"   • 当前气氛: {cur_vibes} 点 ➔ 暴伤基准: 40.0% + {cur_vibes} × 1.5% = +{cdmg_val*100:.1f}%")
-        print("   " + "─" * 74)
-        print(f"   {'角色 / 实体':<18} │ {'实时攻击':<10} │ {'判定模式':<14} │ {'偏离和弦生效数值与形态'}")
-        print("   " + "─" * 74)
+        print("\n5️⃣  【全队各角色 · 偏离和弦 Buff 状态矩阵 (Tonal Chord Matrix)】:")
+        print(f"   • 核心机制: 我方目标使知更鸟获气氛值时，根据【触发瞬间的气氛值】快照生成独立 Buff (持续 2 回合)")
+        print(f"   • 判定准则: 目标实时攻击 > 知更鸟 ({robin_atk:,.0f}) ? 攻击力加成 (16% + 气氛×0.4%) : 暴击伤害加成 (40% + 气氛×1.5%)")
+        print(f"   • 当前知更鸟持有气氛: {cur_vibes} 点 (后续新触发将以此气氛基准实时快照)")
+        print("   " + "─" * 78)
+        print(f"   {'角色 / 实体':<18} │ {'实时攻击':<10} │ {'触发时机与快照依据':<24} │ {'偏离和弦生效数值与形态'}")
+        print("   " + "─" * 78)
 
         roster = [
-            ("【长夜月】", 1443.0),
-            ("【长夜】(伴生忆灵)", 1443.0),
-            ("【缇宝】", 1483.0),
-            ("【知更鸟•晴歌】", 1947.0),
-            ("【风堇】", 1120.0),
+            ("【长夜月】", "长夜月", 1443.0, "待行动使知更鸟获气氛"),
+            ("【长夜】(伴生忆灵)", "长夜", 1443.0, "0.0 AV 终极爆发 (11气氛)"),
+            ("【缇宝】", "缇宝", 1483.0, "0.0 AV 终结技+追击 (10气氛)"),
+            ("【知更鸟•晴歌】", "知更鸟•晴歌", robin_atk, "开局秘技后触发 (7气氛)"),
+            ("【风堇】", "风堇", 1336.0, "进战开局被动治疗 (1气氛)"),
         ]
-        for name, cur_atk in roster:
-            mode = "ATK > 1947" if cur_atk > robin_atk else "ATK ≤ 1947"
-            buff_desc = f"攻击力 +{atk_val*100:.1f}%" if cur_atk > robin_atk else f"暴击伤害 +{cdmg_val*100:.1f}%"
-            note = " (共享主体)" if "长夜】" in name else ""
-            print(f"   {name:<16} │ {cur_atk:>8.0f}   │ {mode:<14} │ {buff_desc}{note}")
-        print("   " + "─" * 74)
+        for label, raw_name, default_atk, trigger_info in roster:
+            cur_atk = default_atk
+            ent = self.sim.get_entity(raw_name) if self.sim else None
+            if ent and hasattr(self.sim, "status_mgr"):
+                cur_atk = self.sim.status_mgr.get_detailed_snapshot(ent).get("current_atk", default_atk)
+
+            buff = self.sim.status_mgr.get_status(raw_name, f"Robin_Talent_TonalChord_{raw_name}") if self.sim else None
+            if buff:
+                dur_str = f" [余 {buff.duration} 回合]" if buff.duration is not None else ""
+                val_str = f"{buff.description}{dur_str}"
+            else:
+                val_str = "未激活 (尚未使知更鸟获气氛值)"
+            print(f"   {label:<16} │ {cur_atk:>8.0f}   │ {trigger_info:<24} │ {val_str}")
+        print("   " + "─" * 78)
 
         # 6. 核心插件清单
         print("\n6️⃣  【本次行动过程中激活的核心插件清单 (Active Plugins)】:")
