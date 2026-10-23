@@ -256,6 +256,30 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertEqual(kit.vibes, 24, "12点触发进Fever后应立即获得E4的12点气氛值，共24点")
         self.assertEqual(robin_e6.energy, 140.0, "E6 首次进入 Fever 应固定恢复 140 点能量满能")
 
+    def test_06_amphoreus_relic_team_speed_buff(self):
+        """测试 6: 验证装备【永恒之地翁法罗斯】(ID 323) 时，忆灵「晴空乐手」在场为我方全体提供 8% 速度加成。"""
+        sim = TurnSimulator(
+            entities=[self.robin_ent, self.cyy_ent, self.enemy],
+            use_techniques=False,
+            auto_ult=False
+        )
+        robin = sim.get_entity("知更鸟•晴歌")
+        cyy = sim.get_entity("长夜月")
+
+        # 召唤晴空乐手前：晴空乐手不在场，晴歌身上的翁法罗斯套装不生效
+        robin_spd_before = robin.speed
+        cyy_spd_before = cyy.speed
+
+        # 施放战技召唤「晴空乐手」
+        robin.kit.summon_musicians()
+        sim.resolver.resolve_all()
+
+        # 召唤后：晴空乐手在场，我方全体获得 8% 速度加成
+        # 知更鸟白字 95 * 0.08 = 7.6
+        self.assertAlmostEqual(robin.speed, robin_spd_before + 95.0 * 0.08, places=2)
+        # 长夜月白字 99 * 0.08 = 7.92
+        self.assertAlmostEqual(cyy.speed, cyy_spd_before + 99.0 * 0.08, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

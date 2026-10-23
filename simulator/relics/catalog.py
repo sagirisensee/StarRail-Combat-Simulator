@@ -5,6 +5,7 @@ from .handlers.valkyrie_of_sun_and_thunder import ValkyrieOfSunAndThunderHandler
 from .handlers.poet_of_mourning import PoetOfMourningHandler
 from .handlers.bone_collecting_ground import BoneCollectingGroundHandler
 from .handlers.sunken_tree import SunkenTreeHandler
+from .handlers.eternal_land_of_amphoreus import EternalLandOfAmphoreusHandler
 
 
 def register_all_relics() -> None:
@@ -51,6 +52,17 @@ def register_all_relics() -> None:
             aliases=("sunken_tree", "巨树", "渊思寂虑的巨树")
         ),
         SunkenTreeHandler
+    )
+
+    # 5. 永恒之地翁法罗斯 (ID 323, 位面饰品)
+    RelicRegistry.register(
+        RelicSetSpec(
+            set_id=323,
+            name="永恒之地翁法罗斯",
+            set_type="planar",
+            aliases=("amphoreus", "翁法罗斯", "永恒之地翁法罗斯")
+        ),
+        EternalLandOfAmphoreusHandler
     )
 
 
