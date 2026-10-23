@@ -356,8 +356,9 @@ class TibaoKit(KitHandler):
 
             if is_valid_attacker and is_valid_target and is_attack_dmg:
                 energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
-                # 遵循官方实机对账规则：该回能为固定点数充能，不吃角色能量恢复效率放大
-                self.port.gain_energy(self.owner_id, energy_per_hit)
+                # 星铁底层机制：未标明“固定能量”的回能严格享受角色能量恢复效率 (ERR) 放大
+                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+                self.port.gain_energy(self.owner_id, energy_per_hit * err)
 
         elif isinstance(event, ActionExecuteEvent):
             actor_id = event.actor_name or event.actor_id

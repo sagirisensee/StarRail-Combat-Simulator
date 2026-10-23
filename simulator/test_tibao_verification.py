@@ -176,19 +176,22 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             reduction_mult=1.0,
             final_damage=1500.0
         )
+        err = tibao.err
+        single_gain = 1.5 * err
         # 命中第 1 个敌人
         sim.event_bus.publish(DamageAppliedEvent(
             av=0.0, cycle=0, attacker_name="长夜", target_name="月夜天马 (Lv.100)",
             damage=1500.0, is_crit=True, breakdown=breakdown_valid, target_hp_left=500000.0
         ))
-        self.assertAlmostEqual(tibao.energy, energy_after_ult + 1.5, places=2)
+        self.assertAlmostEqual(tibao.energy, energy_after_ult + single_gain, places=2)
 
-        # 命中第 2 个敌人 -> 累计 +3.0 点，能量达到 29.27 (显示 29 点)
+        # 命中第 2 个敌人 -> 累计 2 次，受 ERR 放大，实机向下截断显示为 29 点
         sim.event_bus.publish(DamageAppliedEvent(
             av=0.0, cycle=0, attacker_name="长夜", target_name="「灯塔」 (Lv.100)",
             damage=1500.0, is_crit=True, breakdown=breakdown_valid, target_hp_left=600000.0
         ))
-        self.assertAlmostEqual(tibao.energy, energy_after_ult + 3.0, places=2)
+        expected_two_hits = energy_after_ult + 2 * single_gain
+        self.assertAlmostEqual(tibao.energy, expected_two_hits, places=2)
         self.assertEqual(int(tibao.energy), 29)
 
         # 2. 机制边界验证：DoT 伤害跳伤不应触发回能
@@ -210,14 +213,14 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             damage=250.0, is_crit=False, breakdown=breakdown_dot, target_hp_left=490000.0,
             damage_tag="dot"
         ))
-        self.assertAlmostEqual(tibao.energy, energy_after_ult + 3.0, places=2, msg="DoT 伤害不应误触发行迹回能")
+        self.assertAlmostEqual(tibao.energy, expected_two_hits, places=2, msg="DoT 伤害不应误触发行迹回能")
 
         # 3. 机制边界验证：反伤/友方目标受伤不应触发回能
         sim.event_bus.publish(DamageAppliedEvent(
             av=0.0, cycle=0, attacker_name="长夜月", target_name="长夜",
             damage=100.0, is_crit=False, breakdown=breakdown_valid, target_hp_left=3000.0
         ))
-        self.assertAlmostEqual(tibao.energy, energy_after_ult + 3.0, places=2, msg="友方目标受击不应触发行迹回能")
+        self.assertAlmostEqual(tibao.energy, expected_two_hits, places=2, msg="友方目标受击不应触发行迹回能")
 
 
 if __name__ == "__main__":
