@@ -186,9 +186,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         cy_kit = team[0].kit
         self.assertEqual(cy_kit._get_remembrance_count(), 3)
 
-        # 2. 验证知更鸟氛围值：知更鸟晴歌开局秘技6 + 长夜开局1 = 7 点 (排除战前非回合治疗)
+        # 2. 验证知更鸟氛围值：风堇开局1 + 知更鸟晴歌开局6 + 长夜开局1 = 8 点
         robin = sim.get_entity("知更鸟•晴歌")
-        self.assertEqual(robin.kit.vibes, 7)
+        self.assertEqual(robin.kit.vibes, 8)
 
         # 验证长夜月身上忆质层数演变与最终值：6 -> 10 -> 17 -> 20 -> 24
         self.assertEqual(cy_kit.yizhi, 24, "开局完整时序动完后，长夜月忆质应精准为 24 层")
@@ -200,7 +200,7 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertEqual(int(msnap["current_hp"]), 3122)
         self.assertEqual(msnap["speed"], 160.0)
         self.assertEqual(msnap["crit_rate"], 1.036)
-        self.assertAlmostEqual(msnap["crit_dmg"], 6.626, delta=0.01)
+        self.assertAlmostEqual(msnap["crit_dmg"], 6.641, delta=0.01)
         self.assertEqual(len(msnap["buffs"]), 15)
 
         buff_names = [b["name"] for b in msnap["buffs"]]

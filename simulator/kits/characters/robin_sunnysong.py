@@ -307,7 +307,7 @@ class RobinSunnySongKit(KitHandler):
         self.vibes = min(self.max_vibes, self.vibes + amount)
 
         # 行迹【即兴蓝调】回能与律动消耗 (仅在实战回合或动作内有效，排除战前秘技)
-        if self.port.is_in_turn() and not getattr(self, "_rhythm_consumed_in_current_turn", False):
+        if not getattr(self, "_rhythm_consumed_in_current_turn", False):
             if self.rhythm_stacks > 0:
                 self._rhythm_consumed_in_current_turn = True
                 self.rhythm_stacks -= 1
@@ -624,7 +624,7 @@ class RobinSunnySongKit(KitHandler):
                 self.rhythm_stacks = 12
                 self._sync_rhythm_status()
                 # 天赋：在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值 (排除战前非回合治疗)
-                if self.port.is_in_turn() and not getattr(self, "_healed_this_turn", False):
+                if not getattr(self, "_healed_this_turn", False):
                     self._healed_this_turn = True
                     extra = 0
                     if self.eidolon >= 2 and not self._e2_vibe_bonus_in_turn:

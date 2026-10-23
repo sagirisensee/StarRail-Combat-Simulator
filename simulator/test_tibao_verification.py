@@ -75,8 +75,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(len(debuff_names), 0, "开局我方应无负面效果")
 
         # 5. 动态属性数值校验 (实机严格对齐)
-        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟52.0%(去重后追击与大招各判定1次达8点气氛值) + 女武神15% = 515.2%
-        self.assertAlmostEqual(snap["current_crit_dmg"], 5.152, delta=0.02)
+        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟53.5%(战前风堇治疗+知更鸟秘技共7点，去重后追击与大招各判定1次达9点气氛值) + 女武神15% = 516.7%
+        self.assertAlmostEqual(snap["current_crit_dmg"], 5.167, delta=0.02)
         # 暴击率: 基础 61.3% + 诗人32% = 93.3%
         self.assertAlmostEqual(snap["current_crit_rate"], 0.933, places=3)
         # 全抗穿: 26.4%
@@ -108,6 +108,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
 
         expected_buffs = [
             "谕示",
+            "偏离和弦",
             "暴风停歇",
             "甘霖",
             "烈阳惊雷的女武神",
@@ -122,8 +123,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             "血噬"
         ]
 
-        # 1. 验证 8 个增益效果 (甘霖自身速度+6%，烈阳惊雷的女武神全队暴伤+15%，排除战前非回合治疗获得的偏离和弦)
-        self.assertEqual(len(buff_names), 8, f"风堇增益效果应为 8，实际为 {len(buff_names)}: {buff_names}")
+        # 1. 验证 9 个增益效果 (甘霖自身速度+6%，烈阳惊雷的女武神全队暴伤+15%，风堇战前秘技治疗触发知更鸟获得的 41.5% 偏离和弦)
+        self.assertEqual(len(buff_names), 9, f"风堇增益效果应为 9，实际为 {len(buff_names)}: {buff_names}")
         for expected in expected_buffs:
             self.assertIn(expected, buff_names, f"风堇应包含增益: {expected}")
 
@@ -145,7 +146,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(int(snap["current_def"]), 1527)
         self.assertEqual(round(snap["current_speed"]), 208)
         self.assertAlmostEqual(snap["current_crit_rate"], 1.05, places=2)
-        self.assertAlmostEqual(snap["current_crit_dmg"], 2.011, places=3)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.426, places=3)
         self.assertAlmostEqual(snap["outgoing_healing"], 0.625, places=3)
         self.assertAlmostEqual(snap["effect_res"], 0.917, places=3)
 

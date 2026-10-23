@@ -182,25 +182,25 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
             stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
         )
 
-        # 阶段 1：0.0 AV 战前秘技结算期 (律动在实战回合外不消耗，保持 12 层，能量 70，知更鸟秘技+6 气氛值)
+        # 阶段 1：0.0 AV 战前秘技结算期 (step=0，消耗第 1 层律动：12 -> 11 层，能量 70 -> 73)
         snap_pre = sim.query_status("知更鸟•晴歌")
         robin_kit = sim.get_entity("知更鸟•晴歌").kit
-        self.assertEqual(robin_kit.rhythm_stacks, 12, "战前秘技期不消耗律动，保持 12 层")
-        self.assertEqual(int(snap_pre["current_energy"]), 70, "战前能量保持 70/140")
-        self.assertEqual(robin_kit.vibes, 6, "知更鸟秘技+6 气氛值 (排除战前非回合治疗)")
+        self.assertEqual(robin_kit.rhythm_stacks, 11, "战前秘技结算后律动消耗 1 层，剩余 11 层")
+        self.assertEqual(int(snap_pre["current_energy"]), 73, "战前回能 3 点，能量为 73/140")
+        self.assertEqual(robin_kit.vibes, 7, "战前风堇治疗+1、知更鸟秘技+6，气氛值精准为 7 点")
 
-        # 阶段 2：推进至首个玩家可操作决策回合 (长夜自动喷水完成，消耗第 1 层律动：12 -> 11 层，能量 70 -> 73)
+        # 阶段 2：推进至首个玩家可操作决策回合 (长夜自动喷水完成，消耗第 2 层律动：11 -> 10 层，能量 73 -> 76)
         actor = sim.advance_to_interactive_turn()
         self.assertEqual(actor.name, "长夜", "首个玩家可操作决策回合应为【长夜】满忆质终极爆发")
 
         snap = sim.query_status("知更鸟•晴歌")
 
-        # 1. 双暴对账：暴击率 91.3% (基础 41.3% + 重构谐乐 50.0%)，暴击伤害 232.6% (6 气氛值自身偏离和弦 49.0%)
+        # 1. 双暴对账：暴击率 91.3% (基础 41.3% + 重构谐乐 50.0%)，暴击伤害 234.1% (7 气氛值偏离和弦 50.5%)
         self.assertAlmostEqual(snap["current_crit_rate"], 0.913, places=3)
-        self.assertAlmostEqual(snap["current_crit_dmg"], 2.326, places=3)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.341, places=3)
 
-        # 2. 能量对账：73 / 140 (初始 70 + 消耗 1 层律动回能 3 点)
-        self.assertEqual(int(snap["current_energy"]), 73)
+        # 2. 能量对账：76 / 140 (初始 70 + 消耗 2 层律动回能 6 点)
+        self.assertEqual(int(snap["current_energy"]), 76)
         self.assertEqual(int(snap["max_energy"]), 140)
 
         # 3. 增益列表 (8 项增益，包含《重构谐乐》)
@@ -216,8 +216,8 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         # 4. 其他效果列表 (3 项：律动、血噬、好忙好忙的缇宝)
         other_names = [b["name"] for b in snap["other_effects"]]
         self.assertIn("律动", other_names, "其他效果应包含【律动】")
-        self.assertEqual(robin_kit.rhythm_stacks, 11, "到达首个玩家决策点时，律动精准为 11 层")
-        self.assertEqual(robin_kit.vibes, 7, "长夜自动攻击后，知更鸟气氛值精准为 7 点")
+        self.assertEqual(robin_kit.rhythm_stacks, 10, "到达首个玩家决策点时，律动精准为 10 层")
+        self.assertEqual(robin_kit.vibes, 8, "长夜自动攻击后，知更鸟气氛值精准为 8 点")
 
     def test_08_mid_turn_ultimate_summon_action_priority(self):
         """测试 8: 验证星铁底层行动优先级——在当前角色(知更鸟)回合内开大招召唤忆灵，长夜立即行动严格排在知更鸟之后。"""
