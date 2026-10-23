@@ -47,25 +47,25 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
         self.apply_oracle_buff()
 
     def on_action_after(self, ctx: ActionContext) -> None:
-        """施放动作后判定：若是追加攻击，则回能 12 点并刷新【谕示】。"""
-        if not self.port:
-            return
-        if getattr(ctx, "damage_tag", None) == "FollowUpAttack" or "FollowUp" in getattr(ctx, "action_id", ""):
-            err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-            self.port.gain_energy(self.owner_id, 12.0 * err)
-            self.apply_oracle_buff()
+        pass
 
     def on_action_before(self, ctx: ActionContext) -> None:
         self._fua_triggered_this_action = False
 
     def on_event(self, event: Any) -> None:
-        """监听可能产生的追击事件，确保每次追击只触发一次回能与刷新。"""
-        if getattr(event, "actor_id", "") == self.owner_id:
-            action_type = getattr(event, "action_type", "")
-            event_name = type(event).__name__
-            if ("FollowUp" in action_type or "FollowUp" in event_name) and not getattr(self, "_fua_triggered_this_action", False):
-                self._fua_triggered_this_action = True
-                if self.port:
-                    err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                    self.port.gain_energy(self.owner_id, 12.0 * err)
-                    self.apply_oracle_buff()
+        """追击事件：每次追加攻击执行时为装备者恢复 12 点能量 (受 ERR 放大) 并刷新【启示】。"""
+        from ...events import ActionExecuteEvent
+        from ...actions import ActionKind
+        if isinstance(event, ActionExecuteEvent):
+            if getattr(event, "actor_id", "") == self.owner_id:
+                action_type = getattr(event, "action_type", "")
+                if "FollowUp" in action_type or getattr(event, "action_kind", None) == ActionKind.FOLLOW_UP:
+                    if self.port:
+                        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+                        self.port.gain_energy(
+                            self.owner_id,
+                            12.0 * err,
+                            cause=f"光锥《如果时间是一朵花》追击回能 (基础 12.0 × ERR {err*100:.1f}%)",
+                            source_plugin="光锥《如果时间是一朵花》"
+                        )
+                        self.apply_oracle_buff()
