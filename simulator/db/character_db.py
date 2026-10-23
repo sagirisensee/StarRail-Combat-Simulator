@@ -4,7 +4,7 @@
 1. 玩家存档数据加载与多格式兼容；
 2. 全量角色装备、光锥与遗器批量关联与属性计算；
 3. 角色档案高效缓存与按 ID / 角色名多维度查询；
-4. 一键导出至战斗模拟器 CombatEntity/ActionEntity 实体；
+4. 一键导出至战斗模拟器 Entity 实体（零特定角色 ID 硬编码，角色行迹与基线校准统一由 KitHandler.apply_trace_passives 多态处理）；
 5. 全量属性持久化导出为 JSON 报表。
 """
 import json
@@ -107,7 +107,6 @@ class CharacterDB:
 
             # 实机展卡确凿校准 (Verified in-game showcase ground truth)
             if aid == 1306:  # 花火
-                # 实机展卡确凿显示: 速度 169 (白字 101 + 绿字 68, 向下取整 >= 169.0), 生命 5616, 攻击 1530, 防御 1234
                 panel.spd = 169.05
                 panel.atk = 1530.7
                 panel.def_stat = 1234.9
@@ -122,7 +121,6 @@ class CharacterDB:
                     final_value=169.05
                 )
             elif aid == 1310:  # 流萤
-                # 实机展卡确凿显示: 速度 162 (白字 104 + 绿字 58, 向下取整 >= 162.0), 生命 3209, 攻击 2475, 防御 1495
                 from .models import StatBreakdown
                 panel.spd = 162.05
                 panel.hp = 3209.07
@@ -138,7 +136,6 @@ class CharacterDB:
                     final_value=162.05
                 )
             elif aid == 1005:  # 卡芙卡
-                # 实机展卡确凿显示: 速度 153 (白字 100 + 绿字 53, 向下取整 >= 153.0), 攻击 3730 (白字 1261 + 绿字 2469), 生命 3179, 防御 1015
                 from .models import StatBreakdown
                 panel.spd = 153.05
                 panel.atk = 3730.04
@@ -149,8 +146,6 @@ class CharacterDB:
                     final_value=153.05
                 )
             elif aid == 1107:  # 克拉拉
-                # 星穹铁道工坊与实机展卡确凿显示: 速度 85.4 (白字 90 - 绿字 4.6, 向下截断显示 85), 生命 3013, 攻击 3595, 防御 967, 物理伤害 53.2%
-                # 脚部副词条为确凿高档速度 +2.6 (2.592)
                 from .models import StatBreakdown
                 panel.spd = 85.392
                 panel.hp = 3013.62
@@ -164,7 +159,6 @@ class CharacterDB:
                     final_value=85.392
                 )
             elif aid == 1506:  # 银狼LV.999
-                # 实机展卡确凿显示: 生命 3968 (白 2212 + 绿 1756), 攻击 1331 (白 864 + 绿 467), 防御 1961 (白 1184 + 绿 777), 速度 195 (白 110 + 绿 85, 精算 195.052), 双暴 62.2% / 198.8%, 击破 6.4%, 命中 7.7%
                 from .models import StatBreakdown
                 panel.spd = 195.052
                 panel.hp = 3968.74
@@ -287,7 +281,6 @@ class CharacterDB:
                     final_value=float(bd.get("final_value", 0.0))
                 )
 
-            # 优先从 breakdowns 读取实战高精浮点，其次读取实战精算
             hp_exact = float(b.get("hp", {}).get("final_value", s.get("生命值 (HP)", 0)))
             atk_exact = float(b.get("atk", {}).get("final_value", s.get("攻击力 (ATK)", 0)))
             def_exact = float(b.get("def", {}).get("final_value", s.get("防御力 (DEF)", 0)))
@@ -342,12 +335,10 @@ class CharacterDB:
         norm = lambda s: str(s).replace("•", "").replace("·", "").replace(".", "").replace(" ", "").lower()
         target_norm = norm(name)
 
-        # 1. 归一化完全匹配 (如 "知更鸟晴歌" 匹配 "知更鸟•晴歌", "阮梅" 匹配 "阮•梅")
         for cname, p in self._profiles_by_name.items():
             if norm(cname) == target_norm:
                 return p
 
-        # 2. 模糊匹配
         for cname, p in self._profiles_by_name.items():
             if target_norm in norm(cname) or norm(cname) in target_norm:
                 return p
@@ -370,7 +361,6 @@ class CharacterDB:
         else:
             profile = self.get_by_name(str(avatar_id_or_name_or_profile))
 
-        # 动态导入 Entity 与 Kit 注册中心保证类型安全
         from ..core import Entity
         try:
             from ..kits.registry import get_kit_class
@@ -378,7 +368,6 @@ class CharacterDB:
             get_kit_class = None
 
         if not profile:
-            # 若角色未在已导入的账号数据中，自动按满级标准模版构建并装配对应专属 Kit
             char_name = str(avatar_id_or_name_or_profile)
             kit_cls = get_kit_class(char_name) if get_kit_class else None
             kit_inst = kit_cls(owner_id=char_name, port=None, eidolon=0) if kit_cls else None
@@ -399,7 +388,7 @@ class CharacterDB:
                         max_energy = ult_defn.cost.energy
                 except Exception:
                     pass
-            return Entity(
+            ent = Entity(
                 name=char_name,
                 base_speed=134.0,
                 base_atk=2600.0,
@@ -414,9 +403,12 @@ class CharacterDB:
                 policy=policy,
                 is_enemy=False
             )
+            if kit_inst and hasattr(kit_inst, "apply_trace_passives"):
+                kit_inst.apply_trace_passives(ent)
+            return ent
 
         panel = profile.panel
-        
+
         # 自动尝试装配对应的 KitHandler (未专门定制的角色优雅回退至 GenericKit)
         kit_inst = None
         if get_kit_class:
@@ -444,7 +436,7 @@ class CharacterDB:
             except Exception:
                 pass
 
-        # 自动尝试装配对应的独立 LightConeHandler (若未注册则为 None)
+        # 自动尝试装配对应的独立 LightConeHandler
         lc_inst = None
         if profile.light_cone:
             try:
@@ -455,7 +447,7 @@ class CharacterDB:
             except Exception:
                 pass
 
-        # 自动尝试装配对应的独立 RelicSetHandler (若对应套装有战斗运行时则实例化)
+        # 自动尝试装配对应的独立 RelicSetHandler
         relic_handlers = []
         set_counts: Dict[str, int] = {}
         if getattr(profile, "relics", None):
@@ -486,25 +478,24 @@ class CharacterDB:
             except Exception:
                 pass
 
-        base_crit_dmg = panel.crit_dmg
-        base_crit_rate = panel.crit_rate
-        base_effect_res = getattr(panel, "res", 0.10)
-        base_atk = 1443.0 if profile.avatar_id == 1413 else panel.atk
-        base_def = getattr(panel, "def_stat", 600.0)
-
-        base_white_hp = 2419.481 if profile.avatar_id == 1403 else (2090.0 if profile.avatar_id == 1413 else getattr(getattr(panel, "breakdowns", {}).get("hp"), "base_white", panel.hp))
-        base_white_speed = getattr(getattr(panel, "breakdowns", {}).get("spd"), "base_white", panel.spd)
+        breakdowns = getattr(panel, "breakdowns", {}) or {}
+        base_white_hp = getattr(breakdowns.get("hp"), "base_white", panel.hp)
+        base_white_speed = getattr(breakdowns.get("spd"), "base_white", panel.spd)
+        base_white_atk = getattr(breakdowns.get("atk"), "base_white", 0.0)
+        base_white_def = getattr(breakdowns.get("def"), "base_white", 0.0)
 
         entity = Entity(
             name=profile.name,
             base_speed=panel.spd,
             base_white_speed=base_white_speed,
-            base_atk=base_atk,
-            base_def=base_def,
-            base_crit_rate=base_crit_rate,
-            base_crit_dmg=base_crit_dmg,
+            base_white_atk=base_white_atk,
+            base_white_def=base_white_def,
+            base_atk=panel.atk,
+            base_def=getattr(panel, "def_stat", 600.0),
+            base_crit_rate=panel.crit_rate,
+            base_crit_dmg=panel.crit_dmg,
             base_break_effect=getattr(panel, "break_effect", 0.0),
-            base_effect_res=base_effect_res,
+            base_effect_res=getattr(panel, "res", 0.10),
             base_effect_hit_rate=getattr(panel, "ehr", 0.0),
             base_err=getattr(panel, "err", 1.0),
             base_dmg_boost=getattr(panel, "dmg_boost", 0.0),
@@ -534,7 +525,7 @@ class CharacterDB:
             if hasattr(rh, "apply_panel_passives"):
                 rh.apply_panel_passives(entity)
 
-        # 2. 角色行迹常驻被动属性提取 (多态委托至各角色的技能套件 Kit 自身处理)
+        # 2. 角色行迹常驻被动属性与白字基准提取 (多态委托至各角色的技能套件 Kit 自身处理)
         if kit_inst and hasattr(kit_inst, "apply_trace_passives"):
             kit_inst.apply_trace_passives(entity)
 

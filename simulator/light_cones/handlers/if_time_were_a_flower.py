@@ -42,8 +42,7 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
         """进战瞬间：恢复 21 点能量 (享受 ERR 放大) 并展开【谕示】。"""
         if not self.port:
             return
-        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-        err = getattr(ent, "err", 1.0) if ent else 1.0
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 21.0 * err)
         self.apply_oracle_buff()
 
@@ -52,7 +51,8 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
         if not self.port:
             return
         if getattr(ctx, "damage_tag", None) == "FollowUpAttack" or "FollowUp" in getattr(ctx, "action_id", ""):
-            self.port.gain_energy(self.owner_id, 12.0)
+            err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+            self.port.gain_energy(self.owner_id, 12.0 * err)
             self.apply_oracle_buff()
 
     def on_action_before(self, ctx: ActionContext) -> None:
@@ -66,7 +66,6 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
             if ("FollowUp" in action_type or "FollowUp" in event_name) and not getattr(self, "_fua_triggered_this_action", False):
                 self._fua_triggered_this_action = True
                 if self.port:
-                    ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-                    err = getattr(ent, "err", 1.0) if ent else 1.0
+                    err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
                     self.port.gain_energy(self.owner_id, 12.0 * err)
                     self.apply_oracle_buff()

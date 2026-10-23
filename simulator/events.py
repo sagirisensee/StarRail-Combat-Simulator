@@ -2,8 +2,8 @@
 
 架构原则：
 1. 事件是不可变的战斗事实记录 (Immutable Facts)；
-2. 任何状态变更 (血量、SP、拉条、伤害、韧性削减、弱点击破) 都产生对应的标准事件；
-3. 支持事件总线 (EventBus) 订阅与广播。
+2. 任何状态变更 (血量、SP、拉条、伤害、治疗、护盾、韧性削减、弱点击破、召唤物退场) 都产生对应的标准事件；
+3. 支持事件总线 (EventBus) 订阅与广播，驱动角色 Kit、光锥、遗器与关卡插件解耦响应。
 """
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Type, Any
@@ -32,8 +32,9 @@ class TurnEndEvent(BattleEvent):
 class ActionExecuteEvent(BattleEvent):
     actor_id: str
     actor_name: str
-    action_type: str            # "BasicAttack", "Skill", "Ultimate", "FollowUp", "Technique"
+    action_type: str            # "BasicAttack", "Skill", "Ultimate", "FollowUpAttack", "Technique"
     description: str
+    action_kind: Any = None     # 可选 ActionKind 枚举，便于强类型判断
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class StatusApplyEvent(BattleEvent):
     target_name: str
     status_id: str
     status_name: str
-    duration: int
+    duration: Any
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,15 @@ class DamageAppliedEvent(BattleEvent):
     is_crit: bool
     breakdown: Any              # DamageBreakdown
     target_hp_left: float
+
+
+@dataclass(frozen=True)
+class HPLostEvent(BattleEvent):
+    """实体生命值降低事实事件（含受击扣血、技能自耗血、环境流血等）。"""
+    entity_name: str
+    amount: float
+    hp_left: float
+    cause: str = ""
 
 
 @dataclass(frozen=True)
@@ -135,8 +145,23 @@ class ToughnessRecoverEvent(BattleEvent):
     max_toughness: float
 
 
+@dataclass(frozen=True)
+class SpiritSummonedEvent(BattleEvent):
+    """伴生忆灵/召唤物入场事实事件。"""
+    owner_name: str
+    spirit_name: str
+
+
+@dataclass(frozen=True)
+class SpiritDespawnEvent(BattleEvent):
+    """伴生忆灵/召唤物退场消失事实事件。"""
+    owner_name: str
+    spirit_name: str
+    reason: str = ""
+
+
 class EventBus:
-    """全局战斗事件总线，负责事件发布与监听。"""
+    """全局战斗事件总线，负责事件发布与按继承树广播监听。"""
     def __init__(self):
         self._subscribers: Dict[Type[BattleEvent], List[Callable[[Any], None]]] = {}
         self.history: List[BattleEvent] = []

@@ -10,6 +10,8 @@ class ActionKind(Enum):
     ULTIMATE = auto()       # 终结技 (插队执行)
     TECHNIQUE = auto()      # 秘技 (开战前触发)
     TALENT = auto()         # 天赋/被动触发
+    FOLLOW_UP = auto()      # 追加攻击
+    MEMOSPRITE_SKILL = auto() # 忆灵技
 
 
 class TargetMode(Enum):
@@ -19,6 +21,7 @@ class TargetMode(Enum):
     SINGLE_ENEMY = auto()   # 敌方单体
     ALL_ENEMIES = auto()    # 敌方全体
     BLAST = auto()          # 扩散 (主目标 + 相邻目标)
+    BOUNCE = auto()         # 弹射
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,7 @@ class AbilityDefinition:
     allow_self: bool = True
     name: str = ""
     priority: int = 1                   # 秘技/动作准备执行优先级 (值越小越先结算，如全队增益=0, 默认=1, 领域展开=2)
+    tag: str = ""                       # 动作UI与机制分类标签 (如 "战技", "普攻", "忆灵技", "终极爆发")
 
 
 @dataclass(frozen=True)
@@ -52,3 +56,4 @@ class ActionContext:
     kind: ActionKind
     target_ids: Tuple[str, ...]         # 目标 ID 元组 (已校验)
     is_natural_turn_action: bool = True # 是否为常规自然回合动作 (终结技插队为 False)
+    damage_tag: str = ""                # 可选伤害/动作细分标签

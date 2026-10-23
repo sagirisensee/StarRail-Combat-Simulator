@@ -7,11 +7,13 @@
    - CASTER_TURN_END:   施法者自身行动结束扣减（结界类技能，如符玄穷观阵、阮·梅结界）；
 2. 属性动态计算流水线 (Modifier Pipeline)：
    - 杜绝直接原地加减数值导致的状态漂移；
-   - 每次按 基础属性 + sum(固定值加成) * (1 + sum(百分比加成)) 动态采样。
+   - 每次按 基础属性 + sum(固定值加成) + 白字基准 * sum(百分比加成) 动态采样。
+3. 语义化状态标签 (StatusTag)：
+   - 通过标签声明状态的适用范围与转化约束，彻底消除硬编码状态 ID 或名称黑名单。
 """
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 
 class DurationTiming(Enum):
@@ -37,13 +39,13 @@ class StatType(Enum):
     CRIT_RATE = "crit_rate"      # 暴击率
     CRIT_DMG = "crit_dmg"        # 暴击伤害
     DMG_BOOST = "dmg_boost"      # 增伤区
-    DEF_SHRED = "def_shred"      # 减防区
+    DEF_SHRED = "def_shred"      # 减防/无视防御区
     RES_PEN = "res_pen"          # 抗性穿透
     BREAK_EFFECT = "break_effect"# 击破特攻
     BREAK_EFFICIENCY = "break_eff"# 击破效率
     ELATION = "elation"          # 欢愉伤害/度
-    DEF_BASE = 'def_base'
-    DEF = 'def'
+    DEF_BASE = "def_base"
+    DEF = "def"
     DEF_PERCENT = "def_pct"      # 防御力百分比
     MAX_HP_PERCENT = "max_hp_pct"# 生命上限百分比
     EFFECT_RES = "effect_res"    # 效果抵抗
@@ -60,7 +62,7 @@ class StatType(Enum):
 
 class ModifierOp(Enum):
     ADD = auto()                 # 加算 (如 +12% 暴击率, +10 速度)
-    PERCENT = auto()             # 百分比算
+    PERCENT = auto()             # 百分比算 (基于白字属性)
 
 
 @dataclass
@@ -74,6 +76,7 @@ class StatusTag:
     """状态元数据语义标签（用于通用过滤与属性转化隔离，杜绝硬编码状态ID）。"""
     EXCLUDE_FROM_STAT_TRANSFERS = "exclude_from_stat_transfers"  # 排除属性二次转化/分享 (防自循环)
     MEMOSPRITE_ONLY = "memosprite_only"                          # 伴生忆灵专享
+    CHARACTER_ONLY = "character_only"                            # 仅角色本体专享 (不继承/不投影至伴生忆灵)
     AURA_SHARED = "aura_shared"                                  # 全队共享光环
 
 
@@ -108,8 +111,28 @@ class StatusManager:
         # entity_name -> list of StatusInstance
         self.statuses: Dict[str, List[StatusInstance]] = {}
 
-    def get_statuses(self, entity_name: str) -> List[StatusInstance]:
-        return self.statuses.get(entity_name, [])
+    def get_statuses(
+        self,
+        entity_name: str,
+        *,
+        category: Optional[str] = None,
+        include_tags: Tuple[str, ...] = (),
+        exclude_tags: Tuple[str, ...] = ()
+    ) -> List[StatusInstance]:
+        raw = self.statuses.get(entity_name, [])
+        if not category and not include_tags and not exclude_tags:
+            return raw
+        result = []
+        for s in raw:
+            if category is not None and getattr(s, "category", "buff") != category:
+                continue
+            s_tags = getattr(s, "tags", ())
+            if include_tags and not any(t in s_tags for t in include_tags):
+                continue
+            if exclude_tags and any(t in s_tags for t in exclude_tags):
+                continue
+            result.append(s)
+        return result
 
     def get_status(self, entity_name: str, status_id: str) -> Optional[StatusInstance]:
         """获取目标指定 ID 的状态实例。"""
@@ -123,9 +146,7 @@ class StatusManager:
 
         existing = next((s for s in self.statuses[target_name] if s.id == status.id), None)
         if existing:
-            # 策略分支
             if status.stack_policy == StackPolicy.REPLACE:
-                # 覆盖最新数值（如重放战技更新暴伤采样值）
                 existing.modifiers = list(status.modifiers)
                 existing.duration = status.duration if status.duration is not None else existing.duration
                 existing.stacks = min(existing.max_stacks, max(existing.stacks, status.stacks))
@@ -186,7 +207,6 @@ class StatusManager:
             active = []
             for s in status_list:
                 if condition(s):
-                    # 如果标记了跳过当前生效时钟（如本行动刚刚施加的自身速度Buff）
                     if s.skip_current_clock:
                         s.skip_current_clock = False
                         active.append(s)
@@ -206,13 +226,23 @@ class StatusManager:
                 active.append(s)
             self.statuses[target_name] = active
 
-    def calculate_stat(self, entity_name: str, base_val: float, stat_type: StatType, white_base: float = 0.0) -> float:
-        """动态计算指定属性的加成总值。
+    def calculate_stat(
+        self,
+        entity_name: str,
+        base_val: float,
+        stat_type: StatType,
+        white_base: float = 0.0,
+        *,
+        exclude_tags: Tuple[str, ...] = (),
+        exclude_ids: Tuple[str, ...] = ()
+    ) -> float:
+        """动态计算指定属性的加成总值（支持按语义标签或状态 ID 排除以防自循环转化）。
         
         符合星铁官方属性计算公式：
         - 攻击力 ATK = 战前攻击力 + 基础白字攻击 * 攻击力%总和 + 固定攻击力总和
         - 速度 SPD   = 战前速度 + 基础白字速度 * 速度%总和 + 固定速度总和
         - 防御力 DEF = 战前防御力 + 基础白字防御 * 防御力%总和 + 固定防御力总和
+        - 生命上限 HP = 战前生命上限 + 基础白字生命 * 生命%总和 + 固定生命总和
         - 暴击/暴伤/增伤/抗穿/易伤/治疗量 = 基础值 + 加成数值总和
         """
         if white_base <= 0.0 and self.simulator:
@@ -222,13 +252,17 @@ class StatusManager:
                     white_base = getattr(ent, "base_white_speed", 0.0)
                 elif stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
                     white_base = getattr(ent, "base_white_atk", 0.0)
-                elif stat_type == StatType.DEF_PERCENT:
+                elif stat_type in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE):
                     white_base = getattr(ent, "base_white_def", 0.0)
+                elif stat_type == StatType.MAX_HP_PERCENT:
+                    white_base = getattr(ent, "base_white_hp", 0.0)
 
         flat_sum = 0.0
         pct_sum = 0.0
 
-        for status in self.get_statuses(entity_name):
+        for status in self.get_statuses(entity_name, exclude_tags=exclude_tags):
+            if exclude_ids and status.id in exclude_ids:
+                continue
             for mod in status.modifiers:
                 # 攻击力属性统一聚合 (包含 ATK_BASE, ATK_PERCENT, ATK)
                 if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
@@ -251,12 +285,23 @@ class StatusManager:
                         pct_sum += total_mod_val
 
                 # 防御属性统一聚合
-                elif stat_type in (StatType.DEF_PERCENT,) and mod.stat in (StatType.DEF_PERCENT,):
+                elif stat_type in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE) and mod.stat in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE):
                     total_mod_val = mod.value * status.stacks
                     if mod.op == ModifierOp.ADD:
                         pct_sum += total_mod_val
                     elif mod.op == ModifierOp.PERCENT:
                         pct_sum += total_mod_val
+
+                # 生命上限统一聚合 (支持百分比与固定数值)
+                elif stat_type == StatType.MAX_HP_PERCENT and mod.stat == StatType.MAX_HP_PERCENT:
+                    total_mod_val = mod.value * status.stacks
+                    if mod.op == ModifierOp.PERCENT:
+                        pct_sum += total_mod_val
+                    elif mod.op == ModifierOp.ADD:
+                        if total_mod_val > 1.0:
+                            flat_sum += total_mod_val
+                        else:
+                            pct_sum += total_mod_val
 
                 # 其他属性 (CRIT_RATE, CRIT_DMG, DMG_BOOST, RES_PEN, VULNERABILITY 等)
                 elif mod.stat == stat_type:
@@ -275,8 +320,13 @@ class StatusManager:
         elif stat_type == StatType.MAX_HP_PERCENT:
             eff_base = white_base if white_base > 0 else base_val
             return base_val + (eff_base * pct_sum) + flat_sum
-        elif stat_type in (StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST, StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT, StatType.DEF_SHRED, StatType.OUTGOING_HEALING):
-            return base_val + flat_sum
+        elif stat_type in (
+            StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST,
+            StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT,
+            StatType.DEF_SHRED, StatType.OUTGOING_HEALING, StatType.EFFECT_RES,
+            StatType.EHR, StatType.ERR
+        ):
+            return base_val + flat_sum + pct_sum
 
         return (base_val + flat_sum) * (1.0 + pct_sum)
 
@@ -316,23 +366,8 @@ class StatusManager:
         base_max_hp = getattr(entity, "max_hp", 0.0)
         cur_max_hp = base_max_hp
         if base_max_hp != float("inf") and base_max_hp > 0:
-            white_hp = getattr(entity, "base_white_hp", 0.0)
-            if white_hp <= 0:
-                white_hp = 2419.481 if getattr(entity, "avatar_id", 0) == 1403 else base_max_hp
-            hp_pct_sum = 0.0
-            hp_flat_sum = 0.0
-            for status in self.get_statuses(name):
-                for mod in status.modifiers:
-                    if mod.stat == StatType.MAX_HP_PERCENT:
-                        val = mod.value * status.stacks
-                        if mod.op == ModifierOp.PERCENT:
-                            hp_pct_sum += val
-                        elif mod.op == ModifierOp.ADD:
-                            if val > 1.0:
-                                hp_flat_sum += val
-                            else:
-                                hp_pct_sum += val
-            cur_max_hp = base_max_hp + (white_hp * hp_pct_sum) + hp_flat_sum
+            white_hp = getattr(entity, "base_white_hp", 0.0) or base_max_hp
+            cur_max_hp = self.calculate_stat(name, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp)
         cur_hp = entity.current_hp + (cur_max_hp - base_max_hp) if (entity.current_hp > 0 and base_max_hp != float("inf")) else entity.current_hp
 
         # Buff 详情列表

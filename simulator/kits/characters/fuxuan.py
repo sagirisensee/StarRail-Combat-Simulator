@@ -4,7 +4,7 @@
 1. 普攻【始击岁星】：单体量子属性伤害，等同符玄 70% (Lv 10) 生命上限，削韧 10，回能 20，回 1 SP。HP 缩放 (scaling_stat="hp")。
 2. 战技【太微行棋，灵台示影】：消耗 1 点 SP，开启【穷观阵】3 回合 (符玄每回合开始时持续回合数减 1)。
    【穷观阵】期间：
-   - 队友受到伤害的 65% 分摊给符玄；
+   - 队友受到伤害的 65% 分摊给符玄（通过 `intercept_incoming_damage` 协议钩子实现，引擎核心零耦合）；
    - 我方全体生命上限提高 6% (Lv 10) 符玄生命，暴击率提高 12% (Lv 10)；
    - E1【司危】：处于【穷观阵】时，暴击伤害提高 30%；
    - 回能 30。
@@ -66,6 +66,27 @@ class FuXuanKit(KitHandler):
                 category="buff",
                 description=f"受到的伤害降低 {dmg_red * 100:.1f}%"
             ))
+
+    def intercept_incoming_damage(self, target_id: str, raw_damage: float) -> float:
+        """穷观阵分摊协议钩子：若受击队友持有【穷观阵】且不是符玄自身，分摊 65% 伤害。"""
+        if target_id == self.owner_id or not self.port:
+            return raw_damage
+        if not self.port.has_status(target_id, self.MATRIX_BUFF):
+            return raw_damage
+        shared_dmg = raw_damage * 0.65
+        remaining_dmg = raw_damage * 0.35
+        self.port.lose_hp(self.owner_id, shared_dmg, cause="fuxuan_matrix_share")
+        if self.eidolon >= 4:
+            self.port.gain_energy(self.owner_id, 5.0)
+        return remaining_dmg
+
+    def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
+        """天赋【乾清坤夷，否极泰来】：自身生命比例 <= 50% 且拥有翻转次数时，立即回血。"""
+        if entity_id == self.owner_id and self.hp_reversals > 0 and self.port:
+            if self.port.hp_ratio(self.owner_id) <= 0.50:
+                self.hp_reversals -= 1
+                heal_ratio = self.skill_param("talent", 1, default=0.85)
+                self.port.heal(self.owner_id, self.owner_id, self.port.max_hp(self.owner_id) * heal_ratio)
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:

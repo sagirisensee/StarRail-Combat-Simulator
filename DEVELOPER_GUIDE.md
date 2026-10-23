@@ -3,42 +3,44 @@
 > **致新加入的工程师与 Coding Agent**：  
 > 本项目是一套高精度、完全解耦的《崩坏：星穹铁道》回合制战斗模拟器。  
 > 为了杜绝“随手写硬编码、换个名字就报错、跨模块强耦合”的技术负债，**本项目所有后续代码研发、重构与排障必须严格遵循本说明书中的公式化规范**。  
-> 若未来因官方机制更新需调整规范，必须**同步更新本说明书**。
+> 新人开发新角色、新光锥或新遗器时，请直接复制各目录下的 `_template.py` 标准脚手架，配合 `@register_*` 装饰器实现**零中心文件修改**的即插即用开发。
 
 ---
 
-## 一、 核心架构图谱与系统拓扑
+## 一、 核心架构图谱与四层解耦拓扑
 
-战斗引擎采用 **微内核 + 插件化协议** 架构。核心调度器不感知任何具体的角色名、技能名或关卡机制名。
+战斗引擎采用 **微内核 + 窄接口契约 (`CombatPort`) + 事实事件总线 (`EventBus`) + 装饰器插件自注册** 架构。核心调度器不感知任何具体的角色名、技能名、光锥名或关卡机制名。
 
 ```mermaid
 flowchart TD
-    subgraph 引擎核心层 ["1. 引擎调度微内核 (Engine Core)"]
+    subgraph 引擎核心层 ["1. 引擎调度微内核 (Engine Microkernel)"]
         TS["TurnSimulator (核心调度引擎)\n- AV跑道调度与行动轮次\n- 战技点SP池管理\n- 纯生命周期钩子分发"]
-        EB["EventBus (战斗事件总线)\n- 发布 TurnBegin / ActionExecute\n- 发布 HealApplied / ShieldApplied"]
-        SM["StatusManager (状态管理器)\n- 状态时钟精准结算\n- 属性修改器汇算流水线"]
+        ER["EffectResolver (事务结算器)\n- 伤害/削韧/推拉条队列结算\n- 调用多态 intercept_incoming_damage"]
+        EB["EventBus (战斗事实事件总线)\n- TurnBegin / ActionExecute\n- HealApplied / ShieldApplied\n- HPLost / SpiritSummoned / SpiritDespawn"]
+        SM["StatusManager (状态与属性管线)\n- 状态时钟精准结算\n- 支持 StatusTag 语义过滤的动态属性计算"]
     end
 
-    subgraph 协议隔离层 ["2. 基础设施契约 (Port & Protocols)"]
-        CP["CombatPort (安全基础设施契约)\n- 实体身份判定: is_ally(), is_memosprite()\n- 从属关系: is_own_memosprite()\n- 动作指令: attack(), heal(), lose_hp()"]
+    subgraph 协议隔离层 ["2. 基础设施窄接口契约 (Port & Protocols)"]
+        CP["CombatPort (安全窄接口契约)\n- 阵营与从属: is_ally(), is_own_memosprite(), count_allies_by_path()\n- 属性采样: stat(exclude_tags=...), white_stat(), current_hp(), max_hp()\n- 状态查询: statuses(include_tags=..., exclude_tags=...), upsert_status()\n- 动作指令: attack(), heal(), lose_hp(), advance(), summon_spirit()"]
         SMP["StageMechanicPlugin (关卡插件契约)\n- on_battle_start()\n- on_turn_begin()\n- on_entity_summoned()"]
-        TAG["StatusTag (语义标签体系)\n- EXCLUDE_FROM_STAT_TRANSFERS\n- MEMOSPRITE_ONLY\n- AURA_SHARED"]
+        TAG["StatusTag (语义标签体系)\n- EXCLUDE_FROM_STAT_TRANSFERS (防自循环)\n- MEMOSPRITE_ONLY (忆灵专享)\n- CHARACTER_ONLY (仅角色专享)\n- AURA_SHARED (全队光环)"]
     end
 
-    subgraph 业务插件层 ["3. 业务插件层 (Pluggable Business Logic)"]
-        KH["KitHandler (角色/忆灵套件)\n- 声明式 priority 出招优先级\n- 官方数据驱动 skill_param\n- 事件响应 on_event"]
-        LCH["LightConeHandler (光锥插件)"]
-        RH["RelicSetHandler (遗器插件)"]
-        SMR["StageMechanicRegistry (关卡机制注册中心)\n- BloodDevourMechanicPlugin (血噬/流血)\n- 自定义关卡环境插件"]
+    subgraph 业务插件层 ["3. 即插即用业务插件层 (Auto-Discovered Plugins)"]
+        KH["KitHandler (@register_kit)\n- simulator/kits/characters/_template.py"]
+        LCH["LightConeHandler (@register_light_cone)\n- simulator/light_cones/handlers/_template.py"]
+        RH["RelicSetHandler (@register_relic_set)\n- simulator/relics/handlers/_template.py"]
+        SMR["StageMechanicRegistry (@register_stage_mechanic)\n- simulator/stage_mechanics.py"]
     end
 
     TS <--> CP
+    TS <--> ER
     TS --> EB
     TS <--> SM
-    EB -->|广播事实事件| KH & LCH & RH & SMR
-    CP <-->|窄接口调用| KH & LCH & RH
+    EB -->|广播不可变事实事件| KH & LCH & RH & SMR
+    CP <-->|窄接口安全调用| KH & LCH & RH
+    ER <-->|多态伤害分摊钩子| KH
     TS <-->|生命周期回调| SMP
-    SMR -->|实例化插件| SMP
     SM <-->|元数据过滤| TAG
 ```
 
@@ -48,308 +50,127 @@ flowchart TD
 
 任何提交的代码若违反以下任意一条，均视为**不合格代码**，必须立即打回重构：
 
-### ❌ 戒律 1：严禁在核心引擎 (`core.py`) 中硬编码任何具体玩法名或数值
+### ❌ 戒律 1：严禁在核心引擎 (`core.py`, `effects.py`, `status.py`, `character_db.py`) 中硬编码任何角色名、技能名或专属机制
 * **错误反例**：
   ```python
-  # ❌ 绝不允许：核心引擎直接感知关卡名称 "血" 或写死 500.0 魔数
-  if hasattr(self, "stage_mechanics") and any("血" in m for m in self.stage_mechanics):
-      self.port.lose_hp(active_entity.name, 500.0, cause="stage_mechanic_bleed")
-  if "花火" in e.name:
-      self.port.set_sp_cap(7)
+  # ❌ 绝不允许：在 effects.py 中直接写死 "符玄" 分摊伤害，或在 core.py 中写死 "迷梦" 技能名
+  if "符玄" in e.name and self.simulator.status_mgr.has_status(target.name, "FuXuan_Matrix"):
+      shared_dmg = raw_dmg * 0.65
   ```
 * **正确规范**：
-  所有关卡环境逻辑必须封装在 [`StageMechanicPlugin`](file:///Users/yunkaichen/Downloads/starrail/simulator/stage_mechanics.py#L12) 插件中；角色被动通过角色 Kit 的契约方法动态读取：
+  所有角色专属机制必须通过 [`KitHandler`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/base.py) 的标准多态扩展钩子实现（如伤害分摊使用 `intercept_incoming_damage`，战前白字校准使用 `apply_trace_passives`，动作分类标签使用 `AbilityDefinition.tag`）：
   ```python
-  # ✅ 正确做法：核心引擎仅通过插件协议与 Kit 协议调度
-  for plugin in self.stage_plugins:
-      plugin.on_turn_begin(active_entity, self)
-  if getattr(e, "kit", None) and hasattr(e.kit, "get_initial_sp_cap"):
-      self.port.set_sp_cap(e.kit.get_initial_sp_cap())
+  # ✅ 正确做法：effects.py 仅调用多态协议钩子，具体分摊逻辑封装在 FuXuanKit.intercept_incoming_damage 中
+  for ent in list(self.simulator.entities):
+      if ent.kit:
+          raw_dmg = ent.kit.intercept_incoming_damage(target.name, raw_dmg)
   ```
 
 ---
 
-### ❌ 戒律 2：严禁在属性汇算中使用硬编码状态 ID 黑名单
+### ❌ 戒律 2：严禁插件跨层访问 `self.port.sim` 或 `self.port._get_entity`，严禁角色 Kit 直接调用光锥/遗器内部方法
 * **错误反例**：
   ```python
-  # ❌ 绝不允许：靠 ID 黑名单排除跨角色/跨忆灵状态，新增一个装备就会崩漏
-  if s.id in ("LC_IfTimeWereAFlower_Oracle", "Relic_Valkyrie_CritDmg_长夜", "Robin_Talent_TonalChord_长夜"):
+  # ❌ 绝不允许：角色 Kit 直接伸手去拿内部 Entity 并强行调用特定光锥的方法
+  ent = self.port._get_entity(self.owner_id)
+  if ent and hasattr(ent.light_cone, "trigger_flower_buff"):
+      ent.light_cone.trigger_flower_buff()
+  ```
+* **正确规范**：
+  角色 Kit 只管调用 `self.port.lose_hp(...)`，引擎会自动在 `EventBus` 上广播 [`HPLostEvent`](file:///Users/yunkaichen/Downloads/starrail/simulator/events.py)；光锥通过 `on_event` 独立监听 `HPLostEvent` 或 `SpiritDespawnEvent`：
+  ```python
+  # ✅ 正确做法：光锥通过 EventBus 监听 HPLostEvent，与角色 Kit 100% 解耦
+  def on_event(self, event: Any) -> None:
+      if isinstance(event, HPLostEvent):
+          if event.entity_name == self.owner_id or self.port.is_own_memosprite(self.owner_id, event.entity_name):
+              self.trigger_flower_buff()
+  ```
+
+---
+
+### ❌ 戒律 3：严禁在属性汇算或状态过滤中使用硬编码状态 ID / 名称黑名单
+* **错误反例**：
+  ```python
+  # ❌ 绝不允许：靠状态 ID 或名称黑名单排除状态
+  if s.id in ("Changyeyue_Skill_SharedCritDmg", "Robin_Talent_TonalChord_长夜") or "好忙好忙" in s.name:
       continue
   ```
 * **正确规范**：
-  在 Buff 生成时打上 [`StatusTag`](file:///Users/yunkaichen/Downloads/starrail/simulator/status.py#L73) 语义标签，汇算逻辑依据标签通用过滤：
+  在挂载状态时打上 [`StatusTag`](file:///Users/yunkaichen/Downloads/starrail/simulator/status.py) 语义标签（`EXCLUDE_FROM_STAT_TRANSFERS`、`MEMOSPRITE_ONLY`、`CHARACTER_ONLY`），查询时直接通过 `self.port.stat(..., exclude_tags=...)` 或 `self.port.statuses(..., exclude_tags=...)` 过滤：
   ```python
-  # ✅ 正确做法：基于语义标签解耦过滤
-  from ...status import StatusTag
-  if StatusTag.EXCLUDE_FROM_STAT_TRANSFERS in s.tags or StatusTag.MEMOSPRITE_ONLY in s.tags:
-      continue
+  # ✅ 正确做法：基于语义标签一行完成安全采样
+  own_cd = self.port.stat(
+      self.owner_id,
+      StatType.CRIT_DMG,
+      exclude_tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS, StatusTag.MEMOSPRITE_ONLY)
+  )
   ```
 
 ---
 
-### ❌ 戒律 3：严禁依靠技能名称或描述的字符串模糊匹配触发机制
+### ❌ 戒律 4：严禁依靠技能名称字符串模糊匹配触发事件，严禁对实体从属关系使用名字等值硬编码
 * **错误反例**：
   ```python
-  # ❌ 绝不允许：靠汉字子串判断技能是否是治疗/护盾
-  if "天气正好" in event.technique_name or "治" in event.technique_name or "盾" in event.technique_name:
-      self.gain_vibes(1)
-  ```
-* **正确规范**：
-  底层行为发生时发布标准领域事实事件（如 [`HealAppliedEvent`](file:///Users/yunkaichen/Downloads/starrail/simulator/events.py#L100)、[`ShieldAppliedEvent`](file:///Users/yunkaichen/Downloads/starrail/simulator/events.py#L107)），上层 Kit 仅监听事实事件：
-  ```python
-  # ✅ 正确做法：监听标准领域事实事件
-  from ...events import HealAppliedEvent
-  if isinstance(event, HealAppliedEvent):
-      if self.port.is_ally(event.source_name) and event.source_name != self.owner_id:
-          self.gain_vibes(1)
-  ```
-
----
-
-### ❌ 戒律 4：严禁对实体从属关系使用字符串等值硬编码
-* **错误反例**：
-  ```python
-  # ❌ 绝不允许：写死具体忆灵名字 "长夜"，导致改名或新增忆灵时失效
-  if entity_id == "长夜" or "长夜" in actor_name:
+  # ❌ 绝不允许：靠汉字子串判断技能类型或写死忆灵名字
+  if "治" in event.technique_name or entity_id == "长夜":
       ...
   ```
 * **正确规范**：
-  必须调用 [`CombatPort`](file:///Users/yunkaichen/Downloads/starrail/simulator/combat_port.py#L23) 面向对象的查询方法：
-  ```python
-  # ✅ 正确做法：面向对象判定从属与身份
-  if self.port.is_own_memosprite(self.owner_id, entity_id):
-      ...
-  if self.port.is_ally(actor_name):
-      ...
-  ```
+  统一监听强类型 `BattleEvent` 子类（`HealAppliedEvent`, `ShieldAppliedEvent`, `HPLostEvent`, `ActionExecuteEvent`），并调用 `self.port.is_own_memosprite(self.owner_id, entity_id)` 或 `self.port.count_allies_by_path(self.owner_id, "Remembrance")`。
 
 ---
 
 ### ❌ 戒律 5：严禁在快照与测试中篡改状态名称或伪造断言
-* **错误反例**：
-  ```python
-  # ❌ 绝不允许：为了迎合测试拼写错误而在业务代码中强行偷换名称
-  if name == "血噬":
-      name = "血嗜"
-  other_effects = other_effects if other_effects else ["血嗜"]
+* 状态管理器中是什么名字，快照就客观反映什么名字；测试用例动态断言 `STAGE_CONFIG["mechanics"]`。
+
+---
+
+## 三、 插件标准扩展钩子总表 (Extension Hooks Reference)
+
+### 1. 角色与伴生忆灵套件 (`KitHandler` - [`simulator/kits/base.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/base.py))
+
+| 钩子方法 | 触发时机与职责 | 是否必填 | 典型应用场景 |
+| :--- | :--- | :---: | :--- |
+| `definition(kind)` | 声明普攻/战技/终结技/秘技的目标模式、SP/能量消耗、秘技 `priority` 与显示 `tag` | **必填** | 所有角色与忆灵 |
+| `execute(ctx)` | 执行具体动作逻辑（调用 `self.port.attack` / `heal` / `upsert_status` 等） | **必填** | 所有角色与忆灵 |
+| `apply_trace_passives(entity)` | 战前静态组装阶段：注入行迹常驻属性或校准角色基础白字 | 可选 | 风堇暴击/抵抗行迹、长夜月/缇宝白字校准 |
+| `get_initial_sp_cap()` | 进战前修改全队战技点上限 | 可选 | 花火天赋（SP 上限提升至 7/8 点） |
+| `on_battle_start()` | 进战时激活常驻光环、进战回能、自动召唤伴生忆灵 | 可选 | 长夜月召唤长夜、缇宝进战回能 |
+| `on_event(event)` | 响应 `EventBus` 广播的领域事件 (`ActionExecuteEvent`, `HealAppliedEvent` 等) | 可选 | 知更鸟晴歌攒气氛值、缇宝队友大招追击 |
+| `on_hp_lost(entity_id, loss, cause)` | 场上实体损失生命值时回调 | 可选 | 长夜月扣血攒忆质、符玄半血翻转回血、风堇E2提速 |
+| `intercept_incoming_damage(target_id, raw_dmg)` | 伤害结算前拦截/分摊伤害，返回目标实际承受伤害 | 可选 | 符玄穷观阵分摊队友 65% 伤害 |
+| `can_cast_ultimate(entity)` / `consume_ultimate_cost(entity)` | 自定义特殊大招充能就绪条件与扣除逻辑 | 可选 | 黄泉残梦层数、飞霄飞黄点 |
+| `get_memosprite_snapshot()` | 返回伴生忆灵独立实时战斗面板快照 | 可选 | 长夜月伴生忆灵「长夜」状态透析 |
+
+---
+
+## 四、 新人 3 分钟即插即用开发 SOP
+
+### SOP 1：新增一个角色技能套件 (`@register_kit`)
+1. 复制模板文件 [`simulator/kits/characters/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/characters/_template.py) 为 `simulator/kits/characters/<char_pinyin>.py`；
+2. 在类定义上方添加 `@register_kit("<avatar_id>", "<中文名>", "<english_name>")`；
+3. 实现 `definition()` 与 `execute()`，所有技能倍率通过 `self.skill_param("basic"|"skill"|"ultra"|"talent", index, default=...)` 读取；
+4. **无需修改 `registry.py`**，直接通过 `db.to_combat_entity("<中文名>")` 即可加载并参战！
+
+### SOP 2：新增一个专属光锥 (`@register_light_cone`)
+1. 复制模板文件 [`simulator/light_cones/handlers/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/light_cones/handlers/_template.py) 为 `simulator/light_cones/handlers/<lc_name>.py`；
+2. 添加装饰器 `@register_light_cone(cone_id="...", name="...", path="...", aliases=(...))`；
+3. 使用 `self.scale(VALUES_TUPLE)` 读取 S1~S5 叠影数值，在 `on_battle_start` / `on_action_after` / `on_event` 中通过 `self.port.upsert_status(BuffSpec(...))` 挂载效果（注意：攻击者身上的无视防御同样使用 `StatType.DEF_SHRED`，伤害引擎会自动将攻击者无视防御与敌方减防相加）。
+
+### SOP 3：新增一个遗器套装 (`@register_relic_set`) 或关卡机制 (`@register_stage_mechanic`)
+* **遗器套装**：复制 [`simulator/relics/handlers/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/relics/handlers/_template.py)，加上 `@register_relic_set(set_id=..., name=..., set_type="cavern"|"planar")`。
+* **关卡机制**：在 [`simulator/stage_mechanics.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/stage_mechanics.py) 中定义插件类并加上 `@register_stage_mechanic("机制名", "别名")`。
+
+---
+
+## 五、 架构自审必查清单 (Pre-Commit Checklist)
+
+在每次编写完毕、准备提交 Git 之前，**必须逐条自问自答并执行测试命令**：
+
+- [ ] **1. Core 纯洁性**：检查 `simulator/core.py`、`simulator/effects.py`、`simulator/status.py`、`simulator/db/character_db.py` 是否有新增任何特定角色名、技能名或角色 ID 判断？（**必须为 0**）
+- [ ] **2. 窄接口合规性**：新增的 Kit / 光锥 / 遗器是否只调用了 `self.port.*` 契约方法，没有任何 `self.port.sim` 或 `self.port._get_entity` 跨层调用？（**必须为 0**）
+- [ ] **3. 事件与标签解耦**：是否有使用中文子串匹配技能或写死状态 ID 黑名单？是否全部替换为 `BattleEvent` 派生类与 `StatusTag`？
+- [ ] **4. 全量测试绿灯**：在项目根目录运行以下命令是否 **100% 全部通过**？
+  ```bash
+  python3 -m unittest discover -s simulator -t . -p "test_*.py" -v
   ```
-* **正确规范**：
-  状态管理器中是什么名字，快照就客观反映什么名字；测试用例动态断言 `STAGE_CONFIG["mechanics"]`，严禁伪造测试断言。
-
----
-
-## 三、 公式化开发作业程序 (SOP)
-
----
-
-### SOP 1：如何编写一个新角色技能套件 (KitHandler)
-
-新建文件路径：`simulator/kits/characters/<character_pinyin>.py`  
-**直接套用以下标准骨架模板**：
-
-```python
-"""<角色名> (<英文名> - ID <avatar_id>, <属性> / <命途>) 标准战斗技能套件。"""
-from typing import Optional, Any
-from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
-from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
-
-
-class ExampleCharacterKit(KitHandler):
-    def __init__(self, owner_id: str, port: CombatPort, *, eidolon: int = 0, skill_levels: Optional[dict] = None):
-        super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
-        # 1. 角色私有状态字段
-
-    def definition(self, kind: ActionKind) -> AbilityDefinition:
-        """声明技能模式、消耗与秘技优先级 (全队增益=0, 默认=1, 结界/领域=2)。"""
-        if kind == ActionKind.BASIC:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="普攻名称")
-        elif kind == ActionKind.SKILL:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost(sp=1), name="战技名称")
-        elif kind == ActionKind.ULTIMATE:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(energy=120.0), name="终结技名称")
-        elif kind == ActionKind.TECHNIQUE:
-            # 必须显式声明 priority：全队增益/治疗设为 0，领域展开设为 2
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost(technique_points=1), name="秘技名称", priority=0)
-        raise ValueError(f"未支持的动作类型: {kind}")
-
-    def on_battle_start(self) -> None:
-        """进战常态被动与行迹光环注入。"""
-        # 严禁写死数值！必须通过 self.skill_param 读取官方数据驱动参数
-        boost_val = self.skill_param("talent", 0, default=0.20)
-        self.port.upsert_status(BuffSpec(
-            key=f"{self.owner_id}_Talent_Aura",
-            name="天赋光环",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.ATK_PERCENT, ModifierOp.PERCENT, boost_val),),
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff"
-        ))
-
-    def execute(self, ctx: ActionContext) -> None:
-        """动作具体执行分发。"""
-        if ctx.kind == ActionKind.BASIC:
-            dmg_pct = self.skill_param("normal", 0, default=1.0)
-            self.port.attack(self.owner_id, ctx.target_ids[0], element="Wind", atk_multiplier=dmg_pct, toughness_damage=10.0)
-            self.port.gain_energy(self.owner_id, 20.0)
-        # 其余分支同理...
-
-    def on_event(self, event: Any) -> None:
-        """通过标准事件监听我方行为，绝不使用中文字符串匹配。"""
-        from ...events import ActionExecuteEvent, HealAppliedEvent
-        if isinstance(event, HealAppliedEvent):
-            if self.port.is_ally(event.source_name) and event.source_name != self.owner_id:
-                # 响应我方治疗
-                pass
-```
-
----
-
-### SOP 2：如何实现伴生忆灵 / 召唤物 (Memosprite)
-
-召唤物不是普通实体，必须与召唤者建立明确的主从契约：
-
-```python
-# 1. 召唤注册：必须通过 self.port.summon_spirit
-spirit = self.port.summon_spirit(
-    owner_id=self.owner_id,
-    name=self.spirit_name,           # 使用 Kit 内部字段 self.spirit_name，严禁到处硬编码字面量
-    base_speed=160.0,                # 显式传入实机速度
-    max_hp=self.spirit_max_hp,       # 显式传入动态计算的生命上限
-    kit_class=MemospriteKitClass,    # 绑定独立的忆灵 KitHandler
-    kit_args={"master_kit": self}
-)
-
-# 2. 标记从属元数据
-spirit.is_memosprite = True
-spirit.master_name = self.owner_id
-
-# 3. 忆灵专属状态打标：必须挂载 StatusTag 语义标签，防自循环与防污染本体
-from ...status import StatusTag
-self.port.upsert_status(BuffSpec(
-    key=f"{self.owner_id}_Skill_SharedCritDmg_Spirit",
-    name="白昼悄然离去",
-    source_id=self.owner_id,
-    target_id=self.spirit_name,
-    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
-    duration=2,
-    timing=DurationTiming.TARGET_TURN_START,
-    category="buff",
-    tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS)
-))
-```
-
----
-
-### SOP 3：如何开发/接入一个新的关卡环境机制 (StageMechanicPlugin)
-
-新建机制无需改动 `TurnSimulator`，在 [`simulator/stage_mechanics.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/stage_mechanics.py) 中定义插件并注册：
-
-```python
-from .stage_mechanics import StageMechanicPlugin, StageMechanicRegistry
-from .status import StatusInstance, DurationTiming
-
-# 1. 实现 StageMechanicPlugin 协议
-class CustomHazardMechanicPlugin:
-    def __init__(self, name: str = "深空辐射", hazard_value: float = 300.0):
-        self.name = name
-        self.hazard_value = hazard_value
-
-    def on_battle_start(self, sim: Any) -> None:
-        """进战为全场挂载机制标识。"""
-        for e in sim.entities:
-            sim.status_mgr.add_status(StatusInstance(
-                id=f"Stage_Mechanic_{self.name}_{e.name}",
-                name=self.name,
-                source=e,
-                target=e,
-                duration=None,
-                timing=DurationTiming.TARGET_TURN_END,
-                modifiers=[],
-                category="other",
-                description="自定义关卡环境机制"
-            ))
-
-    def on_turn_begin(self, active_entity: Any, sim: Any) -> None:
-        """回合开始环境响应。"""
-        if not active_entity.is_enemy:
-            sim.port.lose_hp(active_entity.name, self.hazard_value, cause="custom_hazard_turn")
-
-    def on_entity_summoned(self, entity: Any, sim: Any) -> None:
-        """召唤物入场环境响应。"""
-        sim.port.lose_hp(entity.name, self.hazard_value, cause="custom_hazard_summon")
-
-
-# 2. 注册到 StageMechanicRegistry (支持中英文别名)
-StageMechanicRegistry.register("深空辐射", CustomHazardMechanicPlugin)
-StageMechanicRegistry.register("SpaceRadiation", CustomHazardMechanicPlugin)
-```
-
-使用时，直接在关卡配置中指定名称即可：
-```python
-STAGE_CONFIG = {
-    "mechanics": ["深空辐射"],  # 换名字即插即用，内核零改动！
-    ...
-}
-```
-
----
-
-### SOP 4：状态管理器与 Buff 挂载标准 (BuffSpec & StatusTag)
-
-挂载状态时必须明确生命周期时钟与语义标签：
-
-| 字段 | 推荐配置 | 语义含义 |
-| :--- | :--- | :--- |
-| `timing` | `DurationTiming.TARGET_TURN_END` | 目标自身行动结束时扣减回合数（绝大多数普通 Buff/Debuff）。 |
-| `timing` | `DurationTiming.CASTER_TURN_END` | 施加者行动结束时扣减回合数（如知更鸟大招协奏、花火战技暴伤）。 |
-| `skip_current_clock` | `True` | 施加当回合免扣减（行动中开大或自身回合施加时必加）。 |
-| `tags` | `(StatusTag.MEMOSPRITE_ONLY,)` | 仅伴生忆灵专享，长夜月等召唤者在汇算本体面板时不计入。 |
-| `tags` | `(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,)` | 排除属性二次转化（如战技根据自身暴伤分享给忆灵，防止再次回流自身导致死循环）。 |
-
----
-
-### SOP 5：如何编写官方对账单元测试
-
-单元测试必须做到**动态对账**，严禁伪造测试通过：
-
-```python
-def test_character_dynamic_status_verification(self):
-    """测试模板：动态验证角色在实战环境下的全量面板对账。"""
-    sim = TurnSimulator(
-        entities=self.team + self.enemies,
-        use_techniques=True,
-        stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
-    )
-    # 推进动作
-    sim.cast_ultimate("缇宝")
-    
-    # 获取快照
-    snap = sim.query_status("目标角色")
-    buff_names = [b["name"] for b in snap["buffs"]]
-    
-    # 1. 动态断言增益名称
-    for expected in ["期望BuffA", "期望BuffB"]:
-        self.assertIn(expected, buff_names)
-        
-    # 2. 环境机制动态对齐配置（绝不写死）
-    self.assertEqual(snap["other_effects"], STAGE_CONFIG["mechanics"])
-    
-    # 3. 浮点属性精准对账 (Delta 严格控制在 0.001)
-    self.assertAlmostEqual(snap["current_crit_dmg"], 2.426, places=3)
-```
-
----
-
-## 四、 架构自审必查清单 (Pre-Commit Checklist)
-
-在每次编写完毕、准备运行测试与提交 Git 之前，**必须逐条自问自答**：
-
-- [ ] **1. Core 纯洁性**：检查 [`simulator/core.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/core.py) 是否有新增任何特定的角色名、技能名、关卡机制字面量？（**必须为 0**）
-- [ ] **2. 换名鲁棒性**：如果把关卡机制名从 `"血噬"` 改为 `"流血环境"`，或者把忆灵改名为 `"新忆灵"`，代码是否依然能通过测试？（**必须能通过**）
-- [ ] **3. 事件解耦**：是否有使用 `if "字" in name` 匹配技能？是否全部替换为标准 `BattleEvent` 派生类？
-- [ ] **4. 标签语义化**：是否有在属性计算中写死 `s.id == "xxx"`？是否全部替换为 `StatusTag`？
-- [ ] **5. 全量绿灯**：本地运行 `pytest -v` 是否保持 **100% 全部通过**？

@@ -180,7 +180,10 @@ class FengjinKit(KitHandler):
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         """普攻【当微风轻吻云沫】：等同生命上限 70% (Lv 10) 的风属性伤害。"""
-        target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        enemies = self.port.enemies(self.owner_id)
+        if not enemies:
+            return
+        target_id = ctx.target_ids[0] if ctx.target_ids else enemies[0]
         mult = self.skill_param("basic", 0, default=0.70)
         self.port.attack(
             self.owner_id,

@@ -25,7 +25,7 @@ from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType
+from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
 
 class TibaoKit(KitHandler):
@@ -37,13 +37,16 @@ class TibaoKit(KitHandler):
         self.zone_duration: int = 0
         self.talent_used_by: set = set()
 
+    def apply_trace_passives(self, entity: Any) -> None:
+        """战前静态基线校准：注入缇宝基础白字生命（角色白字 + 专武白字 = 2419.481）。"""
+        entity.base_white_hp = 2419.481
+
     def on_battle_start(self) -> None:
         """额外能力【岔路旁的小石头】：进入战斗时恢复 30 点能量 (受能量恢复效率加成)。
         星魂 6【星月漫天的明日】常驻挂载。
         天赋标记【好忙好忙的缇宝】：队友大招追击挂载。
         """
-        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-        err = getattr(ent, "err", 1.0) if ent else 1.0
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 30.0 * err)
 
         # 星魂 6 常驻质变状态【星月漫天的明日】
@@ -60,10 +63,9 @@ class TibaoKit(KitHandler):
                 description="天赋追加攻击伤害提高 +729.0%"
             ))
 
-        # 天赋标记【好忙好忙的缇宝】 (仅角色生效，忆灵/召唤物不挂载)
+        # 天赋标记【好忙好忙的缇宝】 (仅角色生效，带 CHARACTER_ONLY 语义标签，忆灵/召唤物不挂载)
         for ally in self.port.allies(self.owner_id):
-            ally_ent = self.port._get_entity(ally) if hasattr(self.port, "_get_entity") else None
-            if ally != self.owner_id and not getattr(ally_ent, "is_memosprite", False):
+            if ally != self.owner_id and not self.port.is_memosprite(ally):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_Talent_BusyBusy_{ally}",
                     name="好忙好忙的缇宝",
@@ -73,6 +75,7 @@ class TibaoKit(KitHandler):
                     duration=None,
                     timing=DurationTiming.TARGET_TURN_END,
                     category="other",
+                    tags=(StatusTag.CHARACTER_ONLY,),
                     description="队友施放终结技后，触发缇宝天赋追加攻击 (可触发)"
                 ))
             # E4【心意相契的安宁】：进战结界生效时我方全体无视目标 18% 防御
@@ -233,11 +236,11 @@ class TibaoKit(KitHandler):
                 description=f"受到伤害提高 +{zone_vuln * 100:.1f}%"
             ))
 
-        # 2. 为我方全体附加【神启】
+        # 2. 为我方全体附加【神启】并重置天赋次数
+        self.talent_used_by.clear()
         res_pen = self.skill_param("skill", 0, default=0.264)
         for a in self.port.allies(self.owner_id):
-            ally_ent = self.port._get_entity(a) if hasattr(self.port, "_get_entity") else None
-            if a != self.owner_id and not getattr(ally_ent, "is_memosprite", False):
+            if a != self.owner_id and not self.port.is_memosprite(a):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_Talent_BusyBusy_{a}",
                     name="好忙好忙的缇宝",
@@ -247,6 +250,7 @@ class TibaoKit(KitHandler):
                     duration=None,
                     timing=DurationTiming.TARGET_TURN_END,
                     category="other",
+                    tags=(StatusTag.CHARACTER_ONLY,),
                     description="队友施放终结技后，触发缇宝天赋追加攻击 (次数已重置)"
                 ))
             self.port.upsert_status(BuffSpec(
@@ -293,8 +297,7 @@ class TibaoKit(KitHandler):
         ))
 
         # 5. 施放大招自身固定回能 5 点 + E6 天赋追加攻击回能 5 点 (受 ERR 加成)
-        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-        err = getattr(ent, "err", 1.0) if ent else 1.0
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         base_energy = 5.0 + (5.0 if self.eidolon >= 6 else 0.0)
         self.port.gain_energy(self.owner_id, base_energy * err)
 
@@ -326,14 +329,14 @@ class TibaoKit(KitHandler):
 
     def on_event(self, event: Any) -> None:
         """响应事件：我方其他角色施放终结技后触发追加攻击。"""
-        event_name = type(event).__name__
-        if event_name == "ActionExecuteEvent":
-            actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
-            action_kind = getattr(event, "action_kind", "")
-            allies = self.port.allies(self.owner_id)
+        from ...events import ActionExecuteEvent
+        if isinstance(event, ActionExecuteEvent):
+            actor_id = event.actor_name or event.actor_id
+            action_kind = getattr(event, "action_kind", None)
+            action_type = getattr(event, "action_type", "")
 
-            if actor_id in allies and actor_id != self.owner_id:
-                if action_kind == "Ultimate" or action_kind == ActionKind.ULTIMATE:
+            if self.port.is_ally(actor_id) and actor_id != self.owner_id and not self.port.is_memosprite(actor_id):
+                if action_kind == ActionKind.ULTIMATE or "Ultimate" in str(action_type):
                     if actor_id not in self.talent_used_by:
                         self.talent_used_by.add(actor_id)
                         fu_mult = 0.18 * ((1.0 + 7.29) if self.eidolon >= 6 else 1.0)
@@ -347,6 +350,5 @@ class TibaoKit(KitHandler):
                                 damage_tag="FollowUpAttack",
                                 scaling_stat="hp"
                             )
-                        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-                        err = getattr(ent, "err", 1.0) if ent else 1.0
+                        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
                         self.port.gain_energy(self.owner_id, 5.0 * err)

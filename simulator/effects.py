@@ -3,14 +3,15 @@
 核心理念（遵从架构师规范）：
 1. 角色技能和被动不直接篡改游戏状态，而是向结算上下文投递 `EffectRequest`；
 2. 由统一的 `EffectResolver` 执行状态变更，产生对应的 `BattleEvent`；
-3. 伤害、削韧、弱点击破与推条解耦结算；
+3. 伤害、削韧、弱点击破与推条解耦结算，伤害分摊通过 `KitHandler.intercept_incoming_damage` 协议多态分发，绝不硬编码特定角色名；
 4. 严格限制最大结算步数 (MAX_EFFECT_STEPS)，彻底防止追击/触发产生无限死循环递归。
 """
 from dataclasses import dataclass
 from typing import Any, List, Optional
 from .events import (
     ActionAdvanceEvent, ActionDelayEvent, SPChangeEvent, StatusApplyEvent, 
-    ActionExecuteEvent, DamageAppliedEvent, ToughnessReduceEvent, WeaknessBreakEvent
+    ActionExecuteEvent, DamageAppliedEvent, ToughnessReduceEvent, WeaknessBreakEvent,
+    HPLostEvent
 )
 from .damage import DamageCalculator, DamageRequest, DamageBreakdown
 
@@ -178,7 +179,6 @@ class EffectResolver:
 
         elif isinstance(effect, ReduceToughnessEffect):
             target = effect.target
-            # 只有有韧性且未击破的敌方才能被削韧
             if hasattr(target, "max_toughness") and target.max_toughness > 0 and not getattr(target, "is_broken", False):
                 weaknesses = getattr(target, "weaknesses", [])
                 if effect.ignore_weakness or (effect.element in weaknesses):
@@ -197,14 +197,12 @@ class EffectResolver:
                     # 检查是否触发弱点击破 (Weakness Break)
                     if target.current_toughness <= 0.0:
                         target.is_broken = True
-                        # 1. 行动条推条 25% (2500 距离)
                         self.enqueue(DelayActionEffect(
                             source_name="弱点击破",
                             target=target,
                             percent=0.25
                         ))
 
-                        # 2. 计算标准击破伤害 (Lv 80 基准 ~3767 点)
                         base_break = 3767.55
                         elem_mult = 1.0  # 雷/冰为 1.0, 物理/火为 2.0
                         if effect.element in ["Physical", "Fire"]:
@@ -229,7 +227,6 @@ class EffectResolver:
                         ))
 
         elif isinstance(effect, ApplyDamageEffect):
-            # 将受击目标的击破状态同步进伤害请求
             target = effect.request.target
             effect.request.target_is_broken = getattr(target, "is_broken", False)
 
@@ -237,20 +234,13 @@ class EffectResolver:
             breakdown = DamageCalculator.calculate(effect.request)
             raw_dmg = breakdown.final_damage
 
-            # 符玄穷观阵分摊检测 (若目标不是符玄自身，且全队存在持有穷观阵的符玄)
-            fuxuan = next((e for e in getattr(self.simulator, "entities", []) if ("符玄" in e.name or e.name == "FuXuan") and not getattr(e, "is_enemy", False)), None)
-            if fuxuan and fuxuan != target and getattr(self.simulator, "status_mgr", None) and self.simulator.status_mgr.has_status(target.name, "FuXuan_Matrix"):
-                shared_dmg = raw_dmg * 0.65
-                raw_dmg = raw_dmg * 0.35
-                fuxuan_absorbed = min(getattr(fuxuan, "shield", 0.0), shared_dmg)
-                fuxuan.shield -= fuxuan_absorbed
-                fuxuan.current_hp = max(0.0, fuxuan.current_hp - (shared_dmg - fuxuan_absorbed))
-                # 符玄半血生命逆转检测
-                if fuxuan.current_hp <= fuxuan.max_hp * 0.50 and getattr(getattr(fuxuan, "kit", None), "hp_reversals", 0) > 0:
-                    fuxuan.kit.hp_reversals -= 1
-                    fuxuan.current_hp = min(fuxuan.max_hp, fuxuan.current_hp + fuxuan.max_hp * 0.85)
+            # 2. 多态伤害分摊/减免拦截协议钩子 (如符玄穷观阵分摊，零角色名硬编码)
+            for ent in list(getattr(self.simulator, "entities", [])):
+                kit = getattr(ent, "kit", None)
+                if kit is not None and hasattr(kit, "intercept_incoming_damage"):
+                    raw_dmg = kit.intercept_incoming_damage(target.name, raw_dmg)
 
-            # 护盾优先吸收 (砂金、杰帕德等)
+            # 3. 护盾优先吸收 (砂金、杰帕德等)
             if hasattr(target, "shield") and target.shield > 0:
                 absorbed = min(target.shield, raw_dmg)
                 target.shield -= absorbed
@@ -262,6 +252,14 @@ class EffectResolver:
                 hp_left = target.current_hp
                 actual_loss = old_hp - target.current_hp
                 if actual_loss > 0:
+                    bus.publish(HPLostEvent(
+                        av=round(av, 2),
+                        cycle=cycle,
+                        entity_name=target.name,
+                        amount=actual_loss,
+                        hp_left=hp_left,
+                        cause="attack_damage"
+                    ))
                     for e in list(getattr(self.simulator, "entities", [])):
                         if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
                             e.kit.on_hp_lost(target.name, actual_loss, cause="attack_damage")
@@ -279,7 +277,7 @@ class EffectResolver:
                 target_hp_left=hp_left
             ))
 
-            # 2. 如果携带削韧属性，入队削韧请求
+            # 4. 如果携带削韧属性，入队削韧请求
             if effect.toughness_reduction > 0:
                 self.enqueue(ReduceToughnessEffect(
                     attacker=effect.request.attacker,

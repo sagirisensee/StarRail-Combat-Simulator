@@ -1,5 +1,13 @@
-"""光锥注册中心 (Light Cone Registry)."""
-from typing import Dict, Optional, Type, List, Tuple
+"""光锥注册中心 (Light Cone Registry).
+
+支持两种注册方式：
+1. 装饰器自注册（推荐新人开发使用）：在 `simulator/light_cones/handlers/<name>.py` 中使用 `@register_light_cone(...)`，无需修改中心目录文件；
+2. 显式调用：`LightConeRegistry.register(spec, handler_cls)`。
+"""
+import importlib
+import pkgutil
+from pathlib import Path
+from typing import Dict, Optional, Type, List, Tuple, Sequence, Callable
 from .models import LightConeSpec
 from .base import LightConeHandler
 from ..combat_port import CombatPort
@@ -11,6 +19,7 @@ class LightConeRegistry:
     _specs_by_id: Dict[str, LightConeSpec] = {}
     _handlers_by_id: Dict[str, Type[LightConeHandler]] = {}
     _alias_to_id: Dict[str, str] = {}
+    _discovered: bool = False
 
     @classmethod
     def register(cls, spec: LightConeSpec, handler_cls: Type[LightConeHandler]) -> None:
@@ -23,8 +32,23 @@ class LightConeRegistry:
             cls._alias_to_id[alias.lower()] = spec.cone_id
 
     @classmethod
+    def auto_discover(cls) -> None:
+        """自动扫描并加载 handlers 目录下的所有光锥插件模块（忽略以 _ 开头的模版文件）。"""
+        if cls._discovered:
+            return
+        cls._discovered = True
+        handlers_dir = Path(__file__).resolve().parent / "handlers"
+        if not handlers_dir.exists():
+            return
+        pkg_prefix = f"{__package__}.handlers."
+        for mod_info in pkgutil.iter_modules([str(handlers_dir)]):
+            if not mod_info.name.startswith("_"):
+                importlib.import_module(pkg_prefix + mod_info.name)
+
+    @classmethod
     def resolve_id(cls, cone_id_or_name: str) -> Optional[str]:
         """按 ID、名称或别名解析标准 cone_id。"""
+        cls.auto_discover()
         key = cone_id_or_name.strip().lower()
         return cls._alias_to_id.get(key)
 
@@ -91,4 +115,26 @@ class LightConeRegistry:
     @classmethod
     def list_all(cls) -> List[LightConeSpec]:
         """列出所有已注册的光锥规格。"""
+        cls.auto_discover()
         return list(cls._specs_by_id.values())
+
+
+def register_light_cone(
+    cone_id: str,
+    name: str,
+    path: str = "",
+    rarity: int = 5,
+    aliases: Sequence[str] = ()
+) -> Callable[[Type[LightConeHandler]], Type[LightConeHandler]]:
+    """光锥处理器类装饰器：声明式完成 LightConeSpec 构建与自动注册。"""
+    def _decorator(handler_cls: Type[LightConeHandler]) -> Type[LightConeHandler]:
+        spec = LightConeSpec(
+            cone_id=str(cone_id),
+            name=name,
+            path=path,
+            rarity=rarity,
+            aliases=tuple(aliases)
+        )
+        LightConeRegistry.register(spec, handler_cls)
+        return handler_cls
+    return _decorator

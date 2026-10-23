@@ -3,10 +3,10 @@
 遵循架构师规范：
 1. 纯函数计算器：绝无任何副作用，只负责接收请求并输出可解释的伤害账单；
 2. 完整 8 大乘区建模：
-   - 基础乘区 (Base DMG): 攻击力 x 技能倍率 + 附加伤害
+   - 基础乘区 (Base DMG): 属性基数 x 技能倍率 + 附加伤害
    - 双暴乘区 (Crit): 未暴击=1.0, 暴击=1+暴伤, 期望模式=1+暴击率x暴伤
    - 增伤乘区 (DMG Boost): 1 + 属性增伤 + 全增伤 + 技能类型增伤
-   - 防御乘区 (DEF Mult): (攻击者等级*10 + 200) / ((攻击者等级*10 + 200) + 防御值*(1-减防-无视防御))
+   - 防御乘区 (DEF Mult): (攻击者等级*10 + 200) / ((攻击者等级*10 + 200) + 防御值*(1 - 敌方减防 - 攻击者无视防御))
    - 抗性乘区 (RES Mult): 1 - (基础抗性 - 抗性穿透)
    - 易伤乘区 (Vulnerability): 1 + 易伤总和
    - 减伤/韧性乘区 (Broken/Damage Reduction): 韧性未击破固定 0.9 (自带10%减伤)，击破后为 1.0
@@ -74,7 +74,10 @@ class DamageCalculator:
             atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE)
             dmg_boost = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DMG_BOOST)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
-            def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
+            # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
+            target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
+            attacker_def_ignore = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DEF_SHRED)
+            def_shred = target_def_shred + attacker_def_ignore
             vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY)
         else:
             dmg_boost = 0.0

@@ -1,5 +1,15 @@
-"""角色技能套件注册中心 (Kit Registry)."""
-from typing import Dict, Type, Optional, Any
+"""角色技能套件注册中心 (Kit Registry).
+
+支持两种注册方式：
+1. 装饰器自注册（推荐新人开发使用）：
+   在 `simulator/kits/characters/<char>.py` 中直接为类加上 `@register_kit("1413", "长夜月", "evernight")`，
+   系统会自动扫描 `characters/` 目录并完成注册，无需手动修改本文件！
+2. 函数式注册：`register_kit("角色名", KitClass)`。
+"""
+import importlib
+import pkgutil
+from pathlib import Path
+from typing import Dict, Type, Optional, Any, Union
 from .base import KitHandler
 from .characters.sparkle import SparkleKit
 from .characters.robin import RobinKit
@@ -410,15 +420,47 @@ _KIT_REGISTRY: Dict[str, Type[KitHandler]] = {
     "silverwolf_999": ElationKit,
 }
 
-
-def register_kit(name_or_id: str, kit_cls: Type[KitHandler]):
-    """动态注册角色的 Kit 类。"""
-    _KIT_REGISTRY[str(name_or_id).lower()] = kit_cls
+_DISCOVERED = False
 
 
-def get_kit_class(name_or_id: str) -> Optional[Type[KitHandler]]:
+def register_kit(*args: Any):
+    """支持两种调用形态的动态注册入口：
+    1. 类装饰器：`@register_kit("1413", "长夜月", "evernight")`
+    2. 函数调用：`register_kit("长夜月", ChangyeyueKit)`
+    """
+    if len(args) == 2 and isinstance(args[1], type) and issubclass(args[1], KitHandler):
+        name_or_id, kit_cls = args[0], args[1]
+        _KIT_REGISTRY[str(name_or_id).lower()] = kit_cls
+        return kit_cls
+
+    names = [str(a).lower() for a in args]
+    def _decorator(kit_cls: Type[KitHandler]) -> Type[KitHandler]:
+        for key in names:
+            _KIT_REGISTRY[key] = kit_cls
+        return kit_cls
+    return _decorator
+
+
+def auto_discover_kits() -> None:
+    """自动扫描并加载 `characters/` 目录下的所有角色套件模块（忽略以 `_` 开头的模板文件）。"""
+    global _DISCOVERED
+    if _DISCOVERED:
+        return
+    _DISCOVERED = True
+    chars_dir = Path(__file__).resolve().parent / "characters"
+    if not chars_dir.exists():
+        return
+    pkg_prefix = f"{__package__}.characters."
+    for mod_info in pkgutil.iter_modules([str(chars_dir)]):
+        if not mod_info.name.startswith("_"):
+            importlib.import_module(pkg_prefix + mod_info.name)
+
+
+def get_kit_class(name_or_id: Union[str, int]) -> Optional[Type[KitHandler]]:
     """查找指定角色的 KitHandler 类。"""
     key = str(name_or_id).lower()
+    if key not in _KIT_REGISTRY:
+        auto_discover_kits()
     return _KIT_REGISTRY.get(key)
 
 

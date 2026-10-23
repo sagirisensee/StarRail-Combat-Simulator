@@ -1,106 +1,50 @@
 # 崩坏：星穹铁道 回合制战斗与排轴模拟器 (Star Rail Combat Simulator)
 
-一个高度解耦、完全独立、高精度的《崩坏：星穹铁道》回合制战斗模拟器与全角色属性数据库引擎。
+一个基于**微内核 + 协议隔离 + 装饰器即插即用插件架构**的《崩坏：星穹铁道》回合制战斗模拟器与全角色高精属性数据库引擎。
 
 > 📘 **研发人员与 AI 开发者必读**：
-> - **规范手册**：[《星穹铁道战斗模拟器·研发工程规范与新人开发指引 (DEVELOPER_GUIDE.md)》](file:///Users/yunkaichen/Downloads/starrail/DEVELOPER_GUIDE.md) —— 包含 5 大红线戒律与公式化 SOP 骨架。
-> - **速查索引**：[《代码索引与架构速查表 (CODEBASE_INDEX.md)》](file:///Users/yunkaichen/Downloads/starrail/CODEBASE_INDEX.md) —— 秒级定位角色 Kit、光锥与测试。
+> - **研发规范与新人指引**：[《星穹铁道战斗模拟器·研发工程规范与新人开发指引 (DEVELOPER_GUIDE.md)》](file:///Users/yunkaichen/Downloads/starrail/DEVELOPER_GUIDE.md) —— 包含 5 大红线戒律、扩展钩子总表与公式化 SOP 骨架。
+> - **代码索引与架构速查**：[《代码索引与架构速查表 (CODEBASE_INDEX.md)》](file:///Users/yunkaichen/Downloads/starrail/CODEBASE_INDEX.md) —— 秒级定位角色 Kit、光锥、遗器与测试。
+> - **新人即插即用开发模板**：
+>   - 角色/忆灵模板：[`simulator/kits/characters/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/characters/_template.py)
+>   - 光锥被动模板：[`simulator/light_cones/handlers/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/light_cones/handlers/_template.py)
+>   - 遗器套装模板：[`simulator/relics/handlers/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/relics/handlers/_template.py)
 
 ---
 
-## 🌟 核心设计哲学：双层架构隔离
+## 🌟 核心架构设计：微内核 + 四层解耦
 
-本项目严格贯彻**「实机面板只用于验算，实战模拟全走高精浮点」**的架构规范：
+本项目严格贯彻**「实机面板只用于验算，实战模拟全走高精浮点」**与**「引擎微内核零硬编码，业务逻辑全插件化」**的架构规范：
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │      全量数据源 (freesr / official json) │
-                    └───────────────────┬─────────────────────┘
-                                        │ 纯函数解析
-                                        ▼
-                    ┌─────────────────────────────────────────┐
-                    │    CharacterDB / StatCalculator 引擎    │
-                    │   (完整保留浮点精度，不产生任何提前截断)  │
-                    └───────────┬─────────────────┬───────────┘
-                                │                 │
-            【只读投影：用于截图验算】               【实战执行：直接对接模拟器】
-                                │                 │
-                                ▼                 ▼
-┌───────────────────────────────────────┐   ┌─────────────────────────────────────────┐
-│     UI 验算层 (Verification Layer)    │   │      实战层 (Combat Engine)             │
-│  - 严格采用官方截断: math.floor()     │   │  - 零截断注入原始浮点 (Raw Floats)      │
-│  - 真实对齐实机面板、工坊、米游社截图   │   │  - 行动值精确调度: AV = 10000 / Speed   │
-│  - 例如同谐主 155 (105+50), 克拉拉 85 │   │  - 技能倍率、双暴期望、全乘区无损计算   │
-└───────────────────────────────────────┘   └─────────────────────────────────────────┘
-```
+1. **数据与资产层 (`data/`, `simulator/assets/`, `simulator/scaling/`, `simulator/db/`)**：
+   - 收录 99+ 位角色 80 级白值、170+ 光锥、62+ 遗器套装与 Nanoka 4.6 官方多等级 `param_list` 原始倍率；
+   - `StatCalculator` 与 `CharacterDB` 完整保留浮点精度，通过 `db.to_combat_entity("角色名")` 一键装配角色套件、光锥与遗器。
+2. **微内核调度与事件总线层 (`simulator/core.py`, `simulator/events.py`, `simulator/effects.py`, `simulator/status.py`, `simulator/damage.py`)**：
+   - **10,000 行动距离跑道**：按 $AV = 10000 / \text{Speed}$ 推进，支持瞬时拉条、推条、插队终结技与伴生忆灵立即行动；
+   - **纯事实事件总线 (`EventBus`)**：所有攻击、治疗 (`HealAppliedEvent`)、护盾 (`ShieldAppliedEvent`)、扣血 (`HPLostEvent`)、召唤物入场/退场 (`SpiritSummonedEvent` / `SpiritDespawnEvent`) 均以不可变事件广播，彻底解耦角色与光锥/遗器联动；
+   - **语义化状态管线 (`StatusManager` & `StatusTag`)**：支持 `TARGET_TURN_START` / `TARGET_TURN_END` / `CASTER_TURN_END` 三类时钟，通过 `StatusTag` (`MEMOSPRITE_ONLY`, `CHARACTER_ONLY`, `EXCLUDE_FROM_STAT_TRANSFERS`) 实现零硬编码黑名单的动态属性汇算；
+   - **8 大乘区纯函数伤害管线 (`DamageCalculator`)**：完整汇总攻击/生命/防御基数、双暴、增伤、敌方减防 + 攻击者无视防御 (`DEF_SHRED`)、抗穿、易伤与破韧减伤。
+3. **窄接口契约层 (`simulator/combat_port.py`, `simulator/actions.py`)**：
+   - 所有插件仅通过 `CombatPort` 标准窄接口查询阵营/从属关系、采样实时属性（支持按标签过滤）、挂载 `BuffSpec` 或发起战斗动作，**严禁跨层访问 `sim` 内部私有结构**。
+4. **即插即用业务插件层 (`simulator/kits/`, `simulator/light_cones/`, `simulator/relics/`, `simulator/stage_mechanics.py`)**：
+   - 支持 `@register_kit`、`@register_light_cone`、`@register_relic_set`、`@register_stage_mechanic` 装饰器自注册与目录自动扫描发现（Auto-Discovery）；
+   - 新人开发新角色、新光锥或新遺器只需复制 `_template.py` 并在新文件中添加装饰器，**无需改动任何中心注册表或核心引擎代码**。
 
 ---
 
-## ⚔️ 战斗引擎核心机制
-
-1. **10,000 行动距离与行动值调度（Action Scheduler）**：
-   * 角色以自身真实速度 $v$ 沿跑道推进，行动值计算公式：
-     $$AV = \frac{10000}{\text{Speed}}$$
-   * 支持瞬时拉条（如花火战技推进行动 50%：距离 $-5000$）与弱点击破推条（如击破延后 25%：距离 $+2500$）；
-   * 支持插队终结技（Ultimate）优先级无损插入。
-2. **战技点管理（Skill Point Pool）**：
-   * 默认上限 5 点，支持花火秘技/天赋扩展至 7 点上限；
-   * 动态管理技能消耗与普攻回点，溢出/欠费严格拦截。
-3. **状态机与增减益结算（Buff / Debuff Management）**：
-   * 支持按行动者回合开始（`TURN_START`）或回合结束（`TURN_END`）精确倒计时；
-   * 属性修改器（加算 `ADD`、乘算 `MUL`、覆写 `OVERWRITE`）。
-4. **完整伤害计算管线（7 大伤害乘区）**：
-   $$\text{Damage} = \text{基础区} \times \text{技能倍率区} \times \text{双暴区} \times \text{增伤区} \times \text{防御区} \times \text{抗性区} \times \text{易伤区} \times \text{韧性减伤区}$$
-5. **韧性、弱点击破与推条（Toughness & Break System）**：
-   * 敌方具有最大韧性与当前韧性，仅弱点属性或特异技能（如黄泉终结技）可造成削韧；
-   * 击破瞬间破除敌方 10% 常驻减伤（减伤系数 $0.9 \to 1.0$），触发一次性属性击破伤害并推条 25%；
-   * 敌方下次行动结束自动恢复韧性条并重新激活减伤。
-
----
-
-## 📊 全角色高精属性数据库 (CharacterDB)
-
-* **全量数据覆盖**：收录 99+ 位全角色 80 级白值、光锥 80 级白值、5★ 遗器词条；
-* **可追溯的 StatBreakdown**：全属性分层拆解（基础白值、固定词条、百分比加成、最终值）；
-* **一键转换为实战实体**：调用 `db.to_combat_entity("角色名")` 即可将高精属性直接注入战斗模拟。
-
----
-
-## 🚀 快速启动
+## 🚀 快速启动与测试
 
 本项目基于 Python 3.9+ 标准库构建，**零第三方运行时依赖**：
 
 ```bash
-# 运行完整演示 (包含战斗排轴、削韧击破全流程与数据库抽查)
-python run_demo.py
-```
+# 1. 运行全套单元测试与架构拓展性验证 (推荐标准命令)
+python3 -m unittest discover -s simulator -t . -p "test_*.py" -v
 
-### 代码调用示例
+# 2. 启动实战交互打牌 / 自动排轴模拟
+python3 simulate_battle.py -i
 
-```python
-from simulator import TurnSimulator, Entity, CharacterDB
-
-# 1. 从数据库读取满配角色作为实战实体
-db = CharacterDB().load("data/character_db_export.json")
-sparkle = db.to_combat_entity("花火", policy="E")
-acheron = db.to_combat_entity("黄泉", policy="E")
-
-# 2. 配置敌方 Boss
-boss = Entity(
-    name="拟真Boss",
-    base_speed=110.0,
-    max_hp=200000.0,
-    current_hp=200000.0,
-    max_toughness=60.0,
-    current_toughness=60.0,
-    weaknesses=["Lightning", "Quantum"],
-    is_enemy=True
-)
-
-# 3. 启动排轴模拟
-sim = TurnSimulator([sparkle, acheron, boss], initial_sp=4, max_sp=7)
-for actor in sim.run_until_av(max_av=150.0):
-    print(f"[{sim.current_av:.1f} AV] {actor.name} 正在行动...")
+# 3. 机械化查询指定步数的回合归属、可选 Action 与实时面板透析
+python3 query_turn_action.py --step 0 --status 长夜
 ```
 
 ---
@@ -108,26 +52,41 @@ for actor in sim.run_until_av(max_av=150.0):
 ## 📁 目录结构
 
 ```
-StarRail-Combat-Simulator/
-├── simulator/                 # 核心模块源码
-│   ├── __init__.py            # 顶层包导出
-│   ├── core.py                # 跑条调度器与实体定义 (TurnSimulator, Entity)
-│   ├── damage.py              # 7 大乘区伤害引擎与击破结算
-│   ├── effects.py             # 动作效果解析 (拉条、推条、附加状态、造成伤害)
-│   ├── events.py              # 战斗事件总线 (EventBus, BattleEvent)
-│   ├── sp.py                  # 战技点管理器 (SkillPointManager)
-│   ├── status.py              # 增减益状态机 (StatusManager, Modifier)
-│   ├── demo.py                # P4 阶段战斗全流程参考实现
-│   └── db/                    # 属性数据库子模块
-│       ├── __init__.py        # DB 导出
-│       ├── tables.py          # 基础白值、光锥、遗器与规则常数表
-│       ├── models.py          # 数据模型 (CharacterPanel, Profile, Relic)
-│       ├── calculator.py      # 纯函数面板计算引擎 (StatCalculator)
-│       └── character_db.py    # 数据库聚合服务与实体转换
-├── data/
-│   └── character_db_export.json # 持久化全角色高精属性数据 (99 位角色)
-├── run_demo.py                # 演示主入口
-├── requirements.txt           # 依赖清单
-├── .gitignore                 # Git 忽略配置
-└── README.md                  # 项目工程文档
+starrail/
+├── simulator/                        # 核心模拟器源码包
+│   ├── __init__.py                   # 顶层公共契约与装饰器导出
+│   ├── core.py                       # 微内核调度器与实体定义 (TurnSimulator, SimulatorCombatPort, Entity)
+│   ├── combat_port.py                # 插件安全窄接口契约 (CombatPort, BuffSpec)
+│   ├── actions.py                    # 动作枚举、目标模式与技能声明 (ActionKind, AbilityDefinition)
+│   ├── damage.py                     # 8 大乘区纯函数伤害引擎 (DamageCalculator, DamageBreakdown)
+│   ├── effects.py                    # 效果队列与多态事务结算器 (EffectResolver)
+│   ├── events.py                     # 不可变领域事实事件总线 (EventBus, BattleEvent 派生类)
+│   ├── sp.py                         # 战技点池管理 (SkillPointManager)
+│   ├── status.py                     # 状态时钟与语义标签属性管线 (StatusManager, StatusTag)
+│   ├── stage_mechanics.py            # 关卡环境机制插件与注册中心 (StageMechanicPlugin)
+│   ├── assets/                       # Nanoka 4.6 官方归一化数据仓库 (AssetRepository)
+│   ├── scaling/                      # 技能等级与星魂倍率动态解析器 (SkillScaling)
+│   ├── db/                           # 玩家存档解析与高精面板计算引擎 (CharacterDB, StatCalculator)
+│   ├── kits/                         # 角色与伴生忆灵技能套件插件
+│   │   ├── base.py                   # KitHandler 抽象基类与全生命周期扩展钩子
+│   │   ├── registry.py               # @register_kit 装饰器与自动扫描发现注册中心
+│   │   └── characters/               # 60+ 位角色实现与 _template.py 标准脚手架
+│   ├── light_cones/                  # 光锥独立运行时插件
+│   │   ├── base.py                   # LightConeHandler 抽象基类
+│   │   ├── registry.py               # @register_light_cone 装饰器与注册中心
+│   │   └── handlers/                 # 专属光锥实现与 _template.py 标准脚手架
+│   ├── relics/                       # 遗器套装独立运行时插件
+│   │   ├── base.py                   # RelicSetHandler 抽象基类
+│   │   ├── registry.py               # @register_relic_set 装饰器与注册中心
+│   │   └── handlers/                 # 遗器套装实现与 _template.py 标准脚手架
+│   ├── test_changyeyue_memosprite.py # 长夜月与伴生忆灵核心机制对账测试
+│   ├── test_tibao_verification.py    # 缇宝与风堇全量状态实机对账测试
+│   ├── test_changyeyue_team_synergy.py # 四人完整配队排轴与协同测试
+│   └── test_framework_extensibility.py # 微内核零硬编码与插件拓展性验证测试
+├── data/                             # 角色导出面板与 Nanoka 4.6 原始/归一化资产库
+├── simulate_battle.py                # 交互式/自动战斗与实时状态透析 CLI 主入口
+├── query_turn_action.py              # 回合状态与可行动 Action 机械查询工具
+├── DEVELOPER_GUIDE.md                # 研发工程规范与新人开发 SOP 手册
+├── CODEBASE_INDEX.md                 # 代码索引与架构速查表
+└── README.md                         # 项目总体介绍
 ```
