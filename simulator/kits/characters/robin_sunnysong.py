@@ -579,10 +579,9 @@ class RobinSunnySongKit(KitHandler):
         """秘技【我们自成旋律】(151207)：
         进战行动提前 20%，立即获得 6 点气氛值，我方全体造成的伤害提高 30%，持续 2 回合。
         """
-        self._rhythm_consumed_in_current_turn = False
         # 官方规范：进战行动提前 20%
         self.port.advance(self.owner_id, self.owner_id, 0.20)
-        # 立即获得 6 点气氛值 (消耗 1 层律动回能 3 点)
+        # 立即获得 6 点气氛值 (战前开场阶段与风堇秘技同属战前结算窗口，不重复消耗第 2 层律动)
         self.gain_vibes(6, trigger_ally_id=self.owner_id)
 
         for ally in self.port.allies(self.owner_id):
