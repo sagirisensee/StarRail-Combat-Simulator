@@ -609,7 +609,7 @@ class RobinSunnySongKit(KitHandler):
         """监听行动、治疗、护盾、伤害与回合时钟事件。"""
         if isinstance(event, TurnBeginEvent):
             # 新回合开始：重置本回合律动消耗门禁、治疗门禁与 E2 技能首获门禁
-            self._last_turn_actor = event.entity_name
+            self._last_turn_actor = getattr(event, "actor_name", getattr(event, "entity_name", ""))
             self._rhythm_consumed_in_current_turn = False
             self._healed_this_turn = False
             self._e2_vibe_bonus_in_turn = False

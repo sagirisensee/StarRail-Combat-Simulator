@@ -21,11 +21,19 @@ class TurnBeginEvent(BattleEvent):
     actor_name: str
     speed: float
 
+    @property
+    def entity_name(self) -> str:
+        return self.actor_name
+
 
 @dataclass(frozen=True)
 class TurnEndEvent(BattleEvent):
     actor_id: str
     actor_name: str
+
+    @property
+    def entity_name(self) -> str:
+        return self.actor_name
 
 
 @dataclass(frozen=True)
