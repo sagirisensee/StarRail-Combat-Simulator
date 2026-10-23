@@ -181,8 +181,6 @@ class ChangyeyueKit(KitHandler):
             description="暴击伤害提高 +15.0%"
         ))
 
-        # 忆灵技【追忆，蹁跹，如雨】(1141301) 施放回能 20 点
-        self.port.gain_energy(self.owner_id, 20.0)
         # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 5.0)
         self.gain_yizhi(1)
