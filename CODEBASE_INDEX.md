@@ -18,10 +18,12 @@ flowchart TD
     subgraph 实体与底层驱动 ["2. 实体构建与战斗微内核 (Core & Port)"]
         C1["simulator/db/character_db.py -> to_combat_entity()"]
         C2["simulator/core.py -> TurnSimulator (微内核: 时间轴/行动轮次/战技点)"]
-        C3["simulator/combat_port.py -> CombatPort / BuffSpec (安全窄接口契约)"]
-        C4["simulator/status.py -> StatusManager / StatusTag (属性管线与语义标签)"]
-        C5["simulator/events.py -> EventBus / BattleEvent (不可变事实事件总线)"]
-        C6["simulator/effects.py -> EffectResolver (事务队列与多态伤害分摊结算)"]
+        C3["simulator/entity.py -> Entity (战斗实体模型与动态属性只读计算)"]
+        C4["simulator/combat_port.py -> CombatPort / BuffSpec (安全窄接口契约与适配器)"]
+        C5["simulator/inspector.py -> BattleInspector (状态透析快照与点号查询DSL)"]
+        C6["simulator/status.py -> StatusManager / StatusTag (属性管线与语义标签)"]
+        C7["simulator/events.py -> EventBus / BattleEvent (不可变事实事件总线)"]
+        C8["simulator/effects.py -> EffectResolver (事务队列与多态伤害分摊结算)"]
     end
 
     subgraph 业务插件层 ["3. 业务逻辑插件层 (Auto-Discovered Plugins)"]
@@ -62,6 +64,8 @@ flowchart TD
 | **修改专属光锥机制 (如冥花)** | [`simulator/light_cones/handlers/make_farewells_more_beautiful.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/light_cones/handlers/make_farewells_more_beautiful.py) | `trigger_flower_buff()`<br>`on_event(HPLostEvent)` | 监听标准 `HPLostEvent` 与 `SpiritDespawnEvent`，提供 30%~50% 无视防御 (`StatType.DEF_SHRED`)。 |
 | **修改知更鸟晴歌 / 气氛值** | [`simulator/kits/characters/robin_sunnysong.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/characters/robin_sunnysong.py) | `RobinSunnySongKit.gain_vibes()`<br>`RobinSunnySongKit.on_event()` | 监听标准 `HealAppliedEvent` 与 `ActionExecuteEvent`。 |
 | **修改关卡波次与环境机制** | [`simulator/stage_mechanics.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/stage_mechanics.py)<br>[`simulate_battle.py`](file:///Users/yunkaichen/Downloads/starrail/simulate_battle.py) | `@register_stage_mechanic`<br>`StageMechanicRegistry` | 关卡全局环境机制通过 `StageMechanicPlugin` 插件驱动，支持中英文换名即插即用。 |
+| **修改战斗实体属性与推拉条** | [`simulator/entity.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/entity.py) | `Entity`<br>`Entity.speed`<br>`Entity.advance_action()` | 实体白值、资源槽（HP/能量/韧性）与跑道剩余距离，由 `core.py` 拆分独立。 |
+| **修改状态透析快照与查询DSL** | [`simulator/inspector.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/inspector.py) | `BattleInspector`<br>`get_turn_action_info()`<br>`query_status()` | 负责全局战斗透析数据构建与点号路径检索，由 `core.py` 拆分独立。 |
 | **运行全套单元测试与架构验证** | [`simulator/test_changyeyue_memosprite.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/test_changyeyue_memosprite.py)<br>[`simulator/test_tibao_verification.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/test_tibao_verification.py)<br>[`simulator/test_changyeyue_team_synergy.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/test_changyeyue_team_synergy.py)<br>[`simulator/test_framework_extensibility.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/test_framework_extensibility.py) | `python3 -m unittest discover -s simulator -t . -p "test_*.py" -v` | 必须维持全量测试 100% 通过率。 |
 
 ---

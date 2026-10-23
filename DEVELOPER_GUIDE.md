@@ -14,10 +14,12 @@
 ```mermaid
 flowchart TD
     subgraph 引擎核心层 ["1. 引擎调度微内核 (Engine Microkernel)"]
-        TS["TurnSimulator (核心调度引擎)\n- AV跑道调度与行动轮次\n- 战技点SP池管理\n- 纯生命周期钩子分发"]
-        ER["EffectResolver (事务结算器)\n- 伤害/削韧/推拉条队列结算\n- 调用多态 intercept_incoming_damage"]
-        EB["EventBus (战斗事实事件总线)\n- TurnBegin / ActionExecute\n- HealApplied / ShieldApplied\n- HPLost / SpiritSummoned / SpiritDespawn"]
-        SM["StatusManager (状态与属性管线)\n- 状态时钟精准结算\n- 支持 StatusTag 语义过滤的动态属性计算"]
+        TS["TurnSimulator (核心调度引擎 - core.py)\n- AV跑道调度与行动轮次\n- 战技点SP池管理\n- 纯生命周期钩子分发"]
+        ENT["Entity (战斗实体模型 - entity.py)\n- 局内生命/能量/护盾/韧性资源槽\n- 跑道剩余距离与动态属性采样"]
+        BI["BattleInspector (战场透析视图 - inspector.py)\n- 实时快照构建与格式化打印\n- query_status 点号路径查询 DSL"]
+        ER["EffectResolver (事务结算器 - effects.py)\n- 伤害/削韧/推拉条队列结算\n- 调用多态 intercept_incoming_damage"]
+        EB["EventBus (战斗事实事件总线 - events.py)\n- TurnBegin / ActionExecute\n- HealApplied / ShieldApplied\n- HPLost / SpiritSummoned / SpiritDespawn"]
+        SM["StatusManager (状态与属性管线 - status.py)\n- 状态时钟精准结算\n- 支持 StatusTag 语义过滤的动态属性计算"]
     end
 
     subgraph 协议隔离层 ["2. 基础设施窄接口契约 (Port & Protocols)"]
@@ -46,7 +48,19 @@ flowchart TD
 
 ---
 
-## 二、 严禁触犯的五大「红线戒律」 (Anti-Patterns)
+## 二、 引擎微内核四分职责划分 (Microkernel Decomposition)
+
+为了彻底降低代码复杂度，原 1100+ 行庞大单体 `core.py` 已解耦拆分为 4 个职责高度内聚的独立模块：
+1. **`simulator/core.py` (微内核调度器，~330行)**：仅保留 `TurnSimulator` 时间轴推进、行动轮次循环、终结技抢断插队与生命周期分发。
+2. **`simulator/entity.py` (战斗实体数据模型，~144行)**：`Entity` 实体定义、局内 HP/能量/护盾/韧性资源槽，以及基于 `StatusManager` 的实时动态属性（`speed`, `atk`, `defense`, `crit_rate`, `crit_dmg`）计算。
+3. **`simulator/combat_port.py` (基础设施窄接口与适配器，~510行)**：`CombatPort` 接口规范与 `SimulatorCombatPort` 适配器，彻底屏蔽插件对引擎内部结构的越权访问。
+4. **`simulator/inspector.py` (战场透析与查询视图服务，~260行)**：`BattleInspector` 专门负责构建透析快照面板与解析 `query_status` 点号路径查询 DSL。
+
+> **向后兼容承诺**：`simulator/core.py` 内部重导出了 `Entity` 与 `SimulatorCombatPort`，同时顶层 `simulator/__init__.py` 统一导出了核心符号，现有业务代码和测试无需做任何 import 变更。
+
+---
+
+## 三、 严禁触犯的五大「红线戒律」 (Anti-Patterns)
 
 任何提交的代码若违反以下任意一条，均视为**不合格代码**，必须立即打回重构：
 
@@ -125,7 +139,7 @@ flowchart TD
 
 ---
 
-## 三、 插件标准扩展钩子总表 (Extension Hooks Reference)
+## 四、 插件标准扩展钩子总表 (Extension Hooks Reference)
 
 ### 1. 角色与伴生忆灵套件 (`KitHandler` - [`simulator/kits/base.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/base.py))
 
@@ -144,7 +158,7 @@ flowchart TD
 
 ---
 
-## 四、 新人 3 分钟即插即用开发 SOP
+## 五、 新人 3 分钟即插即用开发 SOP
 
 ### SOP 1：新增一个角色技能套件 (`@register_kit`)
 1. 复制模板文件 [`simulator/kits/characters/_template.py`](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/characters/_template.py) 为 `simulator/kits/characters/<char_pinyin>.py`；
@@ -163,7 +177,7 @@ flowchart TD
 
 ---
 
-## 五、 架构自审必查清单 (Pre-Commit Checklist)
+## 六、 架构自审必查清单 (Pre-Commit Checklist)
 
 在每次编写完毕、准备提交 Git 之前，**必须逐条自问自答并执行测试命令**：
 
