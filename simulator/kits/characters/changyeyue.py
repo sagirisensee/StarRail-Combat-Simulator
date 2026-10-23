@@ -296,13 +296,14 @@ class ChangyeyueKit(KitHandler):
             self.port.change_sp(self.owner_id, 1, "evernight_a2_sp_recover")
 
             # 忆灵自毁离场：消耗全部生命值并消失
+            # 走标准 self.port.lose_hp 事件总线广播 HPLostEvent，驱动天赋【今夜与我同行】自动获得 4 点【忆质】
+            if self.spirit_hp > 0:
+                self.port.lose_hp(self.spirit_name, self.spirit_hp, cause="memosprite_burst_consume_hp")
+
             self.spirit_alive = False
             self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
             self.port.despawn_spirit(self.spirit_name, "burst_depart")
-
-            # 触发长夜消耗全部生命自毁的天赋回忆质 (基础 2 点，E2 额外+2 为 4 点)
-            self.gain_yizhi(2)
 
             # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (最多计算 40 点忆质)
             speed_bonus = 0.10 + 0.01 * min(40, spent_memory)
@@ -326,7 +327,7 @@ class ChangyeyueKit(KitHandler):
         """
         is_owner = (entity_id == self.owner_id)
         is_own_spirit = self.port.is_own_memosprite(self.owner_id, entity_id)
-        if (is_owner or is_own_spirit) and not cause.startswith("evernight_self_destruct"):
+        if is_owner or is_own_spirit:
             if is_own_spirit:
                 self.spirit_hp = self.port.current_hp(entity_id)
 
@@ -336,8 +337,9 @@ class ChangyeyueKit(KitHandler):
                 source_id=self.owner_id,
                 target_id=self.owner_id,
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.60),),
-                duration=3,
+                duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True,
                 category="buff",
                 description="暴击伤害提高 +60.0%"
             ))
