@@ -328,9 +328,18 @@ class TibaoKit(KitHandler):
                 )
 
     def on_event(self, event: Any) -> None:
-        """响应事件：我方其他角色施放终结技后触发追加攻击。"""
-        from ...events import ActionExecuteEvent
-        if isinstance(event, ActionExecuteEvent):
+        """响应事件：
+        1. 我方其他角色施放终结技后触发追加攻击；
+        2. 行迹【岔路旁的小石子？】：我方其他目标攻击后，每击中 1 个目标使缇宝恢复 1.5 点能量。
+        """
+        from ...events import ActionExecuteEvent, DamageAppliedEvent
+        if isinstance(event, DamageAppliedEvent):
+            attacker = event.attacker_name
+            if self.port.is_ally(attacker) and attacker != self.owner_id:
+                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+                self.port.gain_energy(self.owner_id, 1.5 * err)
+
+        elif isinstance(event, ActionExecuteEvent):
             actor_id = event.actor_name or event.actor_id
             action_kind = getattr(event, "action_kind", None)
             action_type = getattr(event, "action_type", "")
