@@ -30,8 +30,12 @@ def floor_val(val: float, decimals: int = 1) -> float:
     return math.floor(val * factor + 1e-4) / factor
 
 def floor_int(val: float) -> int:
-    """遵循星铁实机整数显示规范。"""
+    """遵循星铁实机整数显示规范 (能量、单次伤害等)。"""
     return math.floor(val + 1e-4)
+
+def round_int(val: float) -> int:
+    """遵循星铁实机面板属性显示规范 (速度 SPD、生命值、攻击力等面板显示遵循四舍五入)。"""
+    return round(val + 1e-6)
 
 def floor_str(val: float, decimals: int = 1) -> str:
     """遵循星铁引擎统一向下截断字符串格式化。"""
@@ -309,7 +313,7 @@ def render_hud(sim: TurnSimulator, enemies: List[Entity], team_members: List[str
         buff_summary = f"({buffs[0][:10]}..)" if buffs else ""
 
         hp_p = (ent.current_hp / ent.max_hp * 100) if (ent.max_hp > 0 and ent.max_hp != float("inf")) else 100.0
-        print(f" {is_turn} [{idx+1}] {ent.name:8} (E{ent.eidolon}) │ HP: {ent.current_hp:5.0f}/{ent.max_hp:5.0f} ({hp_p:3.0f}%) │ {energy_str} {ready_tag} │ 距行动: {ent.remaining_av:5.1f} AV {buff_summary}")
+        print(f" {is_turn} [{idx+1}] {ent.name:8} (E{ent.eidolon}) │ HP: {ent.current_hp:5.0f}/{ent.max_hp:5.0f} ({hp_p:3.0f}%) │ 速度: {round_int(ent.speed):3d} (精算: {ent.speed:5.1f}) │ {energy_str} {ready_tag} │ 距行动: {ent.remaining_av:5.1f} AV {buff_summary}")
     print("═" * 78)
 
 
@@ -328,7 +332,7 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
             print("📊 忆灵动态面板 (遵循星铁实机面板规范):")
             print(f"   • 在场状态          : {'🟢 在场战斗中' if msnap['is_alive'] else '🔴 已离场'}")
             print(f"   • 生命值 (HP)       : {floor_int(msnap['current_hp']):,d} / {floor_int(msnap['max_hp']):,d} ({msnap['hp_pct']*100:.1f}%)")
-            print(f"   • 行动速度 (SPD)    : {msnap['speed']:.1f}")
+            print(f"   • 行动速度 (SPD)    : {round_int(msnap['speed']):d} (精算: {msnap['speed']:.2f})")
             print(f"   • 实时攻击 (ATK)    : {msnap.get('base_atk', 1072)} + {msnap.get('bonus_atk', 371)} ({msnap.get('current_atk', 1443)})")
             print(f"   • 实时防御 (DEF)    : {msnap.get('base_def', 979)} + {msnap.get('bonus_def', 47)} ({msnap.get('current_def', 1026)})")
             print(f"   • 暴击率 (CRIT)     : {msnap.get('crit_rate', 1.036)*100:.1f}%")
