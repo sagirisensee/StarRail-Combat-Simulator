@@ -74,6 +74,7 @@ class ApplyDamageEffect(EffectRequest):
     element: str = "Physical"
     break_effect: float = 0.0
     ignore_weakness: bool = False
+    damage_tag: str = "direct"
 
 
 class EffectResolver:
@@ -274,7 +275,8 @@ class EffectResolver:
                 damage=breakdown.final_damage,
                 is_crit=breakdown.is_crit,
                 breakdown=breakdown,
-                target_hp_left=hp_left
+                target_hp_left=hp_left,
+                damage_tag=getattr(effect, "damage_tag", "direct")
             ))
 
             # 4. 如果携带削韧属性，入队削韧请求

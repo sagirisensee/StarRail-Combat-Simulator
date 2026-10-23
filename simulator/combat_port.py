@@ -477,7 +477,8 @@ class SimulatorCombatPort:
             request=req,
             toughness_reduction=toughness_damage,
             element=element,
-            ignore_weakness=ignore_weakness
+            ignore_weakness=ignore_weakness,
+            damage_tag=damage_tag
         ))
 
     def max_hp(self, entity_id: str) -> float:

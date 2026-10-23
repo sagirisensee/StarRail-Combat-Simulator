@@ -31,6 +31,10 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 class TibaoKit(KitHandler):
     """缇宝 (ID 1403, 量子 / 同谐)."""
 
+    # 官方解包数据 (1403.json 行迹 1403103 【岔路旁的小石子？】 param_list: [30, 1.5])
+    TRACE_PEBBLE_START_ENERGY: float = 30.0
+    TRACE_PEBBLE_ENERGY_PER_HIT: float = 1.5
+
     def __init__(self, owner_id: str, port: CombatPort, *, eidolon: int = 0, skill_levels: Optional[dict] = None):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.zone_active: bool = False
@@ -42,12 +46,13 @@ class TibaoKit(KitHandler):
         entity.base_white_hp = 2419.481
 
     def on_battle_start(self) -> None:
-        """额外能力【岔路旁的小石头】：进入战斗时恢复 30 点能量 (受能量恢复效率加成)。
+        """额外能力【岔路旁的小石子？】：进入战斗时恢复 30 点能量 (受能量恢复效率加成)。
         星魂 6【星月漫天的明日】常驻挂载。
         天赋标记【好忙好忙的缇宝】：队友大招追击挂载。
         """
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-        self.port.gain_energy(self.owner_id, 30.0 * err)
+        start_energy = self.skill_param("trace_pebble_start", 0, default=self.TRACE_PEBBLE_START_ENERGY)
+        self.port.gain_energy(self.owner_id, start_energy * err)
 
         # 星魂 6 常驻质变状态【星月漫天的明日】
         if self.eidolon >= 6:
@@ -330,14 +335,29 @@ class TibaoKit(KitHandler):
     def on_event(self, event: Any) -> None:
         """响应事件：
         1. 我方其他角色施放终结技后触发追加攻击；
-        2. 行迹【岔路旁的小石子？】：我方其他目标攻击后，每击中 1 个目标使缇宝恢复 1.5 点能量。
+        2. 行迹【岔路旁的小石子？】：我方其他目标攻击后，每击中 1 个目标使缇宝恢复 1.5 点固定能量。
         """
         from ...events import ActionExecuteEvent, DamageAppliedEvent
         if isinstance(event, DamageAppliedEvent):
             attacker = event.attacker_name
-            if self.port.is_ally(attacker) and attacker != self.owner_id:
-                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                self.port.gain_energy(self.owner_id, 1.5 * err)
+            target = event.target_name
+
+            # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血误判):
+            # 1. 攻击者必须为我方其他目标 (排除缇宝自身，支持伴生忆灵长夜)
+            # 2. 承受目标必须为敌方目标
+            # 3. 必须为直接攻击有效命中 (排除 DoT / stage_bleed / reflect)
+            is_valid_attacker = self.port.is_ally(attacker) and attacker != self.owner_id
+            is_valid_target = not self.port.is_ally(target)
+            is_attack_dmg = (
+                getattr(event, "damage_tag", "") not in ("dot", "stage_bleed", "reflect", "environment")
+                and getattr(event.breakdown, "is_dot", False) is False
+                and event.damage > 0
+            )
+
+            if is_valid_attacker and is_valid_target and is_attack_dmg:
+                energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
+                # 遵循官方实机对账规则：该回能为固定点数充能，不吃角色能量恢复效率放大
+                self.port.gain_energy(self.owner_id, energy_per_hit)
 
         elif isinstance(event, ActionExecuteEvent):
             actor_id = event.actor_name or event.actor_id

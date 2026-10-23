@@ -96,6 +96,7 @@ class DamageAppliedEvent(BattleEvent):
     is_crit: bool
     breakdown: Any              # DamageBreakdown
     target_hp_left: float
+    damage_tag: str = "direct"
 
 
 @dataclass(frozen=True)

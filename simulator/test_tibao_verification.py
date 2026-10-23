@@ -146,6 +146,79 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertAlmostEqual(snap["outgoing_healing"], 0.625, places=3)
         self.assertAlmostEqual(snap["effect_res"], 0.917, places=3)
 
+    def test_tibao_trace_pebble_ally_hit_energy(self):
+        """验证行迹【岔路旁的小石子？】：队友直接攻击每命中 1 目标回复 1.5 点固定能量，并免疫 DoT/反伤误判。"""
+        from simulator.events import DamageAppliedEvent
+        from simulator.damage import DamageBreakdown
+
+        sim = TurnSimulator(
+            entities=self.entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=STAGE_CONFIG.get("mechanics", ["血噬"])
+        )
+        tibao = sim.get_entity("缇宝")
+        sim.cast_ultimate("缇宝")
+        energy_after_ult = tibao.energy
+        self.assertAlmostEqual(energy_after_ult, 26.268, places=2)
+
+        # 1. 模拟长夜直接攻击命中 2 个敌人 -> 回复 1.5 * 2 = 3.0 点固定能量
+        breakdown_valid = DamageBreakdown(
+            attacker_name="长夜",
+            target_name="月夜天马 (Lv.100)",
+            base_dmg=1000,
+            crit_mult=2.0,
+            is_crit=True,
+            dmg_boost_mult=1.5,
+            def_mult=0.5,
+            res_mult=1.0,
+            vuln_mult=1.0,
+            reduction_mult=1.0,
+            final_damage=1500.0
+        )
+        # 命中第 1 个敌人
+        sim.event_bus.publish(DamageAppliedEvent(
+            av=0.0, cycle=0, attacker_name="长夜", target_name="月夜天马 (Lv.100)",
+            damage=1500.0, is_crit=True, breakdown=breakdown_valid, target_hp_left=500000.0
+        ))
+        self.assertAlmostEqual(tibao.energy, energy_after_ult + 1.5, places=2)
+
+        # 命中第 2 个敌人 -> 累计 +3.0 点，能量达到 29.27 (显示 29 点)
+        sim.event_bus.publish(DamageAppliedEvent(
+            av=0.0, cycle=0, attacker_name="长夜", target_name="「灯塔」 (Lv.100)",
+            damage=1500.0, is_crit=True, breakdown=breakdown_valid, target_hp_left=600000.0
+        ))
+        self.assertAlmostEqual(tibao.energy, energy_after_ult + 3.0, places=2)
+        self.assertEqual(int(tibao.energy), 29)
+
+        # 2. 机制边界验证：DoT 伤害跳伤不应触发回能
+        breakdown_dot = DamageBreakdown(
+            attacker_name="长夜月",
+            target_name="月夜天马 (Lv.100)",
+            base_dmg=500,
+            crit_mult=1.0,
+            is_crit=False,
+            dmg_boost_mult=1.0,
+            def_mult=0.5,
+            res_mult=1.0,
+            vuln_mult=1.0,
+            reduction_mult=1.0,
+            final_damage=250.0
+        )
+        sim.event_bus.publish(DamageAppliedEvent(
+            av=0.0, cycle=0, attacker_name="长夜月", target_name="月夜天马 (Lv.100)",
+            damage=250.0, is_crit=False, breakdown=breakdown_dot, target_hp_left=490000.0,
+            damage_tag="dot"
+        ))
+        self.assertAlmostEqual(tibao.energy, energy_after_ult + 3.0, places=2, msg="DoT 伤害不应误触发行迹回能")
+
+        # 3. 机制边界验证：反伤/友方目标受伤不应触发回能
+        sim.event_bus.publish(DamageAppliedEvent(
+            av=0.0, cycle=0, attacker_name="长夜月", target_name="长夜",
+            damage=100.0, is_crit=False, breakdown=breakdown_valid, target_hp_left=3000.0
+        ))
+        self.assertAlmostEqual(tibao.energy, energy_after_ult + 3.0, places=2, msg="友方目标受击不应触发行迹回能")
+
 
 if __name__ == "__main__":
     unittest.main()
