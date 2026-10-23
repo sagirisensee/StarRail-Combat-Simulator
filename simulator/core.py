@@ -52,6 +52,8 @@ class TurnSimulator:
         self.stage_plugins: List[StageMechanicPlugin] = [
             StageMechanicRegistry.create(m) for m in (stage_mechanics or [])
         ]
+        self.battle_started: bool = False
+        self._in_technique_phase: bool = False
 
         # 注册事件总线转发至各实体挂载的技能套件、光锥与遗器
         def _forward_event_to_handlers(evt: BattleEvent):
@@ -73,24 +75,28 @@ class TurnSimulator:
                         self.port.set_sp_cap(sp_cap)
 
             # 1. 战前秘技 (Techniques 在入场前按 priority 排序生效)
-            if use_techniques:
-                target_users = list(technique_users or [e.name for e in self.entities if not e.is_enemy])
-                def _tech_order(uid):
-                    ent = self._get_entity(uid)
-                    if ent and getattr(ent, "kit", None):
-                        try:
-                            d = ent.kit.definition(ActionKind.TECHNIQUE)
-                            if d:
-                                return getattr(d, "priority", 1)
-                        except Exception:
-                            pass
-                    return 1
-                target_users = sorted(target_users, key=_tech_order)
-                for user_id in target_users:
-                    self.use_technique(user_id)
-            elif technique_users:
-                for user_id in technique_users:
-                    self.use_technique(user_id)
+            self._in_technique_phase = True
+            try:
+                if use_techniques:
+                    target_users = list(technique_users or [e.name for e in self.entities if not e.is_enemy])
+                    def _tech_order(uid):
+                        ent = self._get_entity(uid)
+                        if ent and getattr(ent, "kit", None):
+                            try:
+                                d = ent.kit.definition(ActionKind.TECHNIQUE)
+                                if d:
+                                    return getattr(d, "priority", 1)
+                            except Exception:
+                                pass
+                        return 1
+                    target_users = sorted(target_users, key=_tech_order)
+                    for user_id in target_users:
+                        self.use_technique(user_id)
+                elif technique_users:
+                    for user_id in technique_users:
+                        self.use_technique(user_id)
+            finally:
+                self._in_technique_phase = False
 
             # 2. 关卡环境机制插件初始化 (Stage Mechanics Plugins)
             for plugin in self.stage_plugins:
@@ -116,6 +122,8 @@ class TurnSimulator:
                         max_hp_val = self.port.max_hp(e.name)
                         if max_hp_val and max_hp_val > 0 and max_hp_val != float("inf"):
                             e.current_hp = max_hp_val
+
+        self.battle_started = True
 
     def get_entity(self, name_or_id: str) -> Optional[Entity]:
         for e in self.entities:

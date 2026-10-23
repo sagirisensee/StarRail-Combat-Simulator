@@ -5,6 +5,7 @@
 - 严禁插件直接访问 `self.port.sim` 或 `self.port._get_entity` 内部私有结构；
 - `SimulatorCombatPort` 将插件的窄接口请求桥接为 `EffectResolver` 队列事务、`StatusManager` 状态更新与 `EventBus` 事实事件。
 """
+import sys
 from dataclasses import dataclass
 from typing import Protocol, Tuple, Optional, Any, TYPE_CHECKING
 from .actions import ActionKind, TargetMode
@@ -48,6 +49,7 @@ class CombatPort(Protocol):
     def is_memosprite(self, entity_id: str) -> bool: ...
     def get_master_name(self, entity_id: str) -> Optional[str]: ...
     def is_own_memosprite(self, master_id: str, entity_id: str) -> bool: ...
+    def is_in_turn(self) -> bool: ...
     def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool: ...
     def allies(self, actor_id: str) -> Tuple[str, ...]: ...
     def enemies(self, actor_id: str) -> Tuple[str, ...]: ...
@@ -128,6 +130,14 @@ class SimulatorCombatPort:
     """TurnSimulator 与业务插件（KitHandler / LightConeHandler / RelicSetHandler）之间的标准窄接口实现。"""
     def __init__(self, simulator: "TurnSimulator"):
         self.sim = simulator
+        self._last_followup_frame = None
+        self._last_followup_actor = None
+
+    def is_in_turn(self) -> bool:
+        """判定当前是否处于正规战斗回合或动作执行期（排除战前秘技阶段）。"""
+        if getattr(self.sim, "_in_technique_phase", False) or not getattr(self.sim, "battle_started", False):
+            return False
+        return True
 
     def _get_entity(self, name_or_id: str) -> Optional["Entity"]:
         for e in self.sim.entities:
@@ -488,15 +498,19 @@ class SimulatorCombatPort:
             scaling_stat=scaling_stat
         )
         if damage_tag == "FollowUpAttack":
-            self.sim.event_bus.publish(ActionExecuteEvent(
-                av=round(self.sim.current_av, 2),
-                cycle=self.sim.current_cycle,
-                actor_id=source_id,
-                actor_name=source_id,
-                action_type="FollowUpAttack",
-                description=f"【{source_id}】触发追加攻击",
-                action_kind=ActionKind.FOLLOW_UP
-            ))
+            caller_frame = sys._getframe(1)
+            if self._last_followup_frame is not caller_frame or getattr(self, "_last_followup_actor", None) != source_id:
+                self._last_followup_frame = caller_frame
+                self._last_followup_actor = source_id
+                self.sim.event_bus.publish(ActionExecuteEvent(
+                    av=round(self.sim.current_av, 2),
+                    cycle=self.sim.current_cycle,
+                    actor_id=source_id,
+                    actor_name=source_id,
+                    action_type="FollowUpAttack",
+                    description=f"【{source_id}】触发追加攻击",
+                    action_kind=ActionKind.FOLLOW_UP
+                ))
         self.sim.resolver.enqueue(ApplyDamageEffect(
             request=req,
             toughness_reduction=toughness_damage,
