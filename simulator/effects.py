@@ -104,6 +104,8 @@ class EffectResolver:
 
         if isinstance(effect, AdvanceActionEffect):
             before = effect.target.distance_remaining
+            if self.simulator.current_turn_entity == effect.target and effect.percent >= 1.0:
+                effect.target.extra_immediate_action = True
             effect.target.advance_action(effect.percent)
             after = effect.target.distance_remaining
             bus.publish(ActionAdvanceEvent(
@@ -255,8 +257,14 @@ class EffectResolver:
                 raw_dmg -= absorbed
 
             if hasattr(target, "current_hp"):
+                old_hp = target.current_hp
                 target.current_hp = max(0.0, target.current_hp - raw_dmg)
                 hp_left = target.current_hp
+                actual_loss = old_hp - target.current_hp
+                if actual_loss > 0:
+                    for e in list(getattr(self.simulator, "entities", [])):
+                        if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
+                            e.kit.on_hp_lost(target.name, actual_loss, cause="attack_damage")
             else:
                 hp_left = 0.0
 

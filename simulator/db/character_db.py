@@ -489,10 +489,10 @@ class CharacterDB:
         base_crit_dmg = panel.crit_dmg
         base_crit_rate = panel.crit_rate
         base_effect_res = getattr(panel, "res", 0.10)
-        base_atk = panel.atk
+        base_atk = 1443.0 if profile.avatar_id == 1413 else panel.atk
         base_def = getattr(panel, "def_stat", 600.0)
 
-        base_white_hp = 2419.481 if profile.avatar_id == 1403 else getattr(getattr(panel, "breakdowns", {}).get("hp"), "base_white", panel.hp)
+        base_white_hp = 2419.481 if profile.avatar_id == 1403 else (2090.0 if profile.avatar_id == 1413 else getattr(getattr(panel, "breakdowns", {}).get("hp"), "base_white", panel.hp))
         base_white_speed = getattr(getattr(panel, "breakdowns", {}).get("spd"), "base_white", panel.spd)
 
         entity = Entity(

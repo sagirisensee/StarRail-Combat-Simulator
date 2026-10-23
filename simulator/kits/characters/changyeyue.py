@@ -50,15 +50,6 @@ class ChangyeyueKit(KitHandler):
         """忆灵「长夜」生命上限为长夜月实时生命上限的 50% (满血 4313 点)。"""
         return float(round(0.50 * self.port.max_hp(self.owner_id)))
 
-    def _has_stage_bleed(self) -> bool:
-        """检查当前关卡环境是否挂载【血噬】机制。"""
-        if self.port.has_status(self.owner_id, f"Stage_Mechanic_血噬_{self.owner_id}"):
-            return True
-        sim = getattr(self.port, "sim", None)
-        if sim and "血噬" in getattr(sim, "stage_mechanics", []):
-            return True
-        return False
-
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
         # E2【听，沉眠中的呓语】：长夜月和忆灵「长夜」暴击伤害提高 40%
@@ -88,21 +79,6 @@ class ChangyeyueKit(KitHandler):
             description="暴击率提高 +35.0%"
         ))
 
-        # 行迹【天亮了，雨落了】：根据队伍中「记忆」命途角色数量提升暴击伤害 (本队3名记忆角色加成 +50%)
-        rem_count = self._get_remembrance_count()
-        rem_cd = 0.50 if rem_count == 3 else (0.65 if rem_count >= 4 else (0.15 if rem_count == 2 else 0.05))
-        self.port.upsert_status(BuffSpec(
-            key="Changyeyue_A6_RemembranceCritDmg",
-            name="天亮了，雨落了",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, rem_cd),),
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="buff",
-            description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd*100:.1f}%"
-        ))
-
         # 行迹【烛火起，烛火熄】：战斗开始时，长夜月恢复 70 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 70.0)
         self.gain_yizhi(1)
@@ -114,51 +90,75 @@ class ChangyeyueKit(KitHandler):
         if getattr(self, "technique_active", False):
             self.apply_skill_shared_crit_dmg()
 
-    def summon_spirit(self) -> None:
-        """召唤忆灵「长夜」，赋予在场 70% 增伤光环，并触发忆灵天赋【与夜，形影，不离】立即行动。"""
+    def summon_spirit(self) -> Any:
+        """召唤忆灵「长夜」，赋予在场增伤光环，并在跑道上注册实体 (触发【与夜，形影，不离】立即行动 0.0 AV)。"""
         was_alive = self.spirit_alive
         self.spirit_alive = True
         self.threshold_issued = False
         if not was_alive or self.spirit_hp <= 0:
             self.spirit_hp = self.spirit_max_hp
-            # 关卡【血噬】机制：召唤/进场受到一次血噬扣血 500 点 (4313 -> 3813)
-            if self._has_stage_bleed():
-                bleed_loss = 500.0
-                self.spirit_hp = max(1.0, self.spirit_hp - bleed_loss)
-                self.on_hp_lost("长夜", bleed_loss, cause="stage_mechanic_bleed_summon")
 
-        # 忆灵天赋【孤独，浮游，漆黑】：长夜在场增伤 50%
+        # 忆灵天赋【孤独，浮游，漆黑】：长夜在场时长夜月造成的伤害提高 50%
+        # （注：「长夜」免控与受击概率提高专属属于长夜自身，长夜月本体无此效果）
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_Memosprite_Presence",
-            name="孤独，浮游，漆黑 (免控与全属性增伤+50%)",
+            name="孤独，浮游，漆黑",
             source_id=self.owner_id,
             target_id=self.owner_id,
             modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.50),),
             duration=None,
             timing=DurationTiming.TARGET_TURN_END,
             category="buff",
-            description="全属性伤害提高 +50.0%"
+            description="长夜在场全属性伤害提高 +50.0%"
         ))
 
-        # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动！
-        if not was_alive:
-            self._trigger_memosprite_immediate_action()
+        # 在模拟器实体列表中注册/就绪伴生忆灵实体
+        spirit_ent = self.port.summon_spirit(
+            owner_id=self.owner_id,
+            name="长夜",
+            base_speed=160.0,
+            max_hp=self.spirit_max_hp,
+            kit_class=ChangyeMemospriteKit,
+            kit_args={"master_kit": self}
+        )
+        if spirit_ent:
+            spirit_ent.is_memosprite = True
+            spirit_ent.master_name = self.owner_id
+            spirit_ent.current_hp = self.spirit_hp
+            spirit_ent.max_hp = self.spirit_max_hp
+            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动！(100% 拉条，置于跑道 0.0 AV 起跑点)
+            spirit_ent.distance_remaining = 0.0
 
-        self._check_threshold()
+            # 行迹【天亮了，雨落了】：赋予忆灵暴击伤害加成 (+50%)
+            rem_count = self._get_remembrance_count()
+            rem_cd = 0.50 if rem_count == 3 else (0.65 if rem_count >= 4 else (0.15 if rem_count == 2 else 0.05))
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_A6_RemembranceCritDmg_Spirit",
+                name="天亮了，雨落了",
+                source_id=self.owner_id,
+                target_id="长夜",
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, rem_cd),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END,
+                category="buff",
+                description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd*100:.1f}%"
+            ))
 
-    def _trigger_memosprite_immediate_action(self) -> None:
-        """执行忆灵天赋【与夜，形影，不离】立即行动，施放常规忆灵技【追忆，蹁跹，如雨】。"""
+        return spirit_ent
+
+    def _execute_memosprite_skill(self, ctx: Optional[ActionContext] = None) -> None:
+        """执行忆灵天赋【与夜，形影，不离】与常规忆灵技【追忆，蹁跹，如雨】。"""
         enemies = self.port.enemies(self.owner_id)
         if not enemies:
             return
-        target = enemies[0]
+        target = ctx.target_ids[0] if (ctx and ctx.target_ids) else enemies[0]
         self.in_initial_action = True
 
-        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值 (3813 -> 3622)
+        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值
         if self.spirit_hp <= 0:
             self.spirit_hp = self.spirit_max_hp
         hp_loss = round(self.spirit_hp * 0.05, 2)
-        self.spirit_hp = max(1.0, round(self.spirit_hp - hp_loss, 2))
+        self.port.lose_hp("长夜", hp_loss, cause="memosprite_skill_cost")
 
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_A2_Skill_CritDmg",
@@ -172,32 +172,13 @@ class ChangyeyueKit(KitHandler):
             description="暴击伤害提高 +15.0%"
         ))
 
-        # 天赋【今夜与我同行】：长夜扣血触发生命降低暴伤提升与忆质累积
-        self.on_hp_lost("长夜", hp_loss, cause="memosprite_skill_cost")
-
-        # （注：第二段【血噬】扣血在忆质达到16层触发天赋立即行动进入长夜自身回合时结算）
-
+        # 忆灵技【追忆，蹁跹，如雨】(1141301) 施放回能 20 点
+        self.port.gain_energy(self.owner_id, 20.0)
         # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】
         self.port.gain_energy(self.owner_id, 5.0)
         self.gain_yizhi(1)
 
-        # 触发知更鸟晴歌气氛值监听 (长夜行动 +1 氛围值，总氛围值达到 1+6+1=8 点)
-        sim = getattr(self.port, "sim", None)
-        if sim and hasattr(sim, "event_bus"):
-            from ...events import ActionExecuteEvent
-            sim.event_bus.publish(ActionExecuteEvent(
-                av=round(getattr(sim, "current_av", 0.0), 2),
-                cycle=getattr(sim, "current_cycle", 0),
-                actor_id="长夜",
-                actor_name="长夜",
-                action_type="Skill",
-                description="追忆，蹁跹，如雨"
-            ))
-
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
-        # 对敌方单体造成等同于「长夜」70% 生命上限的冰属性伤害，
-        # 每有 4 点【忆质】，额外造成等同于「长夜」14% 生命上限的冰属性伤害。
-        # 长夜生命上限 = 50% 长夜月生命上限
         extra_ratio = (self.yizhi // 4) * 0.14
         mult = (0.70 + extra_ratio) * 0.50
 
@@ -215,6 +196,10 @@ class ChangyeyueKit(KitHandler):
         self.gain_yizhi(1)
         self.in_initial_action = False
         self._check_threshold()
+
+    def _trigger_memosprite_immediate_action(self) -> None:
+        """兼容调用：触发常规忆灵技。"""
+        self._execute_memosprite_skill()
 
     def gain_yizhi(self, amount: int) -> None:
         """获取【忆质】，E2 额外提高 2 点。若达到 16 点且长夜在场，触发天赋【立即行动】。"""
@@ -235,11 +220,7 @@ class ChangyeyueKit(KitHandler):
         ):
             self.threshold_issued = True
             # 天赋【今夜与我同行】：解除并免疫控制，若长夜在场使其立即行动进入自身回合 (Turn Begin)
-            # 若处于【血噬】环境再次扣血 500 点 (3622 -> 3122)
-            if self._has_stage_bleed():
-                turn_bleed = 500.0
-                self.spirit_hp = max(1.0, round(self.spirit_hp - turn_bleed, 2))
-                self.on_hp_lost("长夜", turn_bleed, cause="stage_mechanic_bleed_turn_begin")
+            self.port.advance(self.owner_id, "长夜", 1.0)
 
     def trigger_spirit_burst(self) -> None:
         """忆灵终极爆发【迷梦，流失，如露】：主目标16.8%*忆质，副目标8.4%*忆质。"""
@@ -282,6 +263,7 @@ class ChangyeyueKit(KitHandler):
             self.spirit_alive = False
             self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
+            self.port.despawn_spirit("长夜", "burst_depart")
 
             # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (上限 40%)
             speed_bonus = min(0.40, 0.10 + 0.01 * spent_memory)
@@ -300,8 +282,13 @@ class ChangyeyueKit(KitHandler):
             self.bursting = False
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
-        """生命降低响应：受到攻击、技能自耗或环境机制(如【血噬】)扣血时，暴伤提高 60% 并获得 2 点【忆质】(E2为 2+2=4 点)。"""
+        """生命降低统一响应：受到敌方攻击伤害、持续伤害/负面状态扣血、技能自耗或环境机制扣血时，暴伤提高 60% 并获得 2 点【忆质】(E2为 2+2=4 点)。"""
         if (entity_id == self.owner_id or entity_id == "长夜") and not cause.startswith("evernight_self_destruct"):
+            if entity_id == "长夜":
+                ent = self.port._get_entity("长夜") if hasattr(self.port, "_get_entity") else None
+                if ent:
+                    self.spirit_hp = ent.current_hp
+
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Talent_CritDmg",
                 name="今夜与我同行 (生命降低暴伤+60%)",
@@ -348,19 +335,37 @@ class ChangyeyueKit(KitHandler):
         return round(owner_cd * cd_ratio, 4)
 
     def apply_skill_shared_crit_dmg(self) -> float:
-        """动态挂载【白昼悄然离去】增益插件：使我方全体忆灵暴击伤害提高长夜月暴伤的 24%，持续 2 回合。"""
+        """动态挂载【白昼悄然离去】：
+        - 对长夜月本体：作为机制状态标记 (category='other')，自身不享受忆灵暴伤加成；
+        - 对伴生忆灵长夜：挂载专属暴伤 Buff (提高数值等同于长夜月实时暴伤的 24%)。
+        """
         shared_cd = self.calc_skill_shared_crit_dmg()
+        # 对长夜月本体：other 分类，无自身属性加成
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_Skill_SharedCritDmg",
             name="白昼悄然离去",
             source_id=self.owner_id,
             target_id=self.owner_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+            modifiers=(),
             duration=2,
             timing=DurationTiming.TARGET_TURN_START,
-            category="buff",
-            description=f"长夜月战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+            category="other",
+            description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
         ))
+        # 对伴生忆灵长夜：挂载实际暴击伤害提升 Buff
+        spirit_ent = self.port.sim.get_entity("长夜") if hasattr(self.port, "sim") else None
+        if spirit_ent:
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_Skill_SharedCritDmg_Spirit",
+                name="白昼悄然离去",
+                source_id=self.owner_id,
+                target_id="长夜",
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_START,
+                category="buff",
+                description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+            ))
         return shared_cd
 
     def _get_remembrance_count(self) -> int:
@@ -402,23 +407,34 @@ class ChangyeyueKit(KitHandler):
 
         # 3. 动态采样暴击率与暴击伤害 (CRIT) - 从状态管理器实时汇算所有生效 Modifier (纯动态，绝无任何硬编码加数)
         crit_rate = self.port.stat(self.owner_id, StatType.CRIT_RATE) if owner_ent else 1.036
-        crit_dmg = self.port.stat(self.owner_id, StatType.CRIT_DMG) if owner_ent else 6.633
+        crit_dmg = self.port.stat(self.owner_id, StatType.CRIT_DMG) if owner_ent else 4.533
+        if self.port.sim and hasattr(self.port.sim, "status_mgr"):
+            for s in self.port.sim.status_mgr.get_statuses("长夜"):
+                if s.id in ("LC_IfTimeWereAFlower_Oracle", "Relic_Valkyrie_GentleRain_长夜", "Relic_Valkyrie_CritDmg_长夜"):
+                    continue
+                for m in s.modifiers:
+                    if m.stat == StatType.CRIT_DMG:
+                        crit_dmg += m.value
 
         # 4. 纯动态从状态管理器采集长夜月/忆灵身上所有真实生效的 Buff 实例 (纯动态插件驱动，绝无任何硬编码 append)
         buffs = []
         other_effects = []
         if self.port.sim and hasattr(self.port.sim, "status_mgr"):
-            for s in self.port.sim.status_mgr.get_statuses(self.owner_id):
+            all_statuses = list(self.port.sim.status_mgr.get_statuses(self.owner_id)) + list(self.port.sim.status_mgr.get_statuses("长夜"))
+            seen_names = set()
+            for s in all_statuses:
                 cat = getattr(s, "category", "buff")
                 if cat == "buff":
                     name = s.name
-                    if "天气正好" in name:
-                        name = "天气正好万物可爱"
-                    elif "甘霖" in name:
-                        name = "烈阳惊雷的女武神"
+                    if name in seen_names:
+                        continue
+                    seen_names.add(name)
                     buffs.append({"name": name, "desc": s.description or "局内动态增益"})
                 elif cat == "other":
-                    # 伴生忆灵非角色：排除只属于角色的专属机制标记（如【好忙好忙的缇宝】仅对角色生效，长夜绝不挂载）
+                    # 伴生忆灵非角色：排除只属于角色的专属机制标记，且仅保留对长夜自身生效的特殊效果或环境机制
+                    target_name = getattr(s.target, "name", str(s.target))
+                    if target_name != "长夜" and not s.id.startswith("Stage_Mechanic"):
+                        continue
                     if "好忙好忙" in s.name:
                         continue
                     name = s.name
@@ -600,5 +616,32 @@ class ChangyeyueKit(KitHandler):
         self.apply_skill_shared_crit_dmg()
 
 
-# 兼容映射
-ChangyeMemospriteKit = ChangyeyueKit
+class ChangyeMemospriteKit(KitHandler):
+    """伴生忆灵「长夜」独立技能套件。"""
+    def __init__(self, owner_id: str, port: CombatPort, master_kit: Any = None):
+        super().__init__(owner_id, port)
+        self.master_kit = master_kit
+
+    def definition(self, kind: ActionKind):
+        if self.master_kit and self.master_kit.yizhi >= 16:
+            return AbilityDefinition(
+                kind=ActionKind.SKILL,
+                target_mode=TargetMode.ALL_ENEMIES,
+                cost=ResourceCost(sp=0),
+                name="迷梦，流失，如露"
+            )
+        else:
+            return AbilityDefinition(
+                kind=ActionKind.SKILL,
+                target_mode=TargetMode.SINGLE_ENEMY,
+                cost=ResourceCost(sp=0),
+                name="追忆，蹁跹，如雨"
+            )
+
+    def execute(self, ctx: ActionContext):
+        if not self.master_kit:
+            return
+        if self.master_kit.yizhi >= 16:
+            self.master_kit.trigger_spirit_burst()
+        else:
+            self.master_kit._execute_memosprite_skill(ctx)

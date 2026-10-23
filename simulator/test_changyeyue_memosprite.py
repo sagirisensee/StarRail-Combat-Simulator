@@ -35,6 +35,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # 忆灵在场
         self.assertTrue(kit.spirit_alive, "进战应召唤忆灵在场")
 
+        # 推进长夜开局顶轴第 1 动 (常规忆灵技)
+        sim.step()
+
         # 伴生忆灵「长夜」独立快照验证
         spirit_snap = sim.query_status("长夜")
         self.assertIsNotNone(spirit_snap, "应支持独立查询伴生忆灵「长夜」快照")
@@ -62,10 +65,12 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
     def test_02_basic_attack_hp_scaling(self):
         """验证普攻【从此岁月朦胧】按长夜月生命上限 70% 缩放结算冰伤与回能。"""
         sim = TurnSimulator(entities=[self.changyeyue, self.boss], auto_ult=False)
+        # 长夜开局顶轴先动
+        sim.step()
         hp_before = self.boss.current_hp
         energy_before = self.changyeyue.energy # 进战 70 + 忆灵技能 5 = 75 点
 
-        sim.execute_current_turn(action_override=ActionKind.BASIC)
+        sim.execute_current_turn(action_override=ActionKind.BASIC, actor=self.changyeyue)
 
         damage_dealt = hp_before - self.boss.current_hp
         self.assertGreater(damage_dealt, 0, "普攻应造成伤害")
@@ -74,6 +79,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
     def test_03_skill_hp_loss_and_memory_accumulation(self):
         """验证战技自扣生命、为忆灵恢复生命并累积忆质。"""
         sim = TurnSimulator(entities=[self.changyeyue, self.boss], auto_ult=False)
+        # 长夜开局顶轴先动
+        sim.step()
         kit = self.changyeyue.kit
 
         # 开局长夜已动，忆灵血量为 95%
@@ -83,7 +90,7 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         kit.yizhi = 0
         hp_before = self.changyeyue.current_hp
 
-        sim.execute_current_turn(action_override=ActionKind.SKILL)
+        sim.execute_current_turn(action_override=ActionKind.SKILL, actor=self.changyeyue)
 
         # 自扣生命
         self.assertLess(self.changyeyue.current_hp, hp_before)
@@ -169,6 +176,9 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
         sim = TurnSimulator(entities=team + enemies, use_techniques=True, stage_mechanics=STAGE_CONFIG["mechanics"])
 
+        # 推进长夜开局顶轴第 1 动 (常规忆灵技)
+        sim.step()
+
         # 1. 验证队伍中「记忆」命途角色数量为 3 (长夜月, 风堇, 知更鸟•晴歌)
         cy_kit = team[0].kit
         self.assertEqual(cy_kit._get_remembrance_count(), 3)
@@ -183,8 +193,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # 3. 验证长夜快照
         msnap = sim.query_status("长夜")
         self.assertEqual(msnap["name"], "长夜")
-        self.assertEqual(int(msnap["max_hp"]), 4313)
-        self.assertEqual(int(msnap["current_hp"]), 3122)
+        self.assertEqual(int(msnap["max_hp"]), 4263)
+        self.assertEqual(int(msnap["current_hp"]), 3099)
         self.assertEqual(msnap["speed"], 160.0)
         self.assertEqual(msnap["crit_rate"], 1.036)
         self.assertAlmostEqual(msnap["crit_dmg"], 6.641, delta=0.01)
@@ -200,6 +210,7 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         for name in expected_15:
             self.assertTrue(any(name in b for b in buff_names), f"长夜应包含增益: {name}")
         # 验证长夜作为伴生忆灵绝不挂载角色专属标记【好忙好忙的缇宝】，其他效果精准仅有关卡环境【血嗜】
+        self.assertFalse(any("好忙好忙" in o for o in msnap["other_effects"]), "长夜作为伴生忆灵不应挂载角色专属标记【好忙好忙的缇宝】")
         self.assertFalse(any("好忙好忙" in o for o in msnap["other_effects"]), "长夜作为伴生忆灵不应挂载角色专属标记【好忙好忙的缇宝】")
         self.assertEqual(msnap["other_effects"], ["血嗜"], "长夜特殊效果应精准仅有【血嗜】")
 

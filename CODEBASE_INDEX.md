@@ -56,6 +56,7 @@ flowchart TD
 | **修改关卡波次与环境机制** | `simulate_battle.py` | `STAGE_CONFIG["mechanics"]`<br>`STAGE_CONFIG["waves"]` | 关卡全局环境机制（如 `["血嗜"]`）在 `TurnSimulator.__init__` 中挂载为 `category="other"`。 |
 | **修改实时状态透析面板输出** | `simulate_battle.py` | `render_inspect_panel()` | 格式化打印角色与伴生忆灵面板，遵循星铁实机面板标准，直接读取 `msnap` 快照。 |
 | **查阅官方 4.6 技能参数与倍率** | `data/nanoka/raw/4.6/zh/character/{id}.json` | `skills -> {skill_id} -> level -> param_list` | 官方原始基准源文件（长夜月: 1413, 晴歌: 1512, 缇宝: 1403, 风堇: 1410）。 |
+| **查询当前回合归属与可行动Action** | `query_turn_action.py` | `TurnSimulator.print_turn_action_info()`<br>`TurnSimulator.get_turn_action_info()` | 机械化调用战斗模拟引擎底层，直接输出当前是谁的回合与可行动Action。 |
 | **运行与核对核心单元测试** | `simulator/test_changyeyue_memosprite.py`<br>`simulator/test_tibao_verification.py` | `TestChangyeyueMemospriteMechanics`<br>`TestTibaoVerification` | 必须维持 8/8 100% 通过率。 |
 
 ---

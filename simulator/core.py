@@ -99,6 +99,8 @@ class SimulatorCombatPort:
     def advance(self, source_id: str, target_id: str, ratio: float) -> None:
         tgt = self._get_entity(target_id)
         if tgt:
+            if ratio >= 1.0 and (self.sim.current_turn_entity == tgt or getattr(tgt, "extra_immediate_action", False)):
+                tgt.extra_immediate_action = True
             self.sim.resolver.enqueue(AdvanceActionEffect(source_id, tgt, ratio))
 
     def delay(self, source_id: str, target_id: str, ratio: float) -> None:
@@ -219,7 +221,7 @@ class SimulatorCombatPort:
                     e.kit.on_hp_lost(entity_id, actual, cause)
 
     def summon_spirit(self, owner_id: str, name: str, base_speed: float, max_hp: float, kit_class: Any = None, kit_args: Optional[dict] = None) -> Any:
-        existing = self._get_entity(name)
+        existing = self.sim.get_entity(name)
         if existing:
             return existing
         owner = self._get_entity(owner_id)
@@ -232,17 +234,24 @@ class SimulatorCombatPort:
             base_crit_rate=owner.base_crit_rate if owner else 0.05,
             base_crit_dmg=owner.base_crit_dmg if owner else 0.50,
             is_enemy=False,
+            is_memosprite=True,
+            master_name=owner_id,
             policy="A"
         )
         if kit_class:
             spirit.kit = kit_class(name, self, **(kit_args or {}))
         self.sim.add_entity(spirit, trigger_battle_start=False)
+        # 关卡环境机制：若关卡配置了入场环境生命削减 (如【血噬】)，对新入场实体统一调用 lose_hp 扣减生命并通知生命降低事件
+        if hasattr(self.sim, "stage_mechanics") and any("血" in m for m in self.sim.stage_mechanics):
+            self.lose_hp(name, 500.0, cause="stage_mechanic_bleed_summon")
         return spirit
 
     def despawn_spirit(self, name: str, reason: str = "") -> None:
-        ent = self._get_entity(name)
+        ent = self.sim.get_entity(name)
         if ent and ent in self.sim.entities:
             self.sim.entities.remove(ent)
+            if self.sim._current_turn_entity == ent:
+                self.sim._current_turn_entity = None
 
 
 @dataclass
@@ -290,6 +299,9 @@ class Entity:
     policy: str = "E"
     policy_index: int = 0
     is_enemy: bool = False
+    is_memosprite: bool = False
+    master_name: Optional[str] = None
+    extra_immediate_action: bool = False
     # 绑定所属的模拟器引用
     simulator: Optional[Any] = None
     # 动作回调：(actor: Entity, resolver: EffectResolver, action_type: str)
@@ -350,7 +362,11 @@ class Entity:
         self.distance_remaining += 10000.0 * percent
 
     def reset_distance(self):
-        self.distance_remaining = 10000.0
+        if getattr(self, "extra_immediate_action", False):
+            self.distance_remaining = 0.0
+            self.extra_immediate_action = False
+        else:
+            self.distance_remaining = 10000.0
 
     def get_next_action_intent(self) -> str:
         if not self.policy:
@@ -381,6 +397,7 @@ class TurnSimulator:
         self.port: SimulatorCombatPort = SimulatorCombatPort(self)
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
+        self.stage_mechanics: List[str] = list(stage_mechanics or [])
 
         # 注册事件总线转发至各实体挂载的技能套件、光锥与遗器
         def _forward_event_to_handlers(evt: BattleEvent):
@@ -532,8 +549,8 @@ class TurnSimulator:
         if not alive:
             return None
 
-        # 1. 寻找最快到达终点者
-        active_entity = min(alive, key=lambda e: e.remaining_av)
+        # 1. 寻找最快到达终点者 (若有多个单位 remaining_av == 0，优先忆灵/拉条者)
+        active_entity = min(alive, key=lambda e: (round(e.remaining_av, 4), 0 if getattr(e, "is_memosprite", False) else 1))
         delta_av = active_entity.remaining_av
 
         # 2. 全员沿跑道行进 delta_av 距离
@@ -545,6 +562,10 @@ class TurnSimulator:
 
         # 3. 状态时钟：结算【目标回合开始】类型状态 (如持续伤害)
         self.status_mgr.tick_on_turn_begin(active_entity)
+
+        # 关卡环境机制：若关卡配置了行动回合开始环境生命削减 (如【血噬】)，对当前我方行动实体统一结算扣血
+        if hasattr(self, "stage_mechanics") and any("血" in m for m in self.stage_mechanics) and not active_entity.is_enemy:
+            self.port.lose_hp(active_entity.name, 500.0, cause="stage_mechanic_bleed_turn_begin")
 
         # 4. 发布【回合开始】事件
         self.event_bus.publish(TurnBeginEvent(
@@ -561,10 +582,11 @@ class TurnSimulator:
     def execute_current_turn(
         self, 
         action_override: Optional[ActionKind] = None, 
-        target_ids: Optional[Tuple[str, ...]] = None
+        target_ids: Optional[Tuple[str, ...]] = None,
+        actor: Optional[Entity] = None
     ) -> Entity:
         """执行当前到达终点实体的回合动作，结算伤害、终结技抢断、状态时钟与回合结束。"""
-        active_entity = self._current_turn_entity
+        active_entity = actor if actor is not None else self._current_turn_entity
         if active_entity is None:
             active_entity = self.advance_to_next_turn()
             if active_entity is None:
@@ -575,6 +597,8 @@ class TurnSimulator:
         if getattr(active_entity, "kit", None) is not None:
             if action_override is not None:
                 req_kind = action_override
+            elif getattr(active_entity, "is_memosprite", False):
+                req_kind = ActionKind.SKILL
             else:
                 req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
             defn = active_entity.kit.definition(req_kind)
@@ -788,6 +812,137 @@ class TurnSimulator:
                 break
             actor = self.step()
             yield actor
+
+    def get_turn_action_info(self) -> Dict[str, Any]:
+        """获取当前决策窗口的核心信息：
+        - 当前行动值 (AV) 与轮次 (Cycle)
+        - 目前是谁的回合 (Current Actor)
+        - 当前行动者可行动的 Action (Available Actions for Current Actor)
+        - 全队就绪可抢断插队的终结技 (Ready Ultimates)
+        """
+        actor = self.current_turn_entity
+        if actor is None:
+            alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+            if alive:
+                actor = min(alive, key=lambda e: (round(e.remaining_av, 4), 0 if getattr(e, "is_memosprite", False) else 1))
+                av = self.current_av + (actor.remaining_av if actor else 0.0)
+            else:
+                actor = None
+                av = self.current_av
+        else:
+            av = self.current_av
+
+        actor_name = actor.name if actor else "无"
+        is_memosprite = getattr(actor, "is_memosprite", False)
+        if is_memosprite:
+            actor_type = "伴生忆灵"
+        elif actor and actor.is_enemy:
+            actor_type = "敌方目标"
+        else:
+            actor_type = "我方角色"
+
+        actions = []
+        if actor and getattr(actor, "kit", None) is not None:
+            for kind in (ActionKind.SKILL, ActionKind.BASIC):
+                try:
+                    defn = actor.kit.definition(kind)
+                    if defn:
+                        if any(a["name"] == defn.name for a in actions):
+                            continue
+                        sp_cost = getattr(defn.cost, "sp", 0)
+                        can_afford = (sp_cost <= 0) or self.sp.can_consume(sp_cost)
+                        
+                        target_desc = "敌方单体"
+                        if hasattr(defn, "target_mode"):
+                            from .actions import TargetMode
+                            tm = defn.target_mode
+                            target_map = {
+                                TargetMode.SELF: "自身",
+                                TargetMode.SINGLE_ALLY: "我方单体",
+                                TargetMode.ALL_ALLIES: "我方全体",
+                                TargetMode.SINGLE_ENEMY: "敌方单体",
+                                TargetMode.ALL_ENEMIES: "敌方全体",
+                                TargetMode.BLAST: "扩散"
+                            }
+                            target_desc = target_map.get(tm, "敌方单体")
+
+                        if is_memosprite:
+                            tag = "终极爆发" if "迷梦" in defn.name else "忆灵技"
+                        elif kind == ActionKind.SKILL:
+                            tag = "战技"
+                        else:
+                            tag = "普攻"
+
+                        actions.append({
+                            "kind": kind.name,
+                            "name": defn.name,
+                            "cost_sp": sp_cost,
+                            "available": can_afford,
+                            "target": target_desc,
+                            "tag": tag
+                        })
+                except Exception:
+                    pass
+        elif actor:
+            actions.append({
+                "kind": "NORMAL",
+                "name": "敌方行动" if actor.is_enemy else "普通行动",
+                "cost_sp": 0,
+                "available": True,
+                "target": "我方" if actor.is_enemy else "敌方",
+                "tag": "行动"
+            })
+
+        ready_ults = []
+        for u in self.get_ready_ultimates():
+            u_defn = u.kit.definition(ActionKind.ULTIMATE) if getattr(u, "kit", None) else None
+            u_name = u_defn.name if u_defn else "终结技"
+            e_raw = u.kit.get_energy_display(u) if (getattr(u, "kit", None) and hasattr(u.kit, "get_energy_display")) else f"{u.energy:.0f}/{u.max_energy:.0f}"
+            e_desc = e_raw.replace("能量:", "").replace("能量", "").strip()
+            ready_ults.append({
+                "name": u.name,
+                "action_name": u_name,
+                "energy": e_desc,
+                "is_current_actor": (u.name == actor_name)
+            })
+
+        return {
+            "av": round(av, 2),
+            "cycle": self.current_cycle,
+            "current_actor": actor_name,
+            "actor_type": actor_type,
+            "is_memosprite": is_memosprite,
+            "actions": actions,
+            "ready_ultimates": ready_ults,
+            "sp": {"current": self.sp.current_sp, "max": self.sp.max_sp}
+        }
+
+    def print_turn_action_info(self) -> None:
+        """格式化输出当前回合行动信息，供脚本演算与实时查看。"""
+        import sys
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
+        info = self.get_turn_action_info()
+        print("=" * 70)
+        print(f"[行动时钟]: {info['av']:.1f} AV (第 {info['cycle']} 轮) | 战技点: {info['sp']['current']}/{info['sp']['max']}")
+        print(f"[目前是谁的回合]: 【{info['current_actor']}】 ({info['actor_type']})")
+        print("-" * 70)
+        print("[本回合可行动的 Action]:")
+        for idx, act in enumerate(info['actions'], 1):
+            avail_tag = "[可施放]" if act['available'] else "[战技点不足]"
+            sp_tag = f"消耗 {act['cost_sp']} SP" if act['cost_sp'] > 0 else "无消耗"
+            print(f"  [{idx}] 【{act['tag']}】《{act['name']}》 ({sp_tag} | 目标: {act['target']} | {avail_tag})")
+        if info['ready_ultimates']:
+            print("\n[当前可抢断插队的终结技 (Ready Ultimates)]:")
+            for idx, ult in enumerate(info['ready_ultimates'], 1):
+                self_tag = " (当前行动者)" if ult['is_current_actor'] else ""
+                print(f"  [U{idx}] 【{ult['name']}】 · 《{ult['action_name']}》 (能量: {ult['energy']} [就绪!]){self_tag}")
+        else:
+            print("\n[当前可抢断插队的终结技]: 暂无角色就绪")
+        print("=" * 70)
 
     def get_battle_status(self) -> Dict[str, Any]:
         """获取当前全战场统一状态视图 (Single Source of Truth: status)。"""

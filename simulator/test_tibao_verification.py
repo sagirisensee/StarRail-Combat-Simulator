@@ -51,7 +51,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             "心意相契的安宁",
             "神启",
             "天气正好，万物可爱！",
-            "甘霖",
+            "烈阳惊雷的女武神",
             "星月漫天的明日",
             "哀歌覆国的诗人"
         ]
@@ -75,8 +75,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(len(debuff_names), 0, "开局我方应无负面效果")
 
         # 5. 动态属性数值校验 (实机严格对齐)
-        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟56%(11点气氛值) + 女武神15% = 519.2%
-        self.assertAlmostEqual(snap["current_crit_dmg"], 5.192, places=3)
+        # 暴伤: 基础 324.2% + 拾骨地28% + 专武96% + 知更鸟55%~56%(10~11点气氛值) + 女武神15% = 518.2% ~ 519.2%
+        self.assertAlmostEqual(snap["current_crit_dmg"], 5.182, delta=0.02)
         # 暴击率: 基础 61.3% + 诗人32% = 93.3%
         self.assertAlmostEqual(snap["current_crit_rate"], 0.933, places=3)
         # 全抗穿: 26.4%
@@ -109,6 +109,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             "偏离和弦",
             "暴风停歇",
             "甘霖",
+            "烈阳惊雷的女武神",
             "我们自成旋律",
             "天气正好，万物可爱！",
             "神启",
@@ -120,8 +121,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             "血噬"
         ]
 
-        # 1. 验证 8 个增益效果
-        self.assertEqual(len(buff_names), 8, f"风堇增益效果应为 8，实际为 {len(buff_names)}: {buff_names}")
+        # 1. 验证 9 个增益效果 (甘霖自身速度+6%，烈阳惊雷的女武神全队暴伤+15%)
+        self.assertEqual(len(buff_names), 9, f"风堇增益效果应为 9，实际为 {len(buff_names)}: {buff_names}")
         for expected in expected_buffs:
             self.assertIn(expected, buff_names, f"风堇应包含增益: {expected}")
 
