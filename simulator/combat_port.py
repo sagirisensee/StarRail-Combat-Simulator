@@ -108,6 +108,7 @@ class CombatPort(Protocol):
         fixed_crit_dmg: Optional[float] = None
     ) -> None: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None: ...
+    def is_countdown(self, entity_id: str) -> bool: ...
     def summon_spirit(
         self,
         owner_id: str,
@@ -115,7 +116,10 @@ class CombatPort(Protocol):
         base_speed: float,
         max_hp: float,
         kit_class: Any = None,
-        kit_args: Optional[dict] = None
+        kit_args: Optional[dict] = None,
+        *,
+        is_memosprite: bool = True,
+        is_countdown: bool = False
     ) -> Any: ...
     def despawn_spirit(self, name: str, reason: str = "") -> None: ...
 
@@ -153,9 +157,16 @@ class SimulatorCombatPort:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None) == master_id)
 
+    def is_countdown(self, entity_id: str) -> bool:
+        ent = self._get_entity(entity_id)
+        return bool(ent and getattr(ent, "is_countdown", False))
+
     def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool:
         """判定指定实体的某次动作是否属于【攻击】行为（排除纯辅助技能与倒计时实体）。"""
-        if "倒计时" in str(actor_id) or "Countdown" in str(action_type):
+        actor_ent = self._get_entity(actor_id)
+        if actor_ent and getattr(actor_ent, "is_countdown", False):
+            return False
+        if "Countdown" in str(action_type):
             return False
         if action_kind in (ActionKind.BASIC, ActionKind.FOLLOW_UP) or action_type in ("BasicAttack", "FollowUpAttack"):
             return True
@@ -531,7 +542,10 @@ class SimulatorCombatPort:
         base_speed: float,
         max_hp: float,
         kit_class: Any = None,
-        kit_args: Optional[dict] = None
+        kit_args: Optional[dict] = None,
+        *,
+        is_memosprite: bool = True,
+        is_countdown: bool = False
     ) -> Any:
         from .entity import Entity
         existing = self.sim.get_entity(name)
@@ -547,7 +561,8 @@ class SimulatorCombatPort:
             base_crit_rate=owner.base_crit_rate if owner else 0.05,
             base_crit_dmg=owner.base_crit_dmg if owner else 0.50,
             is_enemy=False,
-            is_memosprite=True,
+            is_memosprite=is_memosprite,
+            is_countdown=is_countdown,
             master_name=owner_id,
             policy="A"
         )

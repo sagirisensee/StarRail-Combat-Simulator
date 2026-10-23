@@ -105,11 +105,11 @@ class ChangyeyueKit(KitHandler):
                 and action_kind in (ActionKind.SKILL, ActionKind.ULTIMATE)
             )
             # 2. 我方任意忆灵施放技能 (含伴生忆灵「长夜」及队友忆灵，排除倒计时等机制实体)
+            is_countdown = hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_name)
             is_ally_memosprite_skill = (
                 self.port.is_ally(actor_name)
                 and self.port.is_memosprite(actor_name)
-                and "倒计时" not in actor_name
-                and "Countdown" not in action_type
+                and not is_countdown
             )
 
             if is_owner_skill or is_ally_memosprite_skill:

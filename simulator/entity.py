@@ -59,6 +59,7 @@ class Entity:
     policy_index: int = 0
     is_enemy: bool = False
     is_memosprite: bool = False
+    is_countdown: bool = False
     master_name: Optional[str] = None
     extra_immediate_action: bool = False
     # 绑定所属的模拟器引用

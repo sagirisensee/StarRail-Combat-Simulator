@@ -281,5 +281,48 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertAlmostEqual(cyy.speed, cyy_spd_before + 99.0 * 0.08, places=2)
 
 
+
+    def test_07_amphoreus_relic_non_stacking_and_graceful_despawn(self):
+        """测试 7: 验证【永恒之地翁法罗斯】不叠加规则 (双装备者只有 8%) 及单人忆灵退场不误删全队效果。"""
+        from simulator.relics.handlers.eternal_land_of_amphoreus import EternalLandOfAmphoreusHandler
+        sim = TurnSimulator(
+            entities=[self.robin_ent, self.cyy_ent, self.enemy],
+            use_techniques=False,
+            auto_ult=False
+        )
+        robin = sim.get_entity("知更鸟•晴歌")
+        cyy = sim.get_entity("长夜月")
+
+        # 让长夜月也装备翁法罗斯 2 件套
+        cyy_amphoreus = EternalLandOfAmphoreusHandler(owner_id="长夜月", port=sim.port, pieces=2)
+        cyy.relic_handlers.append(cyy_amphoreus)
+
+        # 初始：长夜月的伴生忆灵「长夜」已自动召唤在场
+        self.assertTrue(cyy.kit.spirit_alive)
+        cyy_amphoreus.on_battle_start()
+
+        # 全队应有 8% 速度加成 (长夜在场)
+        self.assertTrue(sim.port.has_status("知更鸟•晴歌", EternalLandOfAmphoreusHandler.BUFF_KEY))
+        robin_spd_1 = robin.speed
+
+        # 晴歌也施放战技召唤晴空乐手 (此时两名角色均有忆灵在场)
+        robin.kit.summon_musicians()
+        sim.resolver.resolve_all()
+
+        # 验证“该效果无法叠加”：知更鸟的速度依然是 1 份 8% 加成，没有变成 16%
+        self.assertAlmostEqual(robin.speed, robin_spd_1, places=2)
+
+        # 模拟晴空乐手离场 (退场)
+        sim.port.despawn_spirit("晴空乐手", reason="test_exit")
+        # 触发晴歌的遗器同步
+        for handler in robin.relic_handlers:
+            if isinstance(handler, EternalLandOfAmphoreusHandler):
+                handler._sync_speed_buff()
+
+        # 验证：因为长夜月的忆灵「长夜」仍然在场，全队 8% 加速不应被误删！
+        self.assertTrue(sim.port.has_status("知更鸟•晴歌", EternalLandOfAmphoreusHandler.BUFF_KEY))
+        self.assertAlmostEqual(robin.speed, robin_spd_1, places=2)
+
+
 if __name__ == "__main__":
     unittest.main()

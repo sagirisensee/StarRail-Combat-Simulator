@@ -108,6 +108,15 @@ class TurnSimulator:
 
             self.resolver.resolve_all()
 
+            # 4. 战斗开局根据全队秘技与进场光环对满血角色生命值进行上限初始化对齐 (满血进场)
+            for e in list(self.entities):
+                if not e.is_enemy:
+                    base_m = getattr(e, "max_hp", 0.0)
+                    if base_m > 0 and e.current_hp >= base_m:
+                        max_hp_val = self.port.max_hp(e.name)
+                        if max_hp_val and max_hp_val > 0 and max_hp_val != float("inf"):
+                            e.current_hp = max_hp_val
+
     def get_entity(self, name_or_id: str) -> Optional[Entity]:
         for e in self.entities:
             if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):

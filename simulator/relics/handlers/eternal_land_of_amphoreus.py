@@ -18,16 +18,36 @@ class EternalLandOfAmphoreusHandler(RelicSetHandler):
             self._sync_speed_buff()
 
     def on_event(self, event: Any) -> None:
-        if self.pieces >= 2:
+        if self.pieces < 2:
+            return
+        from ...events import ActionExecuteEvent, TurnBeginEvent, SpiritSummonedEvent, SpiritDespawnEvent
+        # 仅在实体召唤、退场或行动轮次变化等关键时机同步，避免高频细粒度事件的无效遍历
+        if isinstance(event, (SpiritSummonedEvent, SpiritDespawnEvent, ActionExecuteEvent, TurnBeginEvent)):
             self._sync_speed_buff()
 
     def _has_memosprite_on_field(self) -> bool:
+        """检查装备者自身是否有存活在场的伴生忆灵。"""
         if not self.port:
             return False
         for ally_name in self.port.allies(self.owner_id):
             if self.port.is_own_memosprite(self.owner_id, ally_name):
-                if "倒计时" not in ally_name and "Countdown" not in ally_name:
-                    return True
+                return True
+        return False
+
+    def _is_any_other_amphoreus_active(self) -> bool:
+        """检查是否有其他队友也装备了翁法罗斯且其忆灵仍在场（确保退场时不误删不可叠加的全队效果）。"""
+        if not self.port:
+            return False
+        for ally_name in self.port.allies(self.owner_id):
+            if ally_name == self.owner_id:
+                continue
+            ent = getattr(self.port, "_get_entity", lambda _: None)(ally_name)
+            if not ent or not getattr(ent, "relic_handlers", None):
+                continue
+            for handler in ent.relic_handlers:
+                if isinstance(handler, EternalLandOfAmphoreusHandler) and handler.pieces >= 2:
+                    if handler._has_memosprite_on_field():
+                        return True
         return False
 
     def _sync_speed_buff(self) -> None:
@@ -35,7 +55,8 @@ class EternalLandOfAmphoreusHandler(RelicSetHandler):
             return
         active = self._has_memosprite_on_field()
         for ally in self.port.allies(self.owner_id):
-            if "倒计时" in ally or "Countdown" in ally:
+            # 排除非战斗角色/倒计时跑条实体
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                 continue
             has_buff = self.port.has_status(ally, self.BUFF_KEY)
             if active and not has_buff:
@@ -51,4 +72,6 @@ class EternalLandOfAmphoreusHandler(RelicSetHandler):
                     description="装备者的忆灵在场，我方全体速度提高 +8.0%"
                 ))
             elif not active and has_buff:
-                self.port.remove_status(ally, self.BUFF_KEY)
+                # 只有当全队没有任何其他装备者的忆灵在场时，才真正移除全队增益（保证“该效果无法叠加”时的正确生命周期）
+                if not self._is_any_other_amphoreus_active():
+                    self.port.remove_status(ally, self.BUFF_KEY)

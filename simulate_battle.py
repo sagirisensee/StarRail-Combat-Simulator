@@ -312,8 +312,10 @@ def render_hud(sim: TurnSimulator, enemies: List[Entity], team_members: List[str
         buffs = [s.name for s in sim.status_mgr.get_statuses(ent.name)]
         buff_summary = f"({buffs[0][:10]}..)" if buffs else ""
 
-        hp_p = (ent.current_hp / ent.max_hp * 100) if (ent.max_hp > 0 and ent.max_hp != float("inf")) else 100.0
-        print(f" {is_turn} [{idx+1}] {ent.name:8} (E{ent.eidolon}) │ HP: {ent.current_hp:5.0f}/{ent.max_hp:5.0f} ({hp_p:3.0f}%) │ 速度: {round_int(ent.speed):3d} (精算: {ent.speed:5.1f}) │ {energy_str} {ready_tag} │ 距行动: {ent.remaining_av:5.1f} AV {buff_summary}")
+        cur_max_hp = sim.port.max_hp(ent.name)
+        cur_hp = min(cur_max_hp, ent.current_hp)
+        hp_p = (cur_hp / cur_max_hp * 100) if (cur_max_hp > 0 and cur_max_hp != float("inf")) else 100.0
+        print(f" {is_turn} [{idx+1}] {ent.name:8} (E{ent.eidolon}) │ HP: {round_int(cur_hp):5d}/{round_int(cur_max_hp):5d} ({hp_p:3.0f}%) │ 速度: {round_int(ent.speed):3d} (精算: {ent.speed:5.1f}) │ {energy_str} {ready_tag} │ 距行动: {ent.remaining_av:5.1f} AV {buff_summary}")
     print("═" * 78)
 
 
@@ -402,7 +404,7 @@ def render_inspect_panel(sim: TurnSimulator, target_key: str, team_members: List
     print(f"🔍 【{snap['name']}】 实时属性与 Buff 全量透析 │ {role_tag}")
     print("━" * 78)
     print("📊 实时动态面板 (Dynamic Attributes - 遵循星铁向下截断规范):")
-    hp_str = f"{floor_int(snap['current_hp']):,d} / {floor_int(snap['max_hp']):,d}" if snap['max_hp'] != float("inf") else "∞ / ∞ (无限生命测试木桩)"
+    hp_str = f"{round_int(snap['current_hp']):,d} / {round_int(snap['max_hp']):,d}" if snap['max_hp'] != float("inf") else "∞ / ∞ (无限生命测试木桩)"
     if snap.get('shield', 0.0) > 0:
         hp_str += f" │ 护盾: {floor_int(snap['shield']):,d}"
     print(f"   • 生命值 (HP)       : {hp_str}")

@@ -6,6 +6,7 @@ from .handlers.poet_of_mourning import PoetOfMourningHandler
 from .handlers.bone_collecting_ground import BoneCollectingGroundHandler
 from .handlers.sunken_tree import SunkenTreeHandler
 from .handlers.eternal_land_of_amphoreus import EternalLandOfAmphoreusHandler
+from .handlers.creator_of_new_world import CreatorOfNewWorldHandler
 
 
 def register_all_relics() -> None:
@@ -63,6 +64,17 @@ def register_all_relics() -> None:
             aliases=("amphoreus", "翁法罗斯", "永恒之地翁法罗斯")
         ),
         EternalLandOfAmphoreusHandler
+    )
+
+    # 6. 再创天地的救世主 (ID 127)
+    RelicRegistry.register(
+        RelicSetSpec(
+            set_id=127,
+            name="再创天地的救世主",
+            set_type="cavern",
+            aliases=("creator_of_new_world", "救世主", "再创天地的救世主")
+        ),
+        CreatorOfNewWorldHandler
     )
 
 

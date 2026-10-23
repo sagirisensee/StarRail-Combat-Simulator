@@ -460,7 +460,9 @@ class RobinSunnySongKit(KitHandler):
             base_speed=countdown_spd,
             max_hp=1000.0,
             kit_class=FeverCountdownKit,
-            kit_args={"master_kit": self}
+            kit_args={"master_kit": self},
+            is_memosprite=False,
+            is_countdown=True
         )
         if countdown_ent:
             self.port.set_distance(self.COUNTDOWN_NAME, 10000.0)

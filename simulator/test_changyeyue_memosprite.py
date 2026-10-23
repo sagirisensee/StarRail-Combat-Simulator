@@ -290,7 +290,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         robin.kit.summon_musicians()
         robin.kit.gain_vibes(12)
         self.assertTrue(sim.port.is_memosprite("晴空乐手"))
-        self.assertTrue(sim.port.is_memosprite("晴空乐手•倒计时"))
+        self.assertTrue(sim.port.is_countdown("晴空乐手•倒计时"))
+        self.assertFalse(sim.port.is_memosprite("晴空乐手•倒计时"))
 
         energy_before = self.changyeyue.energy
         yizhi_before = cyy_kit.yizhi
