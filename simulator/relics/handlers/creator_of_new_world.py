@@ -25,9 +25,8 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
         if not self.port:
             return False
         for ally in self.port.allies(self.owner_id):
-            if self.port.is_own_memosprite(self.owner_id, ally):
-                if "倒计时" not in ally and "Countdown" not in ally:
-                    return True
+            if self.port.is_own_memosprite(self.owner_id, ally) and not self.port.is_countdown(ally):
+                return True
         return False
 
     def _trigger_4pc_buff(self) -> None:
@@ -36,10 +35,9 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
         # 1. 自身与自身忆灵生命上限提高 24%
         memos = [
             ally for ally in self.port.allies(self.owner_id)
-            if self.port.is_own_memosprite(self.owner_id, ally)
+            if self.port.is_own_memosprite(self.owner_id, ally) and not self.port.is_countdown(ally)
         ]
         for tgt in [self.owner_id] + memos:
-            old_max = self.port.max_hp(tgt)
             self.port.upsert_status(BuffSpec(
                 key=f"{self.BUFF_HP_KEY}_{tgt}",
                 name="再创天地的救世主 (生命+24%)",
@@ -51,16 +49,10 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
                 category="buff",
                 description="施放普攻或战技且忆灵在场，生命上限提高 +24.0%"
             ))
-            new_max = self.port.max_hp(tgt)
-            hp_delta = new_max - old_max
-            if hp_delta > 0:
-                ent = getattr(self.port, "_get_entity", lambda x: None)(tgt)
-                if ent:
-                    ent.current_hp = min(new_max, getattr(ent, "current_hp", 0.0) + hp_delta)
 
         # 2. 我方全体造成的伤害提高 15%
         for ally in self.port.allies(self.owner_id):
-            if "倒计时" in ally or "Countdown" in ally:
+            if self.port.is_countdown(ally):
                 continue
             self.port.upsert_status(BuffSpec(
                 key=f"{self.BUFF_DMG_KEY}_{ally}",

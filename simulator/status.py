@@ -20,7 +20,7 @@ class DurationTiming(Enum):
     """状态衰减时钟锚点。"""
     TARGET_TURN_START = auto()   # 目标自身回合开始扣减
     TARGET_TURN_END = auto()     # 目标自身回合结束扣减
-    CASTER_TURN_END = auto()     # 施法者自身回合结束扣减 (结界时钟)
+    CASTER_TURN_END = auto()     # 施法者自身行动结束扣减 (结界时钟)
 
 
 class StackPolicy(Enum):
@@ -139,11 +139,23 @@ class StatusManager:
         """获取目标指定 ID 的状态实例。"""
         return next((s for s in self.get_statuses(entity_name) if s.id == status_id), None)
 
+    def _calc_entity_max_hp(self, target: Any) -> float:
+        """动态计算实体的实时生命上限（含白字基准与百分比/固定值生命加成）。"""
+        base_max_hp = getattr(target, "max_hp", 0.0)
+        if base_max_hp <= 0 or base_max_hp == float("inf"):
+            return base_max_hp
+        white_hp = getattr(target, "base_white_hp", 0.0) or base_max_hp
+        return self.calculate_stat(target.name, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp)
+
     def add_status(self, status: StatusInstance):
-        """向目标添加状态（严格执行 REPLACE/STACK 策略与数值更新）。"""
-        target_name = status.target.name
+        """向目标添加状态（严格执行 REPLACE/STACK 策略与数值更新，并自动同步动态生命上限差值）。"""
+        target = status.target
+        target_name = target.name
         if target_name not in self.statuses:
             self.statuses[target_name] = []
+
+        has_hp_mod = any(m.stat == StatType.MAX_HP_PERCENT for m in status.modifiers)
+        old_max = self._calc_entity_max_hp(target) if has_hp_mod else 0.0
 
         existing = next((s for s in self.statuses[target_name] if s.id == status.id), None)
         if existing:
@@ -166,10 +178,36 @@ class StatusManager:
         else:
             self.statuses[target_name].append(status)
 
+        if has_hp_mod and old_max > 0 and old_max != float("inf"):
+            new_max = self._calc_entity_max_hp(target)
+            hp_delta = new_max - old_max
+            if hp_delta > 0 and getattr(target, "current_hp", 0.0) > 0:
+                target.current_hp = min(new_max, target.current_hp + hp_delta)
+            elif hp_delta < 0 and getattr(target, "current_hp", 0.0) > new_max:
+                target.current_hp = new_max
+
+            if abs(hp_delta) > 1e-4 and status.id != "Tribbie_A4_GlassBallWithWings" and self.simulator and hasattr(self.simulator, "event_bus"):
+                from .events import StatusApplyEvent
+                self.simulator.event_bus.publish(StatusApplyEvent(
+                    av=round(getattr(self.simulator, "current_av", 0.0), 2),
+                    cycle=getattr(self.simulator, "current_cycle", 0),
+                    source_name=getattr(status.source, "name", str(status.source)),
+                    target_name=target_name,
+                    status_id=status.id,
+                    status_name=status.name,
+                    duration=status.duration
+                ))
+
     def remove_status(self, target_name: str, status_id: str):
-        """显式移除指定状态。"""
+        """显式移除指定状态，并在移除生命上限增益时自动截断溢出当前生命值。"""
         if target_name in self.statuses:
+            removed = [s for s in self.statuses[target_name] if s.id == status_id]
             self.statuses[target_name] = [s for s in self.statuses[target_name] if s.id != status_id]
+            if removed:
+                target = removed[0].target
+                new_max = self._calc_entity_max_hp(target)
+                if 0 < new_max != float("inf") and getattr(target, "current_hp", 0.0) > new_max:
+                    target.current_hp = new_max
 
     def has_status(self, target_name: str, status_id: str) -> bool:
         """检查目标是否持有指定状态。"""
@@ -204,8 +242,10 @@ class StatusManager:
         av = self.simulator.current_av
         cycle = self.simulator.current_cycle
 
+        expired_events = []
         for target_name, status_list in list(self.statuses.items()):
             active = []
+            expired_targets = []
             for s in status_list:
                 if condition(s):
                     if s.skip_current_clock:
@@ -216,7 +256,8 @@ class StatusManager:
                     if s.duration is not None:
                         s.duration -= 1
                         if s.duration <= 0:
-                            bus.publish(StatusExpireEvent(
+                            expired_targets.append(s.target)
+                            expired_events.append(StatusExpireEvent(
                                 av=round(av, 2),
                                 cycle=cycle,
                                 target_name=s.target.name,
@@ -226,6 +267,13 @@ class StatusManager:
                             continue
                 active.append(s)
             self.statuses[target_name] = active
+            for tgt in expired_targets:
+                new_max = self._calc_entity_max_hp(tgt)
+                if 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
+                    tgt.current_hp = new_max
+
+        for evt in expired_events:
+            bus.publish(evt)
 
     def calculate_stat(
         self,
@@ -369,7 +417,7 @@ class StatusManager:
         if base_max_hp != float("inf") and base_max_hp > 0:
             white_hp = getattr(entity, "base_white_hp", 0.0) or base_max_hp
             cur_max_hp = self.calculate_stat(name, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp)
-        cur_hp = entity.current_hp + (cur_max_hp - base_max_hp) if (entity.current_hp > 0 and base_max_hp != float("inf")) else entity.current_hp
+        cur_hp = min(cur_max_hp, entity.current_hp) if (entity.current_hp > 0 and base_max_hp != float("inf")) else entity.current_hp
 
         # Buff 详情列表
         active_buffs = []

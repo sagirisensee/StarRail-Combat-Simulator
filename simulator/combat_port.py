@@ -408,7 +408,8 @@ class SimulatorCombatPort:
     def heal(self, source_id: str, target_id: str, amount: float) -> None:
         tgt = self._get_entity(target_id)
         if tgt and hasattr(tgt, "current_hp"):
-            tgt.current_hp = min(tgt.max_hp, tgt.current_hp + amount)
+            cur_max = self.max_hp(target_id) or tgt.max_hp
+            tgt.current_hp = min(cur_max, tgt.current_hp + amount)
             self.sim.event_bus.publish(HealAppliedEvent(
                 av=getattr(self.sim, "current_av", 0.0),
                 cycle=getattr(self.sim, "current_cycle", 0),
@@ -448,8 +449,9 @@ class SimulatorCombatPort:
 
     def hp_ratio(self, entity_id: str) -> float:
         ent = self._get_entity(entity_id)
-        if ent and getattr(ent, "max_hp", 0) > 0:
-            return ent.current_hp / ent.max_hp
+        cur_max = self.max_hp(entity_id)
+        if ent and cur_max > 0:
+            return ent.current_hp / cur_max
         return 1.0
 
     def attack(

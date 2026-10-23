@@ -9,7 +9,7 @@
    结界期间：
    - 敌方全体陷入易伤状态，受到的伤害提高 30% (Lv 10) / 33% (Lv 12)；
    - 施放大招自身固定回能 5 点 (受能量恢复效率加成)；
-   - 行迹【长翅膀的玻璃球！】：结界期间自身生命上限提升 2527 点数值；
+   - 行迹【长翅膀的玻璃球！】：结界期间自身生命上限提升全队生命上限之和的 9%；
    - 星魂 4【心意相契的安宁】：结界期间我方全体无视目标 18% 防御；
    - 星魂 6【星月漫天的明日】：施放大招后立即对敌方全体发动天赋追加攻击；
    - 重置队友【好忙好忙的缇宝】追加攻击触发次数。
@@ -71,7 +71,7 @@ class TibaoKit(KitHandler):
 
         # 天赋标记【好忙好忙的缇宝】 (仅角色生效，带 CHARACTER_ONLY 语义标签，忆灵/召唤物不挂载)
         for ally in self.port.allies(self.owner_id):
-            if ally != self.owner_id and not self.port.is_memosprite(ally):
+            if ally != self.owner_id and not self.port.is_memosprite(ally) and not self.port.is_countdown(ally):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_Talent_BusyBusy_{ally}",
                     name="好忙好忙的缇宝",
@@ -85,7 +85,7 @@ class TibaoKit(KitHandler):
                     description="队友施放终结技后，触发缇宝天赋追加攻击 (可触发)"
                 ))
             # E4【心意相契的安宁】：进战结界生效时我方全体无视目标 18% 防御
-            if self.eidolon >= 4:
+            if self.eidolon >= 4 and not self.port.is_countdown(ally):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_E4_PeaceInConcord_{ally}",
                     name="心意相契的安宁",
@@ -106,6 +106,8 @@ class TibaoKit(KitHandler):
         """获得/刷新【神启】状态。"""
         res_pen = self.skill_param("skill", 0, default=0.264)
         for ally in self.port.allies(self.owner_id):
+            if self.port.is_countdown(ally):
+                continue
             self.port.upsert_status(BuffSpec(
                 key=f"Tribbie_Ult_DivineRevelation_{ally}",
                 name="神启",
@@ -246,6 +248,8 @@ class TibaoKit(KitHandler):
         self.talent_used_by.clear()
         res_pen = self.skill_param("skill", 0, default=0.264)
         for a in self.port.allies(self.owner_id):
+            if self.port.is_countdown(a):
+                continue
             if a != self.owner_id and not self.port.is_memosprite(a):
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_Talent_BusyBusy_{a}",
@@ -275,6 +279,8 @@ class TibaoKit(KitHandler):
         # 3. 星魂 4【心意相契的安宁】：结界期间我方全体无视目标 18% 防御
         if self.eidolon >= 4:
             for a in self.port.allies(self.owner_id):
+                if self.port.is_countdown(a):
+                    continue
                 self.port.upsert_status(BuffSpec(
                     key=f"Tribbie_E4_PeaceInConcord_{a}",
                     name="心意相契的安宁",
@@ -326,65 +332,56 @@ class TibaoKit(KitHandler):
         """同步行迹【长翅膀的玻璃球！】生命上限加成 (我方全体角色生命上限之和的 9%)。"""
         if not self.port:
             return
-        is_active = getattr(self, "zone_active", False) or self.port.has_status(self.owner_id, "Tribbie_Ult_Zone_GuessWhoLivesHere")
-        if not is_active:
+        zone_status = next(
+            (s for s in self.port.statuses(self.owner_id, category="other") if s.id == "Tribbie_Ult_Zone_GuessWhoLivesHere"),
+            None
+        )
+        self.zone_active = zone_status is not None
+        if not self.zone_active:
             if self.port.has_status(self.owner_id, "Tribbie_A4_GlassBallWithWings"):
-                old_max = self.port.max_hp(self.owner_id)
                 self.port.remove_status(self.owner_id, "Tribbie_A4_GlassBallWithWings")
-                new_max = self.port.max_hp(self.owner_id)
-                ent = getattr(self.port, "_get_entity", lambda x: None)(self.owner_id)
-                if ent and getattr(ent, "current_hp", 0.0) > new_max:
-                    ent.current_hp = new_max
             return
 
         team_hp_sum = 0.0
         for ally in self.port.allies(self.owner_id):
-            if not self.port.is_memosprite(ally):
+            if not self.port.is_memosprite(ally) and not self.port.is_countdown(ally):
                 if ally == self.owner_id:
-                    ent = getattr(self.port, "_get_entity", lambda x: None)(ally)
-                    base_max_hp = getattr(ent, "max_hp", 0.0)
-                    white_hp = getattr(ent, "base_white_hp", 0.0) or base_max_hp
-                    status_mgr = getattr(getattr(self.port, "sim", None), "status_mgr", None)
-                    if status_mgr:
-                        self_hp = status_mgr.calculate_stat(
-                            ally, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp,
-                            exclude_ids=("Tribbie_A4_GlassBallWithWings",)
-                        )
-                    else:
-                        self_hp = base_max_hp
+                    self_hp = self.port.stat(
+                        ally,
+                        StatType.MAX_HP_PERCENT,
+                        exclude_ids=("Tribbie_A4_GlassBallWithWings",)
+                    )
                     team_hp_sum += self_hp
                 else:
                     team_hp_sum += self.port.max_hp(ally)
 
         glass_ball_hp = round(team_hp_sum * 0.09, 1)
-        old_max = self.port.max_hp(self.owner_id)
         self.port.upsert_status(BuffSpec(
             key="Tribbie_A4_GlassBallWithWings",
             name="长翅膀的玻璃球！",
             source_id=self.owner_id,
             target_id=self.owner_id,
             modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, glass_ball_hp),),
-            duration=3,
-            timing=DurationTiming.TARGET_TURN_END,
-            skip_current_clock=True,
+            duration=zone_status.duration,
+            timing=DurationTiming.CASTER_TURN_END,
+            skip_current_clock=zone_status.skip_current_clock,
             category="buff",
             description=f"生命上限提升 +{glass_ball_hp:.0f} (全队生命上限之和的 9%)"
         ))
-        new_max = self.port.max_hp(self.owner_id)
-        hp_delta = new_max - old_max
-        if hp_delta > 0:
-            ent = getattr(self.port, "_get_entity", lambda x: None)(self.owner_id)
-            if ent:
-                ent.current_hp = min(new_max, getattr(ent, "current_hp", 0.0) + hp_delta)
 
     def on_event(self, event: Any) -> None:
         """响应事件：
         1. 我方其他角色施放终结技后触发追加攻击；
-        2. 行迹【岔路旁的小石子？】：我方其他目标攻击后，每击中 1 个目标使缇宝恢复 1.5 点固定能量。
+        2. 行迹【岔路旁的小石子？】：我方其他目标攻击后，每击中 1 个目标使缇宝恢复 1.5 点固定能量；
+        3. 动态同步【长翅膀的玻璃球！】生命上限与结界到期清理。
         """
-        from ...events import ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent, SpiritDespawnEvent
-        if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent)):
-            self._sync_glass_ball_hp()
+        from ...events import (
+            ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
+            SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent
+        )
+        if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent)):
+            if not (isinstance(event, StatusApplyEvent) and event.status_id == "Tribbie_A4_GlassBallWithWings"):
+                self._sync_glass_ball_hp()
 
         if isinstance(event, DamageAppliedEvent):
             attacker = event.attacker_name
@@ -409,12 +406,11 @@ class TibaoKit(KitHandler):
                 self.port.gain_energy(self.owner_id, energy_per_hit * err)
 
         elif isinstance(event, ActionExecuteEvent):
-            self._sync_glass_ball_hp()
             actor_id = event.actor_name or event.actor_id
             action_kind = getattr(event, "action_kind", None)
             action_type = getattr(event, "action_type", "")
 
-            if self.port.is_ally(actor_id) and actor_id != self.owner_id and not self.port.is_memosprite(actor_id):
+            if self.port.is_ally(actor_id) and actor_id != self.owner_id and not self.port.is_memosprite(actor_id) and not self.port.is_countdown(actor_id):
                 if action_kind == ActionKind.ULTIMATE or "Ultimate" in str(action_type):
                     if actor_id not in self.talent_used_by:
                         self.talent_used_by.add(actor_id)

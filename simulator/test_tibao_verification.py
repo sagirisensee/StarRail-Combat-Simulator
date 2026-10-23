@@ -85,8 +85,10 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertAlmostEqual(snap["def_shred"], 0.18, places=2)
         # 通用属性增伤: 诗人10% + 知更鸟秘技30% + 羊羔儿72% = 112% (E6为必杀专属追加增伤，不污染通用增伤)
         self.assertAlmostEqual(snap["dmg_boost"], 1.12, places=2)
-        # 生命上限 = 6505.1 + 基础白字生命2419.5 * 20% + 2527 = 9516.0
+        # 生命上限 = 6505.1 + 基础白字生命2317.0 * 20% + 2547.1 = 9515.6 (四舍五入 9516)
         self.assertEqual(round(snap["max_hp"]), 9516)
+        self.assertEqual(round(snap["current_hp"]), 9516)
+        self.assertAlmostEqual(snap["hp_pct"], 1.0, places=3)
 
     def test_fengjin_full_status_verification(self):
         """验证风堇在进战且缇宝施放大招后的实机全量面板与增益效果对账。"""
@@ -136,6 +138,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
 
         # 4. 动态属性数值与实机完全对账
         self.assertEqual(int(snap["max_hp"]), 6014)
+        self.assertEqual(int(snap["current_hp"]), 6014)
+        self.assertAlmostEqual(snap["hp_pct"], 1.0, places=3)
         self.assertEqual(int(snap["current_energy"]), 70)
         self.assertEqual(int(snap["max_energy"]), 140)
         self.assertEqual(int(snap["current_atk"]), 1336)
@@ -221,6 +225,54 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             damage=100.0, is_crit=False, breakdown=breakdown_valid, target_hp_left=3000.0
         ))
         self.assertAlmostEqual(tibao.energy, expected_two_hits, places=2, msg="友方目标受击不应触发行迹回能")
+
+    def test_dynamic_hp_snapshot_heal_and_zone_sync(self):
+        """验证四名角色动态生命上限、详情面板 current_hp 不翻倍、治疗不截断至静态白值以及结界联动即时刷新。"""
+        from simulator.actions import ActionKind
+        for e in self.enemies:
+            e.is_infinite_hp = True
+
+        sim = TurnSimulator(
+            entities=self.entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=[]
+        )
+
+        # 1. 缇宝先手开启大招结界（此时晴歌尚未施放战技触发救世主 4 件套，缇宝生命为 9516）
+        sim.cast_ultimate("缇宝")
+        snap_tb_1 = sim.query_status("缇宝")
+        self.assertEqual(round(snap_tb_1["max_hp"]), 9516)
+        self.assertEqual(round(snap_tb_1["current_hp"]), 9516)
+
+        # 2. 知更鸟•晴歌施放战技召唤晴空乐手，触发【再创天地的救世主】4件套 (+24% 生命 -> 7237)
+        # 验证无需等待下一回合，缇宝【长翅膀的玻璃球！】立即响应 StatusApplyEvent 同步至 9565
+        robin = sim.get_entity("知更鸟•晴歌")
+        sim.execute_current_turn(action_override=ActionKind.SKILL, actor=robin)
+
+        expected_hp = {
+            "长夜月": 8626,
+            "缇宝": 9565,
+            "知更鸟•晴歌": 7237,
+            "风堇": 6014,
+        }
+        for name, exp in expected_hp.items():
+            snap = sim.query_status(name)
+            self.assertEqual(round(snap["max_hp"]), exp, f"{name} 动态生命上限应为 {exp}")
+            self.assertEqual(round(snap["current_hp"]), exp, f"{name} 详情面板当前生命应为 {exp} (不应翻倍溢出)")
+            self.assertAlmostEqual(snap["hp_pct"], 1.0, places=3)
+
+        # 3. 验证治疗不会按静态基础 max_hp 截断当前生命值
+        sim.port.heal("风堇", "缇宝", 500.0)
+        self.assertEqual(round(sim.get_entity("缇宝").current_hp), 9565, "治疗后缇宝生命值不应被静态 max_hp 截断")
+        self.assertAlmostEqual(sim.port.hp_ratio("缇宝"), 1.0, places=3)
+
+        # 4. 验证结界到期后【长翅膀的玻璃球！】正常卸载且不残留
+        sim.port.remove_status("缇宝", "Tribbie_Ult_Zone_GuessWhoLivesHere")
+        sim.get_entity("缇宝").kit._sync_glass_ball_hp()
+        self.assertFalse(sim.port.has_status("缇宝", "Tribbie_A4_GlassBallWithWings"))
+        self.assertAlmostEqual(sim.port.max_hp("缇宝"), 6968.5, places=1)
+        self.assertAlmostEqual(sim.get_entity("缇宝").current_hp, 6968.5, places=1)
 
 
 if __name__ == "__main__":
