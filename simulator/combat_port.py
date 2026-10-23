@@ -446,15 +446,26 @@ class SimulatorCombatPort:
             ent.energy = min(ent.max_energy, ent.energy + amount)
             actual = ent.energy - old_e
             if hasattr(self.sim, "tracer") and self.sim.tracer and actual > 0:
+                src = source_plugin
                 if not cause:
                     if abs(amount - 30.0) < 1e-4:
                         desc = "施放战技回能 (+30.0 点)"
+                        src = src or f"{ent.name}战技"
                     elif abs(amount - 20.0) < 1e-4:
                         desc = "施放普攻回能 (+20.0 点)"
+                        src = src or f"{ent.name}普攻"
                     elif abs(amount - 5.0) < 1e-4:
                         desc = "施放终结技固定回能 (+5.0 点)"
+                        src = src or f"{ent.name}终结技"
+                    elif abs(amount - 3.0) < 1e-4 and "知更鸟" in ent.name:
+                        desc = "行迹《即兴蓝调》消耗律动回能 (+3.0 点)"
+                        src = src or "知更鸟行迹《即兴蓝调》"
+                    elif "缇宝" in ent.name:
+                        desc = f"技能/天赋机制回能 (+{actual:.1f} 点)"
+                        src = src or "缇宝技能与天赋"
                     else:
                         desc = f"获得能量 (+{actual:.1f} 点)"
+                        src = src or f"{ent.name}机制"
                 else:
                     desc = cause
                 self.sim.tracer.record_energy_change(
@@ -463,7 +474,7 @@ class SimulatorCombatPort:
                     new_val=ent.energy,
                     max_energy=ent.max_energy,
                     cause_desc=desc,
-                    source_plugin=source_plugin
+                    source_plugin=src
                 )
 
     def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0, cause: str = "") -> float:
