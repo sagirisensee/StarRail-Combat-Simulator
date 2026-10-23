@@ -80,7 +80,6 @@ class BloodDevourMechanicPlugin:
             sim.port.lose_hp(active_entity.name, self.bleed_damage, cause="stage_mechanic_bleed_turn_begin")
 
     def on_entity_summoned(self, entity: Any, sim: Any) -> None:
-        sim.port.lose_hp(entity.name, self.bleed_damage, cause="stage_mechanic_bleed_summon")
         sim.status_mgr.add_status(StatusInstance(
             id=f"Stage_Mechanic_{self.name}_{entity.name}",
             name=self.name,

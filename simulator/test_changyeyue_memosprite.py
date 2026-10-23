@@ -176,8 +176,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
         sim = TurnSimulator(entities=team + enemies, use_techniques=True, stage_mechanics=STAGE_CONFIG["mechanics"])
 
-        # 推进长夜开局顶轴第 1 动 (常规忆灵技)
-        sim.step()
+        # 推进长夜开局顶轴第 1 动并直达首个玩家决策点 (终极爆发)
+        sim.advance_to_interactive_turn()
 
         # 1. 验证队伍中「记忆」命途角色数量为 3 (长夜月, 风堇, 知更鸟•晴歌)
         cy_kit = team[0].kit
@@ -193,8 +193,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # 3. 验证长夜快照
         msnap = sim.query_status("长夜")
         self.assertEqual(msnap["name"], "长夜")
-        self.assertEqual(int(msnap["max_hp"]), 4263)
-        self.assertEqual(int(msnap["current_hp"]), 3099)
+        self.assertEqual(int(msnap["max_hp"]), 4313)
+        self.assertEqual(int(msnap["current_hp"]), 3122)
         self.assertEqual(msnap["speed"], 160.0)
         self.assertEqual(msnap["crit_rate"], 1.036)
         self.assertAlmostEqual(msnap["crit_dmg"], 6.641, delta=0.01)

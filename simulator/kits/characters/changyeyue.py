@@ -49,7 +49,6 @@ class ChangyeyueKit(KitHandler):
     def apply_trace_passives(self, entity: Any) -> None:
         """战前静态基线校准：注入长夜月角色白字与面板基线，消除数据库模块中的角色 ID 硬编码。"""
         entity.base_atk = 1443.0
-        entity.base_white_hp = 2090.0
         if getattr(entity, "base_white_atk", 0.0) <= 0.0:
             entity.base_white_atk = 1072.0
         if getattr(entity, "base_white_def", 0.0) <= 0.0:
