@@ -113,7 +113,7 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         kit.trigger_spirit_burst()
 
         self.assertFalse(kit.spirit_alive, "忆灵终极爆发后应自毁离场")
-        self.assertEqual(kit.yizhi, 0, "爆发后忆质应清零")
+        self.assertEqual(kit.yizhi, 4, "爆发消耗全部忆质后，忆灵消耗生命自毁触发生命降低天赋，获得 2+2=4 点忆质")
         self.assertGreater(cyy.speed, speed_before, "忆灵自毁后长夜月应获得速度提升 (与你，再见，无期)")
 
     def test_04_fengjin_ult_scales_changyeyue_hp(self):

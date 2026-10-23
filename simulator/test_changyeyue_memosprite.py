@@ -128,8 +128,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # 验证爆发伤害已造成
         self.assertLess(self.boss.current_hp, boss_hp_before, "16忆质应触发长夜终极爆发造成高额冰伤")
 
-        # 爆发后忆质清空
-        self.assertEqual(kit.yizhi, 0, "爆发后忆质应清空")
+        # 爆发消耗全部忆质后，忆灵消耗生命自毁触发天赋生命降低回能/回忆质 (获得 2 点，E2 为 4 点)
+        self.assertEqual(kit.yizhi, 4, "爆发消耗全部忆质后，忆灵消耗生命自毁触发生命降低天赋，获得 2+2=4 点忆质")
 
         # 忆灵自毁离场，在场增伤移除
         self.assertFalse(kit.spirit_alive, "爆发后忆灵应自毁离场")

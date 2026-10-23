@@ -231,11 +231,40 @@ class ChangyeyueKit(KitHandler):
             self.port.advance(self.owner_id, self.spirit_name, 1.0)
 
     def trigger_spirit_burst(self) -> None:
-        """忆灵终极爆发【迷梦，流失，如露】：主目标16.8%*忆质，副目标8.4%*忆质。"""
+        """忆灵终极爆发【迷梦，流失，如露】：
+        - 施放技能时触发：行迹【天黑黑，月寂寂】消耗自身 5% 生命 (触发生命降低天赋+2忆质，E2为4点) 与【烛火起，烛火熄】回能5点+1忆质 (E2为3点)；
+        - 主目标16.8%*忆质，副目标8.4%*忆质，消耗全部【忆质】；
+        - 消耗全部生命值自毁离场：触发生命降低天赋，获得 2 点忆质 (E2为 2+2=4 点)；
+        - 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (最多计算 40 点忆质，上限 50%)，长夜月下个回合开始时移除。
+        """
         enemies = self.port.enemies(self.owner_id)
         if not enemies:
             return
 
+        # 1. 忆灵施放技能阶段触发：
+        # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15%
+        if self.spirit_hp <= 0:
+            self.spirit_hp = self.spirit_max_hp
+        hp_loss = round(self.spirit_hp * 0.05, 2)
+        self.port.lose_hp(self.spirit_name, hp_loss, cause="memosprite_skill_cost")
+
+        self.port.upsert_status(BuffSpec(
+            key="Changyeyue_A2_Skill_CritDmg",
+            name="天黑黑，月寂寂 (施法暴伤+15%)",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            category="buff",
+            description="暴击伤害提高 +15.0%"
+        ))
+
+        # 行迹【烛火起，烛火熄】：我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】(E2为3点)
+        self.port.gain_energy(self.owner_id, 5.0)
+        self.gain_yizhi(1)
+
+        # 2. 快照本次爆发消耗的忆质总量 (从 24 增长到 31)
         spent_memory = self.yizhi
         self.bursting = True
         primary_target = enemies[0]
@@ -266,14 +295,17 @@ class ChangyeyueKit(KitHandler):
             # 行迹【天黑黑，月寂寂】：忆灵「长夜」施放【迷梦，流失，如露】后，为我方恢复 1 个战技点
             self.port.change_sp(self.owner_id, 1, "evernight_a2_sp_recover")
 
-            # 忆灵自毁离场
+            # 忆灵自毁离场：消耗全部生命值并消失
             self.spirit_alive = False
             self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
             self.port.despawn_spirit(self.spirit_name, "burst_depart")
 
-            # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (上限 40%)
-            speed_bonus = min(0.40, 0.10 + 0.01 * spent_memory)
+            # 触发长夜消耗全部生命自毁的天赋回忆质 (基础 2 点，E2 额外+2 为 4 点)
+            self.gain_yizhi(2)
+
+            # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (最多计算 40 点忆质)
+            speed_bonus = 0.10 + 0.01 * min(40, spent_memory)
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Spirit_Depart_Speed",
                 name=f"与你，再见，无期 (加速+{speed_bonus*100:.1f}%)",
@@ -281,7 +313,7 @@ class ChangyeyueKit(KitHandler):
                 target_id=self.owner_id,
                 modifiers=(Modifier(StatType.SPEED, ModifierOp.PERCENT, speed_bonus),),
                 duration=1,
-                timing=DurationTiming.TARGET_TURN_END,
+                timing=DurationTiming.TARGET_TURN_START,
                 category="buff",
                 description=f"速度提高 +{speed_bonus*100:.1f}%"
             ))
@@ -304,7 +336,7 @@ class ChangyeyueKit(KitHandler):
                 source_id=self.owner_id,
                 target_id=self.owner_id,
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.60),),
-                duration=2,
+                duration=3,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff",
                 description="暴击伤害提高 +60.0%"
