@@ -99,8 +99,21 @@ class FengjinKit(KitHandler):
         self._sync_storm_calm()
 
     def summon_yika(self) -> None:
-        """召唤忆灵小伊卡。"""
+        """召唤忆灵小伊卡。
+        遵循官方 Nanoka 4.6 忆灵天赋【展翼，奔向日辉】(1140905)：
+        被召唤时，为风堇恢复 15 点能量；首次被召唤时，额外恢复 30 点能量 (首次合计 45 点)。
+        """
+        first_summon = not self.yika_alive
         self.yika_alive = True
+
+        if self.port and hasattr(self.port, "gain_energy"):
+            base_e = 45.0 if first_summon else 15.0
+            err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+            actual_e = base_e * err
+            tag = "首次" if first_summon else ""
+            desc = f"忆灵天赋《展翼，奔向日辉》{tag}召唤回能 (基础 {base_e:.0f} × ERR {err*100:.1f}%)"
+            self.port.gain_energy(self.owner_id, actual_e, cause=desc, source_plugin="小伊卡天赋")
+
         if self.eidolon >= 6:
             for ally in self.port.allies(self.owner_id):
                 self.port.upsert_status(BuffSpec(
@@ -222,7 +235,8 @@ class FengjinKit(KitHandler):
             damage_tag="BasicAttack",
             scaling_stat="hp"
         )
-        self.port.gain_energy(self.owner_id, 20.0)
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 20.0 * err, cause=f"施放普攻回能 (基础 20.0 × ERR {err*100:.1f}%)", source_plugin="风堇普攻")
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         """战技【爱在虹光洒落时】：召唤小伊卡，全队回复生命 (8% HP + 160)。"""
@@ -236,7 +250,8 @@ class FengjinKit(KitHandler):
             self.port.heal(self.owner_id, ally, heal_amt)
 
         self.on_healing_provided()
-        self.port.gain_energy(self.owner_id, 30.0)
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 30.0 * err, cause=f"施放战技回能 (基础 30.0 × ERR {err*100:.1f}%)", source_plugin="风堇战技")
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         """终结技【飞入晨昏的我们】：召唤小伊卡，全体治疗 (10% HP + 200)，进入【雨过天晴】。"""
@@ -275,7 +290,8 @@ class FengjinKit(KitHandler):
                 description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
             ))
 
-        self.port.gain_energy(self.owner_id, 5.0)
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 5.0 * err, cause=f"施放终结技固定回能 (基础 5.0 × ERR {err*100:.1f}%)", source_plugin="风堇终结技")
 
     def on_event(self, event: Any) -> None:
         self._sync_storm_calm()
