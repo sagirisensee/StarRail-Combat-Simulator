@@ -308,12 +308,8 @@ class RobinSunnySongKit(KitHandler):
         self.vibes = min(self.max_vibes, self.vibes + amount)
 
         if hasattr(self.port, "tracer") and self.port.tracer:
-            hp_cause = getattr(self.port.tracer, "current_hp_cause", "")
             if getattr(self, "_healed_this_turn", False):
-                if hp_cause == "stage_mechanic_bleed_turn_begin":
-                    cause_str = "长夜月回合内受到关卡《血噬》扣血引发小伊卡回复全队 ➔ 首次受治疗获得气氛值 +1 点"
-                else:
-                    cause_str = f"队友回合内首次提供治疗效果 (来源: {trigger_ally_id or '队友'}) ➔ +{amount} 点"
+                cause_str = f"队友回合内首次提供治疗/护盾 (来源: {trigger_ally_id or '队友'}) ➔ +{amount} 点"
             else:
                 cause_str = f"施放技能/攻击获得气氛值 ➔ +{amount} 点"
 
@@ -337,7 +333,7 @@ class RobinSunnySongKit(KitHandler):
                 old_r = self.rhythm_stacks
                 self._rhythm_consumed_in_current_turn = True
                 self.rhythm_stacks -= 1
-                self.port.gain_energy(self.owner_id, 3.0)
+                self.port.gain_energy(self.owner_id, 3.0, cause="行迹《即兴蓝调》消耗律动回能 (+3.0 点)", source_plugin="知更鸟行迹《即兴蓝调》")
                 self._sync_rhythm_status()
                 if hasattr(self.port, "tracer") and self.port.tracer:
                     self.port.tracer.record_var_change(

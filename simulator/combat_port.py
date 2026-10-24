@@ -457,12 +457,6 @@ class SimulatorCombatPort:
                     elif abs(amount - 5.0) < 1e-4:
                         desc = "施放终结技固定回能 (+5.0 点)"
                         src = src or f"{ent.name}终结技"
-                    elif abs(amount - 3.0) < 1e-4 and "知更鸟" in ent.name:
-                        desc = "行迹《即兴蓝调》消耗律动回能 (+3.0 点)"
-                        src = src or "知更鸟行迹《即兴蓝调》"
-                    elif "缇宝" in ent.name:
-                        desc = f"技能/天赋机制回能 (+{actual:.1f} 点)"
-                        src = src or "缇宝技能与天赋"
                     else:
                         desc = f"获得能量 (+{actual:.1f} 点)"
                         src = src or f"{ent.name}机制"

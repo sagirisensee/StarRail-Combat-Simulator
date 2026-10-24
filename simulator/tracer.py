@@ -256,26 +256,21 @@ class ActionCausalTracer:
         print(f"   {'角色 / 实体':<18} │ {'实时攻击':<10} │ {'触发时机与快照依据':<24} │ {'偏离和弦生效数值与形态'}")
         print("   " + "─" * 78)
 
-        roster = [
-            ("【长夜月】", "长夜月", 1443.0, "待行动使知更鸟获气氛"),
-            ("【长夜】(伴生忆灵)", "长夜", 1443.0, "0.0 AV 终极爆发 (11气氛)"),
-            ("【缇宝】", "缇宝", 1483.0, "0.0 AV 终结技+追击 (10气氛)"),
-            ("【知更鸟•晴歌】", "知更鸟•晴歌", robin_atk, "开局秘技后触发 (7气氛)"),
-            ("【风堇】", "风堇", 1336.0, "进战开局被动治疗 (1气氛)"),
-        ]
-        for label, raw_name, default_atk, trigger_info in roster:
-            cur_atk = default_atk
-            ent = self.sim.get_entity(raw_name) if self.sim else None
-            if ent and hasattr(self.sim, "status_mgr"):
-                cur_atk = self.sim.status_mgr.get_detailed_snapshot(ent).get("current_atk", default_atk)
-
+        allies = [e for e in self.sim.entities if not e.is_enemy and not getattr(e, "is_countdown", False) and not getattr(e, "is_summon_countdown", False)] if self.sim else []
+        for ent in allies:
+            raw_name = ent.name
+            cur_atk = self.sim.status_mgr.get_detailed_snapshot(ent).get("current_atk", getattr(ent, "base_atk", 1000.0)) if hasattr(self.sim, "status_mgr") else 1000.0
             buff = self.sim.status_mgr.get_status(raw_name, f"Robin_Talent_TonalChord_{raw_name}") if self.sim else None
+            is_spirit = getattr(ent, "is_memosprite", False)
+            label = f"【{raw_name}】{' (忆灵)' if is_spirit else ''}"
             if buff:
                 dur_str = f" [余 {buff.duration} 回合]" if buff.duration is not None else ""
                 val_str = f"{buff.description}{dur_str}"
+                state_str = "已触发并快照生效"
             else:
                 val_str = "未激活 (尚未使知更鸟获气氛值)"
-            print(f"   {label:<16} │ {cur_atk:>8.0f}   │ {trigger_info:<24} │ {val_str}")
+                state_str = "待行动使知更鸟获气氛"
+            print(f"   {label:<20} │ {cur_atk:>8.0f}   │ {state_str:<22} │ {val_str}")
         print("   " + "─" * 78)
 
         # 6. 核心插件清单
