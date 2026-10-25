@@ -40,6 +40,12 @@ class TibaoKit(KitHandler):
         self.zone_active: bool = False
         self.zone_duration: int = 0
         self.talent_used_by: set = set()
+        # 结界附加伤害的动作窗口: 记录上一个我方行动窗口内被攻击命中的敌方目标与总伤害
+        self._zone_window_actor: Optional[str] = None
+        self._zone_window_zone: bool = False
+        self._zone_window_targets: set = set()
+        self._zone_window_total: float = 0.0
+        self._zone_resolving: bool = False
 
     def apply_trace_passives(self, entity: Any) -> None:
         """战前静态基线校准：注入缇宝基础白字生命（以实机数据 breakdowns.base_white 为准，默认 2317.0）。"""
@@ -328,6 +334,61 @@ class TibaoKit(KitHandler):
                     scaling_stat="hp"
                 )
 
+    def _flush_zone_window(self) -> None:
+        """结算上一个我方攻击动作窗口的结界附加伤害 (140303) 与星魂 1 真实伤害。
+
+        官方机制: 结界持续期间, 敌方目标受到我方目标攻击后, 每有 1 名目标受到攻击,
+        对被攻击目标中当前生命值最高的目标造成 1 次等同于缇宝 12% 生命上限的量子属性
+        附加伤害; 星魂 2 时该附加伤害提高至原伤害的 120% 且每次额外造成 1 次;
+        星魂 1 时, 对承受附加伤害的目标额外造成等同于本次攻击总伤害值 24% 的真实伤害。
+        """
+        targets = self._zone_window_targets
+        total = self._zone_window_total
+        zone_was_active = self._zone_window_zone
+        self._zone_window_actor = None
+        self._zone_window_zone = False
+        self._zone_window_targets = set()
+        self._zone_window_total = 0.0
+        if self._zone_resolving or not zone_was_active or not targets or total <= 0:
+            return
+        living = [t for t in targets if self.port.entity_exists(t)]
+        if not living:
+            return
+        top_target = max(living, key=lambda t: self.port.current_hp(t))
+        base_mult = self.skill_param("ultra", 2, default=0.12)
+        hits_per_target = 1
+        if self.eidolon >= 2:
+            base_mult *= self.eidolon_param(2, 0, default=1.2)
+            hits_per_target += int(self.eidolon_param(2, 1, default=1))
+        self._zone_resolving = True
+        try:
+            for _ in range(len(living) * hits_per_target):
+                self.port.attack(
+                    self.owner_id,
+                    top_target,
+                    element="Quantum",
+                    atk_multiplier=base_mult,
+                    toughness_damage=0.0,
+                    damage_type=DamageType.ADDITIONAL,
+                    scaling_stat="hp"
+                )
+            if self.eidolon >= 1:
+                true_ratio = self.eidolon_param(1, 0, default=0.24)
+                my_max_hp = self.port.max_hp(self.owner_id)
+                if my_max_hp > 0 and total > 0:
+                    # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
+                    self.port.attack(
+                        self.owner_id,
+                        top_target,
+                        element="Quantum",
+                        atk_multiplier=(total * true_ratio) / my_max_hp,
+                        toughness_damage=0.0,
+                        damage_type=DamageType.TRUE,
+                        scaling_stat="hp"
+                    )
+        finally:
+            self._zone_resolving = False
+
     def _sync_glass_ball_hp(self) -> None:
         """同步行迹【长翅膀的玻璃球！】生命上限加成 (我方全体角色生命上限之和的 9%)。"""
         if not self.port:
@@ -378,8 +439,11 @@ class TibaoKit(KitHandler):
         """
         from ...events import (
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
-            SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent
+            SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
+            TurnBeginEvent, TurnEndEvent
         )
+        if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
+            self._flush_zone_window()
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent)):
             if not (isinstance(event, StatusApplyEvent) and event.status_id == "Tribbie_A4_GlassBallWithWings"):
                 self._sync_glass_ball_hp()
@@ -387,6 +451,20 @@ class TibaoKit(KitHandler):
         if isinstance(event, DamageAppliedEvent):
             attacker = event.attacker_name
             target = event.target_name
+
+            # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害
+            if (
+                self._zone_window_actor is not None
+                and not self._zone_resolving
+                and self.port.is_ally(attacker)
+                and not self.port.is_countdown(attacker)
+                and not self.port.is_ally(target)
+                and getattr(event, "damage_type", None) != DamageType.DOT
+                and getattr(event.breakdown, "is_dot", False) is False
+                and event.damage > 0
+            ):
+                self._zone_window_targets.add(target)
+                self._zone_window_total += float(event.damage)
 
             # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血误判):
             # 1. 攻击者必须为我方其他目标 (排除缇宝自身，支持伴生忆灵长夜)
@@ -408,6 +486,11 @@ class TibaoKit(KitHandler):
 
         elif isinstance(event, ActionExecuteEvent):
             actor_id = event.actor_name or event.actor_id
+            # 新动作开始: 先结算上一个动作窗口的结界附加伤害, 再开启本动作的采样窗口
+            self._flush_zone_window()
+            if self.port.is_ally(actor_id) and not self.port.is_countdown(actor_id):
+                self._zone_window_actor = actor_id
+                self._zone_window_zone = self.zone_active
             action_kind = getattr(event, "action_kind", None)
             action_type = getattr(event, "action_type", "")
 

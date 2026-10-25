@@ -61,7 +61,8 @@ class DamageRequest:
     target_is_broken: bool = False      # 敌方是否处于弱点击破状态 (未击破自带 10% 减伤)
     force_crit: Optional[bool] = None   # None: 随机/期望; True: 必暴; False: 不暴
     fixed_crit_dmg: Optional[float] = None # 若指定固定暴击伤害 (如知更鸟协奏附加伤害 150%)，覆盖面板暴伤
-    scaling_stat: str = "atk"           # "atk" | "hp" | "def" 
+    scaling_stat: str = "atk"           # "atk" | "hp" | "def"
+    is_true_damage: bool = False        # 真实伤害: 仅取基础区数值, 跳过双暴/增伤/防御/抗性/易伤/减伤全部乘区
 
 
 class DamageCalculator:
@@ -102,6 +103,22 @@ class DamageCalculator:
             base_stat = atk_stat
 
         base_dmg = base_stat * req.skill_multiplier + req.flat_damage
+
+        # 真实伤害: 无视防御与抗性, 不可暴击, 不吃增伤/易伤/韧性减伤, 基础区数值即最终伤害
+        if getattr(req, "is_true_damage", False):
+            return DamageBreakdown(
+                attacker_name=req.attacker.name,
+                target_name=req.target.name,
+                base_dmg=base_dmg,
+                crit_mult=1.0,
+                is_crit=False,
+                dmg_boost_mult=1.0,
+                def_mult=1.0,
+                res_mult=1.0,
+                vuln_mult=1.0,
+                reduction_mult=1.0,
+                final_damage=base_dmg
+            )
 
         # 2. 双暴区
         crit_rate = getattr(req.attacker, "crit_rate", 0.05)
