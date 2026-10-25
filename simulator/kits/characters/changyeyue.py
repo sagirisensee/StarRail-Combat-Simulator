@@ -179,6 +179,12 @@ class ChangyeyueKit(KitHandler):
         if not was_alive or self.spirit_hp <= 0:
             self.spirit_hp = self.spirit_max_hp
 
+        if not was_alive:
+            # 被动施放事实补发 (对账口径与实机一致: 召唤时点的天赋触发各记一次施放)
+            from ...actions import ActionKind
+            self.port.publish_action(self.owner_id, "孤独，浮游，漆黑", ActionKind.TALENT, skill_id=1141303)
+            self.port.publish_action(self.owner_id, "与夜，形影，不离", ActionKind.TALENT, skill_id=1141305)
+
         # 忆灵天赋【孤独，浮游，漆黑】：长夜在场时长夜月造成的伤害提高 50%
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_Memosprite_Presence",
@@ -391,6 +397,9 @@ class ChangyeyueKit(KitHandler):
             self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
             self.port.despawn_spirit(self.spirit_name, "burst_depart")
+            # 被动施放事实补发: 退场天赋【与你，再见，无期】(与实机施放记录对账)
+            from ...actions import ActionKind
+            self.port.publish_action(self.owner_id, "与你，再见，无期", ActionKind.TALENT, skill_id=1141306)
 
             # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (最多计算 40 点忆质)
             speed_bonus = 0.10 + 0.01 * min(40, spent_memory)

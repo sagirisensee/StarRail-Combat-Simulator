@@ -59,7 +59,7 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
         if isinstance(event, ActionExecuteEvent):
             if getattr(event, "actor_id", "") == self.owner_id:
                 action_type = getattr(event, "action_type", "")
-                if "FollowUp" in action_type or getattr(event, "action_kind", None) == ActionKind.FOLLOW_UP:
+                if getattr(event, "action_kind", None) == ActionKind.FOLLOW_UP:
                     if self.port:
                         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
                         self.port.gain_energy(

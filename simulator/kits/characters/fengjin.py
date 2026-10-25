@@ -43,7 +43,7 @@ class FengjinKit(KitHandler):
     def __init__(self, owner_id: str, port: CombatPort, *, eidolon: int = 0, skill_levels: Optional[dict] = None):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.yika_alive: bool = False
-        self.sun_after_rain: bool = False
+        # (旧实现以布尔标记记录雨过天晴, 置位后永不清除, 已改为实时查询状态)
         self.yika_dmg_stacks: int = 0
         self.ika_kit: Optional[Any] = None
         self._ika_ever_summoned: bool = False
@@ -316,7 +316,6 @@ class FengjinKit(KitHandler):
             hp_boost += 0.50
 
         flat_hp = self.skill_param("ultra", 3, default=600.0)
-        self.sun_after_rain = True
 
         for ally in self.port.allies(self.owner_id):
             ally_max_hp = self.port.max_hp(ally)
@@ -337,6 +336,17 @@ class FengjinKit(KitHandler):
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 5.0 * err, cause=f"施放终结技固定回能 (基础 5.0 × ERR {err*100:.1f}%)", source_plugin="风堇终结技")
 
+    def _sun_after_rain_active(self) -> bool:
+        """【雨过天晴】是否生效中: 实时查询风堇身上的终结技状态 (持续 3 回合)。
+
+        旧实现以布尔标记记录且置位后永不清除, 导致星魂 1 的攻击后治疗在
+        首次终结技后全程常驻; 状态本身有持续时间, 须以状态存续为准。
+        """
+        return any(
+            str(getattr(s, "id", "")).startswith("Fengjin_Ult_SunAfterRain_")
+            for s in self.port.statuses(self.owner_id)
+        )
+
     def on_event(self, event: Any) -> None:
         # 累计治疗量统计: 风堇与小伊卡造成的治疗计入小伊卡忆灵技的伤害基数
         from ...events import HealAppliedEvent
@@ -344,7 +354,7 @@ class FengjinKit(KitHandler):
             self.accumulated_healing += float(event.amount)
         self._sync_storm_calm()
         """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
-        if self.eidolon >= 1 and self.sun_after_rain:
+        if self.eidolon >= 1 and self._sun_after_rain_active():
             event_name = type(event).__name__
             if event_name == "ActionExecuteEvent":
                 actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")

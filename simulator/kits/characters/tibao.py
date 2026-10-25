@@ -587,7 +587,7 @@ class TibaoKit(KitHandler):
             action_type = getattr(event, "action_type", "")
 
             if self.port.is_ally(actor_id) and actor_id != self.owner_id and not self.port.is_memosprite(actor_id) and not self.port.is_countdown(actor_id):
-                if action_kind == ActionKind.ULTIMATE or "Ultimate" in str(action_type):
+                if action_kind == ActionKind.ULTIMATE:
                     if actor_id not in self.talent_used_by:
                         self.talent_used_by.add(actor_id)
                         # 置待发标记: 齐射在大招的结界窗口结算后作为独立行动施放

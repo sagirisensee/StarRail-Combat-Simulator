@@ -185,6 +185,10 @@ class SimulatorCombatPort:
         actor_ent = self._get_entity(actor_id)
         if actor_ent and getattr(actor_ent, "is_countdown", False):
             return False
+        # 天赋/被动触发不是攻击行为 (如忆灵召唤/退场天赋的施放记录补发),
+        # 不触发「施放攻击时」类联动 (知更鸟气氛值等)
+        if action_kind == ActionKind.TALENT:
+            return False
         if action_kind in (ActionKind.BASIC, ActionKind.FOLLOW_UP) or action_type in ("BasicAttack", "FollowUpAttack"):
             return True
         ent = self._get_entity(actor_id)
