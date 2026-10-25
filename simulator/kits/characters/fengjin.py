@@ -399,7 +399,7 @@ class IkaKit(KitHandler):
     def __init__(self, owner_id: str, port: CombatPort, *, master_kit: Any = None):
         super().__init__(owner_id, port)
         self.master_kit = master_kit
-        self._pending_heal_target: Optional[str] = None
+        self._pending_heal_targets: List[str] = []
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.MEMOSPRITE_SKILL:
@@ -447,8 +447,10 @@ class IkaKit(KitHandler):
         """记录生命降低的我方目标，待回合开始/行动后由天赋【牵起晴空的手】结算治疗。"""
         if entity_id == self.owner_id or cause == "yika_talent_consume_hp":
             return
-        if self._pending_heal_target is None and entity_id in self.port.allies(self.owner_id):
-            self._pending_heal_target = entity_id
+        # 每个降低生命的我方目标都排队等待结算 (同一结算点前同一目标只记一次):
+        # 旧实现只记第一个目标, 群体掉血时其余目标的治疗被吞掉, 累计治疗量系统性偏低
+        if entity_id in self.port.allies(self.owner_id) and entity_id not in self._pending_heal_targets:
+            self._pending_heal_targets.append(entity_id)
 
     def on_event(self, event: Any) -> None:
         from ...events import TurnBeginEvent, TurnEndEvent, HPLostEvent
@@ -459,27 +461,31 @@ class IkaKit(KitHandler):
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:
-        target = self._pending_heal_target
-        self._pending_heal_target = None
+        targets = self._pending_heal_targets
+        self._pending_heal_targets = []
         master = self.master_kit
-        if not target or master is None:
+        if not targets or master is None:
             return
-        if not self.port.entity_exists(self.owner_id) or not self.port.entity_exists(target):
-            return
-        hp_before = self.port.current_hp(self.owner_id)
-        cost = self.port.max_hp(self.owner_id) * self.SELF_COST_RATIO
-        self.port.lose_hp(self.owner_id, cost, cause="yika_talent_consume_hp")
-        heal_amt = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
-        self.port.heal(self.owner_id, target, heal_amt)
-        if master.in_rain_state():
-            for ally in self.port.allies(self.owner_id):
-                if ally != target:
-                    self.port.heal(self.owner_id, ally, heal_amt)
-        master.on_healing_provided()
-        # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失
-        if cost >= hp_before - 1e-9:
-            self.port.despawn_spirit(self.owner_id, reason="天赋消耗生命耗尽")
-            self._on_despawned()
+        # 队列中的每个目标各结算一次 (各自消耗小伊卡 4% 生命上限);
+        # 小伊卡生命耗尽消失后, 剩余目标不再结算
+        for target in targets:
+            if not self.port.entity_exists(self.owner_id) or not self.port.entity_exists(target):
+                continue
+            hp_before = self.port.current_hp(self.owner_id)
+            cost = self.port.max_hp(self.owner_id) * self.SELF_COST_RATIO
+            self.port.lose_hp(self.owner_id, cost, cause="yika_talent_consume_hp")
+            heal_amt = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
+            self.port.heal(self.owner_id, target, heal_amt)
+            if master.in_rain_state():
+                for ally in self.port.allies(self.owner_id):
+                    if ally != target:
+                        self.port.heal(self.owner_id, ally, heal_amt)
+            master.on_healing_provided()
+            # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失
+            if cost >= hp_before - 1e-9:
+                self.port.despawn_spirit(self.owner_id, reason="天赋消耗生命耗尽")
+                self._on_despawned()
+                break
 
     def _on_despawned(self) -> None:
         """小伊卡消失的收尾：同步主人状态并触发【坠落，然后飞翔】行动提前 30%。"""
