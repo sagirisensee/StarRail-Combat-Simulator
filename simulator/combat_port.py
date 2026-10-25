@@ -88,6 +88,8 @@ class CombatPort(Protocol):
     # --- 4. 战斗动作与资源指令 ---
     def advance(self, source_id: str, target_id: str, ratio: float) -> None: ...
     def delay(self, source_id: str, target_id: str, ratio: float) -> None: ...
+    def request_immediate_action(self, entity_id: str) -> None: ...
+    def cancel_immediate_action(self, entity_id: str) -> None: ...
     def set_distance(self, entity_id: str, distance: float) -> None: ...
     def set_base_speed(self, entity_id: str, speed: float) -> None: ...
     def change_sp(self, source_id: str, amount: int, reason: str) -> None: ...
@@ -425,6 +427,20 @@ class SimulatorCombatPort:
         tgt = self._get_entity(target_id)
         if tgt:
             self.sim.resolver.enqueue(DelayActionEffect(source_id, tgt, ratio))
+
+    def request_immediate_action(self, entity_id: str) -> None:
+        """请求一次立即行动 (入行动队列 extra 类): 排在已就绪的正规回合之后、
+        时钟推进之前结算。用于忆灵被召唤后的立即行动等机制——与 advance 至 0
+        (正规回合提前到期) 是两种不同的行动来源。"""
+        fn = getattr(self.sim, "request_immediate_action", None)
+        if fn is not None:
+            fn(entity_id)
+
+    def cancel_immediate_action(self, entity_id: str) -> None:
+        """撤销某实体待服务的立即行动 (如对账驱动已直接补发该次施放)。"""
+        fn = getattr(self.sim, "cancel_immediate_action", None)
+        if fn is not None:
+            fn(entity_id)
 
     def set_distance(self, entity_id: str, distance: float) -> None:
         ent = self._get_entity(entity_id)

@@ -972,6 +972,15 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                     kit.summon_spirit()
                     patches.append("presence")
                     result.presence_grants += 1
+                # 本次施放由驱动直接补发: 撤销召唤/阈值在行动队列中留下的待服务
+                # 立即行动, 避免同一行动被调度器再次服务而重复施放。
+                sim.cancel_immediate_action("长夜")
+                # 强发的忆灵行动同样是长夜的一次正式行动: 先按自然回合时序结算
+                # 关卡机制回合开始钩子 (【血噬】扣 500 → 天赋 +4 忆质计入本次施放),
+                # 否则强发路径会绕过扣血与联动入账 (官方她每次行动都吃血噬)。
+                changye_ent = sim.get_entity("长夜")
+                if changye_ent is not None:
+                    sim.run_stage_turn_begin(changye_ent)
                 if sid == 1141307:
                     if stash["amount"] > 0:
                         kit.yizhi = float(kit.yizhi) + stash["amount"]
@@ -1084,10 +1093,8 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, now_av if ok else None))
 
     def _peek_next() -> Any:
-        alive = [e for e in sim.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
-        if not alive:
-            return None
-        return min(alive, key=lambda e: (round(e.remaining_av, 4), 0 if getattr(e, "is_memosprite", False) else 1))
+        # 调度预览与 core 的行动队列保持一致 (队列队首优先, 否则距离最近者)
+        return sim.peek_next_actor()
 
     recorder = SequenceRecorder(sim)
     replay = ReplayResult(decisions_total=len(turn_items) + len(ult_queue), turn_matched=0, turn_total=len(turn_items), ult_matched=0, ult_total=len(ult_queue), forced=True)

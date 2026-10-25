@@ -212,8 +212,14 @@ class ChangyeyueKit(KitHandler):
             spirit_ent.master_name = self.owner_id
             spirit_ent.current_hp = self.spirit_hp
             spirit_ent.max_hp = self.spirit_max_hp
-            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动！(100% 拉条，置于跑道 0.0 AV 起跑点)
-            spirit_ent.distance_remaining = 0.0
+            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动！
+            # 立即行动入行动队列 (extra 类): 排在同簇已就绪的本体行动之后结算——
+            # 实机第二场 47.9 簇: 终结技召唤长夜后, 主人因行动提前 100% 而来的
+            # 在场版战技 (141309) 先落地入账, 长夜随后以攒满的忆质施放迷梦 (70 点
+            # 一发; 若长夜抢先则被拆成 25+22 两发)。已在场时的召唤 (回血) 不
+            # 产生立即行动。
+            if not was_alive:
+                self.port.request_immediate_action(self.spirit_name)
 
             # 行迹【天亮了，雨落了】：赋予忆灵暴击伤害加成 (+50%)
             rem_count = self._get_remembrance_count()
@@ -321,7 +327,8 @@ class ChangyeyueKit(KitHandler):
         self._check_threshold()
 
     def _check_threshold(self) -> None:
-        """检查【忆质】>= 16 点时，触发免控并使长夜立即行动进入自身回合。"""
+        """检查【忆质】>= 16 点时，触发免控并使长夜立即行动 (入行动队列 extra 类，
+        与召唤立即行动同类: 排在已就绪的本体回合之后结算)。"""
         if (
             self.yizhi >= 16
             and self.spirit_alive
@@ -330,7 +337,7 @@ class ChangyeyueKit(KitHandler):
             and not getattr(self, "in_initial_action", False)
         ):
             self.threshold_issued = True
-            self.port.advance(self.owner_id, self.spirit_name, 1.0)
+            self.port.request_immediate_action(self.spirit_name)
 
     def trigger_spirit_burst(self) -> None:
         """忆灵终极爆发【迷梦，流失，如露】：
@@ -614,7 +621,9 @@ class ChangyeyueKit(KitHandler):
         if kind == ActionKind.BASIC:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="从此岁月朦胧")
         elif kind == ActionKind.SKILL:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(sp=1), name="白昼悄然离去")
+            # 官方同一战技按长夜在场状态分两个配置 ID: 不在场 (召唤版) = 141302,
+            # 在场 (回血版) = 141309 (日志实证: 终结技召唤后的同簇战技记为 141309)。
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(sp=1), name="白昼悄然离去", skill_id=141309 if self.spirit_alive else 141302)
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(energy=240.0), name="晚安，全世界无眠")
         elif kind == ActionKind.TECHNIQUE:

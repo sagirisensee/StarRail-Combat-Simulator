@@ -74,6 +74,15 @@ class TurnSimulator:
         self.tracer: ActionCausalTracer = ActionCausalTracer(self)
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
+        # 行动队列 (Action Queue): 同一 AV 内多个行动就绪时按入队序与类别结算,
+        # 而非靠距离微差/排序键抢跑。条目 {"name", "seq", "kind"}:
+        # - "turn": 距离到达终点 (自然推进或被拉条至 0) 的正规回合;
+        # - "extra": 机制请求的立即行动 (如忆灵被召唤后的立即行动), 经
+        #   request_immediate_action 入队。同刻服务序: turn 类 (入队序) 先于
+        #   extra 类 (入队序); 队列未空时不推进时钟。
+        self._action_queue: List[Dict[str, Any]] = []
+        self._queue_seq: int = 0
+        self._current_turn_kind: str = "turn"
         self.stage_mechanics: List[str] = list(stage_mechanics or [])
         from .stage_mechanics import StageMechanicRegistry, StageMechanicPlugin
         self.stage_plugins: List[StageMechanicPlugin] = [
@@ -217,19 +226,95 @@ class TurnSimulator:
         if not alive:
             return []
         current = self._current_turn_entity
+        # 与行动队列的服务序一致: 当前行动者 → 已就绪正规回合 (距离为 0, 按实体
+        # 列表序) 与队列条目 (turn 类先于 extra 类, 类内入队序) → 其余按剩余 AV。
+        self._scan_due_turns(alive)
+        queued = {
+            q["name"]: (0 if q["kind"] == "turn" else 1, q["seq"])
+            for q in self._action_queue
+        }
         def sort_key(e: Entity):
-            # 若当前实体正在其回合内进行决策，其严格排在第 1 位
             is_current = 0 if (current and e.name == current.name) else 1
-            # 紧随其后的是在本回合内获得立即行动的实体 (如终结技唤出的长夜，0 距离)，随后按剩余 AV 升序
-            return (is_current, round(e.remaining_av, 4))
+            if e.name in queued:
+                rank, seq = queued[e.name]
+                return (is_current, 0, rank, seq, 0.0)
+            return (is_current, 1, 0, 0, round(e.remaining_av, 4))
         return sorted(alive, key=sort_key)
 
     @property
     def current_turn_entity(self) -> Optional[Entity]:
         return self._current_turn_entity
 
+    # --- 行动队列 (Action Queue) ---
+    def _enqueue_action(self, entity_name: str, kind: str) -> None:
+        """将一个行动入队 (同实体至多一个待服务条目, 先入队者为准)。"""
+        if any(q["name"] == entity_name for q in self._action_queue):
+            return
+        self._queue_seq += 1
+        self._action_queue.append({"name": entity_name, "seq": self._queue_seq, "kind": kind})
+
+    def request_immediate_action(self, entity_name: str) -> None:
+        """请求一次立即行动 (extra 类): 在已就绪的正规回合之后、时钟推进之前服务。
+
+        供机制经 CombatPort 调用 (如忆灵被召唤后的立即行动、天赋阈值触发的
+        立即行动)。与拉条至 0 的区别: 拉条使正规回合提前到期 (turn 类),
+        立即行动是排在正规回合之后的额外行动——实机同簇行动序实证 (官方第二
+        场 47.9 簇: 长夜月被行动提前的战技先落地, 长夜的迷梦随后施放)。
+        """
+        ent = self.get_entity(entity_name)
+        if ent is None:
+            return
+        if ent.current_hp <= 0 and not getattr(ent, "is_infinite_hp", False):
+            return
+        self._enqueue_action(entity_name, "extra")
+
+    def cancel_immediate_action(self, entity_name: str) -> None:
+        """撤销某实体待服务的 extra 类行动 (如对账驱动已直接补发该次施放)。"""
+        self._action_queue = [
+            q for q in self._action_queue
+            if not (q["name"] == entity_name and q["kind"] == "extra")
+        ]
+
+    def _scan_due_turns(self, alive: List[Entity]) -> None:
+        """把已到达终点 (remaining_av ≈ 0) 的实体以 turn 类入队 (按实体列表序)。
+        正在行动中的实体除外: 它就是当前被服务的行动, 不能再入队一次。"""
+        current_name = self._current_turn_entity.name if self._current_turn_entity is not None else None
+        for e in alive:
+            if e.name == current_name:
+                continue
+            if round(e.remaining_av, 4) <= 0.0:
+                self._enqueue_action(e.name, "turn")
+
+    def _queue_head_entry(self, alive: List[Entity]) -> Optional[Dict[str, Any]]:
+        """清理失效条目后返回队首条目: turn 类 (入队序) 先于 extra 类 (入队序)。"""
+        alive_names = {e.name for e in alive}
+        self._action_queue = [q for q in self._action_queue if q["name"] in alive_names]
+        if not self._action_queue:
+            return None
+        return min(self._action_queue, key=lambda q: (0 if q["kind"] == "turn" else 1, q["seq"]))
+
+    def peek_next_actor(self) -> Optional[Entity]:
+        """预览下一行动者 (队列感知, 供对账驱动与检视器): 当前回合进行中则为
+        当前实体; 否则为行动队首; 队列为空时为距离最近的存活实体。"""
+        if self._current_turn_entity is not None:
+            return self._current_turn_entity
+        alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        if not alive:
+            return None
+        self._scan_due_turns(alive)
+        head = self._queue_head_entry(alive)
+        if head is not None:
+            return self.get_entity(head["name"])
+        return min(alive, key=lambda e: round(e.remaining_av, 4))
+
     def advance_to_next_turn(self) -> Optional[Entity]:
-        """将跑道推进至最快到达终点的实体 (0.0 AV)，结算【回合开始】状态时钟并发布 TurnBeginEvent。"""
+        """服务行动队列中的下一行动: 队列非空时按 (类别, 入队序) 取队首 (时钟
+        不推进); 队列为空时推进跑道至最近的终点并将其以 turn 类入队后服务。
+        turn 类行动结算状态持续时钟并发布 TurnBeginEvent; extra 类行动 (立即
+        行动) 不是完整回合: 不推进状态持续时钟、不发布 TurnBeginEvent, 但同样
+        结算关卡机制的回合开始钩子 (如【血噬】——实机中忆灵每次行动都被扣血)。
+        注: 若干 Kit 以 TurnBeginEvent 为行动窗口结算边界 (如缇宝结界采样),
+        extra 行动不触发该边界是既有窗口口径问题, 不在本队列实装内处理。"""
         # 遵循星铁回合状态机：若当前实体正在进行其自然回合，不可被插队/立即行动强行剥夺，必须先完成本回合动作
         if self._current_turn_entity is not None:
             return self._current_turn_entity
@@ -238,30 +323,52 @@ class TurnSimulator:
         if not alive:
             return None
 
-        active_entity = min(alive, key=lambda e: (round(e.remaining_av, 4), 0 if getattr(e, "is_memosprite", False) else 1))
-        delta_av = active_entity.remaining_av
+        self._scan_due_turns(alive)
+        head = self._queue_head_entry(alive)
+        if head is None:
+            delta_av = min(e.remaining_av for e in alive)
+            if delta_av > 0:
+                for entity in self.entities:
+                    travel_distance = entity.speed * delta_av
+                    entity.distance_remaining = max(0.0, entity.distance_remaining - travel_distance)
+                self.current_av += delta_av
+            self._scan_due_turns(alive)
+            head = self._queue_head_entry(alive)
+            if head is None:
+                return None
 
-        if delta_av > 0:
-            for entity in self.entities:
-                travel_distance = entity.speed * delta_av
-                entity.distance_remaining = max(0.0, entity.distance_remaining - travel_distance)
-            self.current_av += delta_av
+        active_entity = self.get_entity(head["name"])
+        if active_entity is None:
+            return None
+        self._action_queue = [q for q in self._action_queue if q["seq"] != head["seq"]]
+        self._current_turn_kind = head["kind"]
 
-        self.status_mgr.tick_on_turn_begin(active_entity)
+        if head["kind"] == "turn":
+            self.status_mgr.tick_on_turn_begin(active_entity)
+            self.event_bus.publish(TurnBeginEvent(
+                av=round(self.current_av, 2),
+                cycle=self.current_cycle,
+                actor_id=active_entity.name,
+                actor_name=active_entity.name,
+                speed=round(active_entity.speed, 1)
+            ))
 
-        self.event_bus.publish(TurnBeginEvent(
-            av=round(self.current_av, 2),
-            cycle=self.current_cycle,
-            actor_id=active_entity.name,
-            actor_name=active_entity.name,
-            speed=round(active_entity.speed, 1)
-        ))
-
-        for plugin in getattr(self, "stage_plugins", []):
-            plugin.on_turn_begin(active_entity, self)
+        self.run_stage_turn_begin(active_entity)
 
         self._current_turn_entity = active_entity
         return active_entity
+
+    def run_stage_turn_begin(self, active_entity: Entity) -> None:
+        """结算关卡机制插件的回合开始钩子 (如【血噬】回合初扣血)。
+
+        两类调用: 调度器在 advance_to_next_turn 中对自然回合调用; 回合外强制
+        执行的「自身行动」(如忆灵被召唤后的立即行动、由对账驱动补发的忆灵技)
+        也须先经此结算, 与自然回合走同一套关卡机制时序——实机中忆灵每次行动
+        同样被【血噬】扣血并据此联动 (长夜月天赋按生命降低获得忆质)。
+        本方法不发布 TurnBeginEvent、不推进状态持续时钟: 额外行动不是完整回合。
+        """
+        for plugin in getattr(self, "stage_plugins", []):
+            plugin.on_turn_begin(active_entity, self)
 
     def execute_current_turn(
         self, 
@@ -518,7 +625,8 @@ class TurnSimulator:
             alive_enemies = [e for e in self.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
             if not alive_allies or not alive_enemies:
                 break
-            next_av = min(self.entities, key=lambda e: e.remaining_av).remaining_av
+            nxt = self.peek_next_actor()
+            next_av = nxt.remaining_av if nxt is not None else float("inf")
             if self.current_av + next_av > max_av:
                 break
             actor = self.step()

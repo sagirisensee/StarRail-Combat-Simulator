@@ -24,7 +24,7 @@ class BattleInspector:
         if actor is None:
             alive = [e for e in self.sim.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
             if alive:
-                actor = min(alive, key=lambda e: (round(e.remaining_av, 4), 0 if getattr(e, "is_memosprite", False) else 1))
+                actor = self.sim.peek_next_actor()
                 av = self.sim.current_av + (actor.remaining_av if actor else 0.0)
             else:
                 actor = None

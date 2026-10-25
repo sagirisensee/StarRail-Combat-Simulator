@@ -315,3 +315,49 @@ class TestTrajectoryReplay(unittest.TestCase):
         bursts = [r for r in traj.records if r.skill_id == 1141307]
         self.assertEqual(len(bursts), 15)
         self.assertTrue(all(r.fired_av is not None for r in bursts))
+
+    def test_forced_spirit_casts_take_blood_devour_first(self):
+        """轨迹强发的长夜行动须先吃【血噬】: 每次强发同 AV 必有一次对长夜的
+        回合初扣血 (其 +4 忆质计入本次施放)。
+
+        依据: 实机中长夜每次行动 (含召唤后的立即行动) 都是正式行动, 关卡
+        【血噬】在行动开始时扣其 500 生命, 经天赋转化为忆质; 强发路径若直调
+        kit 施放会绕过回合开始结算, 扣血与入账双双丢失。
+        """
+        from simulator.golden_diff import build_stage_sim, extract_timeline, run_trajectory_replay, parse_golden_jsonl
+        from simulator.events import HPLostEvent
+        path = "battle_logs/battle_20261026_062503.jsonl"
+        golden = parse_golden_jsonl(path)
+        sim, director = build_stage_sim()
+        bleed_avs = []
+        def _on_hp(e):
+            if getattr(e, "cause", "") == "stage_mechanic_bleed_turn_begin" and e.entity_name == "长夜":
+                bleed_avs.append(float(getattr(e, "av", 0.0)))
+        sim.event_bus.subscribe(HPLostEvent, _on_hp)
+        traj = run_trajectory_replay(sim, director, extract_timeline(path), av_budget=golden.final_av)
+        forced = [r for r in traj.records if r.skill_id in (1141301, 1141307) and r.mode == "forced" and r.fired_av is not None]
+        self.assertTrue(forced, "预期本场存在强发的长夜施放")
+        for r in forced:
+            self.assertTrue(
+                any(abs(a - r.fired_av) < 0.6 for a in bleed_avs),
+                f"强发 {r.skill_id}@{r.fired_av} 前长夜未被血噬扣血 (扣血AV: {bleed_avs})",
+            )
+
+    def test_moon_skill_id_depends_on_spirit_presence(self):
+        """长夜月战技的官方配置 ID 按长夜在场状态区分: 不在场 (召唤版) 141302 /
+        在场 (回血版) 141309 (日志实证: 第二场 47.9 与 281.4 的同簇战技记为 141309)。
+        轨迹回放中两种 ID 都应出现。"""
+        from simulator.golden_diff import build_stage_sim, extract_timeline, run_trajectory_replay, parse_golden_jsonl
+        from simulator.events import ActionExecuteEvent
+        from simulator.actions import ActionKind
+        path = "battle_logs/battle_20261026_062503.jsonl"
+        golden = parse_golden_jsonl(path)
+        sim, director = build_stage_sim()
+        ids = set()
+        def _on_action(e):
+            if getattr(e, "actor_name", "") == "长夜月" and getattr(e, "action_kind", None) == ActionKind.SKILL:
+                ids.add(int(getattr(e, "skill_config_id", 0) or 0))
+        sim.event_bus.subscribe(ActionExecuteEvent, _on_action)
+        run_trajectory_replay(sim, director, extract_timeline(path), av_budget=golden.final_av)
+        self.assertIn(141302, ids)
+        self.assertIn(141309, ids)

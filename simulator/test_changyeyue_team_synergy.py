@@ -86,12 +86,18 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         self.assertIn("特邀嘉宾", buff_names, "长夜月应获得【特邀嘉宾】增益")
 
         # 4. 验证特邀嘉宾攻击时，额外使知更鸟获得 2 点气氛值 (基础 1 点 + 额外 2 点 = 3 点)。
-        #    本步内气氛值总增量为 4: 特邀嘉宾 (长夜月) 的攻击 +3, 以及知更鸟大招触发的
-        #    缇宝天赋追击作为一次独立的我方攻击行动 +1 (追击在官方时序中于大招结算后、
-        #    被拉条队友行动前施放, 经 gain_vibes 触发记录核实归属为缇宝)。
+        #    气氛值总增量为 4: 特邀嘉宾的召唤物 (长夜) 攻击 +3, 以及知更鸟大招触发的
+        #    缇宝天赋追击作为一次独立的我方攻击行动 +1。
+        #    时序 (官方同簇行动序, 第二场 47.9 簇实证): 被拉条的长夜月先行动 (其战技
+        #    本身不攻击, 仅触发缇宝追击 +1), 长夜的召唤立即行动排在其后 (+3)——
+        #    故 +4 分两步落地, 而非同一步。
         vibes_before = robin.kit.vibes
-        sim.step()
-        self.assertEqual(robin.kit.vibes, vibes_before + 4, "特邀嘉宾攻击 +3 点与缇宝追击行动 +1 点 (共 +4 点)")
+        first = sim.step()
+        self.assertEqual(getattr(first, "name", None), "长夜月", "被行动提前的长夜月应先行动")
+        self.assertEqual(robin.kit.vibes, vibes_before + 1, "缇宝追击行动 +1 点")
+        second = sim.step()
+        self.assertEqual(getattr(second, "name", None), "长夜", "长夜的召唤立即行动应紧随主人行动")
+        self.assertEqual(robin.kit.vibes, vibes_before + 4, "特邀嘉宾召唤物攻击 +3 点 (累计 +4)")
 
     def test_03_changyeyue_yizhi_burst_and_self_destruction(self):
         """测试 3: 验证长夜月忆质累积满 16 层触发忆灵立即爆发并自毁加速。"""
