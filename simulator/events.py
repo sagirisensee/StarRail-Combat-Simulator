@@ -44,6 +44,7 @@ class ActionExecuteEvent(BattleEvent):
     action_type: str            # "BasicAttack", "Skill", "Ultimate", "FollowUpAttack", "Technique"
     description: str
     action_kind: Any = None     # 可选 ActionKind 枚举，便于强类型判断
+    skill_config_id: int = 0    # 官方 skill_config_id (与实机日志 OnUseSkill 对齐); 0 表示未知/不适用
 
 
 @dataclass(frozen=True)

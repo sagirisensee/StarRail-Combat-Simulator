@@ -24,6 +24,31 @@ from .status import StatusManager, StatType
 from .actions import ActionKind, ActionContext
 
 
+# 官方 skill_config_id 的槽位规则: avatar_id * 100 + 槽位 (普攻 01 / 战技 02 / 终结技 03 / 天赋 04 / 秘技 07)
+_SKILL_ID_SLOTS = {
+    ActionKind.BASIC: 1,
+    ActionKind.SKILL: 2,
+    ActionKind.ULTIMATE: 3,
+    ActionKind.TALENT: 4,
+    ActionKind.TECHNIQUE: 7,
+}
+
+
+def resolve_skill_config_id(entity: Any, defn: Any, kind: Any) -> int:
+    """解析一次施放的官方 skill_config_id: 技能定义显式声明优先, 否则按角色 avatar_id 与槽位推导。
+
+    忆灵技等不在槽位表内的动作返回 0, 须由忆灵 Kit 在 AbilityDefinition 中显式声明 skill_id。
+    """
+    declared = getattr(defn, "skill_id", 0) if defn is not None else 0
+    if declared:
+        return int(declared)
+    avatar_id = getattr(entity, "avatar_id", 0) or 0
+    slot = _SKILL_ID_SLOTS.get(kind)
+    if avatar_id and slot:
+        return int(avatar_id) * 100 + slot
+    return 0
+
+
 class TurnSimulator:
     """纯粹的回合与行动值 (AV) 调度微内核。"""
 
@@ -281,7 +306,8 @@ class TurnSimulator:
                 actor_name=active_entity.name,
                 action_type=actual_action,
                 description=f"施放【{defn.name}】",
-                action_kind=actual_kind
+                action_kind=actual_kind,
+                skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind)
             ))
 
             ctx = ActionContext(
@@ -439,7 +465,8 @@ class TurnSimulator:
             actor_name=ent.name,
             action_type=f"Ultimate ({defn.name})",
             description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！",
-            action_kind=ActionKind.ULTIMATE
+            action_kind=ActionKind.ULTIMATE,
+            skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
         ))
 
         ctx = ActionContext(

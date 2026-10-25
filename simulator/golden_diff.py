@@ -246,6 +246,7 @@ def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400) -> Bat
             actor=skill_actor(e.actor_name),
             name=raw_name,
             skill_type=SKILL_TYPE_BY_KIND.get(kind, "Unknown"),
+            config_id=(getattr(e, "skill_config_id", 0) or None),
         ))
 
     def on_damage(e: DamageAppliedEvent) -> None:

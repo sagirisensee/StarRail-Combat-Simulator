@@ -72,7 +72,8 @@ class SunnyMusiciansKit(KitHandler):
             cost=ResourceCost(sp=-1),  # bp_need = -1 -> 产生 1 点 SP
             name="叽叽啾啾四重奏",
             tag="忆灵技",
-            is_auto=True
+            is_auto=True,
+            skill_id=1151201
         )
 
     def execute(self, ctx: ActionContext) -> None:

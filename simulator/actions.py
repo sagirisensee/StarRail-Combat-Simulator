@@ -107,6 +107,7 @@ class AbilityDefinition:
     priority: int = 1                   # 秘技/动作准备执行优先级 (值越小越先结算，如全队增益=0, 默认=1, 领域展开=2)
     tag: str = ""                       # 动作UI与机制分类标签 (如 "战技", "普攻", "忆灵技", "终极爆发")
     is_auto: bool = False               # 是否为系统自动施放/不可玩家手动操作动作 (如长夜开局自动喷水)
+    skill_id: int = 0                   # 官方 skill_config_id (如 141302); 0 表示未声明, 由 core 按角色 avatar_id 与动作槽位推导
 
 
 @dataclass(frozen=True)

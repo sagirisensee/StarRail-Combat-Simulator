@@ -708,7 +708,8 @@ class ChangyeMemospriteKit(KitHandler):
                 cost=ResourceCost(sp=0),
                 name=self.BURST_NAME,
                 tag="终极爆发",
-                is_auto=False
+                is_auto=False,
+                skill_id=1141307
             )
         else:
             return AbilityDefinition(
@@ -717,7 +718,8 @@ class ChangyeMemospriteKit(KitHandler):
                 cost=ResourceCost(sp=0),
                 name=self.SKILL_NAME,
                 tag="忆灵技",
-                is_auto=True
+                is_auto=True,
+                skill_id=1141301
             )
 
     def execute(self, ctx: ActionContext):
