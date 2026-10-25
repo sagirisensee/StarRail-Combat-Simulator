@@ -184,36 +184,40 @@ def parse_golden_jsonl(path: str) -> BattleSequence:
     return seq
 
 
-def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400, director: Any = None) -> BattleSequence:
-    """运行一场模拟战斗, 将其事件流导出为与官方日志同构的标准时序。
+class SequenceRecorder:
+    """将一场模拟的事件流记录为与官方日志同构的标准时序 (自由运行与回放共用)。
 
-    sim 须为已构造完毕的 TurnSimulator (阵容/敌人由调用方决定)。
     归因规则与官方日志对齐: 技能与伤害记在行动者名下, 终结技插队等回合外
-    事件归入当前已开启的回合 (无回合时记为「环境/插队」)。
+    事件归入当前已开启的回合 (无回合时记为「环境/插队」); 忆灵的技能记在
+    主人名下, 忆灵造成的伤害记为「主人 (忆灵)」。
     """
-    from .events import TurnBeginEvent, ActionExecuteEvent, DamageAppliedEvent
 
-    seq = BattleSequence(source="simulator")
-    current: Optional[TurnRecord] = None
+    def __init__(self, sim: Any):
+        from .events import TurnBeginEvent, ActionExecuteEvent, DamageAppliedEvent
 
-    # 归因对齐官方日志: 忆灵的技能记在主人名下, 忆灵造成的伤害记为「主人 (忆灵)」
-    # 忆灵在战斗中途才被召唤, 实体查询必须惰性执行 (带缓存, 未命中时刷新)
-    ent_cache: Dict[str, Any] = {}
+        self.sim = sim
+        self.seq = BattleSequence(source="simulator")
+        self.current: Optional[TurnRecord] = None
+        self.raw_actions: List[Any] = []
+        self._ent_cache: Dict[str, Any] = {}
+        sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
+        sim.event_bus.subscribe(ActionExecuteEvent, self._on_action)
+        sim.event_bus.subscribe(DamageAppliedEvent, self._on_damage)
 
-    def lookup_entity(name: str):
-        if name not in ent_cache:
-            for ent in getattr(sim, "entities", []):
-                ent_cache[ent.name] = ent
-        return ent_cache.get(name)
+    def _lookup_entity(self, name: str):
+        if name not in self._ent_cache:
+            for ent in getattr(self.sim, "entities", []):
+                self._ent_cache[ent.name] = ent
+        return self._ent_cache.get(name)
 
-    def skill_actor(name: str) -> str:
-        ent = lookup_entity(name)
+    def _skill_actor(self, name: str) -> str:
+        ent = self._lookup_entity(name)
         if ent is not None and getattr(ent, "is_memosprite", False):
             return getattr(ent, "master_name", None) or name
         return name
 
-    def damage_actor(name: str, dtype_value: str) -> str:
-        ent = lookup_entity(name)
+    def _damage_actor(self, name: str, dtype_value: str) -> str:
+        ent = self._lookup_entity(name)
         if ent is not None and getattr(ent, "is_memosprite", False):
             master = getattr(ent, "master_name", None) or name
             return f"{master} (忆灵)"
@@ -221,19 +225,19 @@ def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400, direct
             return f"{name} (忆灵)"
         return name
 
-    def open_turn(av: float, owner: str) -> TurnRecord:
-        nonlocal current
-        current = TurnRecord(index=len(seq.turns) + 1, av=av, owner=owner)
-        seq.turns.append(current)
-        return current
+    def _open_turn(self, av: float, owner: str) -> TurnRecord:
+        self.current = TurnRecord(index=len(self.seq.turns) + 1, av=av, owner=owner)
+        self.seq.turns.append(self.current)
+        return self.current
 
-    def on_turn_begin(e: TurnBeginEvent) -> None:
-        open_turn(float(getattr(e, "av", 0.0)), e.actor_name)
+    def _on_turn_begin(self, e: Any) -> None:
+        self._open_turn(float(getattr(e, "av", 0.0)), e.actor_name)
 
-    def on_action(e: ActionExecuteEvent) -> None:
-        if current is None:
-            open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
-        actor_ent = lookup_entity(e.actor_name)
+    def _on_action(self, e: Any) -> None:
+        self.raw_actions.append(e)
+        if self.current is None:
+            self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+        actor_ent = self._lookup_entity(e.actor_name)
         if actor_ent is not None and getattr(actor_ent, "is_countdown", False):
             return  # 倒计时实体的结算是内部机制, 官方日志不记为技能施放
         kind = getattr(e, "action_kind", None)
@@ -242,28 +246,34 @@ def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400, direct
             raw_name = ""  # 追击合成事件只是类型标记, 不是具名技能
         elif raw_name.startswith("Ultimate (") and raw_name.endswith(")"):
             raw_name = raw_name[len("Ultimate ("):-1]
-        current.skills.append(SkillCast(
-            actor=skill_actor(e.actor_name),
+        self.current.skills.append(SkillCast(
+            actor=self._skill_actor(e.actor_name),
             name=raw_name,
             skill_type=SKILL_TYPE_BY_KIND.get(kind, "Unknown"),
             config_id=(getattr(e, "skill_config_id", 0) or None),
         ))
 
-    def on_damage(e: DamageAppliedEvent) -> None:
-        if current is None:
-            open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+    def _on_damage(self, e: Any) -> None:
+        if self.current is None:
+            self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
         dtype = getattr(e, "damage_type", None)
         dtype_value = getattr(dtype, "value", "Direct")
-        current.damages.append(DamageHit(
-            attacker=damage_actor(e.attacker_name, dtype_value),
+        self.current.damages.append(DamageHit(
+            attacker=self._damage_actor(e.attacker_name, dtype_value),
             damage_type=dtype_value,
             damage=float(e.damage),
         ))
 
-    sim.event_bus.subscribe(TurnBeginEvent, on_turn_begin)
-    sim.event_bus.subscribe(ActionExecuteEvent, on_action)
-    sim.event_bus.subscribe(DamageAppliedEvent, on_damage)
+    def finish(self) -> BattleSequence:
+        self.seq.total_damage = sum(t.total_damage for t in self.seq.turns)
+        self.seq.final_av = float(getattr(self.sim, "current_av", 0.0))
+        return self.seq
 
+
+def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400, director: Any = None) -> BattleSequence:
+    """自由运行一场模拟战斗并导出标准时序 (sim 须为已构造完毕的 TurnSimulator)。"""
+    recorder = SequenceRecorder(sim)
+    seq = recorder.seq
     steps = 0
     idle_steps = 0
     while steps < max_turns * 4 and len(seq.turns) <= max_turns:
@@ -279,10 +289,262 @@ def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400, direct
             idle_steps = 0
         if float(getattr(sim, "current_av", 0.0)) > av_budget:
             break
+    return recorder.finish()
 
-    seq.total_damage = sum(t.total_damage for t in seq.turns)
-    seq.final_av = float(getattr(sim, "current_av", 0.0))
-    return seq
+
+@dataclass
+class Decision:
+    """官方日志中的一次玩家决策 (角色回合行动或终结技抢断)。"""
+    actor: str
+    kind: str  # "basic" | "skill" | "ult"
+    skill_id: int
+    name: str
+
+
+@dataclass
+class Divergence:
+    av: float
+    kind: str  # "turn_order" | "ult_blocked" | "ult_failed" | "sp_downgrade" | "script_exhausted"
+    detail: str
+
+
+@dataclass
+class Grant:
+    """强制回放中为钉死决策而补足的资源 (即模拟自身经济产出与脚本需求的差额)。"""
+    av: float
+    actor: str
+    kind: str  # "energy" | "sp"
+    amount: float
+
+
+@dataclass
+class ReplayResult:
+    decisions_total: int
+    turn_matched: int
+    turn_total: int
+    ult_matched: int
+    ult_total: int
+    divergences: List[Divergence] = field(default_factory=list)
+    sequence: Optional[BattleSequence] = None
+    forced: bool = False
+    grants: List[Grant] = field(default_factory=list)
+
+
+# 官方技能类型 -> 决策类型 (仅玩家四名角色的主动决策; 忆灵技与被动触发为自动行为, 不入脚本)
+_DECISION_KIND_BY_TYPE = {"Normal": "basic", "BPSkill": "skill", "Ultra": "ult"}
+PLAYER_ACTORS = ("长夜月", "缇宝", "知更鸟•晴歌", "风堇")
+
+
+def extract_decisions(path: str) -> List[Decision]:
+    """从官方 JSONL 提取玩家决策脚本 (按日志顺序)。"""
+    decisions: List[Decision] = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            if entry.get("event") != "OnUseSkill":
+                continue
+            data = entry.get("data") or {}
+            avatar = data.get("avatar") or {}
+            skill = data.get("skill") or {}
+            if avatar.get("team") != "Player":
+                continue
+            actor = KNOWN_AVATAR_NAMES.get(avatar.get("uid"))
+            kind = _DECISION_KIND_BY_TYPE.get(skill.get("type"))
+            if actor and kind:
+                decisions.append(Decision(
+                    actor=actor,
+                    kind=kind,
+                    skill_id=int(skill.get("skill_config_id") or 0),
+                    name=skill.get("name", ""),
+                ))
+    return decisions
+
+
+def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: float, force: bool = False) -> ReplayResult:
+    """按官方决策脚本驱动模拟 (回放对齐模式)。
+
+    严格模式 (force=False): 角色回合到来时强制执行脚本中该角色的行动;
+    终结技在脚本顺序到达且能量已满时抢断施放。无法对齐之处逐项记为偏离
+    (回合顺序不一致 / 终结技能量不足被跳过 / 战技点不足被降级为普攻),
+    不伪造执行结果。
+
+    强制模式 (force=True): 决策被钉死 —— 终结技到达脚本时点时若能量不足,
+    按缺口补足后施放; 战技点不足时同样补足。每次补足都记入 grants 台账,
+    台账即模拟自身资源经济与实机需求之间的量化差额。回合顺序由调度器
+    决定, 不在钉死范围内, 仍记为偏离供排查。
+    """
+    from .actions import ActionKind
+
+    recorder = SequenceRecorder(sim)
+    result = ReplayResult(
+        decisions_total=len(decisions),
+        turn_matched=0,
+        turn_total=sum(1 for d in decisions if d.kind != "ult"),
+        ult_matched=0,
+        ult_total=sum(1 for d in decisions if d.kind == "ult"),
+        forced=force,
+    )
+    # 回放期间关闭自动终结技: 终结技只能由脚本决策触发, 否则计数不可比
+    prev_auto_ult = getattr(sim, "auto_ult", None)
+    if prev_auto_ult is not None:
+        sim.auto_ult = False
+    ptr = 0
+    steps = 0
+    idle_steps = 0
+
+    def note(kind: str, detail: str) -> None:
+        result.divergences.append(Divergence(av=float(getattr(sim, "current_av", 0.0)), kind=kind, detail=detail))
+
+    def mark_ult_blocked(d: Decision) -> None:
+        ent = sim.get_entity(d.actor)
+        have = float(getattr(ent, "energy", 0.0)) if ent else 0.0
+        need = float(getattr(ent, "max_energy", 0.0)) if ent else 0.0
+        note("ult_blocked", f"{d.actor} 终结技【{d.name}】未能按脚本施放 (能量 {have:.0f}/{need:.0f})")
+
+    def force_cast_ult(d: Decision) -> None:
+        """钉死一次终结技决策: 能量按缺口补足 (记台账) 后施放。"""
+        ent = sim.get_entity(d.actor)
+        if ent is None:
+            note("ult_failed", f"{d.actor} 终结技【{d.name}】施放失败 (实体不存在)")
+            return
+        deficit = float(ent.max_energy) - float(ent.energy)
+        if deficit > 1e-4:
+            ent.energy = float(ent.max_energy)
+            result.grants.append(Grant(av=float(getattr(sim, "current_av", 0.0)), actor=d.actor, kind="energy", amount=deficit))
+        if sim.cast_ultimate(d.actor):
+            result.ult_matched += 1
+            if director is not None:
+                director.after_step()
+        else:
+            note("ult_failed", f"{d.actor} 终结技【{d.name}】能量补足后仍施放失败")
+
+    def force_sp_for_skill(d: Decision) -> None:
+        """钉死一次战技决策: 战技点不足时按缺口补足 (记台账)。"""
+        sp = getattr(sim, "sp", None)
+        if sp is not None and not sp.can_consume(1):
+            deficit = 1 - int(sp.current_sp)
+            if deficit > 0:
+                sp.generate(deficit, d.actor, "回放强制补足", float(getattr(sim, "current_av", 0.0)))
+                result.grants.append(Grant(av=float(getattr(sim, "current_av", 0.0)), actor=d.actor, kind="sp", amount=float(deficit)))
+
+    while steps < 1600 and float(getattr(sim, "current_av", 0.0)) <= av_budget:
+        steps += 1
+        # 1. 脚本头部的终结技: 能量已满则立即抢断施放 (强制模式则补足后施放)
+        while ptr < len(decisions) and decisions[ptr].kind == "ult":
+            d = decisions[ptr]
+            if force:
+                force_cast_ult(d)
+                ptr += 1
+                continue
+            ent = sim.get_entity(d.actor)
+            if ent is not None and float(getattr(ent, "energy", 0.0)) >= float(getattr(ent, "max_energy", 0.0)) - 1e-4:
+                if sim.cast_ultimate(d.actor):
+                    result.ult_matched += 1
+                    ptr += 1
+                    if director is not None:
+                        director.after_step()
+                    continue
+            break
+        # 2. 预览下一个行动者
+        actor_ent = sim.advance_to_next_turn()
+        if actor_ent is None:
+            if director is not None:
+                director.after_step()
+            idle_steps += 1
+            if idle_steps > 100:
+                break
+            continue
+        idle_steps = 0
+        override = None
+        scripted: Optional[Decision] = None
+        if actor_ent.name in PLAYER_ACTORS:
+            j = ptr
+            while j < len(decisions) and decisions[j].kind == "ult":
+                j += 1
+            if j < len(decisions):
+                d = decisions[j]
+                if d.actor == actor_ent.name:
+                    for k in range(ptr, j):
+                        if force:
+                            force_cast_ult(decisions[k])
+                        else:
+                            mark_ult_blocked(decisions[k])
+                    ptr = j + 1
+                    scripted = d
+                    if force and d.kind == "skill":
+                        force_sp_for_skill(d)
+                    override = ActionKind.SKILL if d.kind == "skill" else ActionKind.BASIC
+                    result.turn_matched += 1
+                else:
+                    note("turn_order", f"回合顺序偏离: 脚本期待 {d.actor} 行动, 实际为 {actor_ent.name}")
+            else:
+                note("script_exhausted", f"脚本决策已耗尽, {actor_ent.name} 改由默认策略行动")
+        actions_before = len(recorder.raw_actions)
+        sim.step(action_override=override)
+        if director is not None:
+            director.after_step()
+        # 3. 战技点不足降级检测: 本步内该角色的行动中无一命中脚本技能 ID 才算降级
+        # (同一步内可能先有追击/被动事件, 不能只看第一条)
+        if scripted is not None and scripted.kind == "skill":
+            executed = [a for a in recorder.raw_actions[actions_before:] if a.actor_name == scripted.actor]
+            if executed and not any((getattr(a, "skill_config_id", 0) or 0) == scripted.skill_id for a in executed):
+                note("sp_downgrade", f"{scripted.actor} 战技【{scripted.name}】未按脚本执行 (实际: {executed[0].action_type})")
+
+    # 脚本尾部未消费的终结技决策
+    for k in range(ptr, len(decisions)):
+        if decisions[k].kind == "ult":
+            if force:
+                force_cast_ult(decisions[k])
+            else:
+                mark_ult_blocked(decisions[k])
+
+    if prev_auto_ult is not None:
+        sim.auto_ult = prev_auto_ult
+    result.sequence = recorder.finish()
+    return result
+
+
+def render_replay_markdown(result: ReplayResult) -> str:
+    lines = []
+    title = "## 五、 回放对齐 (按官方决策脚本驱动"
+    title += ", 强制模式: 决策钉死)" if result.forced else ")"
+    lines.append(title)
+    lines.append("")
+    lines.append(f"- 决策总数: {result.decisions_total} (回合行动 {result.turn_total}, 终结技 {result.ult_total})")
+    lines.append(f"- 回合行动对齐: {result.turn_matched}/{result.turn_total}")
+    lines.append(f"- 终结技对齐: {result.ult_matched}/{result.ult_total}")
+    lines.append(f"- 偏离记录: {len(result.divergences)} 条")
+    lines.append("")
+    if result.forced and result.grants:
+        lines.append("### 强制补足台账 (模拟自身经济与脚本需求的差额)")
+        lines.append("")
+        lines.append("| 角色 | 能量补足 (次/总量) | 战技点补足 (次) |")
+        lines.append("| :--- | ---: | ---: |")
+        actors = sorted({g.actor for g in result.grants})
+        for actor in actors:
+            eg = [g for g in result.grants if g.actor == actor and g.kind == "energy"]
+            sg = [g for g in result.grants if g.actor == actor and g.kind == "sp"]
+            lines.append(f"| {actor} | {len(eg)} 次 / {sum(g.amount for g in eg):,.0f} | {len(sg)} 次 |")
+        lines.append("")
+        lines.append("| AV | 角色 | 类型 | 补足量 |")
+        lines.append("| ---: | :--- | :--- | ---: |")
+        for g in result.grants:
+            lines.append(f"| {g.av:.1f} | {g.actor} | {g.kind} | {g.amount:,.0f} |")
+        lines.append("")
+    if result.divergences:
+        lines.append("| AV | 类型 | 说明 |")
+        lines.append("| ---: | :--- | :--- |")
+        for d in result.divergences[:30]:
+            lines.append(f"| {d.av:.1f} | {d.kind} | {d.detail} |")
+        if len(result.divergences) > 30:
+            lines.append(f"| ... | ... | 其余 {len(result.divergences) - 30} 条略 |")
+        lines.append("")
+    return "\n".join(lines)
+
+
 
 
 def diff_sequences(golden: BattleSequence, sim: BattleSequence) -> Dict[str, Any]:
@@ -339,7 +601,7 @@ def diff_sequences(golden: BattleSequence, sim: BattleSequence) -> Dict[str, Any
     }
 
 
-def render_markdown(report: Dict[str, Any], golden_label: str, sim_label: str) -> str:
+def render_markdown(report: Dict[str, Any], golden_label: str, sim_label: str, replay_md: str = "") -> str:
     lines = []
     lines.append("# Golden Trace 对账报告")
     lines.append("")
@@ -377,6 +639,8 @@ def render_markdown(report: Dict[str, Any], golden_label: str, sim_label: str) -
     for s in report["skills"]:
         lines.append(f"| {s['key']} | {s['golden']} | {s['sim']} |")
     lines.append("")
+    if replay_md:
+        lines.append(replay_md)
     return "\n".join(lines)
 
 
@@ -416,13 +680,24 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Golden Trace 真值对账")
     parser.add_argument("golden", help="官方 Veritas JSONL 路径")
     parser.add_argument("--out", default="", help="报告输出路径 (默认打印到终端)")
+    parser.add_argument("--replay", action="store_true", help="回放对齐模式: 按日志中的玩家决策脚本驱动模拟")
+    parser.add_argument("--force", action="store_true", help="强制回放: 决策钉死, 能量/战技点按缺口补足并记台账 (隐含 --replay)")
     args = parser.parse_args(argv)
 
     golden = parse_golden_jsonl(args.golden)
     sim, director = build_stage_sim()
-    sim_seq = export_sim_sequence(sim, av_budget=golden.final_av, director=director)
+    replay_md = ""
+    if args.replay or args.force:
+        decisions = extract_decisions(args.golden)
+        replay = run_replay(sim, director, decisions, av_budget=golden.final_av, force=args.force)
+        sim_seq = replay.sequence
+        replay_md = render_replay_markdown(replay)
+        sim_label = "关卡 30510021 还原场景 + 官方决策脚本回放驱动" + (" (强制钉死)" if args.force else "")
+    else:
+        sim_seq = export_sim_sequence(sim, av_budget=golden.final_av, director=director)
+        sim_label = "关卡 30510021 还原场景 (同阵容, 敌方构成/HP/波次按日志实测)"
     report = diff_sequences(golden, sim_seq)
-    md = render_markdown(report, args.golden, "关卡 30510021 还原场景 (同阵容, 敌方构成/HP/波次按日志实测)")
+    md = render_markdown(report, args.golden, sim_label, replay_md=replay_md)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(md)
