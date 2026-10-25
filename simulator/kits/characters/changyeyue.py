@@ -61,6 +61,18 @@ class ChangyeyueKit(KitHandler):
         """忆灵「长夜」生命上限为长夜月实时生命上限的 50% (满血 4313 点)。"""
         return float(round(0.50 * self.port.max_hp(self.owner_id)))
 
+    def _spirit_crit_dmg(self) -> Optional[float]:
+        """忆灵「长夜」当前的暴击伤害 (供忆灵技伤害结算覆盖)。
+
+        忆灵技由主人套件代发 (归属与 ×0.50 生命换算保持不变), 但暴伤应取
+        忆灵自身面板: 其专属加成 (行迹【天亮了，雨落了】、战技共享暴伤
+        【白昼悄然离去】) 以 MEMOSPRITE_ONLY 状态挂在忆灵实体上, 若按主人
+        面板结算则这些加成永远不生效。忆灵实体不存在时返回 None (走主人面板)。
+        """
+        if not self.port or not self.port.entity_exists(self.spirit_name):
+            return None
+        return float(self.port.stat(self.spirit_name, StatType.CRIT_DMG))
+
     def _trigger_trace_candle_on_skill(self) -> None:
         """行迹【烛火起，烛火熄】(point07)：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】。"""
         self.port.gain_energy(self.owner_id, 5.0, cause="行迹《烛火起，烛火熄》施法回能 (+5.0 点)", source_plugin="长夜月行迹")
@@ -245,7 +257,8 @@ class ChangyeyueKit(KitHandler):
             atk_multiplier=mult,
             toughness_damage=10.0,
             damage_type=DamageType.SERVANT,
-            scaling_stat="hp"
+            scaling_stat="hp",
+            fixed_crit_dmg=self._spirit_crit_dmg()
         )
 
         # 施放后获得 1 点【忆质】(E2自动+2变为3点)
@@ -342,6 +355,7 @@ class ChangyeyueKit(KitHandler):
         primary_target = enemies[0]
 
         try:
+            spirit_cd = self._spirit_crit_dmg()
             for e in enemies:
                 factor = 0.168 if e == primary_target else 0.084
                 self.port.attack(
@@ -351,7 +365,8 @@ class ChangyeyueKit(KitHandler):
                     atk_multiplier=factor * spent_memory * 0.50,
                     toughness_damage=90.0 if e == primary_target else 60.0,
                     damage_type=DamageType.SERVANT,
-                    scaling_stat="hp"
+                    scaling_stat="hp",
+                    fixed_crit_dmg=spirit_cd
                 )
 
             # 消耗全部忆质
