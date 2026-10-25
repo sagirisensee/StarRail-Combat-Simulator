@@ -4,11 +4,11 @@
 敌方数据来源分四类, 请勿混淆:
 - 实测值 (官方日志): 敌人构成、生命上限、波次切换与增援出现的 AV 时点;
 - 数据库值 (Nanoka 关卡数据, 与日志交叉验证): 第一波两只大型敌人的名称/
-  生命/速度/弱点/韧性 (见下);
-- 仓库既有值: 千星戍卫 (8032040) 的速度/韧性/弱点沿用 simulate_battle 既有关卡配置;
-- 估算值: 亚婆离与狂兽的胚芽的速度/韧性日志未提供 (日志中的首次行动 AV
-  已被行动提前等机制污染, 无法反推), 取中性估算, 仅影响敌方出手频率,
-  不影响我方机制对账的结论方向。弱点与抗性已由 Resistance 属性实测 (见下)。
+  生命/速度/弱点/韧性 (见下); 以及亚婆离 (速度 238/关卡韧性 360)、
+  狂兽的胚芽 (速度 174/韧性 90)、千星戍卫 (速度 145/韧性 90) 的速度与
+  韧性——此前为中性估算 (100/300、120/100、110/90), 现按数据库值校准;
+  戍卫速度 145 与日志 ActionDelay 首值 68.87 (= 10000/145) 吻合。
+  弱点与抗性已由 Resistance 属性实测 (见下)。
 
 官方日志还原的战斗结构:
 - 第一波: 月夜天马 (HP 4,904,294) + 「灯塔」 (HP 4,291,259) + 千星戍卫 x3
@@ -84,7 +84,7 @@ SPROUT_RES = {"Fire": 0.0, "Wind": 0.0, "Imaginary": 0.0, "Ice": 0.2, "Quantum":
 def _guard(name: str) -> Entity:
     ent = Entity(
         name=name,
-        base_speed=110.0,
+        base_speed=145.0,
         base_atk=1600.0,
         max_hp=GUARD_HP,
         current_hp=GUARD_HP,
@@ -118,11 +118,11 @@ def _mech(name: str, hp: float, speed: float, weaknesses: List[str]) -> Entity:
 def _boss() -> Entity:
     ent = Entity(
         name="堕神之血•亚婆离",
-        base_speed=100.0,
+        base_speed=238.0,
         base_atk=1600.0,
         max_hp=BOSS_HP,
         current_hp=BOSS_HP,
-        max_toughness=300.0, current_toughness=300.0,
+        max_toughness=360.0, current_toughness=360.0,
         weaknesses=list(BOSS_WEAKNESSES),
         is_enemy=True,
     )
@@ -181,11 +181,11 @@ def _make_boss_ai(sim: TurnSimulator):
 def _sprout(name: str) -> Entity:
     ent = Entity(
         name=name,
-        base_speed=120.0,
+        base_speed=174.0,
         base_atk=1600.0,
         max_hp=SPROUT_HP,
         current_hp=SPROUT_HP,
-        max_toughness=100.0, current_toughness=100.0,
+        max_toughness=90.0, current_toughness=90.0,
         weaknesses=list(SPROUT_WEAKNESSES),
         is_enemy=True,
     )
