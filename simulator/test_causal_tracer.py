@@ -68,5 +68,40 @@ class TestActionCausalTracer(unittest.TestCase):
         sim.tracer.end_action()
         self.assertEqual(len(sim.tracer.history), 1)
 
+    def test_tracer_generic_variable_and_cause_registration(self):
+        """验证追踪器通用性: 新变量只需插件自申报即可渲染, 扣血来源描述由来源插件自注册。"""
+        import io
+        from contextlib import redirect_stdout
+        from simulator.tracer import TraceVariableSpec
+
+        # 1. 扣血来源描述由来源插件自注册 (来源模块加载后即可查到, 追踪器源码不写死)
+        import simulator.light_cones.catalog  # noqa: F401  (触发光锥插件自注册)
+        import simulator.stage_mechanics  # noqa: F401  (触发关卡插件自注册)
+        self.assertIsNotNone(ActionCausalTracer.describe_cause("LC_MayRainbows_HP_Drain"))
+        self.assertIsNotNone(ActionCausalTracer.describe_cause("stage_mechanic_bleed_turn_begin"))
+        self.assertIsNone(ActionCausalTracer.describe_cause("nonexistent_cause"))
+
+        # 2. 任意插件自申报一个全新变量 (如【怒气值】), 追踪器零改动即可渲染其流转与维持值
+        class _FakeKit:
+            def trace_variables(self):
+                return [TraceVariableSpec(var_name="怒气值", unit="点", current_value=lambda: 42.0)]
+
+        class _FakeEnt:
+            name = "假想新角色"
+            kit = _FakeKit()
+
+        class _FakeSim:
+            entities = [_FakeEnt()]
+
+        tracer = ActionCausalTracer(_FakeSim())
+        tracer.start_action("假想新角色", "测试行动", av=1.0, cycle=0)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            tracer.render_audit_panel()
+        out = buf.getvalue()
+        self.assertIn("假想新角色 · 怒气值变化流转", out)
+        self.assertIn("维持 42 点", out)
+
+
 if __name__ == '__main__':
     unittest.main()

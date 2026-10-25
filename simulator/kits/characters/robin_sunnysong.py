@@ -297,6 +297,56 @@ class RobinSunnySongKit(KitHandler):
         if self.rhythm_stacks > 0:
             self._sync_rhythm_status()
 
+    def trace_variables(self) -> list:
+        """向因果追踪器自申报专属变量【气氛值】与【律动层数】。"""
+        from ...tracer import TraceVariableSpec
+        return [
+            TraceVariableSpec(
+                var_name="气氛值",
+                unit="点",
+                current_value=lambda: self.vibes,
+                final_note=lambda v: "🌟 全员登台 Fever 狂热维持中" if self.in_fever else "",
+            ),
+            TraceVariableSpec(
+                var_name="律动层数",
+                unit="层",
+                current_value=lambda: self.rhythm_stacks,
+            ),
+        ]
+
+    def get_trace_panel_section(self):
+        """生成本角色专属报表段落【偏离和弦 Buff 状态矩阵】(仅经 CombatPort 读取全队状态)。"""
+        if not self.port:
+            return None
+        robin_atk = self.port.stat(self.owner_id, StatType.ATK)
+        lines = [
+            "   • 核心机制: 我方目标使知更鸟获气氛值时，根据【触发瞬间的气氛值】快照生成独立 Buff (持续 2 回合)",
+            f"   • 判定准则: 目标实时攻击 > 知更鸟 ({robin_atk:,.0f}) ? 攻击力加成 (16% + 气氛×0.4%) : 暴击伤害加成 (40% + 气氛×1.5%)",
+            f"   • 当前知更鸟持有气氛: {self.vibes} 点 (后续新触发将以此气氛基准实时快照)",
+            "   " + "─" * 78,
+            f"   {'角色 / 实体':<18} │ {'实时攻击':<10} │ {'触发时机与快照依据':<24} │ {'偏离和弦生效数值与形态'}",
+            "   " + "─" * 78,
+        ]
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_countdown(ally):
+                continue
+            cur_atk = self.port.stat(ally, StatType.ATK)
+            buff = next(
+                (s for s in self.port.statuses(ally) if s.id == f"Robin_Talent_TonalChord_{ally}"),
+                None,
+            )
+            label = f"【{ally}】{' (忆灵)' if self.port.is_memosprite(ally) else ''}"
+            if buff:
+                dur_str = f" [余 {buff.duration} 回合]" if buff.duration is not None else ""
+                val_str = f"{buff.description}{dur_str}"
+                state_str = "已触发并快照生效"
+            else:
+                val_str = "未激活 (尚未使知更鸟获气氛值)"
+                state_str = "待行动使知更鸟获气氛"
+            lines.append(f"   {label:<20} │ {cur_atk:>8.0f}   │ {state_str:<22} │ {val_str}")
+        lines.append("   " + "─" * 78)
+        return ("全队各角色 · 偏离和弦 Buff 状态矩阵 (Tonal Chord Matrix)", lines)
+
     def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
         """增加气氛值：
         - 若处于任意目标回合内首次获得气氛值且持有【律动】，消耗 1 层律动并固定恢复 3 点能量 (行迹【即兴蓝调】)；

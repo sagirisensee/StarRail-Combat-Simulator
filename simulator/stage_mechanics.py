@@ -93,6 +93,17 @@ class BloodDevourMechanicPlugin:
         ))
 
 
+# 向因果追踪器自注册本机制的扣血来源描述 (供 tracer 因果报表引用, 核心层不写死本机制信息)
+from .tracer import ActionCausalTracer as _Tracer
+
+_Tracer.register_cause_plugin(
+    "stage_mechanic_bleed_turn_begin",
+    "关卡",
+    "《血噬》 (Stage Mechanic)",
+    "回合开始受到 500 点环境流血伤害",
+)
+
+
 class GenericStageMechanicPlugin:
     """通用默认关卡机制插件（仅挂载状态标记，无额外扣血动作）。"""
     def __init__(self, name: str):

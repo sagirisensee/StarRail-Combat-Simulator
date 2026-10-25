@@ -42,3 +42,13 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                     timing=DurationTiming.TARGET_TURN_END,
                     skip_current_clock=True
                 ))
+
+# 向因果追踪器自注册本光锥的扣血来源描述 (供 tracer 因果报表引用, 核心层不写死本光锥信息)
+from ...tracer import ActionCausalTracer as _Tracer
+
+_Tracer.register_cause_plugin(
+"LC_MayRainbows_HP_Drain",
+"光锥",
+"《愿虹光永驻天空》 (风堇 S1)",
+"战技施放消耗全队 1.0% 当前生命值，并施加敌方 18.0% 虹光群体易伤",
+)

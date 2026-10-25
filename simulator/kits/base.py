@@ -130,6 +130,17 @@ class KitHandler(ABC):
         """若角色拥有伴生忆灵/召唤物，返回其独立实时战斗状态快照；否则返回 None。"""
         return None
 
+    def trace_variables(self) -> list:
+        """向因果追踪器自申报本角色的可追踪机制变量 (TraceVariableSpec 列表)。
+
+        申报后, 追踪器即可按变量名通用渲染其流转, 无需在核心层写死任何角色变量名。
+        """
+        return []
+
+    def get_trace_panel_section(self) -> Optional[tuple]:
+        """返回本角色专属的因果报表段落 (标题, 行列表), 由追踪器统一编号拼接；无则返回 None。"""
+        return None
+
     def get_kit_state(self) -> dict:
         """返回该角色独有的机制层状态字典（如充能层数、印记、协奏状态等）。"""
         excluded = {"owner_id", "port", "skill_levels", "scaling"}

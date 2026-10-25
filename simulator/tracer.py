@@ -1,22 +1,18 @@
 # coding: utf-8
 """星穹铁道战斗模拟系统 - 核心机制变量流转与插件审计追踪器 (Action Causal Tracer)
 
-职责边界：
-1. 监听与捕获每回合/每次行动中核心机制变量的流转 (长夜月【忆质】、知更鸟【气氛值】与【律动】、全队【能量 Energy】)；
-2. 自动记录触发该变量变动的底层插件源 (光锥/天赋/行迹/关卡机制/忆灵技能/受击机制)；
-3. 输出高可视度、函数级别的因果流转拓扑树，用于深度对账与机制调试。
+职责边界 (通用设计, 核心层不感知任何具体角色/光锥/关卡名)：
+1. 监听与捕获每次行动中机制变量的流转：变量由各插件通过 KitHandler.trace_variables()
+   自行申报 (名称/单位/实时值/达标注记), 追踪器只按申报通用渲染；
+2. 自动记录触发变量变动的底层插件源：扣血来源 (cause) 的插件描述由来源插件自行通过
+   ActionCausalTracer.register_cause_plugin() 注册, 追踪器仅保留通用兜底 (如敌方攻击)；
+3. 角色专属的报表段落由插件通过 KitHandler.get_trace_panel_section() 自行生成,
+   追踪器只负责编号与拼接；
+4. 输出高可视度、函数级别的因果流转拓扑树，用于深度对账与机制调试。
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
-
-
-CAUSE_PLUGIN_MAP = {
-    "LC_MayRainbows_HP_Drain": ("光锥", "《愿虹光永驻天空》 (风堇 S1)", "战技施放消耗全队 1.0% 当前生命值，并施加敌方 18.0% 虹光群体易伤"),
-    "stage_mechanic_bleed_turn_begin": ("关卡", "《血噬》 (Stage Mechanic)", "长夜月回合开始受到 500 点环境流血伤害"),
-    "enemy_attack": ("敌方", "敌方攻击", "受到敌方目标攻击扣除生命值并获得受击能量"),
-    "yika_talent_consume_hp": ("忆灵", "《牵起晴空的手》 (小伊卡 1140903)", "消耗自身生命值为我方生命降低的目标回复生命值"),
-}
+from typing import List, Dict, Any, Optional, Tuple, Callable
 
 
 @dataclass
@@ -51,6 +47,21 @@ class PluginRecord:
 
 
 @dataclass
+class TraceVariableSpec:
+    """插件自申报的可追踪机制变量 (如某角色的专属资源/层数)。
+
+    - var_name: 变量名 (与 record_var_change 的 var_name 一致)；
+    - unit: 数值单位 (如 "点" / "层")；
+    - current_value: 实时值读取回调 (本行动无变动时用于展示维持值)；
+    - final_note: 最终值注记回调 (如达标提示), 返回空字符串表示无注记。
+    """
+    var_name: str
+    unit: str = "点"
+    current_value: Optional[Callable[[], float]] = None
+    final_note: Optional[Callable[[float], str]] = None
+
+
+@dataclass
 class ActionTrace:
     actor: str
     action_name: str
@@ -63,6 +74,22 @@ class ActionTrace:
 
 class ActionCausalTracer:
     """全自动行动因果链路与变量审计追踪器。"""
+
+    # 通用兜底的扣血来源描述 (与具体角色/光锥/关卡无关的基础设施条目)。
+    # 其余 cause 的插件描述由来源插件在模块加载时通过 register_cause_plugin 自行注册。
+    _cause_plugin_registry: Dict[str, Tuple[str, str, str]] = {
+        "enemy_attack": ("敌方", "敌方攻击", "受到敌方目标攻击扣除生命值并获得受击能量"),
+    }
+
+    @classmethod
+    def register_cause_plugin(cls, cause: str, plugin_type: str, plugin_name: str, summary: str) -> None:
+        """供来源插件注册其扣血 cause 对应的插件描述 (类型/名称/摘要), 供因果报表引用。"""
+        cls._cause_plugin_registry[cause] = (plugin_type, plugin_name, summary)
+
+    @classmethod
+    def describe_cause(cls, cause: str) -> Optional[Tuple[str, str, str]]:
+        """查询某扣血 cause 的插件描述 (类型/名称/摘要), 未注册返回 None。"""
+        return cls._cause_plugin_registry.get(cause)
 
     def __init__(self, sim: Any = None):
         self.sim = sim
@@ -90,7 +117,7 @@ class ActionCausalTracer:
         cause_desc: str,
         extra_note: str = ""
     ) -> None:
-        """捕获变量数值跃迁 (忆质/气氛/律动)。"""
+        """捕获变量数值跃迁 (插件自申报变量)。"""
         delta = new_val - old_val
         rec = VariableDelta(
             entity=entity,
@@ -139,11 +166,28 @@ class ActionCausalTracer:
                 self.current_trace.plugins.append(PluginRecord(plugin_type=plugin_type, plugin_name=plugin_name, summary=summary))
 
     def record_hp_lost(self, entity_id: str, amount: float, cause: str) -> None:
-        """记录生命值减少事件，并关联到插件源。"""
+        """记录生命值减少事件，并关联到来源插件自行注册的描述。"""
         self.current_hp_cause = cause
-        if cause in CAUSE_PLUGIN_MAP:
-            p_type, p_name, p_sum = CAUSE_PLUGIN_MAP[cause]
+        desc = self.describe_cause(cause)
+        if desc:
+            p_type, p_name, p_sum = desc
             self.record_plugin(p_type, p_name, p_sum)
+
+    def _discover_variable_specs(self) -> Dict[Tuple[str, str], "TraceVariableSpec"]:
+        """向场上各角色 Kit 收集自申报的可追踪变量 (插件申报, 追踪器不写死任何变量)。"""
+        specs: Dict[Tuple[str, str], TraceVariableSpec] = {}
+        if not self.sim:
+            return specs
+        for ent in getattr(self.sim, "entities", []):
+            kit = getattr(ent, "kit", None)
+            if kit is None or not hasattr(kit, "trace_variables"):
+                continue
+            try:
+                for spec in kit.trace_variables() or []:
+                    specs[(ent.name, spec.var_name)] = spec
+            except Exception:
+                continue
+        return specs
 
     def render_audit_panel(self, trace: Optional[ActionTrace] = None) -> None:
         """渲染高可视度、函数级别的因果流转拓扑面板。"""
@@ -158,67 +202,65 @@ class ActionCausalTracer:
         print(f"🕒 [行动时钟]: {t.av:.1f} AV (第 {t.cycle} 轮) │ [当前行动者]: 【{t.actor}】 │ [触发链条]: {t.action_name}")
         print("─" * 80)
 
-        # 1. 忆质
-        yizhi_deltas = [d for d in t.deltas if d.var_name == "忆质"]
-        print("\n1️⃣  【长夜月 · 忆质变化流转 (Yizhi Flow)】:")
-        if yizhi_deltas:
-            init_val = yizhi_deltas[0].old_val
-            final_val = yizhi_deltas[-1].new_val
-            print(f"   • 起始状态: {int(init_val)} 点 (开局受击对账基准)")
-            for idx, d in enumerate(yizhi_deltas, 1):
-                sign = "+" if d.delta > 0 else ""
-                print(f"   ├─ [{d.source_plugin}] {d.cause_desc}")
-                print(f"   │  └─ 实时小计: {int(d.old_val)} ➔ {int(d.new_val)} 点 ({sign}{int(d.delta)} 点)")
-                if d.extra_note:
-                    print(f"   │     └─ {d.extra_note}")
-            threshold_tag = " [🌟 已达成 16 质阈值! 解除并免疫控制 / 忆灵「长夜」行动提前 100%]" if final_val >= 16 else ""
-            print(f"   └─ 🎯 当前最终忆质: {int(final_val)} 点{threshold_tag}")
-        else:
-            cy = self.sim.get_entity("长夜月") if self.sim else None
-            y = cy.kit.yizhi if (cy and hasattr(cy, "kit") and hasattr(cy.kit, "yizhi")) else 16
-            print(f"   • 本次行动忆质无变动，维持 {y} 点")
+        section_no = 0
 
-        # 2. 气氛值
-        vibe_deltas = [d for d in t.deltas if d.var_name == "气氛值"]
-        print("\n2️⃣  【知更鸟•晴歌 · 气氛值变化流转 (Vibe Flow)】:")
-        if vibe_deltas:
-            init_val = vibe_deltas[0].old_val
-            final_val = vibe_deltas[-1].new_val
-            print(f"   • 起始状态: {int(init_val)} 点")
-            for idx, d in enumerate(vibe_deltas, 1):
-                sign = "+" if d.delta > 0 else ""
-                print(f"   ├─ [{d.source_plugin}] {d.cause_desc}")
-                print(f"   │  └─ 实时小计: {int(d.old_val)} ➔ {int(d.new_val)} 点 ({sign}{int(d.delta)} 点)")
-                if d.extra_note:
-                    print(f"   │     └─ {d.extra_note}")
-            print(f"   └─ 🎯 当前最终气氛值: {int(final_val)} 点 [全员登台 Fever 狂热维持中]")
-        else:
-            robin = self.sim.get_entity("知更鸟•晴歌") if self.sim else None
-            v = robin.kit.vibes if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "vibes")) else 13
-            print(f"   • 本次行动气氛值无变动，维持 {v} 点")
+        def next_heading(title: str) -> None:
+            nonlocal section_no
+            section_no += 1
+            print(f"\n{section_no}. 【{title}】:")
 
-        # 3. 律动层数
-        rhythm_deltas = [d for d in t.deltas if d.var_name == "律动层数"]
-        print("\n3️⃣  【知更鸟•晴歌 · 律动层数变化流转 (Rhythm Flow)】:")
-        if rhythm_deltas:
-            init_val = rhythm_deltas[0].old_val
-            final_val = rhythm_deltas[-1].new_val
-            print(f"   • 起始状态: {int(init_val)} 层")
-            for idx, d in enumerate(rhythm_deltas, 1):
-                sign = "+" if d.delta > 0 else ""
-                print(f"   ├─ [{d.source_plugin}] {d.cause_desc}")
-                print(f"   │  └─ 实时小计: {int(d.old_val)} ➔ {int(d.new_val)} 层 ({sign}{int(d.delta)} 层)")
-                if d.extra_note:
-                    print(f"   │     └─ {d.extra_note}")
-            print(f"   └─ 🎯 当前最终律动: {int(final_val)} 层")
-        else:
-            robin = self.sim.get_entity("知更鸟•晴歌") if self.sim else None
-            r = robin.kit.rhythm_stacks if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "rhythm_stacks")) else 11
-            print(f"   • 本次行动律动无变动，维持 {r} 层")
+        # 机制变量流转 (按插件自申报通用渲染: 先本行动有变动的变量, 再已申报未变动的变量)
+        specs = self._discover_variable_specs()
+        grouped: Dict[Tuple[str, str], List[VariableDelta]] = {}
+        order: List[Tuple[str, str]] = []
+        for d in t.deltas:
+            key = (d.entity, d.var_name)
+            if key not in grouped:
+                grouped[key] = []
+                order.append(key)
+            grouped[key].append(d)
+        for key in specs:
+            if key not in grouped:
+                grouped[key] = []
+                order.append(key)
 
-        # 4. 全队各角色能量流转 (Energy Flow)
+        for (entity_name, var_name) in order:
+            var_deltas = grouped[(entity_name, var_name)]
+            spec = specs.get((entity_name, var_name))
+            unit = spec.unit if spec else "点"
+            next_heading(f"{entity_name} · {var_name}变化流转")
+            if var_deltas:
+                print(f"   • 起始状态: {int(var_deltas[0].old_val)} {unit}")
+                for d in var_deltas:
+                    sign = "+" if d.delta > 0 else ""
+                    print(f"   ├─ [{d.source_plugin}] {d.cause_desc}")
+                    print(f"   │  └─ 实时小计: {int(d.old_val)} ➔ {int(d.new_val)} {unit} ({sign}{int(d.delta)} {unit})")
+                    if d.extra_note:
+                        print(f"   │     └─ {d.extra_note}")
+                final_val = var_deltas[-1].new_val
+                note = ""
+                if spec and spec.final_note:
+                    try:
+                        note = spec.final_note(final_val) or ""
+                    except Exception:
+                        note = ""
+                if note:
+                    note = f" [{note}]"
+                print(f"   └─ 🎯 当前最终{var_name}: {int(final_val)} {unit}{note}")
+            else:
+                cur = None
+                if spec and spec.current_value:
+                    try:
+                        cur = spec.current_value()
+                    except Exception:
+                        cur = None
+                if cur is not None:
+                    print(f"   • 本次行动{var_name}无变动，维持 {int(cur)} {unit}")
+                else:
+                    print(f"   • 本次行动{var_name}无变动")
+        # 全队各角色能量流转 (Energy Flow)
+        next_heading("全队角色 · 能量流转审计 (Energy Flow)")
         energy_deltas = t.energy_deltas
-        print("\n4️⃣  【全队角色 · 能量流转审计 (Energy Flow)】:")
         if energy_deltas:
             from collections import defaultdict
             by_entity = defaultdict(list)
@@ -241,43 +283,33 @@ class ActionCausalTracer:
         else:
             print("   • 本次行动全队能量无变动")
 
-        # 5. 全队偏离和弦 Buff 快照矩阵 (真实快照读取，非全局粗暴覆盖)
-        robin = self.sim.get_entity("知更鸟•晴歌") if self.sim else None
-        cur_vibes = robin.kit.vibes if (robin and hasattr(robin, "kit") and hasattr(robin.kit, "vibes")) else 11
-        robin_atk = 1948.0
-        if robin and hasattr(self.sim, "status_mgr"):
-            robin_atk = self.sim.status_mgr.get_detailed_snapshot(robin).get("current_atk", 1948.0)
+        # 插件自备报表段落 (如某角色的专属矩阵, 由 Kit 通过 get_trace_panel_section 自行生成)
+        if self.sim:
+            for ent in getattr(self.sim, "entities", []):
+                kit = getattr(ent, "kit", None)
+                if kit is None or not hasattr(kit, "get_trace_panel_section"):
+                    continue
+                try:
+                    section = kit.get_trace_panel_section()
+                except Exception:
+                    section = None
+                if not section:
+                    continue
+                title, lines = section
+                next_heading(title)
+                for line in lines:
+                    print(line)
 
-        print("\n5️⃣  【全队各角色 · 偏离和弦 Buff 状态矩阵 (Tonal Chord Matrix)】:")
-        print(f"   • 核心机制: 我方目标使知更鸟获气氛值时，根据【触发瞬间的气氛值】快照生成独立 Buff (持续 2 回合)")
-        print(f"   • 判定准则: 目标实时攻击 > 知更鸟 ({robin_atk:,.0f}) ? 攻击力加成 (16% + 气氛×0.4%) : 暴击伤害加成 (40% + 气氛×1.5%)")
-        print(f"   • 当前知更鸟持有气氛: {cur_vibes} 点 (后续新触发将以此气氛基准实时快照)")
-        print("   " + "─" * 78)
-        print(f"   {'角色 / 实体':<18} │ {'实时攻击':<10} │ {'触发时机与快照依据':<24} │ {'偏离和弦生效数值与形态'}")
-        print("   " + "─" * 78)
-
-        allies = [e for e in self.sim.entities if not e.is_enemy and not getattr(e, "is_countdown", False) and not getattr(e, "is_summon_countdown", False)] if self.sim else []
-        for ent in allies:
-            raw_name = ent.name
-            cur_atk = self.sim.status_mgr.get_detailed_snapshot(ent).get("current_atk", getattr(ent, "base_atk", 1000.0)) if hasattr(self.sim, "status_mgr") else 1000.0
-            buff = self.sim.status_mgr.get_status(raw_name, f"Robin_Talent_TonalChord_{raw_name}") if self.sim else None
-            is_spirit = getattr(ent, "is_memosprite", False)
-            label = f"【{raw_name}】{' (忆灵)' if is_spirit else ''}"
-            if buff:
-                dur_str = f" [余 {buff.duration} 回合]" if buff.duration is not None else ""
-                val_str = f"{buff.description}{dur_str}"
-                state_str = "已触发并快照生效"
-            else:
-                val_str = "未激活 (尚未使知更鸟获气氛值)"
-                state_str = "待行动使知更鸟获气氛"
-            print(f"   {label:<20} │ {cur_atk:>8.0f}   │ {state_str:<22} │ {val_str}")
-        print("   " + "─" * 78)
-
-        # 6. 核心插件清单
-        print("\n6️⃣  【本次行动过程中激活的核心插件清单 (Active Plugins)】:")
+        # 核心插件清单
+        next_heading("本次行动过程中激活的核心插件清单 (Active Plugins)")
         if t.plugins:
             for p in t.plugins:
                 print(f"   [{p.plugin_type}] {p.plugin_name} ➔ {p.summary}")
         else:
             print("   • 无新增插件被激活")
         print("=" * 80 + "\n")
+
+
+# 兼容别名: 扣血来源描述注册表 (由各来源插件通过 register_cause_plugin 自行填充)。
+CAUSE_PLUGIN_MAP = ActionCausalTracer._cause_plugin_registry
+

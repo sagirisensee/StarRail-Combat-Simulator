@@ -257,6 +257,18 @@ class ChangyeyueKit(KitHandler):
         """兼容调用：触发常规忆灵技。"""
         self._execute_memosprite_skill()
 
+    def trace_variables(self) -> list:
+        """向因果追踪器自申报专属变量【忆质】(单位/实时值/达标注记均由本 Kit 提供)。"""
+        from ...tracer import TraceVariableSpec
+        return [
+            TraceVariableSpec(
+                var_name="忆质",
+                unit="点",
+                current_value=lambda: self.yizhi,
+                final_note=lambda v: "🌟 已达成 16 质阈值! 解除并免疫控制 / 忆灵「长夜」行动提前 100%" if v >= 16 else "",
+            )
+        ]
+
     def gain_yizhi(self, amount: int) -> None:
         """获取忆质。E2 额外 +2 点。达到 16 点且长夜在场触发立即行动。"""
         if amount <= 0:
@@ -268,9 +280,9 @@ class ChangyeyueKit(KitHandler):
 
         if hasattr(self.port, "tracer") and self.port.tracer:
             hp_cause = getattr(self.port.tracer, "current_hp_cause", "")
-            from ...tracer import CAUSE_PLUGIN_MAP
-            if hp_cause in CAUSE_PLUGIN_MAP:
-                _, p_name, p_desc = CAUSE_PLUGIN_MAP[hp_cause]
+            cause_info = self.port.tracer.describe_cause(hp_cause) if hp_cause else None
+            if cause_info:
+                _, p_name, p_desc = cause_info
                 cause_str = f"响应 [{p_name}]: {p_desc} (生命降低)"
             else:
                 cause_str = "生命降低或技能联动获得"
