@@ -12,6 +12,7 @@ class EternalLandOfAmphoreusHandler(RelicSetHandler):
     """
 
     BUFF_KEY = "Relic_Amphoreus_Team_Speed"
+    SET_ID = 323
 
     def on_battle_start(self) -> None:
         if self.pieces >= 2:
@@ -25,29 +26,32 @@ class EternalLandOfAmphoreusHandler(RelicSetHandler):
         if isinstance(event, (SpiritSummonedEvent, SpiritDespawnEvent, ActionExecuteEvent, TurnBeginEvent)):
             self._sync_speed_buff()
 
+    def _owner_has_memosprite_on_field(self, owner_id: str) -> bool:
+        """检查指定角色是否有存活在场的伴生忆灵 (仅经 CombatPort 从属查询)。"""
+        for ally_name in self.port.allies(owner_id):
+            if self.port.is_own_memosprite(owner_id, ally_name):
+                return True
+        return False
+
     def _has_memosprite_on_field(self) -> bool:
         """检查装备者自身是否有存活在场的伴生忆灵。"""
         if not self.port:
             return False
-        for ally_name in self.port.allies(self.owner_id):
-            if self.port.is_own_memosprite(self.owner_id, ally_name):
-                return True
-        return False
+        return self._owner_has_memosprite_on_field(self.owner_id)
 
     def _is_any_other_amphoreus_active(self) -> bool:
-        """检查是否有其他队友也装备了翁法罗斯且其忆灵仍在场（确保退场时不误删不可叠加的全队效果）。"""
-        if not self.port:
+        """检查是否有其他队友也装备了翁法罗斯且其忆灵仍在场（确保退场时不误删不可叠加的全队效果）。
+
+        套装件数经 CombatPort.relic_set_pieces 窄接口查询, 不跨层访问实体内部结构。
+        """
+        if not self.port or not hasattr(self.port, "relic_set_pieces"):
             return False
         for ally_name in self.port.allies(self.owner_id):
             if ally_name == self.owner_id:
                 continue
-            ent = getattr(self.port, "_get_entity", lambda _: None)(ally_name)
-            if not ent or not getattr(ent, "relic_handlers", None):
-                continue
-            for handler in ent.relic_handlers:
-                if isinstance(handler, EternalLandOfAmphoreusHandler) and handler.pieces >= 2:
-                    if handler._has_memosprite_on_field():
-                        return True
+            if self.port.relic_set_pieces(ally_name, self.SET_ID) >= 2:
+                if self._owner_has_memosprite_on_field(ally_name):
+                    return True
         return False
 
     def _sync_speed_buff(self) -> None:

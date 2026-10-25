@@ -297,6 +297,11 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         cyy_amphoreus = EternalLandOfAmphoreusHandler(owner_id="长夜月", port=sim.port, pieces=2)
         cyy.relic_handlers.append(cyy_amphoreus)
 
+        # 验证 CombatPort 窄接口可跨实体查询套装件数 (红线 2: 插件无需访问 relic_handlers / _get_entity)
+        self.assertEqual(sim.port.relic_set_pieces("长夜月", 323), 2)
+        self.assertEqual(sim.port.relic_set_pieces("知更鸟•晴歌", 323), 2)
+        self.assertEqual(sim.port.relic_set_pieces("测试木桩", 323), 0)
+
         # 初始：长夜月的伴生忆灵「长夜」已自动召唤在场
         self.assertTrue(cyy.kit.spirit_alive)
         cyy_amphoreus.on_battle_start()

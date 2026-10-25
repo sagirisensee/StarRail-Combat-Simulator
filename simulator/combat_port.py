@@ -54,6 +54,7 @@ class CombatPort(Protocol):
     def allies(self, actor_id: str) -> Tuple[str, ...]: ...
     def enemies(self, actor_id: str) -> Tuple[str, ...]: ...
     def count_allies_by_path(self, actor_id: str, path_name: str) -> int: ...
+    def relic_set_pieces(self, entity_id: str, set_key: Any) -> int: ...
 
     # --- 2. 实时属性与白字基准查询 ---
     def stat(
@@ -248,6 +249,38 @@ class SimulatorCombatPort:
             if p_str in accepted or any(a in p_str for a in accepted):
                 count += 1
         return count
+
+    def relic_set_pieces(self, entity_id: str, set_key: Any) -> int:
+        """查询指定实体装备的某遗器套装件数 (按注册表套装 ID / 名称 / 别名匹配, 未装备返回 0)。
+
+        插件禁止直接访问实体内部的 relic_handlers 列表, 跨实体套装联动一律经此窄接口查询。
+        """
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return 0
+        handler_cls = None
+        try:
+            from .relics.registry import RelicRegistry
+            entry = RelicRegistry.get(set_key)
+            if entry:
+                handler_cls = entry[1]
+        except Exception:
+            handler_cls = None
+        key_str = str(set_key).strip().lower()
+        pieces = 0
+        for handler in getattr(ent, "relic_handlers", None) or []:
+            spec = getattr(handler, "spec", None)
+            matched = handler_cls is not None and isinstance(handler, handler_cls)
+            if not matched and spec is not None:
+                if isinstance(set_key, int) and getattr(spec, "set_id", None) == set_key:
+                    matched = True
+                elif key_str.isdigit() and getattr(spec, "set_id", None) == int(key_str):
+                    matched = True
+                elif str(getattr(spec, "name", "")).lower() == key_str:
+                    matched = True
+            if matched:
+                pieces = max(pieces, int(getattr(handler, "pieces", 0) or 0))
+        return pieces
 
     def white_stat(self, entity_id: str, stat: StatType) -> float:
         """获取实体的基础白字属性（角色白字 + 光锥白字）。"""
