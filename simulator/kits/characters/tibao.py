@@ -16,7 +16,9 @@
 4. 天赋【好忙好忙的缇宝】：我方其他角色施放终结技后，缇宝发动追加攻击，对敌方全体造成等同于缇宝生命上限 18% (Lv 10) 的量子伤害。
    每个队友最多触发 1 次，缇宝施放终结技时重置次数。削韧 10，回能 5。
    行迹【城墙外的羊羔儿】：施放天赋追加攻击后，自身伤害提高 72%，持续 3 回合。
-   E6: 天赋追加攻击造成的伤害提高 729%。
+   E6【星月漫天的明日】：施放终结技后立即对敌方全体发动一次天赋追加攻击 (与天赋同倍率)。
+   注: 星魂文本中的「伤害提高 729%」经官方真值日志对账未能观察到 (两类追击齐射单发
+   同量级), 暂不叠乘, 待有可复现证据再补。
 5. 秘技【开心你就拍拍手】：进战获得【神启】，持续 3 回合。
 6. 行迹【岔路旁的小石子？】：进战回能 30 点 (受 ERR 加成)。
 """
@@ -25,7 +27,7 @@ from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
+from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatType, StatusTag
 
 
 class TibaoKit(KitHandler):
@@ -72,7 +74,7 @@ class TibaoKit(KitHandler):
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="buff",
-                description="天赋追加攻击伤害提高 +729.0%"
+                description="施放终结技后立即对敌方全体发动一次天赋追加攻击"
             ))
 
         # 天赋标记【好忙好忙的缇宝】 (仅角色生效，带 CHARACTER_ONLY 语义标签，忆灵/召唤物不挂载)
@@ -250,6 +252,20 @@ class TibaoKit(KitHandler):
                 description=f"受到伤害提高 +{zone_vuln * 100:.1f}%"
             ))
 
+        # 1.5 终结技本体伤害: 对敌方全体造成等同于缇宝生命上限 30% (Lv 10) 的量子伤害
+        # (此前实现缺失: 真值日志中该终结技有 16 次 Ultimate 命中, 模拟为 0)
+        ult_mult = self.skill_param("ultra", 0, default=0.30)
+        for e in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                e,
+                element="Quantum",
+                atk_multiplier=ult_mult,
+                toughness_damage=20.0,
+                damage_type=DamageType.ULTIMATE,
+                scaling_stat="hp"
+            )
+
         # 2. 为我方全体附加【神启】并重置天赋次数
         self.talent_used_by.clear()
         res_pen = self.skill_param("skill", 0, default=0.264)
@@ -310,19 +326,9 @@ class TibaoKit(KitHandler):
 
         # 6. 星魂 6【星月漫天的明日】：施放终结技时立即触发一次追加攻击
         if self.eidolon >= 6:
-            self.port.upsert_status(BuffSpec(
-                key="Tribbie_A2_LambOutsideTheWall",
-                name="城墙外的羊羔儿",
-                source_id=self.owner_id,
-                target_id=self.owner_id,
-                modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.72),),
-                duration=3,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
-                category="buff",
-                description="造成伤害提高 +72.0%"
-            ))
-            fu_mult = 1.20 * (1.0 + 7.29)
+            # E6 齐射与天赋追加攻击同倍率 (18% 生命上限): 真值日志中两类齐射
+            # 单发同量级, 未见 729% 量级的单发 (详见天赋触发处注释)。
+            fu_mult = 0.18
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(
                     self.owner_id,
@@ -333,6 +339,27 @@ class TibaoKit(KitHandler):
                     damage_type=DamageType.FOLLOW_UP,
                     scaling_stat="hp"
                 )
+            self._apply_lamb_buff()
+
+    def _apply_lamb_buff(self) -> None:
+        """行迹【城墙外的羊羔儿】: 施放天赋追加攻击后, 自身造成伤害提高 72%,
+        最多叠加 3 层, 持续 3 回合。每次追加攻击 (队友大招触发或 E6 自大招齐射)
+        结算后叠加 1 层; 本次齐射不享受自己新叠的层数。"""
+        self.port.upsert_status(BuffSpec(
+            key="Tribbie_A2_LambOutsideTheWall",
+            name="城墙外的羊羔儿",
+            source_id=self.owner_id,
+            target_id=self.owner_id,
+            modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.72),),
+            duration=3,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=True,
+            category="buff",
+            stacks=1,
+            max_stacks=3,
+            stack_policy=StackPolicy.STACK,
+            description="造成伤害提高 +72.0% (每层, 最多 3 层)"
+        ))
 
     def _flush_zone_window(self) -> None:
         """结算上一个我方攻击动作窗口的结界附加伤害 (140303) 与星魂 1 真实伤害。
@@ -498,7 +525,11 @@ class TibaoKit(KitHandler):
                 if action_kind == ActionKind.ULTIMATE or "Ultimate" in str(action_type):
                     if actor_id not in self.talent_used_by:
                         self.talent_used_by.add(actor_id)
-                        fu_mult = 0.18 * ((1.0 + 7.29) if self.eidolon >= 6 else 1.0)
+                        # 天赋追加攻击倍率恒为生命上限 18%: E6 的 729% 不在此处叠乘。
+                        # 依据官方真值日志 (battle_20261025_131019) 对账: 队友大招触发与
+                        # 缇宝自身大招触发的两类追击齐射单发分布同量级 (中位约 7.5 万),
+                        # 不存在 8.29 倍量级的齐射; 旧实现叠乘后单发超官方均值 8.4 倍。
+                        fu_mult = 0.18
                         for e in self.port.enemies(self.owner_id):
                             self.port.attack(
                                 self.owner_id,
@@ -511,3 +542,4 @@ class TibaoKit(KitHandler):
                             )
                         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
                         self.port.gain_energy(self.owner_id, 5.0 * err, cause=f"队友[{actor_id}]施放大招触发天赋追击回能 (基础 5.0 × ERR {err*100:.1f}%)", source_plugin="缇宝天赋")
+                        self._apply_lamb_buff()
