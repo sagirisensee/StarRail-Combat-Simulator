@@ -254,3 +254,26 @@ class TestStageBloodDevour(unittest.TestCase):
         plugin.on_turn_begin(moon, sim)
         self.assertEqual(moon.current_hp, hp_before - 500.0)
         self.assertEqual(kit.yizhi, yizhi_before + 4)
+
+
+class TestTrajectoryReplay(unittest.TestCase):
+    def test_extract_trajectory_counts(self):
+        """轨迹提取: 忆灵技施放次数与官方施放表一致 (迷梦 15/追忆 1/乌云 13/四重奏 14)。"""
+        from simulator.golden_diff import extract_trajectory
+        traj = extract_trajectory("battle_logs/battle_20261025_131019.jsonl")
+        from collections import Counter
+        counts = Counter(c.skill_id for c in traj)
+        self.assertEqual(counts[1141307], 15)
+        self.assertEqual(counts[1141301], 1)
+        self.assertEqual(counts[1140901], 13)
+        self.assertEqual(counts[1151201], 14)
+
+    def test_trajectory_replay_fires_all_bursts(self):
+        """轨迹回放: 15 次迷梦全部按官方轨迹施放 (自然或强制补发), 补足有台账。"""
+        from simulator.golden_diff import build_stage_sim, extract_decisions, extract_trajectory, run_trajectory_replay, parse_golden_jsonl
+        golden = parse_golden_jsonl("battle_logs/battle_20261025_131019.jsonl")
+        sim, director = build_stage_sim()
+        traj = run_trajectory_replay(sim, director, extract_decisions("battle_logs/battle_20261025_131019.jsonl"), extract_trajectory("battle_logs/battle_20261025_131019.jsonl"), av_budget=golden.final_av)
+        bursts = [r for r in traj.records if r.skill_id == 1141307]
+        self.assertEqual(len(bursts), 15)
+        self.assertTrue(all(r.fired_av is not None for r in bursts))

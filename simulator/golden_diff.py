@@ -18,7 +18,7 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .actions import ActionKind
 
@@ -363,7 +363,7 @@ def extract_decisions(path: str) -> List[Decision]:
     return decisions
 
 
-def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: float, force: bool = False) -> ReplayResult:
+def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: float, force: bool = False, on_step: Any = None) -> ReplayResult:
     """按官方决策脚本驱动模拟 (回放对齐模式)。
 
     严格模式 (force=False): 角色回合到来时强制执行脚本中该角色的行动;
@@ -486,6 +486,8 @@ def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: fl
         sim.step(action_override=override)
         if director is not None:
             director.after_step()
+        if on_step is not None:
+            on_step(sim)
         # 3. 战技点不足降级检测: 本步内该角色的行动中无一命中脚本技能 ID 才算降级
         # (同一步内可能先有追击/被动事件, 不能只看第一条)
         if scripted is not None and scripted.kind == "skill":
@@ -682,12 +684,22 @@ def main(argv=None) -> int:
     parser.add_argument("--out", default="", help="报告输出路径 (默认打印到终端)")
     parser.add_argument("--replay", action="store_true", help="回放对齐模式: 按日志中的玩家决策脚本驱动模拟")
     parser.add_argument("--force", action="store_true", help="强制回放: 决策钉死, 能量/战技点按缺口补足并记台账 (隐含 --replay)")
+    parser.add_argument("--trajectory", action="store_true", help="轨迹回放: 在强制回放之上再钉死忆灵技轨迹, 缺口补足记账 (隐含 --force)")
     args = parser.parse_args(argv)
 
     golden = parse_golden_jsonl(args.golden)
     sim, director = build_stage_sim()
     replay_md = ""
-    if args.replay or args.force:
+    trajectory_md = ""
+    if args.trajectory:
+        decisions = extract_decisions(args.golden)
+        traj = run_trajectory_replay(sim, director, decisions, extract_trajectory(args.golden), av_budget=golden.final_av)
+        replay = traj.replay
+        sim_seq = replay.sequence
+        replay_md = render_replay_markdown(replay)
+        trajectory_md = render_trajectory_markdown(traj)
+        sim_label = "关卡 30510021 还原场景 + 官方轨迹回放驱动 (决策+忆灵技钉死)"
+    elif args.replay or args.force:
         decisions = extract_decisions(args.golden)
         replay = run_replay(sim, director, decisions, av_budget=golden.final_av, force=args.force)
         sim_seq = replay.sequence
@@ -699,6 +711,8 @@ def main(argv=None) -> int:
     report = diff_sequences(golden, sim_seq)
     md = render_markdown(report, args.golden, sim_label, replay_md=replay_md)
     md += "\n" + render_enemy_activity_markdown(extract_enemy_activity(args.golden))
+    if trajectory_md:
+        md += "\n" + trajectory_md
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(md)
@@ -797,6 +811,228 @@ def render_enemy_activity_markdown(activity: Dict[str, Any]) -> str:
     lines.append("")
     return "\n".join(lines)
 
+
+
+# ---------------------------------------------------------------------------
+# 轨迹回放: 在强制回放 (玩家决策钉死) 之上, 再把忆灵技的施放轨迹也钉死到
+# 官方时点。官方时点到达时若忆灵技尚未自然触发, 则补足前置条件 (忆灵在场 /
+# 忆质阈值) 后强制施放, 所有补足逐项记账——台账即"为走完官方轨迹, 模拟
+# 自身经济还差多少"。敌方施放不在日志中 (OnUseSkill 仅我方), 敌方仍自由行动。
+# ---------------------------------------------------------------------------
+
+SPIRIT_TRAJECTORY_SKILLS = {1141301: "长夜", 1141307: "长夜", 1140901: "小伊卡", 1151201: "晴空乐手"}
+
+
+@dataclass
+class TrajectoryCast:
+    av: float
+    actor: str
+    skill_id: int
+    name: str
+
+
+@dataclass
+class TrajectoryRecord:
+    skill_id: int
+    name: str
+    official_av: float
+    fired_av: Optional[float]
+    mode: str  # "organic" | "forced" | "failed" | "unforceable"
+    patches: Tuple[str, ...] = ()
+
+
+@dataclass
+class TrajectoryResult:
+    replay: Any
+    records: List[TrajectoryRecord] = field(default_factory=list)
+    memoria_granted: float = 0.0
+    presence_grants: int = 0
+
+
+def extract_trajectory(path: str) -> List[TrajectoryCast]:
+    """从官方日志提取忆灵技施放轨迹 (AV 来自回合记录, 按 AV 排序)。"""
+    seq = parse_golden_jsonl(path)
+    out: List[TrajectoryCast] = []
+    for t in seq.turns:
+        for s in t.skills:
+            if s.config_id in SPIRIT_TRAJECTORY_SKILLS:
+                out.append(TrajectoryCast(av=float(t.av), actor=SPIRIT_TRAJECTORY_SKILLS[s.config_id], skill_id=s.config_id, name=s.name))
+    out.sort(key=lambda c: c.av)
+    return out
+
+
+def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], trajectory: List[TrajectoryCast], av_budget: float) -> TrajectoryResult:
+    """轨迹回放: 强制回放 + 忆灵技轨迹钉死 (见上方说明)。
+
+    长夜爆发另有忆质闸门: 非排期窗口内忆质钳制在 15 (超出部分暂存), 使其
+    无法在官方时点之外自行爆发; 到排期时点先归还暂存, 仍不足 16 的差额
+    才记为忆质补足。暂存是模拟自身忆质的时间平移, 不入补足台账。
+    """
+    from collections import deque
+
+    from .actions import ActionKind
+    from .events import ActionExecuteEvent
+
+    result = TrajectoryResult(replay=None)
+    queues = {}
+    for c in trajectory:
+        queues.setdefault(c.skill_id, deque()).append(c)
+    organic: List[Tuple[int, float]] = []
+    organic_used = set()
+    stash = {"amount": 0.0}
+
+    def _on_action(e: Any) -> None:
+        sid = int(getattr(e, "skill_config_id", 0) or 0)
+        if sid in SPIRIT_TRAJECTORY_SKILLS:
+            organic.append((sid, float(getattr(e, "av", 0.0))))
+
+    sim.event_bus.subscribe(ActionExecuteEvent, _on_action)
+
+    def _kit_of(entity_name: str) -> Any:
+        ent = sim.get_entity(entity_name)
+        return getattr(ent, "kit", None) if ent is not None else None
+
+    def _changye_kit() -> Any:
+        moon = sim.get_entity("长夜月")
+        return getattr(moon, "kit", None) if moon is not None else None
+
+    def _force_cast(cast: TrajectoryCast, now_av: float) -> TrajectoryRecord:
+        patches: List[str] = []
+        sid = cast.skill_id
+        organic_before = len(organic)
+        try:
+            if sid in (1141301, 1141307):
+                kit = _changye_kit()
+                if kit is None:
+                    return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
+                if sim.get_entity("长夜") is None or not getattr(kit, "spirit_alive", False):
+                    kit.summon_spirit()
+                    patches.append("presence")
+                    result.presence_grants += 1
+                if sid == 1141307:
+                    if stash["amount"] > 0:
+                        kit.yizhi = float(kit.yizhi) + stash["amount"]
+                        patches.append(f"stash+{stash['amount']:.0f}")
+                        stash["amount"] = 0.0
+                    if float(getattr(kit, "yizhi", 0)) < 16:
+                        deficit = 16 - float(kit.yizhi)
+                        kit.yizhi = 16
+                        patches.append(f"memoria+{deficit:.0f}")
+                        result.memoria_granted += deficit
+                    kit.trigger_spirit_burst()
+                else:
+                    kit._execute_memosprite_skill()
+            elif sid == 1140901:
+                fkit = _kit_of("风堇")
+                if sim.get_entity("小伊卡") is None and fkit is not None:
+                    fkit.summon_yika()
+                    patches.append("presence")
+                    result.presence_grants += 1
+                ika_kit = _kit_of("小伊卡")
+                if ika_kit is None:
+                    return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
+                ika_kit.cast_scatter()
+            elif sid == 1151201:
+                ent = sim.get_entity("晴空乐手")
+                if ent is None or getattr(ent, "kit", None) is None:
+                    return TrajectoryRecord(sid, cast.name, cast.av, None, "unforceable", ())
+                from .actions import ActionContext
+                ctx = ActionContext(action_id="trajectory", actor_id="晴空乐手", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=tuple(e.name for e in sim.entities if getattr(e, "is_enemy", False)))
+                ent.kit.execute(ctx)
+        except Exception:
+            return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
+        resolver = getattr(sim, "resolver", None)
+        if resolver is not None:
+            resolver.resolve_all()
+        # 回合外施放的事实由接口补发 (与套件内触发路径的口径一致), 并标记为
+        # 已消费, 避免被后续匹配误记为自然触发
+        sim.port.publish_action(cast.actor, cast.name, ActionKind.MEMOSPRITE_SKILL, skill_id=sid)
+        for idx in range(organic_before, len(organic)):
+            if organic[idx][0] == sid:
+                organic_used.add(idx)
+        if director is not None:
+            director.after_step()
+        return TrajectoryRecord(sid, cast.name, cast.av, now_av, "forced", tuple(patches))
+
+    def _clamp_memoria(now_av: float) -> None:
+        q = queues.get(1141307)
+        if not q:
+            return
+        kit = _changye_kit()
+        if kit is None:
+            return
+        if q[0].av - now_av > 10.0 and float(getattr(kit, "yizhi", 0)) > 15:
+            excess = float(kit.yizhi) - 15
+            kit.yizhi = 15
+            stash["amount"] += excess
+
+    def _enforce(sim_ref: Any) -> None:
+        now_av = float(getattr(sim_ref, "current_av", 0.0))
+        _clamp_memoria(now_av)
+        for sid, q in queues.items():
+            while q:
+                head = q[0]
+                match_idx = None
+                for idx, (s2, av2) in enumerate(organic):
+                    if idx in organic_used or s2 != sid:
+                        continue
+                    if av2 >= head.av - 2.0:
+                        match_idx = idx
+                        break
+                    organic_used.add(idx)
+                if match_idx is None:
+                    break
+                organic_used.add(match_idx)
+                fired_av = organic[match_idx][1]
+                result.records.append(TrajectoryRecord(sid, head.name, head.av, fired_av, "organic", ()))
+                q.popleft()
+        for sid, q in queues.items():
+            while q and q[0].av <= now_av:
+                cast = q.popleft()
+                result.records.append(_force_cast(cast, now_av))
+
+    replay = run_replay(sim, director, decisions, av_budget, force=True, on_step=_enforce)
+    now_av = float(getattr(sim, "current_av", 0.0))
+    for sid, q in queues.items():
+        while q and q[0].av <= av_budget:
+            cast = q.popleft()
+            result.records.append(_force_cast(cast, now_av))
+        while q:
+            cast = q.popleft()
+            result.records.append(TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ()))
+    result.replay = replay
+    result.records.sort(key=lambda r: r.official_av)
+    return result
+
+
+def render_trajectory_markdown(traj: TrajectoryResult) -> str:
+    lines = []
+    lines.append("## 七、 轨迹回放 (忆灵技轨迹钉死, 缺口补足记账)")
+    lines.append("")
+    lines.append("- 说明: 玩家决策仍按强制回放钉死; 忆灵技按官方时点对齐——时点到达时")
+    lines.append("  未自然触发的, 补足前置 (忆灵在场/忆质阈值) 后强制施放并逐项记账。")
+    lines.append("  敌方施放不在日志中, 敌方仍自由行动。")
+    lines.append(f"- 忆质补足总量: {traj.memoria_granted:.0f} 点; 忆灵在场补发: {traj.presence_grants} 次")
+    lines.append("")
+    lines.append("| 技能 | 官方 | 自然对齐 | 强制补发 | 失败/不可强制 |")
+    lines.append("| :--- | ---: | ---: | ---: | ---: |")
+    from collections import Counter
+    total = Counter(r.skill_id for r in traj.records)
+    modes = Counter((r.skill_id, r.mode) for r in traj.records)
+    names = {r.skill_id: r.name for r in traj.records}
+    for sid in sorted(total):
+        bad = modes.get((sid, "failed"), 0) + modes.get((sid, "unforceable"), 0)
+        lines.append(f"| {names[sid]} | {total[sid]} | {modes.get((sid, 'organic'), 0)} | {modes.get((sid, 'forced'), 0)} | {bad} |")
+    lines.append("")
+    lines.append("### 长夜爆发轨迹 (官方 AV -> 实际 AV)")
+    lines.append("")
+    bursts = [r for r in traj.records if r.skill_id == 1141307]
+    for r in bursts:
+        fired = f"{r.fired_av:.1f}" if r.fired_av is not None else "-"
+        tag = "" if r.mode == "organic" else f" ({r.mode}{': ' + ', '.join(r.patches) if r.patches else ''})"
+        lines.append(f"- {r.official_av:.1f} -> {fired}{tag}")
+    lines.append("")
+    return "\n".join(lines)
 
 if __name__ == "__main__":
     raise SystemExit(main())
