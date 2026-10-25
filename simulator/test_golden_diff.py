@@ -232,3 +232,25 @@ class TestEnemyActivityExtraction(unittest.TestCase):
         self.assertIn(1409, act["hit_energy"])
         self.assertGreaterEqual(act["hit_energy"][1409]["count"], 8)
         self.assertGreater(act["wide_actions"], 0)
+
+
+class TestStageBloodDevour(unittest.TestCase):
+    def test_blood_devour_attached_and_feeds_memoria(self):
+        """关卡 30510021 挂载【血噬】: 回合开始扣 500, 经 HPLostEvent 给长夜月 +4 忆质。
+
+        依据: 官方日志我方恰好 500.0 的 CurrentHP 下降次数与各自回合数吻合
+        (长夜月 11、风堇 10、缇宝 3、知更鸟 1), 敌方无此下降。
+        """
+        from simulator.golden_diff import build_stage_sim
+        from simulator.kits.characters.changyeyue import ChangyeyueKit
+        sim, _director = build_stage_sim()
+        plugins = getattr(sim, "stage_plugins", []) or []
+        names = [type(p).__name__ for p in plugins]
+        self.assertIn("BloodDevourMechanicPlugin", names)
+        plugin = plugins[names.index("BloodDevourMechanicPlugin")]
+        moon = sim.get_entity("长夜月")
+        kit = next(e.kit for e in sim.entities if isinstance(getattr(e, "kit", None), ChangyeyueKit))
+        hp_before, yizhi_before = moon.current_hp, kit.yizhi
+        plugin.on_turn_begin(moon, sim)
+        self.assertEqual(moon.current_hp, hp_before - 500.0)
+        self.assertEqual(kit.yizhi, yizhi_before + 4)

@@ -232,5 +232,9 @@ class Stage30510021Director:
 def build_stage_30510021(team: List[Entity]) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
     enemies = [_guard("千星戍卫A"), _guard("千星戍卫B"), _guard("千星戍卫C")]
-    sim = TurnSimulator(entities=list(team) + enemies, use_techniques=True, auto_ult=True)
+    # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。日志实证:
+    # 我方 CurrentHP 恰好 500.0 的下降次数与各自回合数逐一吻合
+    # (长夜月 11、风堇 10、缇宝 3、知更鸟 1; 敌方无此下降, 与插件口径一致)。
+    # 此前场景漏挂该插件, 长夜月/长夜每回合初的忆质 (+4/次) 等连锁全部缺失。
+    sim = TurnSimulator(entities=list(team) + enemies, use_techniques=True, auto_ult=True, stage_mechanics=["血噬"])
     return sim, Stage30510021Director(sim)
