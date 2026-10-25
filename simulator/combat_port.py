@@ -112,6 +112,7 @@ class CombatPort(Protocol):
         fixed_crit_dmg: Optional[float] = None
     ) -> None: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None: ...
+    def publish_action(self, actor_id: str, name: str, kind: Any, skill_id: int = 0) -> None: ...
     @property
     def tracer(self) -> Any: ...
     def is_countdown(self, entity_id: str) -> bool: ...
@@ -622,6 +623,23 @@ class SimulatorCombatPort:
             for e in list(self.sim.entities):
                 if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
                     e.kit.on_hp_lost(entity_id, actual, cause)
+
+    def publish_action(self, actor_id: str, name: str, kind: Any, skill_id: int = 0) -> None:
+        """广播一次回合外额外行动的施放事实 (如忆灵受主人技能触发的立即行动)。
+
+        core 只为回合行动与终结技抢断发布 ActionExecuteEvent; 由机制触发的额外行动
+        经此接口补发同构事件, 供事件订阅者 (天赋联动/对账导出/追踪器) 统一消费。
+        """
+        self.sim.event_bus.publish(ActionExecuteEvent(
+            av=round(getattr(self.sim, "current_av", 0.0), 2),
+            cycle=getattr(self.sim, "current_cycle", 0),
+            actor_id=actor_id,
+            actor_name=actor_id,
+            action_type=name,
+            description=f"【{actor_id}】施放【{name}】",
+            action_kind=kind,
+            skill_config_id=skill_id
+        ))
 
     def summon_spirit(
         self,
