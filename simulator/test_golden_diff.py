@@ -270,10 +270,10 @@ class TestTrajectoryReplay(unittest.TestCase):
 
     def test_trajectory_replay_fires_all_bursts(self):
         """轨迹回放: 15 次迷梦全部按官方轨迹施放 (自然或强制补发), 补足有台账。"""
-        from simulator.golden_diff import build_stage_sim, extract_decisions, extract_trajectory, run_trajectory_replay, parse_golden_jsonl
+        from simulator.golden_diff import build_stage_sim, extract_timeline, run_trajectory_replay, parse_golden_jsonl
         golden = parse_golden_jsonl("battle_logs/battle_20261025_131019.jsonl")
         sim, director = build_stage_sim()
-        traj = run_trajectory_replay(sim, director, extract_decisions("battle_logs/battle_20261025_131019.jsonl"), extract_trajectory("battle_logs/battle_20261025_131019.jsonl"), av_budget=golden.final_av)
+        traj = run_trajectory_replay(sim, director, extract_timeline("battle_logs/battle_20261025_131019.jsonl"), av_budget=golden.final_av)
         bursts = [r for r in traj.records if r.skill_id == 1141307]
         self.assertEqual(len(bursts), 15)
         self.assertTrue(all(r.fired_av is not None for r in bursts))

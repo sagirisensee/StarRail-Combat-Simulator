@@ -363,7 +363,7 @@ def extract_decisions(path: str) -> List[Decision]:
     return decisions
 
 
-def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: float, force: bool = False, on_step: Any = None) -> ReplayResult:
+def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: float, force: bool = False, on_step: Any = None, pre_step: Any = None) -> ReplayResult:
     """按官方决策脚本驱动模拟 (回放对齐模式)。
 
     严格模式 (force=False): 角色回合到来时强制执行脚本中该角色的行动;
@@ -432,6 +432,10 @@ def run_replay(sim: Any, director: Any, decisions: List[Decision], av_budget: fl
 
     while steps < 1600 and float(getattr(sim, "current_av", 0.0)) <= av_budget:
         steps += 1
+        # 0. 步前钩子 (轨迹模式的 AV 延后策略): 返回 True 表示已延后某个实体,
+        #    本轮重新预览, 不消耗行动
+        if pre_step is not None and pre_step(sim):
+            continue
         # 1. 脚本头部的终结技: 能量已满则立即抢断施放 (强制模式则补足后施放)
         while ptr < len(decisions) and decisions[ptr].kind == "ult":
             d = decisions[ptr]
@@ -693,7 +697,7 @@ def main(argv=None) -> int:
     trajectory_md = ""
     if args.trajectory:
         decisions = extract_decisions(args.golden)
-        traj = run_trajectory_replay(sim, director, decisions, extract_trajectory(args.golden), av_budget=golden.final_av)
+        traj = run_trajectory_replay(sim, director, extract_timeline(args.golden), av_budget=golden.final_av)
         replay = traj.replay
         sim_seq = replay.sequence
         replay_md = render_replay_markdown(replay)
@@ -845,8 +849,13 @@ class TrajectoryRecord:
 class TrajectoryResult:
     replay: Any
     records: List[TrajectoryRecord] = field(default_factory=list)
+    master_records: List["MasterRecord"] = field(default_factory=list)
+    ult_records: List["MasterRecord"] = field(default_factory=list)
     memoria_granted: float = 0.0
     presence_grants: int = 0
+    ult_energy_granted: float = 0.0
+    sp_granted: int = 0
+    sunk_turns: int = 0
 
 
 def extract_trajectory(path: str) -> List[TrajectoryCast]:
@@ -861,12 +870,53 @@ def extract_trajectory(path: str) -> List[TrajectoryCast]:
     return out
 
 
-def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], trajectory: List[TrajectoryCast], av_budget: float) -> TrajectoryResult:
-    """轨迹回放: 强制回放 + 忆灵技轨迹钉死 (见上方说明)。
+@dataclass
+class TimelineItem:
+    av: float
+    kind: str  # "basic" | "skill" | "ult" | "spirit"
+    actor: str
+    skill_id: int
+    name: str
 
-    长夜爆发另有忆质闸门: 非排期窗口内忆质钳制在 15 (超出部分暂存), 使其
-    无法在官方时点之外自行爆发; 到排期时点先归还暂存, 仍不足 16 的差额
-    才记为忆质补足。暂存是模拟自身忆质的时间平移, 不入补足台账。
+
+@dataclass
+class MasterRecord:
+    actor: str
+    skill_id: int
+    name: str
+    official_av: float
+    fired_av: Optional[float]
+
+
+def extract_timeline(path: str) -> List[TimelineItem]:
+    """从官方日志提取完整施放时间线 (本体决策 + 忆灵技, 含 AV, 按 AV 排序)。
+
+    AV 取施放所在回合的 AV (终结技为其抢断回合的 AV, 与实机记账口径一致)。
+    本体决策应与 extract_decisions 的计数一致 (回合 25 + 终结技 27)。
+    """
+    seq = parse_golden_jsonl(path)
+    items: List[TimelineItem] = []
+    for t in seq.turns:
+        for s in t.skills:
+            if s.config_id in SPIRIT_TRAJECTORY_SKILLS:
+                items.append(TimelineItem(float(t.av), "spirit", SPIRIT_TRAJECTORY_SKILLS[s.config_id], s.config_id, s.name))
+            elif s.actor in PLAYER_ACTORS:
+                kind = _DECISION_KIND_BY_TYPE.get(s.skill_type)
+                if kind:
+                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name))
+    items.sort(key=lambda x: x.av)
+    return items
+
+
+def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem], av_budget: float) -> TrajectoryResult:
+    """轨迹回放 v2: 全施放轨迹按官方 AV 钉死, 缺口补足逐项记账。
+
+    - 本体回合行动: 预览下一行动者 (只读复刻调度器选择规则), 若其排期施放
+      尚在未来, 以距离延后把该回合精确推到官方 AV; 迟到则于到达时施放。
+    - 终结技: 到官方 AV 时抢断施放, 能量按缺口补足 (记台账)。
+    - 忆灵技: 到点未自然触发的补前置 (在场/忆质) 后强制施放; 长夜忆质在
+      非排期窗口钳制 15 (超出暂存, 排期点归还) 以防自行乱爆。
+    - 敌方施放不在日志中, 敌方仍自由行动。
     """
     from collections import deque
 
@@ -874,17 +924,26 @@ def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], tr
     from .events import ActionExecuteEvent
 
     result = TrajectoryResult(replay=None)
-    queues = {}
-    for c in trajectory:
-        queues.setdefault(c.skill_id, deque()).append(c)
+    turn_items = [i for i in timeline if i.kind in ("basic", "skill")]
+    ult_queue = deque([i for i in timeline if i.kind == "ult"])
+    spirit_queues = {}
+    for i in timeline:
+        if i.kind == "spirit":
+            spirit_queues.setdefault(i.skill_id, deque()).append(
+                TrajectoryCast(av=i.av, actor=i.actor, skill_id=i.skill_id, name=i.name))
     organic: List[Tuple[int, float]] = []
     organic_used = set()
     stash = {"amount": 0.0}
+    master_fired: List[Tuple[str, int, float]] = []
 
     def _on_action(e: Any) -> None:
         sid = int(getattr(e, "skill_config_id", 0) or 0)
         if sid in SPIRIT_TRAJECTORY_SKILLS:
             organic.append((sid, float(getattr(e, "av", 0.0))))
+        actor = getattr(e, "actor_name", "")
+        kind = getattr(e, "action_kind", None)
+        if actor in PLAYER_ACTORS and kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE):
+            master_fired.append((actor, sid, float(getattr(e, "av", 0.0))))
 
     sim.event_bus.subscribe(ActionExecuteEvent, _on_action)
 
@@ -896,7 +955,8 @@ def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], tr
         moon = sim.get_entity("长夜月")
         return getattr(moon, "kit", None) if moon is not None else None
 
-    def _force_cast(cast: TrajectoryCast, now_av: float) -> TrajectoryRecord:
+    # --- 忆灵技强制施放 (与 v1 相同口径) ---
+    def _force_spirit(cast: TrajectoryCast, now_av: float) -> TrajectoryRecord:
         patches: List[str] = []
         sid = cast.skill_id
         organic_before = len(organic)
@@ -944,8 +1004,6 @@ def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], tr
         resolver = getattr(sim, "resolver", None)
         if resolver is not None:
             resolver.resolve_all()
-        # 回合外施放的事实由接口补发 (与套件内触发路径的口径一致), 并标记为
-        # 已消费, 避免被后续匹配误记为自然触发
         sim.port.publish_action(cast.actor, cast.name, ActionKind.MEMOSPRITE_SKILL, skill_id=sid)
         for idx in range(organic_before, len(organic)):
             if organic[idx][0] == sid:
@@ -955,7 +1013,7 @@ def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], tr
         return TrajectoryRecord(sid, cast.name, cast.av, now_av, "forced", tuple(patches))
 
     def _clamp_memoria(now_av: float) -> None:
-        q = queues.get(1141307)
+        q = spirit_queues.get(1141307)
         if not q:
             return
         kit = _changye_kit()
@@ -966,10 +1024,10 @@ def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], tr
             kit.yizhi = 15
             stash["amount"] += excess
 
-    def _enforce(sim_ref: Any) -> None:
-        now_av = float(getattr(sim_ref, "current_av", 0.0))
+    def _enforce_spirits() -> None:
+        now_av = float(getattr(sim, "current_av", 0.0))
         _clamp_memoria(now_av)
-        for sid, q in queues.items():
+        for sid, q in spirit_queues.items():
             while q:
                 head = q[0]
                 match_idx = None
@@ -983,36 +1041,171 @@ def run_trajectory_replay(sim: Any, director: Any, decisions: List[Decision], tr
                 if match_idx is None:
                     break
                 organic_used.add(match_idx)
-                fired_av = organic[match_idx][1]
-                result.records.append(TrajectoryRecord(sid, head.name, head.av, fired_av, "organic", ()))
+                result.records.append(TrajectoryRecord(sid, head.name, head.av, organic[match_idx][1], "organic", ()))
                 q.popleft()
-        for sid, q in queues.items():
+        for sid, q in spirit_queues.items():
             while q and q[0].av <= now_av:
                 cast = q.popleft()
-                result.records.append(_force_cast(cast, now_av))
+                result.records.append(_force_spirit(cast, now_av))
 
-    replay = run_replay(sim, director, decisions, av_budget, force=True, on_step=_enforce)
+    def _fire_due_ults() -> None:
+        now_av = float(getattr(sim, "current_av", 0.0))
+        while ult_queue and ult_queue[0].av <= now_av:
+            item = ult_queue.popleft()
+            ent = sim.get_entity(item.actor)
+            if ent is None:
+                result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
+                continue
+            deficit = float(ent.max_energy) - float(ent.energy)
+            if deficit > 1e-4:
+                ent.energy = float(ent.max_energy)
+                result.ult_energy_granted += deficit
+            ok = sim.cast_ultimate(item.actor)
+            if director is not None:
+                director.after_step()
+            result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, now_av if ok else None))
+
+    def _peek_next() -> Any:
+        alive = [e for e in sim.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        if not alive:
+            return None
+        return min(alive, key=lambda e: (round(e.remaining_av, 4), 0 if getattr(e, "is_memosprite", False) else 1))
+
+    recorder = SequenceRecorder(sim)
+    replay = ReplayResult(decisions_total=len(turn_items) + len(ult_queue), turn_matched=0, turn_total=len(turn_items), ult_matched=0, ult_total=len(ult_queue), forced=True)
+    prev_auto_ult = getattr(sim, "auto_ult", None)
+    if prev_auto_ult is not None:
+        sim.auto_ult = False
+    # 本体排期按角色分队列: 每名角色的回合只在其排期时点 (或迟到时) 发生,
+    # 无排期的额外回合直接沉底, 与官方轨迹一一对应
+    from collections import defaultdict as _dd
+    actor_queues = _dd(deque)
+    for item in turn_items:
+        actor_queues[item.actor].append(item)
+    steps = 0
+    delays = 0
+    idle_steps = 0
+    _fire_due_ults()
+    while steps < 1600 and float(getattr(sim, "current_av", 0.0)) <= av_budget:
+        steps += 1
+        # A. 延后/沉底策略 (只读预览下一行动者)
+        if getattr(sim, "_current_turn_entity", None) is None and delays < 800:
+            nxt = _peek_next()
+            if nxt is not None and nxt.name in PLAYER_ACTORS:
+                land_av = float(getattr(sim, "current_av", 0.0)) + float(nxt.remaining_av)
+                q = actor_queues.get(nxt.name)
+                if q:
+                    head = q[0]
+                    if head.av > land_av + 0.5:
+                        nxt.distance_remaining += float(nxt.speed) * (head.av - land_av)
+                        delays += 1
+                        continue
+                else:
+                    # 无剩余排期: 沉底到预算之外, 该角色不再产生额外回合
+                    nxt.distance_remaining += float(nxt.speed) * (av_budget - land_av + 1000.0)
+                    result.sunk_turns += 1
+                    delays += 1
+                    continue
+        # B. 到点终结技
+        _fire_due_ults()
+        # C. 预览并执行回合
+        actor_ent = sim.advance_to_next_turn()
+        if actor_ent is None:
+            if director is not None:
+                director.after_step()
+            idle_steps += 1
+            if idle_steps > 100:
+                break
+            continue
+        idle_steps = 0
+        override = None
+        if actor_ent.name in PLAYER_ACTORS:
+            q = actor_queues.get(actor_ent.name)
+            if q:
+                head = q.popleft()
+                if head.kind == "skill":
+                    sp = getattr(sim, "sp", None)
+                    if sp is not None and not sp.can_consume(1):
+                        deficit = 1 - int(sp.current_sp)
+                        if deficit > 0:
+                            sp.generate(deficit, head.actor, "轨迹回放强制补足", float(getattr(sim, "current_av", 0.0)))
+                            result.sp_granted += deficit
+                override = ActionKind.SKILL if head.kind == "skill" else ActionKind.BASIC
+                replay.turn_matched += 1
+        sim.step(action_override=override)
+        if director is not None:
+            director.after_step()
+        _enforce_spirits()
+        _fire_due_ults()
+    # 收尾: 剩余终结技与忆灵技排期
+    while ult_queue:
+        item = ult_queue.popleft()
+        ent = sim.get_entity(item.actor)
+        if ent is not None:
+            ent.energy = float(ent.max_energy)
+            ok = sim.cast_ultimate(item.actor)
+            if director is not None:
+                director.after_step()
+            result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, float(getattr(sim, "current_av", 0.0)) if ok else None))
+        else:
+            result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
     now_av = float(getattr(sim, "current_av", 0.0))
-    for sid, q in queues.items():
+    for sid, q in spirit_queues.items():
         while q and q[0].av <= av_budget:
             cast = q.popleft()
-            result.records.append(_force_cast(cast, now_av))
+            result.records.append(_force_spirit(cast, now_av))
         while q:
             cast = q.popleft()
             result.records.append(TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ()))
+    if prev_auto_ult is not None:
+        sim.auto_ult = prev_auto_ult
+    replay.sequence = recorder.finish()
+    replay.ult_matched = sum(1 for r in result.ult_records if r.fired_av is not None)
     result.replay = replay
+    # 本体回合行动的实际 AV 配对 (按 角色+技能 贪心就近)
+    from collections import defaultdict
+    fired_by_key = defaultdict(list)
+    for actor, sid, av in master_fired:
+        fired_by_key[(actor, sid)].append(av)
+    for item in turn_items:
+        candidates = fired_by_key.get((item.actor, item.skill_id), [])
+        fired_av = None
+        if candidates:
+            best = min(range(len(candidates)), key=lambda i: abs(candidates[i] - item.av))
+            fired_av = candidates.pop(best)
+        result.master_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, fired_av))
     result.records.sort(key=lambda r: r.official_av)
     return result
 
 
 def render_trajectory_markdown(traj: TrajectoryResult) -> str:
     lines = []
-    lines.append("## 七、 轨迹回放 (忆灵技轨迹钉死, 缺口补足记账)")
+    lines.append("## 七、 轨迹回放 (全轨迹按官方 AV 钉死, 缺口补足记账)")
     lines.append("")
-    lines.append("- 说明: 玩家决策仍按强制回放钉死; 忆灵技按官方时点对齐——时点到达时")
-    lines.append("  未自然触发的, 补足前置 (忆灵在场/忆质阈值) 后强制施放并逐项记账。")
-    lines.append("  敌方施放不在日志中, 敌方仍自由行动。")
-    lines.append(f"- 忆质补足总量: {traj.memoria_granted:.0f} 点; 忆灵在场补发: {traj.presence_grants} 次")
+    lines.append("- 说明: 本体回合行动以距离延后精确推到官方 AV, 终结技到点抢断,")
+    lines.append("  忆灵技到点未自然触发的补前置后强制施放。敌方施放不在日志中, 敌方仍自由行动。")
+    lines.append(f"- 补足台账: 终结技能量 {traj.ult_energy_granted:.0f} 点 / 战技点 {traj.sp_granted} 次 / 忆质 {traj.memoria_granted:.0f} 点 / 忆灵在场补发 {traj.presence_grants} 次")
+    lines.append("")
+    lines.append("### 本体施放 AV 对齐")
+    lines.append("")
+    lines.append("| 角色 | 排期 | 已施放 | 平均 |ΔAV| | 最大 |ΔAV| |")
+    lines.append("| :--- | ---: | ---: | ---: | ---: |")
+    from collections import defaultdict
+    by_actor = defaultdict(list)
+    for r in traj.master_records:
+        by_actor[r.actor].append(r)
+    ult_by_actor = defaultdict(list)
+    for r in traj.ult_records:
+        ult_by_actor[r.actor].append(r)
+    for actor in sorted(set(by_actor) | set(ult_by_actor)):
+        recs = by_actor.get(actor, []) + ult_by_actor.get(actor, [])
+        fired = [r for r in recs if r.fired_av is not None]
+        deltas = [abs(r.fired_av - r.official_av) for r in fired]
+        mean_d = f"{sum(deltas) / len(deltas):.1f}" if deltas else "-"
+        max_d = f"{max(deltas):.1f}" if deltas else "-"
+        lines.append(f"| {actor} | {len(recs)} | {len(fired)} | {mean_d} | {max_d} |")
+    lines.append("")
+    lines.append("### 忆灵技轨迹")
     lines.append("")
     lines.append("| 技能 | 官方 | 自然对齐 | 强制补发 | 失败/不可强制 |")
     lines.append("| :--- | ---: | ---: | ---: | ---: |")
@@ -1026,13 +1219,13 @@ def render_trajectory_markdown(traj: TrajectoryResult) -> str:
     lines.append("")
     lines.append("### 长夜爆发轨迹 (官方 AV -> 实际 AV)")
     lines.append("")
-    bursts = [r for r in traj.records if r.skill_id == 1141307]
-    for r in bursts:
+    for r in [r for r in traj.records if r.skill_id == 1141307]:
         fired = f"{r.fired_av:.1f}" if r.fired_av is not None else "-"
         tag = "" if r.mode == "organic" else f" ({r.mode}{': ' + ', '.join(r.patches) if r.patches else ''})"
         lines.append(f"- {r.official_av:.1f} -> {fired}{tag}")
     lines.append("")
     return "\n".join(lines)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
