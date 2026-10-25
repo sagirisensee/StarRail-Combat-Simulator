@@ -63,6 +63,7 @@ class DamageRequest:
     fixed_crit_dmg: Optional[float] = None # 若指定固定暴击伤害 (如知更鸟协奏附加伤害 150%)，覆盖面板暴伤
     scaling_stat: str = "atk"           # "atk" | "hp" | "def"
     is_true_damage: bool = False        # 真实伤害: 仅取基础区数值, 跳过双暴/增伤/防御/抗性/易伤/减伤全部乘区
+    damage_type: Any = None             # DamageType 枚举 (供屏障转化等按类别结算的规则读取)
 
 
 class DamageCalculator:
@@ -105,10 +106,10 @@ class DamageCalculator:
         base_dmg = base_stat * req.skill_multiplier + req.flat_damage
 
         # 真实伤害: 无视防御与抗性, 不可暴击, 不吃增伤/易伤/韧性减伤, 基础区数值即最终伤害
-        # 例外: 目标处于真实伤害免疫状态 (如屏障护体) 时归零——伤害事件照常
-        # 产生、数值记为 0 (与实机日志中屏障期真实伤害事件数值为 0 的形态一致)
+        # 例外: 目标处于屏障护体状态时归零——伤害事件照常产生、数值记为 0
+        # (与实机日志中屏障期真实伤害事件数值为 0 的形态一致)
         if getattr(req, "is_true_damage", False):
-            suppressed = bool(getattr(req.target, "true_damage_immune", False))
+            suppressed = bool(getattr(req.target, "barrier_guarded", False))
             return DamageBreakdown(
                 attacker_name=req.attacker.name,
                 target_name=req.target.name,
@@ -156,6 +157,15 @@ class DamageCalculator:
         # 7. 韧性减伤区 (未破韧固定 0.9，破韧 1.0)
         reduction_mult = 1.0 if req.target_is_broken else 0.9
 
+        # 屏障转化: 目标屏障护体时, 附加伤害按 25% 结算 (直接伤害不受影响;
+        # 实机日志逐窗口实测——屏障期结界附加单发约为无屏障期的 0.25 倍,
+        # 而终结技/忆灵技等直接伤害打在屏障目标上仍为全额)
+        barrier_mult = 1.0
+        if getattr(req.target, "barrier_guarded", False):
+            from .actions import DamageType
+            if getattr(req, "damage_type", None) == DamageType.ADDITIONAL:
+                barrier_mult = 0.25
+
         # 最终汇总
         final_dmg = (
             base_dmg
@@ -165,6 +175,7 @@ class DamageCalculator:
             * res_mult
             * vuln_mult
             * reduction_mult
+            * barrier_mult
         )
 
         return DamageBreakdown(

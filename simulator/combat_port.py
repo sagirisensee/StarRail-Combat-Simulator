@@ -565,7 +565,8 @@ class SimulatorCombatPort:
             force_crit=force_crit,
             fixed_crit_dmg=fixed_crit_dmg,
             scaling_stat=scaling_stat,
-            is_true_damage=(resolved_damage_type == DamageType.TRUE)
+            is_true_damage=(resolved_damage_type == DamageType.TRUE),
+            damage_type=resolved_damage_type
         )
         if resolved_damage_type == DamageType.FOLLOW_UP:
             caller_frame = sys._getframe(1)

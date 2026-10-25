@@ -124,6 +124,7 @@ class TestStageBossPhases(unittest.TestCase):
         """
         from simulator.golden_diff import build_stage_sim
         from simulator.stage_30510021 import (
+            BOSS_PHASE1_BARRIER_DELAY_AV,
             BOSS_PHASE1_FLOOR,
             BOSS_PHASE1_FLOOR_RELEASE_AV,
             BOSS_PHASE2_FLOOR,
@@ -137,22 +138,30 @@ class TestStageBossPhases(unittest.TestCase):
         boss = sim.get_entity("堕神之血•亚婆离")
         self.assertIsNotNone(boss)
         self.assertEqual(director.boss_phase, 1)
-        # 一阶段屏障期内打到地板以下 -> 钳制在冻结值, 不转阶段
+        # 屏障开启前 (延迟窗内): 无地板钳制、无压制
         boss.current_hp = BOSS_PHASE1_FLOOR - 100000.0
+        director.after_step()
+        self.assertEqual(boss.current_hp, BOSS_PHASE1_FLOOR - 100000.0)
+        self.assertFalse(boss.barrier_guarded)
+        # 一阶段屏障期内打到地板以下 -> 钳制在冻结值, 不转阶段; 真实伤害免疫且承伤 25%
+        sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_BARRIER_DELAY_AV + 1.0
         director.after_step()
         self.assertEqual(director.boss_phase, 1)
         self.assertEqual(boss.current_hp, BOSS_PHASE1_FLOOR)
-        # 屏障释放 (AV 越过脚本时点) 后一阶段可打空 -> 转入二阶段并回满
+        self.assertTrue(boss.barrier_guarded)
+        # 屏障释放 (AV 越过脚本时点) 后一阶段可打空 -> 转入二阶段并回满, 压制解除
         sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_FLOOR_RELEASE_AV + 1.0
         boss.current_hp = 0.0
         director.after_step()
         self.assertEqual(director.boss_phase, 2)
         self.assertEqual(boss.current_hp, BOSS_PHASE2_HP)
         self.assertEqual(boss.max_hp, BOSS_PHASE2_HP)
-        # 二阶段打到地板以下 -> 钳制在屏障地板
+        self.assertFalse(boss.barrier_guarded)
+        # 二阶段打到地板以下 -> 钳制在屏障地板, 屏障压制生效
         boss.current_hp = BOSS_PHASE2_FLOOR - 500000.0
         director.after_step()
         self.assertEqual(boss.current_hp, BOSS_PHASE2_FLOOR)
+        self.assertTrue(boss.barrier_guarded)
 
 
 class TestStageBossAI(unittest.TestCase):
@@ -185,18 +194,25 @@ class TestStageBossAI(unittest.TestCase):
 
 
 class TestTrueDamageBarrierSuppression(unittest.TestCase):
-    def test_true_damage_zeroed_on_immune_target_only(self):
-        """真实伤害免疫标记: 目标免疫时真实伤害归零, 普通伤害不受影响。
+    def test_barrier_damage_class_rules(self):
+        """屏障护体的伤害类别规则: 真实伤害归零、附加伤害 25%、直接伤害全额。
 
-        依据: 官方日志屏障期打在亚婆离身上的真实伤害数值均为 0 (事件照常)。
+        依据: 官方日志逐窗口实测——屏障期真实伤害数值为 0、结界附加单发约
+        为无屏障期的 0.25 倍、终结技等直接伤害打在屏障目标上仍为全额量级。
         """
+        from simulator.actions import DamageType
         from simulator.core import Entity
         from simulator.damage import DamageCalculator, DamageRequest
         attacker = Entity(name="攻击者", base_speed=100.0, base_atk=1000.0, max_hp=5000.0, current_hp=5000.0)
         target = Entity(name="目标", base_speed=100.0, base_atk=1000.0, max_hp=5000.0, current_hp=5000.0, is_enemy=True)
-        req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, is_true_damage=True)
-        self.assertGreater(DamageCalculator.calculate(req).final_damage, 0.0)
-        target.true_damage_immune = True
-        self.assertEqual(DamageCalculator.calculate(req).final_damage, 0.0)
-        normal = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0)
-        self.assertGreater(DamageCalculator.calculate(normal).final_damage, 0.0)
+        true_req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, is_true_damage=True, damage_type=DamageType.TRUE)
+        self.assertGreater(DamageCalculator.calculate(true_req).final_damage, 0.0)
+        add_req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, force_crit=False, damage_type=DamageType.ADDITIONAL)
+        add_full = DamageCalculator.calculate(add_req).final_damage
+        direct_req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, force_crit=False, damage_type=DamageType.ULTIMATE)
+        direct_full = DamageCalculator.calculate(direct_req).final_damage
+        target.barrier_guarded = True
+        self.assertEqual(DamageCalculator.calculate(true_req).final_damage, 0.0)
+        self.assertAlmostEqual(DamageCalculator.calculate(add_req).final_damage, add_full * 0.25, places=6)
+        self.assertAlmostEqual(DamageCalculator.calculate(direct_req).final_damage, direct_full, places=6)
+

@@ -25,7 +25,7 @@
   屏障与真实伤害: 屏障开启期间打在亚婆离身上的真实伤害数值为 0
   (日志实测: 二阶段地板后 42 次真实伤害中 31 次为 0、一阶段冻结期 5 次
   为 0、无屏障期 0 次; 打在胚芽上的照常全额)——机制帖所述压制以
-  「事件照常、数值归零」的形式存在, 本场景以 true_damage_immune 标记建模。
+  「事件照常、数值归零」的形式存在, 本场景以 barrier_guarded 标记建模。
 """
 
 from typing import List, Optional
@@ -37,9 +37,15 @@ BOSS_HP = 6389558.0        # 堕神之血•亚婆离 5034010 一阶段血池 (�
 BOSS_PHASE2_HP = 12779117.0    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
 BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
 BOSS_PHASE1_FLOOR = 3655953.0  # 一阶段屏障冻结值 (日志实测首个冻结平台)
+# 一阶段屏障开启时点: 第二波开始后约 34 AV (日志中一阶段开局先自由掉血
+# 约 2.86M, 于事件跨度约 45% 处进入首个冻结平台, 换算为波次相对 AV)
+BOSS_PHASE1_BARRIER_DELAY_AV = 34.0
 # 一阶段屏障释放时点: 第二波开始后约 156 AV (日志中一阶段于第二波后约 161 AV
 # 被打空转阶段, 释放点取其前数 AV, 与增援的 AV 脚本口径一致)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 156.0
+# 【血脑屏障】的伤害类别规则 (日志逐窗口实测, 结算在 damage 管线):
+# 真实伤害归零、附加伤害按 25% 结算、直接伤害 (普攻/战技/终结技/追击/
+# 忆灵技) 全额——屏障只转化派生类伤害, 不削减直接伤害
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 增援批次数 (日志实测)
 SPROUT_INTERVAL_AV = 76.0  # 增援间隔 (日志约 75.76 AV)
@@ -180,25 +186,27 @@ class Stage30510021Director:
         boss = self.sim.get_entity("堕神之血•亚婆离")
         if boss is None:
             return
+        av = float(getattr(self.sim, "current_av", 0.0))
+        wave2_av = self.wave2_av or 0.0
         if self.boss_phase == 1:
-            if boss.current_hp <= 0:
+            # 转阶段只能发生在屏障释放之后 (屏障期内不可被击杀, 与实机一致)
+            if av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV and boss.current_hp <= 0:
                 self.boss_phase = 2
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
-                boss.true_damage_immune = False
+                boss.barrier_guarded = False
                 return
-            release_av = (self.wave2_av or 0.0) + BOSS_PHASE1_FLOOR_RELEASE_AV
-            barrier_up = float(getattr(self.sim, "current_av", 0.0)) < release_av
-            # 屏障开启期间: 生命不低于冻结值, 且真实伤害归零 (日志实测:
-            # 屏障期打在 Boss 身上的真实伤害事件数值均为 0, 打在胚芽上照常)
-            boss.true_damage_immune = barrier_up
+            barrier_up = wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV <= av < wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV
+            # 屏障开启期间: 生命不低于冻结值; 真实伤害归零、附加伤害按
+            # 25% 结算 (由 damage 管线按 barrier_guarded 与伤害类别处理)
+            boss.barrier_guarded = barrier_up
             if barrier_up and boss.current_hp < BOSS_PHASE1_FLOOR:
                 boss.current_hp = BOSS_PHASE1_FLOOR
         else:
             if boss.current_hp < BOSS_PHASE2_FLOOR:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
-            boss.true_damage_immune = boss.current_hp <= BOSS_PHASE2_FLOOR
+            boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
 
     def after_step(self) -> None:
         if not self.wave2_started:
