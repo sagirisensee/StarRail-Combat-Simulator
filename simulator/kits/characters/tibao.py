@@ -47,7 +47,15 @@ class TibaoKit(KitHandler):
         self._zone_window_zone: bool = False
         self._zone_window_targets: set = set()
         self._zone_window_total: float = 0.0
+        self._zone_window_hits: int = 0
         self._zone_resolving: bool = False
+        # 星魂 1 待结算真实伤害: 附加伤害经引擎效果队列延迟结算, 其实际值要在
+        # 附加命中事件陆续到达后才能汇总, 故真实伤害在下一次窗口结算时先行发出
+        # (见 _flush_zone_window 的延迟真实伤害说明)
+        self._pending_true: Optional[dict] = None
+        # 天赋追加攻击待发标记: 追击在官方时序中是独立行动, 须等触发行动的
+        # 结界窗口结算完毕后再施放并单独结算其窗口 (见 _flush_zone_window)
+        self._pending_volley: bool = False
 
     def apply_trace_passives(self, entity: Any) -> None:
         """战前静态基线校准：注入缇宝基础白字生命（以实机数据 breakdowns.base_white 为准，默认 2317.0）。"""
@@ -319,27 +327,18 @@ class TibaoKit(KitHandler):
         # 4. 额外能力【长翅膀的玻璃球！】：处于结界期间自身生命上限提升全队生命上限之和的 9%
         self._sync_glass_ball_hp()
 
-        # 5. 施放大招自身固定回能 5 点 + E6 天赋追加攻击回能 5 点 (受 ERR 加成)
+        # 5. 施放大招自身固定回能 5 点 (受 ERR 加成);
+        #    E6 齐射的回能 5 点在齐射实际施放时由 _cast_talent_volley 统一结算
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-        base_energy = 5.0 + (5.0 if self.eidolon >= 6 else 0.0)
-        self.port.gain_energy(self.owner_id, base_energy * err)
+        self.port.gain_energy(self.owner_id, 5.0 * err)
 
-        # 6. 星魂 6【星月漫天的明日】：施放终结技时立即触发一次追加攻击
+        # 6. 星魂 6【星月漫天的明日】：施放终结技时立即触发一次追加攻击。
+        #    置待发标记后立即走一次窗口结算将其发出: 大招本体伤害已入队待结,
+        #    不会与齐射混窗; 齐射作为独立行动单独结算其结界窗口
+        #    (官方时序下大招与齐射各结算一次结界, 见 _flush_zone_window)。
         if self.eidolon >= 6:
-            # E6 齐射与天赋追加攻击同倍率 (18% 生命上限): 真值日志中两类齐射
-            # 单发同量级, 未见 729% 量级的单发 (详见天赋触发处注释)。
-            fu_mult = 0.18
-            for e in self.port.enemies(self.owner_id):
-                self.port.attack(
-                    self.owner_id,
-                    e,
-                    element="Quantum",
-                    atk_multiplier=fu_mult,
-                    toughness_damage=10.0,
-                    damage_type=DamageType.FOLLOW_UP,
-                    scaling_stat="hp"
-                )
-            self._apply_lamb_buff()
+            self._pending_volley = True
+            self._flush_zone_window()
 
     def _apply_lamb_buff(self) -> None:
         """行迹【城墙外的羊羔儿】: 施放天赋追加攻击后, 自身造成伤害提高 72%,
@@ -364,57 +363,112 @@ class TibaoKit(KitHandler):
     def _flush_zone_window(self) -> None:
         """结算上一个我方攻击动作窗口的结界附加伤害 (140303) 与星魂 1 真实伤害。
 
-        官方机制: 结界持续期间, 敌方目标受到我方目标攻击后, 每有 1 名目标受到攻击,
-        对被攻击目标中当前生命值最高的目标造成 1 次等同于缇宝 12% 生命上限的量子属性
-        附加伤害; 星魂 2 时该附加伤害提高至原伤害的 120% 且每次额外造成 1 次;
-        星魂 1 时, 对承受附加伤害的目标额外造成等同于本次攻击总伤害值 24% 的真实伤害。
+        触发规则以官方真值日志 (battle_20261025_131019) 逐窗口对账为准:
+        - 附加命中数 = 该行动对敌方造成的伤害段数 + (星魂 2 时额外 1 次, 每次行动
+          仅 1 次, 而非每个目标 1 次)。实测: 单目标行动 1 段→2 命中、三目标全体
+          攻击 3 段→4 命中、长夜迷梦 5 段→6 命中。旧实现按「不同目标数 × 2」
+          计数, 三目标时打出 6 命中, 系统性偏高。
+        - 附加伤害全部落在被攻击目标中当前生命值最高者身上, 每段等同于缇宝
+          12% 生命上限 (星魂 2 倍率提高至 120%) 的量子属性伤害。
+        - 星魂 1 真实伤害的基数 = 本次攻击总伤害 + 本次结界附加实际打出的伤害:
+          实测两窗口 0.24 × (712,020 + 277,564) = 237,501、0.24 × (569,426 +
+          268,756) = 201,164, 与日志真实伤害逐点吻合。
+        结算完成后, 若有待发的天赋追加攻击, 在此开启其专属窗口并施放
+        (官方时序中追击是独立行动, 与触发它的终结技各结算一次结界)。
+        延迟真实伤害: 引擎的伤害经效果队列延迟结算, 本窗口附加的实际值在
+        结算当下尚未产生, 故星魂 1 真实伤害登记为待结算, 在下一次窗口结算
+        时以 (本次攻击总伤害 + 附加实际值) 为基数先行发出。
         """
         targets = self._zone_window_targets
         total = self._zone_window_total
+        hit_count = self._zone_window_hits
         zone_was_active = self._zone_window_zone
         self._zone_window_actor = None
         self._zone_window_zone = False
         self._zone_window_targets = set()
         self._zone_window_total = 0.0
-        if self._zone_resolving or not zone_was_active or not targets or total <= 0:
-            return
-        living = [t for t in targets if self.port.entity_exists(t)]
-        if not living:
-            return
-        top_target = max(living, key=lambda t: self.port.current_hp(t))
-        base_mult = self.skill_param("ultra", 2, default=0.12)
-        hits_per_target = 1
-        if self.eidolon >= 2:
-            base_mult *= self.eidolon_param(2, 0, default=1.2)
-            hits_per_target += int(self.eidolon_param(2, 1, default=1))
-        self._zone_resolving = True
-        try:
-            for _ in range(len(living) * hits_per_target):
-                self.port.attack(
-                    self.owner_id,
-                    top_target,
-                    element="Quantum",
-                    atk_multiplier=base_mult,
-                    toughness_damage=0.0,
-                    damage_type=DamageType.ADDITIONAL,
-                    scaling_stat="hp"
-                )
-            if self.eidolon >= 1:
-                true_ratio = self.eidolon_param(1, 0, default=0.24)
-                my_max_hp = self.port.max_hp(self.owner_id)
-                if my_max_hp > 0 and total > 0:
-                    # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
-                    self.port.attack(
-                        self.owner_id,
-                        top_target,
-                        element="Quantum",
-                        atk_multiplier=(total * true_ratio) / my_max_hp,
-                        toughness_damage=0.0,
-                        damage_type=DamageType.TRUE,
-                        scaling_stat="hp"
-                    )
-        finally:
-            self._zone_resolving = False
+        self._zone_window_hits = 0
+        pending_volley = self._pending_volley
+        self._pending_volley = False
+        if not self._zone_resolving:
+            # 先行结算上一个窗口登记的星魂 1 真实伤害: 其基数中的附加部分
+            # 随附加命中事件延迟到达, 到本次结算时已汇总完毕
+            if self._pending_true is not None:
+                pending_true = self._pending_true
+                self._pending_true = None
+                if self.port.entity_exists(pending_true["target"]):
+                    true_ratio = self.eidolon_param(1, 0, default=0.24)
+                    my_max_hp = self.port.max_hp(self.owner_id)
+                    true_base = pending_true["base"] + pending_true["additional"]
+                    if my_max_hp > 0 and true_base > 0:
+                        # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
+                        self.port.attack(
+                            self.owner_id,
+                            pending_true["target"],
+                            element="Quantum",
+                            atk_multiplier=(true_base * true_ratio) / my_max_hp,
+                            toughness_damage=0.0,
+                            damage_type=DamageType.TRUE,
+                            scaling_stat="hp"
+                        )
+            # 结界判定取窗口开启时与结算时两点状态的并集: 终结技自身的窗口在
+            # 事件到达时结界尚未展开 (状态在大招执行中段才施加), 须以结算时
+            # 状态补正, 否则大招本体永远无法触发自己开启的结界
+            if (zone_was_active or self.zone_active) and targets and total > 0:
+                living = [t for t in targets if self.port.entity_exists(t)]
+                if living:
+                    top_target = max(living, key=lambda t: self.port.current_hp(t))
+                    base_mult = self.skill_param("ultra", 2, default=0.12)
+                    additional_hits = hit_count
+                    if self.eidolon >= 2:
+                        base_mult *= self.eidolon_param(2, 0, default=1.2)
+                        additional_hits += 1
+                    self._zone_resolving = True
+                    try:
+                        for _ in range(additional_hits):
+                            self.port.attack(
+                                self.owner_id,
+                                top_target,
+                                element="Quantum",
+                                atk_multiplier=base_mult,
+                                toughness_damage=0.0,
+                                damage_type=DamageType.ADDITIONAL,
+                                scaling_stat="hp"
+                            )
+                        if self.eidolon >= 1:
+                            # 登记待结算真实伤害: 基数 = 本次攻击总伤害 + 本次附加
+                            # 实际值 (后者随事件到达汇总, 下次结算时发出)
+                            self._pending_true = {"target": top_target, "base": total, "additional": 0.0}
+                    finally:
+                        self._zone_resolving = False
+        if pending_volley:
+            # 追击作为独立行动: 开启其专属窗口采样并施放; 其伤害经效果队列
+            # 延迟到达后由窗口采样收集, 在下个动作边界结算 (与一般行动同轨)
+            self._zone_window_actor = self.owner_id
+            self._zone_window_zone = self.zone_active
+            self._cast_talent_volley()
+
+    def _cast_talent_volley(self) -> None:
+        """施放天赋追加攻击齐射 (全体敌人, 生命上限 18%) 并处理回能与行迹叠层。
+
+        倍率依据见天赋触发处注释 (E6 的 729% 不叠乘)。回能在此统一处理;
+        E6 自大招齐射的回能已在大招本体处一并结算, 其待发标记由
+        cast_ultimate 直接置位时不重复回能 (见 _pending_volley 的置位点)。
+        """
+        fu_mult = 0.18
+        for e in self.port.enemies(self.owner_id):
+            self.port.attack(
+                self.owner_id,
+                e,
+                element="Quantum",
+                atk_multiplier=fu_mult,
+                toughness_damage=10.0,
+                damage_type=DamageType.FOLLOW_UP,
+                scaling_stat="hp"
+            )
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 5.0 * err, cause="天赋追加攻击回能 (基础 5.0 × ERR)", source_plugin="缇宝天赋")
+        self._apply_lamb_buff()
 
     def _sync_glass_ball_hp(self) -> None:
         """同步行迹【长翅膀的玻璃球！】生命上限加成 (我方全体角色生命上限之和的 9%)。"""
@@ -479,19 +533,30 @@ class TibaoKit(KitHandler):
             attacker = event.attacker_name
             target = event.target_name
 
-            # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害
+            # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害。
+            # 附加/真实伤害不计入采样: 它们是结界自身的结算产物 (官方规则中也不再次
+            # 触发结界), 且引擎的伤害经效果队列延迟到达, 若计入将形成正反馈放大。
             if (
                 self._zone_window_actor is not None
                 and not self._zone_resolving
                 and self.port.is_ally(attacker)
                 and not self.port.is_countdown(attacker)
                 and not self.port.is_ally(target)
-                and getattr(event, "damage_type", None) != DamageType.DOT
+                and getattr(event, "damage_type", None) not in (DamageType.DOT, DamageType.ADDITIONAL, DamageType.TRUE)
                 and getattr(event.breakdown, "is_dot", False) is False
                 and event.damage > 0
             ):
                 self._zone_window_targets.add(target)
                 self._zone_window_total += float(event.damage)
+                self._zone_window_hits += 1
+
+            # 汇总待结算真实伤害的基数: 本窗口附加伤害的实际值 (延迟到达)
+            if (
+                self._pending_true is not None
+                and attacker == self.owner_id
+                and getattr(event, "damage_type", None) == DamageType.ADDITIONAL
+            ):
+                self._pending_true["additional"] += float(event.damage)
 
             # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血误判):
             # 1. 攻击者必须为我方其他目标 (排除缇宝自身，支持伴生忆灵长夜)
@@ -525,21 +590,7 @@ class TibaoKit(KitHandler):
                 if action_kind == ActionKind.ULTIMATE or "Ultimate" in str(action_type):
                     if actor_id not in self.talent_used_by:
                         self.talent_used_by.add(actor_id)
-                        # 天赋追加攻击倍率恒为生命上限 18%: E6 的 729% 不在此处叠乘。
-                        # 依据官方真值日志 (battle_20261025_131019) 对账: 队友大招触发与
-                        # 缇宝自身大招触发的两类追击齐射单发分布同量级 (中位约 7.5 万),
-                        # 不存在 8.29 倍量级的齐射; 旧实现叠乘后单发超官方均值 8.4 倍。
-                        fu_mult = 0.18
-                        for e in self.port.enemies(self.owner_id):
-                            self.port.attack(
-                                self.owner_id,
-                                e,
-                                element="Quantum",
-                                atk_multiplier=fu_mult,
-                                toughness_damage=10.0,
-                                damage_type=DamageType.FOLLOW_UP,
-                                scaling_stat="hp"
-                            )
-                        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                        self.port.gain_energy(self.owner_id, 5.0 * err, cause=f"队友[{actor_id}]施放大招触发天赋追击回能 (基础 5.0 × ERR {err*100:.1f}%)", source_plugin="缇宝天赋")
-                        self._apply_lamb_buff()
+                        # 置待发标记: 齐射在大招的结界窗口结算后作为独立行动施放
+                        # 并单独结算其结界窗口 (见 _flush_zone_window); 倍率依据
+                        # (E6 的 729% 不叠乘) 见 _cast_talent_volley。
+                        self._pending_volley = True

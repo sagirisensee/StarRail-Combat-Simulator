@@ -85,10 +85,13 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
         buff_names = [b["name"] for b in snap_cyy["buffs"]]
         self.assertIn("特邀嘉宾", buff_names, "长夜月应获得【特邀嘉宾】增益")
 
-        # 4. 验证特邀嘉宾攻击时，额外使知更鸟获得 2 点气氛值 (基础 1 点 + 额外 2 点 = 3 点)
+        # 4. 验证特邀嘉宾攻击时，额外使知更鸟获得 2 点气氛值 (基础 1 点 + 额外 2 点 = 3 点)。
+        #    本步内气氛值总增量为 4: 特邀嘉宾 (长夜月) 的攻击 +3, 以及知更鸟大招触发的
+        #    缇宝天赋追击作为一次独立的我方攻击行动 +1 (追击在官方时序中于大招结算后、
+        #    被拉条队友行动前施放, 经 gain_vibes 触发记录核实归属为缇宝)。
         vibes_before = robin.kit.vibes
         sim.step()
-        self.assertEqual(robin.kit.vibes, vibes_before + 3, "特邀嘉宾攻击应额外提供 2 点气氛值 (共 +3 点)")
+        self.assertEqual(robin.kit.vibes, vibes_before + 4, "特邀嘉宾攻击 +3 点与缇宝追击行动 +1 点 (共 +4 点)")
 
     def test_03_changyeyue_yizhi_burst_and_self_destruction(self):
         """测试 3: 验证长夜月忆质累积满 16 层触发忆灵立即爆发并自毁加速。"""
