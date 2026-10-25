@@ -833,6 +833,7 @@ class TrajectoryCast:
     actor: str
     skill_id: int
     name: str
+    order: int = -1
 
 
 @dataclass
@@ -925,12 +926,14 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
 
     result = TrajectoryResult(replay=None)
     turn_items = [i for i in timeline if i.kind in ("basic", "skill")]
-    ult_queue = deque([i for i in timeline if i.kind == "ult"])
+    ult_queue = deque([(idx, i) for idx, i in enumerate(timeline) if i.kind == "ult"])
     spirit_queues = {}
-    for i in timeline:
+    for idx, i in enumerate(timeline):
         if i.kind == "spirit":
             spirit_queues.setdefault(i.skill_id, deque()).append(
-                TrajectoryCast(av=i.av, actor=i.actor, skill_id=i.skill_id, name=i.name))
+                TrajectoryCast(av=i.av, actor=i.actor, skill_id=i.skill_id, name=i.name, order=idx))
+    master_indices = [idx for idx, i in enumerate(timeline) if i.kind in ("basic", "skill", "ult")]
+    fired_master = set()
     organic: List[Tuple[int, float]] = []
     organic_used = set()
     stash = {"amount": 0.0}
@@ -1024,6 +1027,20 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             kit.yizhi = 15
             stash["amount"] += excess
 
+    def _master_blocked(cast: TrajectoryCast, now_av: float) -> bool:
+        """同 AV 顺序闸门: 官方序位在本施放之前、且同簇 (AV 相差 <=0.5) 的本体
+        施放尚未落地时, 忆灵技不得抢先强制——官方节奏里她的终结技/战技先
+        落地 (再召唤与忆质入账), 忆灵技随后施放。超过簇时点 15 AV 仍未落地
+        则放行, 避免死锁。"""
+        if cast.order < 0 or now_av > cast.av + 15.0:
+            return False
+        for j in master_indices:
+            if j >= cast.order:
+                break
+            if j not in fired_master and timeline[j].av <= cast.av + 0.5:
+                return True
+        return False
+
     def _enforce_spirits() -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
         _clamp_memoria(now_av)
@@ -1044,14 +1061,15 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 result.records.append(TrajectoryRecord(sid, head.name, head.av, organic[match_idx][1], "organic", ()))
                 q.popleft()
         for sid, q in spirit_queues.items():
-            while q and q[0].av <= now_av:
+            while q and q[0].av <= now_av and not _master_blocked(q[0], now_av):
                 cast = q.popleft()
                 result.records.append(_force_spirit(cast, now_av))
 
     def _fire_due_ults() -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
-        while ult_queue and ult_queue[0].av <= now_av:
-            item = ult_queue.popleft()
+        while ult_queue and ult_queue[0][1].av <= now_av:
+            _idx, item = ult_queue.popleft()
+            fired_master.add(_idx)
             ent = sim.get_entity(item.actor)
             if ent is None:
                 result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
@@ -1080,8 +1098,9 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
     # 无排期的额外回合直接沉底, 与官方轨迹一一对应
     from collections import defaultdict as _dd
     actor_queues = _dd(deque)
-    for item in turn_items:
-        actor_queues[item.actor].append(item)
+    for idx, i in enumerate(timeline):
+        if i.kind in ("basic", "skill"):
+            actor_queues[i.actor].append((idx, i))
     steps = 0
     delays = 0
     idle_steps = 0
@@ -1095,7 +1114,7 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 land_av = float(getattr(sim, "current_av", 0.0)) + float(nxt.remaining_av)
                 q = actor_queues.get(nxt.name)
                 if q:
-                    head = q[0]
+                    head = q[0][1]
                     if head.av > land_av + 0.5:
                         nxt.distance_remaining += float(nxt.speed) * (head.av - land_av)
                         delays += 1
@@ -1122,7 +1141,8 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         if actor_ent.name in PLAYER_ACTORS:
             q = actor_queues.get(actor_ent.name)
             if q:
-                head = q.popleft()
+                _idx, head = q.popleft()
+                fired_master.add(_idx)
                 if head.kind == "skill":
                     sp = getattr(sim, "sp", None)
                     if sp is not None and not sp.can_consume(1):
@@ -1135,11 +1155,12 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         sim.step(action_override=override)
         if director is not None:
             director.after_step()
-        _enforce_spirits()
         _fire_due_ults()
+        _enforce_spirits()
     # 收尾: 剩余终结技与忆灵技排期
     while ult_queue:
-        item = ult_queue.popleft()
+        _idx, item = ult_queue.popleft()
+        fired_master.add(_idx)
         ent = sim.get_entity(item.actor)
         if ent is not None:
             ent.energy = float(ent.max_energy)
