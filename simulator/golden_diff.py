@@ -698,6 +698,7 @@ def main(argv=None) -> int:
         sim_label = "关卡 30510021 还原场景 (同阵容, 敌方构成/HP/波次按日志实测)"
     report = diff_sequences(golden, sim_seq)
     md = render_markdown(report, args.golden, sim_label, replay_md=replay_md)
+    md += "\n" + render_enemy_activity_markdown(extract_enemy_activity(args.golden))
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(md)
@@ -705,6 +706,96 @@ def main(argv=None) -> int:
     else:
         print(md)
     return 0
+
+
+def extract_enemy_activity(path: str) -> Dict[str, Any]:
+    """从 OnStatChange 提取敌方行动与受击回能 (签名法)。
+
+    Veritas 的 OnDamage 是玩家侧 DPS 统计事件, 只含我方输出; 敌方命中不产生
+    OnDamage。敌方行为的可观测签名在 OnStatChange 中: 敌方回合窗口内, 我方
+    角色的 CurrentSP (能量在内存协议中序列化为 CurrentSP) 出现约 5.0 x ERR
+    的小额增量即受击回能 (多段攻击会合并为其整数倍附近的样本增量)。
+    本提取为签名估算: CurrentSP 样本稀疏, 相邻样本间的净增量可能被同窗口
+    内的其他能量变动部分抵消, 计数应视为下限。
+    """
+    import bisect
+    import collections
+    import json as _json
+
+    events = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                events.append(_json.loads(line))
+
+    owner_at = []
+    turn_starts = []
+    cur = (None, None)
+    for i, e in enumerate(events):
+        if e.get("event") == "OnTurnBegin":
+            o = e.get("data", {}).get("turn_owner") or {}
+            cur = (o.get("team"), o.get("uid"))
+            turn_starts.append(i)
+        owner_at.append(cur)
+
+    enemy_turns = collections.Counter()
+    for i, e in enumerate(events):
+        if e.get("event") == "OnTurnBegin":
+            o = e.get("data", {}).get("turn_owner") or {}
+            if o.get("team") == "Enemy":
+                enemy_turns[o.get("uid")] += 1
+
+    sp_series = collections.defaultdict(list)
+    for i, e in enumerate(events):
+        if e.get("event") == "OnStatChange":
+            ent = e.get("data", {}).get("entity") or {}
+            prop = e.get("data", {}).get("property") or {}
+            if ent.get("team") == "Player" and prop.get("type") == "CurrentSP":
+                sp_series[ent.get("uid")].append((i, float(prop.get("value") or 0.0)))
+
+    hit_energy = {}
+    targets_per_turn = collections.defaultdict(set)
+    for uid, series in sp_series.items():
+        prev = 0.0
+        count = 0
+        total = 0.0
+        for i, v in series:
+            d = v - prev
+            prev = v
+            if 3.5 <= d <= 17.0 and i < len(owner_at) and owner_at[i][0] == "Enemy":
+                count += 1
+                total += d
+                t = bisect.bisect_right(turn_starts, i) - 1
+                targets_per_turn[t].add(uid)
+        if count:
+            hit_energy[uid] = {"count": count, "total": round(total, 1)}
+
+    wide_actions = sum(1 for s in targets_per_turn.values() if len(s) >= 3)
+    return {
+        "enemy_turns": dict(enemy_turns),
+        "enemy_turn_total": sum(enemy_turns.values()),
+        "hit_energy": hit_energy,
+        "hit_energy_total_count": sum(v["count"] for v in hit_energy.values()),
+        "hit_energy_total": round(sum(v["total"] for v in hit_energy.values()), 1),
+        "wide_actions": wide_actions,
+    }
+
+
+def render_enemy_activity_markdown(activity: Dict[str, Any]) -> str:
+    lines = []
+    lines.append("## 六、 敌方行动与受击回能 (官方, OnStatChange 签名提取)")
+    lines.append("")
+    lines.append("- 说明: OnDamage 仅含我方输出 (DPS 统计口径); 敌方命中以 OnStatChange 中")
+    lines.append("  CurrentSP 的受击回能签名 (约 5.0 x ERR/段) 提取, 计数为样本口径下限。")
+    lines.append(f"- 敌方回合总数: {activity['enemy_turn_total']} (按 uid: {activity['enemy_turns']})")
+    lines.append(f"- 受击回能事件: {activity['hit_energy_total_count']} 次, 合计约 {activity['hit_energy_total']:.1f} 点")
+    for uid in sorted(activity["hit_energy"]):
+        v = activity["hit_energy"][uid]
+        lines.append(f"  - uid {uid}: {v['count']} 次 / {v['total']:.1f} 点")
+    lines.append(f"- 群体攻击签名 (>=3 名我方同时受击回能的敌方回合): {activity['wide_actions']} 次")
+    lines.append("")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

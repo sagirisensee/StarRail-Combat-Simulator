@@ -216,3 +216,19 @@ class TestTrueDamageBarrierSuppression(unittest.TestCase):
         self.assertAlmostEqual(DamageCalculator.calculate(add_req).final_damage, add_full * 0.25, places=6)
         self.assertAlmostEqual(DamageCalculator.calculate(direct_req).final_damage, direct_full, places=6)
 
+
+
+class TestEnemyActivityExtraction(unittest.TestCase):
+    def test_enemy_activity_from_stat_change_signatures(self):
+        """敌方行动/受击回能从 OnStatChange 签名提取 (OnDamage 仅含我方输出)。
+
+        期望值直接数自官方日志: 敌方回合 16 (亚婆离 uid 100039 共 7 次);
+        风堇 (1409) 的受击回能含 5.0 x 1.194394 的签名值 (充能绳)。
+        """
+        from simulator.golden_diff import extract_enemy_activity
+        act = extract_enemy_activity("battle_logs/battle_20261025_131019.jsonl")
+        self.assertEqual(act["enemy_turn_total"], 16)
+        self.assertEqual(act["enemy_turns"].get(100039), 7)
+        self.assertIn(1409, act["hit_energy"])
+        self.assertGreaterEqual(act["hit_energy"][1409]["count"], 8)
+        self.assertGreater(act["wide_actions"], 0)
