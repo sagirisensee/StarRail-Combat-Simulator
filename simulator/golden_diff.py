@@ -1132,6 +1132,18 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                     result.sunk_turns += 1
                     delays += 1
                     continue
+        # B0. 终结技按精确 AV 中断: 若下一终结技时点落在本次步进的旅行区间
+        # 内, 先把时钟推进到该时点并放行, 其行动提前等效果须在被跨越的
+        # 回合之前结算 (官方第二场 167.9 知更鸟终结技: 若迟至步末 178.2
+        # 才放行, 被提前的长夜月回合与同簇爆发整体迟发约 10 AV)。
+        if getattr(sim, "_current_turn_entity", None) is None:
+            while ult_queue:
+                now0 = float(getattr(sim, "current_av", 0.0))
+                due_av = ult_queue[0][1].av
+                if not (now0 < due_av <= sim.peek_landing_av()):
+                    break
+                sim.advance_clock(due_av - now0)
+                _fire_due_ults()
         # B. 到点终结技
         _fire_due_ults()
         # C. 预览并执行回合

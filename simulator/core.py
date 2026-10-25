@@ -293,6 +293,32 @@ class TurnSimulator:
             return None
         return min(self._action_queue, key=lambda q: (0 if q["kind"] == "turn" else 1, q["seq"]))
 
+    def advance_clock(self, delta_av: float) -> None:
+        """仅推进时钟与全体跑道距离, 不服务任何行动。
+
+        供需要在步进中点精确落点中断事件的调用方使用 (如对账驱动在某次
+        步进的旅行区间内放行到点终结技): 距离按各自速度同比缩减, 到达
+        终点者在下一次服务时由 due 扫描入队。
+        """
+        if delta_av <= 0:
+            return
+        for entity in self.entities:
+            entity.distance_remaining = max(0.0, entity.distance_remaining - entity.speed * delta_av)
+        self.current_av += delta_av
+
+    def peek_landing_av(self) -> float:
+        """预览下一次行动服务将落点的 AV: 当前回合进行中或行动队列非空时
+        即当前 AV (服务不产生旅行), 否则为推进到最近终点后的 AV。"""
+        if self._current_turn_entity is not None:
+            return self.current_av
+        alive = [e for e in self.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        if not alive:
+            return self.current_av
+        self._scan_due_turns(alive)
+        if self._queue_head_entry(alive) is not None:
+            return self.current_av
+        return self.current_av + min(e.remaining_av for e in alive)
+
     def peek_next_actor(self) -> Optional[Entity]:
         """预览下一行动者 (队列感知, 供对账驱动与检视器): 当前回合进行中则为
         当前实体; 否则为行动队首; 队列为空时为距离最近的存活实体。"""
