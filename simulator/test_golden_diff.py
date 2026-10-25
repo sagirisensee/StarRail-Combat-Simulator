@@ -152,6 +152,45 @@ class TestStageDirectorReinforcements(unittest.TestCase):
         self.assertGreaterEqual(director.sprout_waves_spawned, 1)
         self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"))
 
+    def test_sprout_pair_on_phase_transition_and_reanchor(self):
+        """转阶段增援与节拍重锚 (两场日志实证): 一阶段血池打空的同一时点刷出
+        一对胚芽, 其后增援以转阶段时点起算 +75.76, 原节拍时点不再生成。
+
+        官方时点 (相对第二波): 第一场 +75.76/+151.52/+176.7(转阶段)/
+        +252.46/+328.22; 第二场同构。本测试以转阶段发生在 +200 处验证:
+        转阶段当刻生成一对, +227.28 (原节拍第三拍) 不生成, +275.76 生成。
+        """
+        from simulator.golden_diff import build_stage_sim
+        from simulator.stage_30510021 import SPROUT_INTERVAL_AV
+        sim, director = build_stage_sim()
+        for name in ("千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        self.assertTrue(director.wave2_started)
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽2"))
+        self.assertIsNone(sim.get_entity("狂兽的胚芽3"))
+        wave2_av = float(director.wave2_av or 0.0)
+        # 转阶段: 屏障释放后 (+156) 打空一阶段血池
+        transition_av = wave2_av + 200.0
+        sim.current_av = transition_av
+        boss = sim.get_entity("堕神之血•亚婆离")
+        boss.current_hp = 0.0
+        director.after_step()
+        self.assertEqual(director.boss_phase, 2)
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"), "转阶段时点应增援一对胚芽")
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽4"))
+        self.assertEqual(director.sprout_waves_spawned, 1)
+        # 原节拍第三拍 (+227.28) 已被重锚覆盖: 不生成
+        sim.current_av = wave2_av + 230.0
+        director.after_step()
+        self.assertIsNone(sim.get_entity("狂兽的胚芽5"))
+        # 重锚后的下一拍 (转阶段 +75.76): 生成
+        sim.current_av = transition_av + SPROUT_INTERVAL_AV
+        director.after_step()
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽5"))
+        self.assertEqual(director.sprout_waves_spawned, 2)
+
 
 class TestStageBossPhases(unittest.TestCase):
     def test_boss_two_pools_and_barrier_floor(self):
@@ -200,6 +239,44 @@ class TestStageBossPhases(unittest.TestCase):
         director.after_step()
         self.assertEqual(boss.current_hp, BOSS_PHASE2_FLOOR)
         self.assertTrue(boss.barrier_guarded)
+
+
+class TestStageBossActionCadence(unittest.TestCase):
+    def test_boss_idle_in_phase1_and_28av_cadence_in_phase2(self):
+        """亚婆离行动节拍 (两场日志回合全序实测): 一阶段无任何回合; 转阶段
+        时点起以 28.058 AV 等间隔行动 (折合速度 356.4)。"""
+        from simulator.golden_diff import build_stage_sim
+        from simulator.events import TurnBeginEvent
+        sim, director = build_stage_sim()
+        boss_avs = []
+        sim.event_bus.subscribe(TurnBeginEvent, lambda e: boss_avs.append(round(e.av, 2)) if "亚婆离" in e.actor_name else None)
+        for name in ("千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        self.assertTrue(director.wave2_started)
+        # 一阶段: 推进若干步, Boss 不应有任何回合
+        for _ in range(12):
+            sim.step()
+            director.after_step()
+        self.assertEqual(boss_avs, [], "一阶段亚婆离不应进行常规行动")
+        # 强制转阶段 (屏障释放后打空一阶段血池)
+        wave2_av = float(director.wave2_av or 0.0)
+        sim.current_av = wave2_av + 200.0
+        boss = sim.get_entity("堕神之血•亚婆离")
+        boss.current_hp = 0.0
+        director.after_step()
+        self.assertEqual(director.boss_phase, 2)
+        for _ in range(60):
+            sim.step()
+            director.after_step()
+            if boss_avs:
+                break
+        self.assertGreaterEqual(len(boss_avs), 1, "二阶段亚婆离应开始行动")
+        self.assertAlmostEqual(boss_avs[0], wave2_av + 200.0, delta=1.0, msg="二阶段首动应在转阶段时点")
+        # 首动刚结束、无人干扰的此刻: 其下一动剩余 AV 即节拍 28.058
+        # (不直接测两动间隔——期间它可能被击破, 击破延迟会合法地推迟下一动)
+        self.assertAlmostEqual(boss.remaining_av, 28.058, delta=0.3, msg="二阶段行动间隔应为 28.058 AV")
 
 
 class TestStageBossAI(unittest.TestCase):

@@ -4,11 +4,12 @@
 敌方数据来源分四类, 请勿混淆:
 - 实测值 (官方日志): 敌人构成、生命上限、波次切换与增援出现的 AV 时点;
 - 数据库值 (Nanoka 关卡数据, 与日志交叉验证): 第一波两只大型敌人的名称/
-  生命/速度/弱点/韧性 (见下); 以及亚婆离 (速度 238/关卡韧性 360)、
-  狂兽的胚芽 (速度 174/韧性 90)、千星戍卫 (速度 145/韧性 90) 的速度与
-  韧性——此前为中性估算 (100/300、120/100、110/90), 现按数据库值校准;
-  戍卫速度 145 与日志 ActionDelay 首值 68.87 (= 10000/145) 吻合。
-  弱点与抗性已由 Resistance 属性实测 (见下)。
+  生命/速度/弱点/韧性 (见下); 以及狂兽的胚芽 (速度 174/韧性 90)、千星
+  戍卫 (速度 145/韧性 90)、亚婆离的关卡韧性 360——此前为中性估算, 现按
+  数据库值校准; 戍卫速度 145 与日志 ActionDelay 首值 68.87 (= 10000/145)
+  吻合。亚婆离的速度不取数据库的 238: 两场日志中其一阶段无任何回合、
+  二阶段以 28.058 AV 等间隔行动 (见 BOSS_PHASE*_SPEED 注), 按日志实测
+  建模。弱点与抗性已由 Resistance 属性实测 (见下)。
 
 官方日志还原的战斗结构:
 - 第一波: 月夜天马 (HP 4,904,294) + 「灯塔」 (HP 4,291,259) + 千星戍卫 x3
@@ -21,8 +22,11 @@
   千星戍卫为「灯塔」技能【正道战线】召唤 (日志中其初始化事件紧随开场),
   本场景以开场即在场近似, 不单独建模召唤动作;
 - 第二波 (第一波全灭后, 日志中出现在 AV 101.78): 堕神之血•亚婆离 (HP 6,389,558)
-  + 狂兽的胚芽 x2 (HP 1,703,882); 此后约每 76 AV 增援狂兽的胚芽 x2, 共 5 批
-  (日志时点 +75.76 / +151.52 / +176.7 / +252.46 / +328.22, 本场景以等间隔近似)。
+  + 狂兽的胚芽 x2 (HP 1,703,882); 此后每 75.76 AV 增援狂兽的胚芽 x2, 另在
+  转阶段时点增援一批并以该时点重锚节拍, 总计 6 批 (第一场相对时点 +75.76 /
+  +151.52 / +176.7 (转阶段) / +252.46 / +328.22; 第二场同构: 97.9 起
+  +75.7 / +151.5 / 281.4 (转阶段) / +75.7 / +151.5——两场转阶段批的
+  CurrentHP 首样本均为 0, 即生成同簇即被击杀)。
 - 亚婆离为两段血池 (据日志 OnStatChange 中 uid 100039 的 CurrentHP 全序实测):
   一阶段 6,389,558 在事件约 47% 处降到 0 并转入二阶段 (无 OnEntityDefeated,
   属转阶段而非击杀), 二阶段血池 12,779,117 (恰为一阶段的 2 倍, 日志 MaxHP
@@ -57,8 +61,8 @@ BOSS_PHASE1_FLOOR_RELEASE_AV = 156.0
 # 真实伤害归零、附加伤害按 25% 结算、直接伤害 (普攻/战技/终结技/追击/
 # 忆灵技) 全额——屏障只转化派生类伤害, 不削减直接伤害
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
-SPROUT_WAVE_COUNT = 5      # 增援批次数 (日志实测)
-SPROUT_INTERVAL_AV = 76.0  # 增援间隔 (日志约 75.76 AV)
+SPROUT_WAVE_COUNT = 5      # 首批之后的增援批次数 (含转阶段增援, 两场日志均为总计 6 批)
+SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 两场增援间隔交替呈 75.7/75.8)
 
 # 第一波大型敌人 (Nanoka 关卡数据, 与日志/录像交叉验证, 见模块头注):
 # 月夜天马 4023020: 弱点火/量子/虚数, 速度 132, 关卡韧性 160;
@@ -115,10 +119,19 @@ def _mech(name: str, hp: float, speed: float, weaknesses: List[str]) -> Entity:
     return ent
 
 
+# 亚婆离的行动节拍 (两场日志的回合全序实测): 一阶段 (约 180 AV) 内日志中
+# 无任何以其为主体的回合——它不进行常规行动 (Nanoka 的 238 为怪物基础数据,
+# 本关卡脚本行为并非如此); 转入二阶段的同一时点起, 以 28.058 AV 的严格
+# 等间隔行动 (两场均值一致, 折合速度 356.4), 共 7 动。一阶段以速度 1.0
+# 近似「不行动」(剩余 AV 10000, 任何现实战斗时长内都不会到期)。
+BOSS_PHASE1_SPEED = 1.0
+BOSS_PHASE2_SPEED = 356.4
+
+
 def _boss() -> Entity:
     ent = Entity(
         name="堕神之血•亚婆离",
-        base_speed=238.0,
+        base_speed=BOSS_PHASE1_SPEED,
         base_atk=1600.0,
         max_hp=BOSS_HP,
         current_hp=BOSS_HP,
@@ -203,6 +216,7 @@ class Stage30510021Director:
         self.sprout_waves_spawned = 0
         self._sprout_seq = 0
         self.boss_phase = 1
+        self._next_sprout_av: Optional[float] = None
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
@@ -217,16 +231,17 @@ class Stage30510021Director:
             self._sprout_seq += 1
             self.sim.add_entity(_sprout(f"狂兽的胚芽{self._sprout_seq}"), trigger_battle_start=False)
 
-    def _manage_boss_phases(self) -> None:
+    def _manage_boss_phases(self) -> bool:
         """亚婆离两段血池与【血脑屏障】地板 (日志 CurrentHP 全序实测, 见模块头注)。
 
         一阶段: 屏障开启期间生命不低于 3,655,953 (日志首个冻结平台), 屏障按
         AV 脚本释放后血池可被打空, 打空即转入二阶段 (血池回满 12,779,117);
         二阶段生命不低于 3,833,735, 低于地板的伤害视为被屏障吸收。
+        返回本次调用是否刚刚完成转阶段 (供增援重锚判定)。
         """
         boss = self.sim.get_entity("堕神之血•亚婆离")
         if boss is None:
-            return
+            return False
         av = float(getattr(self.sim, "current_av", 0.0))
         wave2_av = self.wave2_av or 0.0
         if self.boss_phase == 1:
@@ -236,7 +251,10 @@ class Stage30510021Director:
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
                 boss.barrier_guarded = False
-                return
+                # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
+                boss.base_speed = BOSS_PHASE2_SPEED
+                boss.distance_remaining = 0.0
+                return True
             barrier_up = wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV <= av < wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV
             # 屏障开启期间: 生命不低于冻结值; 真实伤害归零、附加伤害按
             # 25% 结算 (由 damage 管线按 barrier_guarded 与伤害类别处理)
@@ -248,6 +266,7 @@ class Stage30510021Director:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
+        return False
 
     def after_step(self) -> None:
         if not self.wave2_started:
@@ -258,16 +277,27 @@ class Stage30510021Director:
                 boss.action_callback = _make_boss_ai(self.sim)
                 self.sim.add_entity(boss, trigger_battle_start=False)
                 self._spawn_sprouts(2)
+                self._next_sprout_av = self.wave2_av + SPROUT_INTERVAL_AV
             return
-        self._manage_boss_phases()
+        transitioned = self._manage_boss_phases()
         if self.sprout_waves_spawned >= SPROUT_WAVE_COUNT:
             return
         if not self._alive("堕神之血•亚婆离"):
             return
-        due_av = (self.wave2_av or 0.0) + SPROUT_INTERVAL_AV * (self.sprout_waves_spawned + 1)
-        if float(getattr(self.sim, "current_av", 0.0)) >= due_av:
+        av = float(getattr(self.sim, "current_av", 0.0))
+        if transitioned:
+            # 转阶段增援 (两场日志实证): 一阶段血池打空的同一时点刷出一对
+            # 胚芽 (两场该对的 CurrentHP 首样本均为 0——生成即被同簇爆发击杀),
+            # 且增援节拍以转阶段时点重锚 (其后增援为转阶段 +75.7/+151.5,
+            # 原节拍的后续时点不再生成)。该对计入增援批次上限。
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
+            self._next_sprout_av = av + SPROUT_INTERVAL_AV
+            return
+        if self._next_sprout_av is not None and av >= self._next_sprout_av:
+            self.sprout_waves_spawned += 1
+            self._spawn_sprouts(2)
+            self._next_sprout_av += SPROUT_INTERVAL_AV
 
 
 def build_stage_30510021(team: List[Entity]) -> tuple:
