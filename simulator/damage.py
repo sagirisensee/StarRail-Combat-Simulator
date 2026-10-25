@@ -105,7 +105,10 @@ class DamageCalculator:
         base_dmg = base_stat * req.skill_multiplier + req.flat_damage
 
         # 真实伤害: 无视防御与抗性, 不可暴击, 不吃增伤/易伤/韧性减伤, 基础区数值即最终伤害
+        # 例外: 目标处于真实伤害免疫状态 (如屏障护体) 时归零——伤害事件照常
+        # 产生、数值记为 0 (与实机日志中屏障期真实伤害事件数值为 0 的形态一致)
         if getattr(req, "is_true_damage", False):
+            suppressed = bool(getattr(req.target, "true_damage_immune", False))
             return DamageBreakdown(
                 attacker_name=req.attacker.name,
                 target_name=req.target.name,
@@ -117,7 +120,7 @@ class DamageCalculator:
                 res_mult=1.0,
                 vuln_mult=1.0,
                 reduction_mult=1.0,
-                final_damage=base_dmg
+                final_damage=0.0 if suppressed else base_dmg
             )
 
         # 2. 双暴区

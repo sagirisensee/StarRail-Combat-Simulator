@@ -153,3 +153,50 @@ class TestStageBossPhases(unittest.TestCase):
         boss.current_hp = BOSS_PHASE2_FLOOR - 500000.0
         director.after_step()
         self.assertEqual(boss.current_hp, BOSS_PHASE2_FLOOR)
+
+
+class TestStageBossAI(unittest.TestCase):
+    def test_boss_ai_alternates_aoe_and_heavy_single(self):
+        """亚婆离攻击模组交替: 第 1 动全体群伤 (多名我方掉血), 第 2 动重单点 (仅 1 名掉血)。"""
+        from simulator.golden_diff import build_stage_sim
+        sim, director = build_stage_sim()
+        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        boss = sim.get_entity("堕神之血•亚婆离")
+        self.assertIsNotNone(boss.action_callback)
+
+        def hp_snapshot():
+            return {e.name: e.current_hp for e in sim.entities if not e.is_enemy}
+
+        before = hp_snapshot()
+        boss.action_callback(boss, sim.resolver, "EnemySkill")
+        sim.resolver.resolve_all()
+        after1 = hp_snapshot()
+        hurt_aoe = [n for n in before if after1[n] < before[n]]
+        self.assertGreaterEqual(len(hurt_aoe), 3)
+
+        boss.action_callback(boss, sim.resolver, "EnemySkill")
+        sim.resolver.resolve_all()
+        after2 = hp_snapshot()
+        hurt_single = [n for n in after1 if after2[n] < after1[n]]
+        self.assertEqual(len(hurt_single), 1)
+
+
+class TestTrueDamageBarrierSuppression(unittest.TestCase):
+    def test_true_damage_zeroed_on_immune_target_only(self):
+        """真实伤害免疫标记: 目标免疫时真实伤害归零, 普通伤害不受影响。
+
+        依据: 官方日志屏障期打在亚婆离身上的真实伤害数值均为 0 (事件照常)。
+        """
+        from simulator.core import Entity
+        from simulator.damage import DamageCalculator, DamageRequest
+        attacker = Entity(name="攻击者", base_speed=100.0, base_atk=1000.0, max_hp=5000.0, current_hp=5000.0)
+        target = Entity(name="目标", base_speed=100.0, base_atk=1000.0, max_hp=5000.0, current_hp=5000.0, is_enemy=True)
+        req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, is_true_damage=True)
+        self.assertGreater(DamageCalculator.calculate(req).final_damage, 0.0)
+        target.true_damage_immune = True
+        self.assertEqual(DamageCalculator.calculate(req).final_damage, 0.0)
+        normal = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0)
+        self.assertGreater(DamageCalculator.calculate(normal).final_damage, 0.0)

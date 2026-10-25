@@ -60,6 +60,8 @@ class Entity:
     is_enemy: bool = False
     is_memosprite: bool = False
     is_countdown: bool = False
+    # 真实伤害免疫 (如屏障护体期间): 受到的真实伤害归零, 由关卡/机制侧按状态切换
+    true_damage_immune: bool = False
     master_name: Optional[str] = None
     extra_immediate_action: bool = False
     # 绑定所属的模拟器引用

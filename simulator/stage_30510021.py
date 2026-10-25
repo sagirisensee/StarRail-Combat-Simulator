@@ -4,9 +4,9 @@
 敌方数据来源分三类, 请勿混淆:
 - 实测值 (官方日志): 敌人构成、生命上限、波次切换与增援出现的 AV 时点;
 - 仓库既有值: 千星戍卫 (8032040) 的速度/韧性/弱点沿用 simulate_battle 既有关卡配置;
-- 估算值: 亚婆离与狂兽的胚芽的速度/韧性/弱点日志未提供 (日志中的首次行动 AV
-  已被行动提前等机制污染, 无法反推), 取中性估算, 仅影响敌方出手频率与承伤,
-  不影响我方机制对账的结论方向。
+- 估算值: 亚婆离与狂兽的胚芽的速度/韧性日志未提供 (日志中的首次行动 AV
+  已被行动提前等机制污染, 无法反推), 取中性估算, 仅影响敌方出手频率,
+  不影响我方机制对账的结论方向。弱点与抗性已由 Resistance 属性实测 (见下)。
 
 官方日志还原的战斗结构:
 - 第一波: 千星戍卫 x3 (HP 459,778);
@@ -22,8 +22,10 @@
   +127,791 (= 一阶段血池 2%, 与机制帖所述护法回血量吻合) 的回升与再冻结,
   最后一段才被打空。本场景以「一阶段地板 3,655,953 + 按 AV 时点释放」
   近似屏障周期 (屏障自身的血量/充能规则日志不可见)。
-  注: 本日志中屏障期缇宝星魂 1 真实伤害照常触发 (82 次中 42 次在地板
-  生效后), 与社区机制帖的说法不同, 以日志为准, 不做真实伤害压制。
+  屏障与真实伤害: 屏障开启期间打在亚婆离身上的真实伤害数值为 0
+  (日志实测: 二阶段地板后 42 次真实伤害中 31 次为 0、一阶段冻结期 5 次
+  为 0、无屏障期 0 次; 打在胚芽上的照常全额)——机制帖所述压制以
+  「事件照常、数值归零」的形式存在, 本场景以 true_damage_immune 标记建模。
 """
 
 from typing import List, Optional
@@ -42,7 +44,13 @@ SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 增援批次数 (日志实测)
 SPROUT_INTERVAL_AV = 76.0  # 增援间隔 (日志约 75.76 AV)
 
-TEAM_WEAKNESSES = ["Ice", "Wind", "Quantum", "Imaginary", "Fire"]
+# 弱点与抗性: 据日志 OnStatChange 的 Resistance 属性实测——只有非弱点属性
+# 会以 0.2 记录, 缺失的属性即弱点 (抗性 0)。亚婆离弱点为冰/量子/虚数
+# (风不在弱点内, 风抗 0.2); 胚芽弱点为火/风/虚数 (冰/量子抗 0.2)。
+BOSS_WEAKNESSES = ["Ice", "Quantum", "Imaginary"]
+BOSS_RES = {"Ice": 0.0, "Quantum": 0.0, "Imaginary": 0.0, "Wind": 0.2, "Fire": 0.2, "Physical": 0.2, "Thunder": 0.2}
+SPROUT_WEAKNESSES = ["Fire", "Wind", "Imaginary"]
+SPROUT_RES = {"Fire": 0.0, "Wind": 0.0, "Imaginary": 0.0, "Ice": 0.2, "Quantum": 0.2, "Physical": 0.2, "Thunder": 0.2}
 
 
 def _guard(name: str) -> Entity:
@@ -68,9 +76,10 @@ def _boss() -> Entity:
         max_hp=BOSS_HP,
         current_hp=BOSS_HP,
         max_toughness=300.0, current_toughness=300.0,
-        weaknesses=list(TEAM_WEAKNESSES),
+        weaknesses=list(BOSS_WEAKNESSES),
         is_enemy=True,
     )
+    ent.damage_res = dict(BOSS_RES)
     # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
     # 记账方式管理 (见 Stage30510021Director._manage_boss_phases),
     # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
@@ -78,17 +87,63 @@ def _boss() -> Entity:
     return ent
 
 
+def _make_boss_ai(sim: TurnSimulator):
+    """亚婆离的攻击行为 (经 Entity.action_callback 挂载, 不改核心桩)。
+
+    校准依据: 本日志不含敌方伤害事件 (OnDamage 仅记录我方攻击者), 无法实测
+    敌方伤害数值; 行为模式按社区机制帖所述二阶段攻击模组 (重单点 + 圆形
+    群伤交替) 近似, 单发倍率沿用核心桩的 1.2 基准、重单点 2.4。
+    目的不在敌方伤害本身 (不进入对账口径), 而在于恢复我方生命损失事件的
+    经济: 忆质积攒、小伊卡天赋治疗触发与受击回能都由这类事件驱动,
+    核心桩的全程单体攻击使这三条经济在模拟中系统性偏低。
+    """
+    from .damage import DamageRequest
+    from .effects import ApplyDamageEffect
+    from .status import StatType
+    import random
+
+    state = {"actions": 0}
+
+    def _ai(entity, resolver, action) -> None:
+        def _hit(target, multiplier: float) -> None:
+            req = DamageRequest(attacker=entity, target=target, skill_multiplier=multiplier)
+            resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+
+        allies = [
+            e for e in sim.entities
+            if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+        ]
+        if not allies:
+            return
+        state["actions"] += 1
+        if state["actions"] % 2 == 1:
+            # 群伤模组: 全体 (含忆灵) 各承受一次
+            for target in allies:
+                _hit(target, 1.2)
+        else:
+            # 重单点模组: 按嘲讽选取 (与核心桩同口径)
+            target = max(
+                allies,
+                key=lambda a: sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30),
+            )
+            _hit(target, 2.4)
+
+    return _ai
+
+
 def _sprout(name: str) -> Entity:
-    return Entity(
+    ent = Entity(
         name=name,
         base_speed=120.0,
         base_atk=1600.0,
         max_hp=SPROUT_HP,
         current_hp=SPROUT_HP,
         max_toughness=100.0, current_toughness=100.0,
-        weaknesses=list(TEAM_WEAKNESSES),
+        weaknesses=list(SPROUT_WEAKNESSES),
         is_enemy=True,
     )
+    ent.damage_res = dict(SPROUT_RES)
+    return ent
 
 
 class Stage30510021Director:
@@ -130,19 +185,29 @@ class Stage30510021Director:
                 self.boss_phase = 2
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
+                boss.true_damage_immune = False
                 return
             release_av = (self.wave2_av or 0.0) + BOSS_PHASE1_FLOOR_RELEASE_AV
-            if float(getattr(self.sim, "current_av", 0.0)) < release_av and boss.current_hp < BOSS_PHASE1_FLOOR:
+            barrier_up = float(getattr(self.sim, "current_av", 0.0)) < release_av
+            # 屏障开启期间: 生命不低于冻结值, 且真实伤害归零 (日志实测:
+            # 屏障期打在 Boss 身上的真实伤害事件数值均为 0, 打在胚芽上照常)
+            boss.true_damage_immune = barrier_up
+            if barrier_up and boss.current_hp < BOSS_PHASE1_FLOOR:
                 boss.current_hp = BOSS_PHASE1_FLOOR
-        elif boss.current_hp < BOSS_PHASE2_FLOOR:
-            boss.current_hp = BOSS_PHASE2_FLOOR
+        else:
+            if boss.current_hp < BOSS_PHASE2_FLOOR:
+                boss.current_hp = BOSS_PHASE2_FLOOR
+            # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
+            boss.true_damage_immune = boss.current_hp <= BOSS_PHASE2_FLOOR
 
     def after_step(self) -> None:
         if not self.wave2_started:
             if not any(self._alive(n) for n in ("千星戍卫A", "千星戍卫B", "千星戍卫C")):
                 self.wave2_started = True
                 self.wave2_av = float(getattr(self.sim, "current_av", 0.0))
-                self.sim.add_entity(_boss(), trigger_battle_start=False)
+                boss = _boss()
+                boss.action_callback = _make_boss_ai(self.sim)
+                self.sim.add_entity(boss, trigger_battle_start=False)
                 self._spawn_sprouts(2)
             return
         self._manage_boss_phases()
