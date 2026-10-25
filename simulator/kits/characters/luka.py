@@ -26,6 +26,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -120,7 +121,7 @@ class LukaKit(KitHandler):
                 element="Physical",
                 atk_multiplier=0.50,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
             self.port.upsert_status(BuffSpec(
                 key=self.BLEED_DEBUFF,
@@ -145,7 +146,7 @@ class LukaKit(KitHandler):
                 element="Physical",
                 atk_multiplier=1.96,
                 toughness_damage=20.0,
-                damage_tag="EnhancedBasic"
+                damage_type=DamageType.BASIC
             )
             # 引爆裂伤 (基础 85% + E6 额外 24% = 109%)
             detonate_mult = 1.09 if self.eidolon >= 6 else 0.85
@@ -155,7 +156,7 @@ class LukaKit(KitHandler):
                 element="Physical",
                 atk_multiplier=detonate_mult,
                 toughness_damage=0.0,
-                damage_tag="DoT_Detonation"
+                damage_type=DamageType.DOT
             )
         else:
             self.port.attack(
@@ -164,7 +165,7 @@ class LukaKit(KitHandler):
                 element="Physical",
                 atk_multiplier=1.40,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack"
+                damage_type=DamageType.BASIC
             )
             self.fighting_will = min(4, self.fighting_will + 1)
             self._update_e4_buff()
@@ -179,7 +180,7 @@ class LukaKit(KitHandler):
             element="Physical",
             atk_multiplier=1.20,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         self.port.upsert_status(BuffSpec(
             key=self.BLEED_DEBUFF,
@@ -235,6 +236,6 @@ class LukaKit(KitHandler):
             element="Physical",
             atk_multiplier=3.30,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         self.port.gain_energy(self.owner_id, 5.0)

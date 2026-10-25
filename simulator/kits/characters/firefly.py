@@ -22,6 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -101,7 +102,7 @@ class FireflyKit(KitHandler):
                 element="Fire",
                 atk_multiplier=2.00,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 scaling_stat="atk"
             )
 
@@ -117,7 +118,7 @@ class FireflyKit(KitHandler):
                 element="Fire",
                 atk_multiplier=2.80,
                 toughness_damage=15.0,
-                damage_tag="BasicAttack",
+                damage_type=DamageType.BASIC,
                 scaling_stat="atk"
             )
         else:
@@ -128,7 +129,7 @@ class FireflyKit(KitHandler):
                 element="Fire",
                 atk_multiplier=1.40,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack",
+                damage_type=DamageType.BASIC,
                 scaling_stat="atk"
             )
             self.port.gain_energy(self.owner_id, 20.0)
@@ -167,7 +168,7 @@ class FireflyKit(KitHandler):
                 element="Fire",
                 atk_multiplier=main_mult,
                 toughness_damage=45.0,
-                damage_tag="Skill",
+                damage_type=DamageType.SKILL,
                 scaling_stat="atk"
             )
 
@@ -181,7 +182,7 @@ class FireflyKit(KitHandler):
                         element="Fire",
                         atk_multiplier=adj_mult,
                         toughness_damage=22.5,
-                        damage_tag="Skill",
+                        damage_type=DamageType.SKILL,
                         scaling_stat="atk"
                     )
 
@@ -201,7 +202,7 @@ class FireflyKit(KitHandler):
                 element="Fire",
                 atk_multiplier=2.00,
                 toughness_damage=20.0,
-                damage_tag="Skill",
+                damage_type=DamageType.SKILL,
                 scaling_stat="atk"
             )
             self.port.advance(self.owner_id, self.owner_id, 0.25)

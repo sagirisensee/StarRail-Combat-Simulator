@@ -22,6 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -106,7 +107,7 @@ class WeltKit(KitHandler):
             element="Imaginary",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -121,7 +122,7 @@ class WeltKit(KitHandler):
             element="Imaginary",
             atk_multiplier=mult,
             toughness_damage=tough,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 施加【失重】(防御力降低 20%，速度降低 15%)
@@ -169,7 +170,7 @@ class WeltKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=1.50,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
             # 全体推条 40% 与禁锢
             self.port.delay(self.owner_id, enemy, 0.40)

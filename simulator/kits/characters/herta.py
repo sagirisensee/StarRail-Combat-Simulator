@@ -20,6 +20,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -110,7 +111,7 @@ class HertaKit(KitHandler):
             element="Ice",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
 
@@ -121,7 +122,7 @@ class HertaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=0.40,
                 toughness_damage=0.0,
-                damage_tag="AdditionalDamage",
+                damage_type=DamageType.ADDITIONAL,
                 scaling_stat="atk"
             )
 
@@ -141,7 +142,7 @@ class HertaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=mult,
                 toughness_damage=10.0,
-                damage_tag="Skill",
+                damage_type=DamageType.SKILL,
                 scaling_stat="atk"
             )
 
@@ -159,7 +160,7 @@ class HertaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate",
+                damage_type=DamageType.ULTIMATE,
                 scaling_stat="atk"
             )
 
@@ -197,7 +198,7 @@ class HertaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=dmg_mult,
                 toughness_damage=5.0,
-                damage_tag="FollowUpAttack",
+                damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="atk"
             )
 

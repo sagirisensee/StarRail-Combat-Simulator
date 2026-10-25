@@ -25,7 +25,7 @@
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
@@ -146,7 +146,7 @@ class FuXuanKit(KitHandler):
             element="Quantum",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="hp"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -198,7 +198,7 @@ class FuXuanKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate",
+                damage_type=DamageType.ULTIMATE,
                 scaling_stat="hp"
             )
 

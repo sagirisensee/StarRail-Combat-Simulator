@@ -14,6 +14,7 @@ from .events import (
     HPLostEvent
 )
 from .damage import DamageCalculator, DamageRequest, DamageBreakdown
+from .actions import DamageType
 
 
 MAX_EFFECT_STEPS = 100
@@ -75,6 +76,7 @@ class ApplyDamageEffect(EffectRequest):
     break_effect: float = 0.0
     ignore_weakness: bool = False
     damage_tag: str = "direct"
+    damage_type: Optional[DamageType] = None  # 权威伤害分类；为 None 时由 damage_tag 经 DamageType.from_tag 收编
 
 
 class EffectResolver:
@@ -270,6 +272,7 @@ class EffectResolver:
             else:
                 hp_left = 0.0
 
+            resolved_damage_type = getattr(effect, "damage_type", None) or DamageType.from_tag(getattr(effect, "damage_tag", "direct"))
             bus.publish(DamageAppliedEvent(
                 av=round(av, 2),
                 cycle=cycle,
@@ -279,7 +282,8 @@ class EffectResolver:
                 is_crit=breakdown.is_crit,
                 breakdown=breakdown,
                 target_hp_left=hp_left,
-                damage_tag=getattr(effect, "damage_tag", "direct")
+                damage_tag=resolved_damage_type.value,
+                damage_type=resolved_damage_type
             ))
 
             # 4. 敌方直接攻击命中我方角色时触发标准受击回能 (严格受目标 ERR 能量恢复效率放大)
@@ -287,7 +291,7 @@ class EffectResolver:
                 getattr(effect.request.attacker, "is_enemy", False)
                 and not getattr(target, "is_enemy", False)
                 and not getattr(target, "is_memosprite", False)
-                and getattr(effect, "damage_tag", "direct") == "direct"
+                and resolved_damage_type == DamageType.DIRECT
             ):
                 hit_base = getattr(effect.request, "hit_energy", 0.0) or 5.0
                 if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):

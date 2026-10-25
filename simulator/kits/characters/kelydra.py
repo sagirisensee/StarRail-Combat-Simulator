@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -100,7 +101,7 @@ class KelydraKit(KitHandler):
             element="Wind",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -151,7 +152,7 @@ class KelydraKit(KitHandler):
                 element="Wind",
                 atk_multiplier=ult_mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
 
         self.port.gain_energy(self.owner_id, 5.0)

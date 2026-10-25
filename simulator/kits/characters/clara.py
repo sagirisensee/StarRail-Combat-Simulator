@@ -22,6 +22,7 @@
 from typing import Optional, List, Any, Set
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -130,7 +131,7 @@ class ClaraKit(KitHandler):
             element="Physical",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -147,7 +148,7 @@ class ClaraKit(KitHandler):
                 element="Physical",
                 atk_multiplier=mult,
                 toughness_damage=10.0,
-                damage_tag="Skill",
+                damage_type=DamageType.SKILL,
                 scaling_stat="atk"
             )
 
@@ -208,7 +209,7 @@ class ClaraKit(KitHandler):
                 element="Physical",
                 atk_multiplier=3.20,
                 toughness_damage=20.0,
-                damage_tag="FollowUpAttack",
+                damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="atk"
             )
             # 对相邻目标造成 50% 溅射
@@ -220,7 +221,7 @@ class ClaraKit(KitHandler):
                         element="Physical",
                         atk_multiplier=1.60,
                         toughness_damage=10.0,
-                        damage_tag="FollowUpAttack",
+                        damage_type=DamageType.FOLLOW_UP,
                         scaling_stat="atk"
                     )
         else:
@@ -231,7 +232,7 @@ class ClaraKit(KitHandler):
                 element="Physical",
                 atk_multiplier=1.60,
                 toughness_damage=10.0,
-                damage_tag="FollowUpAttack",
+                damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="atk"
             )
 

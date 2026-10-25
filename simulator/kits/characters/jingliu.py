@@ -24,6 +24,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -115,7 +116,7 @@ class JingliuKit(KitHandler):
             element="Ice",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -142,7 +143,7 @@ class JingliuKit(KitHandler):
                 element="Ice",
                 atk_multiplier=mult_main,
                 toughness_damage=20.0,
-                damage_tag="Skill",
+                damage_type=DamageType.SKILL,
                 scaling_stat="atk"
             )
 
@@ -154,7 +155,7 @@ class JingliuKit(KitHandler):
                         element="Ice",
                         atk_multiplier=mult_adj,
                         toughness_damage=10.0,
-                        damage_tag="Skill",
+                        damage_type=DamageType.SKILL,
                         scaling_stat="atk"
                     )
 
@@ -172,7 +173,7 @@ class JingliuKit(KitHandler):
                 element="Ice",
                 atk_multiplier=2.00,
                 toughness_damage=20.0,
-                damage_tag="Skill",
+                damage_type=DamageType.SKILL,
                 scaling_stat="atk"
             )
             self.port.gain_energy(self.owner_id, 30.0)
@@ -187,7 +188,7 @@ class JingliuKit(KitHandler):
             element="Ice",
             atk_multiplier=3.00,
             toughness_damage=20.0,
-            damage_tag="Ultimate",
+            damage_type=DamageType.ULTIMATE,
             scaling_stat="atk"
         )
 
@@ -199,7 +200,7 @@ class JingliuKit(KitHandler):
                     element="Ice",
                     atk_multiplier=1.50,
                     toughness_damage=10.0,
-                    damage_tag="Ultimate",
+                    damage_type=DamageType.ULTIMATE,
                     scaling_stat="atk"
                 )
 

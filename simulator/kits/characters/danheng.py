@@ -21,6 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -123,7 +124,7 @@ class DanHengKit(KitHandler):
             element="Wind",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -135,7 +136,7 @@ class DanHengKit(KitHandler):
             element="Wind",
             atk_multiplier=2.60,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 减速 (基础 12%，E6 为 20%)
@@ -165,7 +166,7 @@ class DanHengKit(KitHandler):
             element="Wind",
             atk_multiplier=mult,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
 
         # E4: 终结技击杀立即行动

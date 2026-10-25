@@ -24,6 +24,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -108,7 +109,7 @@ class KafkaKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=0.50,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
             self.port.upsert_status(BuffSpec(
                 key=self.SHOCK_DEBUFF,
@@ -129,7 +130,7 @@ class KafkaKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -142,7 +143,7 @@ class KafkaKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.60,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 扩散受击
@@ -155,7 +156,7 @@ class KafkaKit(KitHandler):
                     element="Lightning",
                     atk_multiplier=0.60,
                     toughness_damage=10.0,
-                    damage_tag="Skill_Blast"
+                    damage_type=DamageType.SKILL
                 )
 
         # 2. 战技立即引爆 75% DoT 持续伤害
@@ -165,7 +166,7 @@ class KafkaKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.50,
             toughness_damage=0.0,
-            damage_tag="DoT_Detonation"
+            damage_type=DamageType.DOT
         )
 
         # E1: 目标受到的 DoT 伤害提高 30%
@@ -196,7 +197,7 @@ class KafkaKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
             # 施加触电状态
             self.port.upsert_status(BuffSpec(
@@ -216,7 +217,7 @@ class KafkaKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=detonate_mult,
                 toughness_damage=0.0,
-                damage_tag="DoT_Detonation"
+                damage_type=DamageType.DOT
             )
 
         # E4: 敌方受到触电结算时，卡芙卡恢复能量 (每个敌人 2 点)
@@ -231,7 +232,7 @@ class KafkaKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="FollowUp"
+            damage_type=DamageType.FOLLOW_UP
         )
         self.port.upsert_status(BuffSpec(
             key=self.SHOCK_DEBUFF,

@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -122,7 +123,7 @@ class TohsakaRinKit(KitHandler):
             element="Quantum",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -145,7 +146,7 @@ class TohsakaRinKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=aoe_mult,
                     toughness_damage=10.0,
-                    damage_tag="Skill"
+                    damage_type=DamageType.SKILL
                 )
         else:
             # 常规单体战技
@@ -155,7 +156,7 @@ class TohsakaRinKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=skill_mult,
                 toughness_damage=20.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
 
         self.port.gain_energy(self.owner_id, 30.0)
@@ -171,7 +172,7 @@ class TohsakaRinKit(KitHandler):
             element="Quantum",
             atk_multiplier=6.00,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         for enemy in enemies:
             if enemy != target_id:
@@ -181,7 +182,7 @@ class TohsakaRinKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=2.00,
                     toughness_damage=20.0,
-                    damage_tag="Ultimate"
+                    damage_type=DamageType.ULTIMATE
                 )
 
         # E6: 获得 24 点宝石能量并自拉条 100% (额外回合)

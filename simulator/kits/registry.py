@@ -491,7 +491,7 @@ class GenericKit(KitHandler):
     """通用保底 Kit (用于尚未编写专属机制的角色)。"""
 
     def definition(self, kind: Any):
-        from ..actions import ActionKind, AbilityDefinition, TargetMode, ResourceCost
+        from ..actions import ActionKind, AbilityDefinition, TargetMode, ResourceCost, DamageType
         if kind == ActionKind.SKILL:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=1), name="战技")
         elif kind == ActionKind.ULTIMATE:
@@ -501,11 +501,11 @@ class GenericKit(KitHandler):
     def execute(self, ctx: Any):
         target = ctx.target_ids[0] if ctx.target_ids else (self.port.enemies(self.owner_id)[0] if self.port.enemies(self.owner_id) else self.owner_id)
         if ctx.kind.name == "SKILL":
-            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=2.0, toughness_damage=20.0, damage_tag="Skill")
+            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=2.0, toughness_damage=20.0, damage_type=DamageType.SKILL)
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind.name == "ULTIMATE":
-            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=3.0, toughness_damage=30.0, damage_tag="Ultimate")
+            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=3.0, toughness_damage=30.0, damage_type=DamageType.ULTIMATE)
             self.port.gain_energy(self.owner_id, 5.0)
         else:
-            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=1.0, toughness_damage=10.0, damage_tag="Basic")
+            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=1.0, toughness_damage=10.0, damage_type=DamageType.BASIC)
             self.port.gain_energy(self.owner_id, 20.0)

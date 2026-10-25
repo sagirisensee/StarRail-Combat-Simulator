@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -151,7 +152,7 @@ class YanqingKit(KitHandler):
             element="Ice",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
         self._check_soulsteel_followup(target_id)
@@ -164,7 +165,7 @@ class YanqingKit(KitHandler):
             element="Ice",
             atk_multiplier=2.20,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         # 赋予自身【智剑连心】
         self._apply_soulsteel()
@@ -188,7 +189,7 @@ class YanqingKit(KitHandler):
             element="Ice",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="YanqingFollowUp"
+            damage_type=DamageType.FOLLOW_UP
         )
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
@@ -215,7 +216,7 @@ class YanqingKit(KitHandler):
             element="Ice",
             atk_multiplier=3.50,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         self.port.gain_energy(self.owner_id, 5.0)
         self._check_soulsteel_followup(target_id)

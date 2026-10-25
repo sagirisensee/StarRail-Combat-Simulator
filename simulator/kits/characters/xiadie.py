@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -107,7 +108,7 @@ class XiadieKit(KitHandler):
             element="Quantum",
             atk_multiplier=0.70,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -139,7 +140,7 @@ class XiadieKit(KitHandler):
             element="Quantum",
             atk_multiplier=0.50,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 相邻目标 30% 生命上限量子伤害
@@ -157,7 +158,7 @@ class XiadieKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=0.30,
                     toughness_damage=10.0,
-                    damage_tag="Skill"
+                    damage_type=DamageType.SKILL
                 )
 
         self.port.gain_energy(self.owner_id, 30.0)

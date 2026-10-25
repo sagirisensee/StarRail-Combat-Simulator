@@ -7,6 +7,7 @@
 """
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Type, Any
+from .actions import DamageType
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,12 @@ class DamageAppliedEvent(BattleEvent):
     breakdown: Any              # DamageBreakdown
     target_hp_left: float
     damage_tag: str = "direct"
+    damage_type: Any = None     # DamageType 枚举 (伤害分类的权威字段, damage_tag 仅作展示兼容)
+
+    def __post_init__(self):
+        # 手工构造事件未显式给出 damage_type 时, 由 damage_tag 经官方映射收编, 保证该字段恒为枚举
+        if self.damage_type is None:
+            object.__setattr__(self, "damage_type", DamageType.from_tag(self.damage_tag))
 
 
 @dataclass(frozen=True)

@@ -22,6 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -91,7 +92,7 @@ class ArlanKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
@@ -104,7 +105,7 @@ class ArlanKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -133,7 +134,7 @@ class ArlanKit(KitHandler):
             element="Lightning",
             atk_multiplier=skill_mult,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         self.port.gain_energy(self.owner_id, 30.0)
 
@@ -164,7 +165,7 @@ class ArlanKit(KitHandler):
             element="Lightning",
             atk_multiplier=main_mult,
             toughness_damage=20.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
 
         # 相邻扩散攻击
@@ -182,7 +183,7 @@ class ArlanKit(KitHandler):
                     element="Lightning",
                     atk_multiplier=blast_mult,
                     toughness_damage=10.0,
-                    damage_tag="Ultimate"
+                    damage_type=DamageType.ULTIMATE
                 )
 
         self.port.gain_energy(self.owner_id, 5.0)

@@ -23,6 +23,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -104,7 +105,7 @@ class YunliKit(KitHandler):
             element="Physical",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -125,7 +126,7 @@ class YunliKit(KitHandler):
             element="Physical",
             atk_multiplier=mult_main,
             toughness_damage=20.0,
-            damage_tag="Skill",
+            damage_type=DamageType.SKILL,
             scaling_stat="atk"
         )
 
@@ -137,7 +138,7 @@ class YunliKit(KitHandler):
                     element="Physical",
                     atk_multiplier=mult_adj,
                     toughness_damage=10.0,
-                    damage_tag="Skill",
+                    damage_type=DamageType.SKILL,
                     scaling_stat="atk"
                 )
 
@@ -199,7 +200,7 @@ class YunliKit(KitHandler):
                 element="Physical",
                 atk_multiplier=2.20 * dmg_boost,
                 toughness_damage=20.0,
-                damage_tag="Ultimate",
+                damage_type=DamageType.ULTIMATE,
                 scaling_stat="atk"
             )
             for e in enemies:
@@ -210,7 +211,7 @@ class YunliKit(KitHandler):
                         element="Physical",
                         atk_multiplier=1.10 * dmg_boost,
                         toughness_damage=10.0,
-                        damage_tag="Ultimate",
+                        damage_type=DamageType.ULTIMATE,
                         scaling_stat="atk"
                     )
 
@@ -223,7 +224,7 @@ class YunliKit(KitHandler):
                     element="Physical",
                     atk_multiplier=0.72 * dmg_boost,
                     toughness_damage=5.0,
-                    damage_tag="Ultimate",
+                    damage_type=DamageType.ULTIMATE,
                     scaling_stat="atk"
                 )
         else:
@@ -234,7 +235,7 @@ class YunliKit(KitHandler):
                 element="Physical",
                 atk_multiplier=1.20,
                 toughness_damage=10.0,
-                damage_tag="FollowUpAttack",
+                damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="atk"
             )
             for e in enemies:
@@ -245,7 +246,7 @@ class YunliKit(KitHandler):
                         element="Physical",
                         atk_multiplier=0.60,
                         toughness_damage=5.0,
-                        damage_tag="FollowUpAttack",
+                        damage_type=DamageType.FOLLOW_UP,
                         scaling_stat="atk"
                     )
             self.port.gain_energy(self.owner_id, 15.0)

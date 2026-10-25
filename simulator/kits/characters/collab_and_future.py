@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -44,17 +45,17 @@ class TohsakaRinKit(KitHandler):
         if ctx.kind == ActionKind.BASIC:
             target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
             mult = 1.20 if self.eidolon >= 1 else 1.00 # E1 普攻强化
-            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=mult, toughness_damage=10.0, damage_tag="BasicAttack")
+            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=mult, toughness_damage=10.0, damage_type=DamageType.BASIC)
             self.port.gain_energy(self.owner_id, 20.0)
         elif ctx.kind == ActionKind.SKILL:
             mult = 1.60 if self.eidolon >= 2 else 1.40 # E2 战技增伤
             for enemy in self.port.enemies(self.owner_id):
-                self.port.attack(self.owner_id, enemy, element="Quantum", atk_multiplier=mult, toughness_damage=10.0, damage_tag="Skill")
+                self.port.attack(self.owner_id, enemy, element="Quantum", atk_multiplier=mult, toughness_damage=10.0, damage_type=DamageType.SKILL)
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
             ult_mult = 3.20 if self.eidolon >= 6 else 2.60 # E6 宝石剑毁灭爆发
             for enemy in self.port.enemies(self.owner_id):
-                self.port.attack(self.owner_id, enemy, element="Quantum", atk_multiplier=ult_mult, toughness_damage=20.0, damage_tag="Ultimate")
+                self.port.attack(self.owner_id, enemy, element="Quantum", atk_multiplier=ult_mult, toughness_damage=20.0, damage_type=DamageType.ULTIMATE)
                 # E4: 减防 20%
                 if self.eidolon >= 4:
                     self.port.upsert_status(BuffSpec(
@@ -101,16 +102,16 @@ class ArcherKit(KitHandler):
     def execute(self, ctx: ActionContext) -> None:
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
         if ctx.kind == ActionKind.BASIC:
-            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=1.0, toughness_damage=10.0, damage_tag="BasicAttack")
+            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=1.0, toughness_damage=10.0, damage_type=DamageType.BASIC)
             self.port.gain_energy(self.owner_id, 20.0)
         elif ctx.kind == ActionKind.SKILL:
             mult = 2.40 * (1.20 if self.eidolon >= 2 else 1.0) # E2 战技增伤 20%
-            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=mult, toughness_damage=20.0, damage_tag="Skill")
+            self.port.attack(self.owner_id, target_id, element="Quantum", atk_multiplier=mult, toughness_damage=20.0, damage_type=DamageType.SKILL)
             self.port.gain_energy(self.owner_id, 30.0)
         elif ctx.kind == ActionKind.ULTIMATE:
             ult_mult = 3.60 if self.eidolon >= 6 else 2.80 # E6 固有结界完全展开
             for enemy in self.port.enemies(self.owner_id):
-                self.port.attack(self.owner_id, enemy, element="Quantum", atk_multiplier=ult_mult, toughness_damage=30.0, damage_tag="Ultimate")
+                self.port.attack(self.owner_id, enemy, element="Quantum", atk_multiplier=ult_mult, toughness_damage=30.0, damage_type=DamageType.ULTIMATE)
             # 结界自拉条 100%
             if self.eidolon >= 4:
                 self.port.advance(self.owner_id, self.owner_id, 1.0)
@@ -123,7 +124,7 @@ class XilianKit(KitHandler):
         return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1 if kind == ActionKind.BASIC else (1 if kind == ActionKind.SKILL else 0)), name="昔涟之忆")
     def execute(self, ctx: ActionContext):
         t = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        self.port.attack(self.owner_id, t, element="Ice", atk_multiplier=2.0, toughness_damage=20.0, damage_tag="Memory")
+        self.port.attack(self.owner_id, t, element="Ice", atk_multiplier=2.0, toughness_damage=20.0, damage_type=DamageType.SKILL)
         self.port.gain_energy(self.owner_id, 20.0)
 
 
@@ -143,7 +144,7 @@ class ChangyeyueKit(KitHandler):
         return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="长夜之月")
     def execute(self, ctx: ActionContext):
         for e in self.port.enemies(self.owner_id):
-            self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=2.2, toughness_damage=20.0, damage_tag="Moonlight")
+            self.port.attack(self.owner_id, e, element="Ice", atk_multiplier=2.2, toughness_damage=20.0, damage_type=DamageType.SKILL)
         self.port.gain_energy(self.owner_id, 30.0)
 
 
@@ -163,7 +164,7 @@ class FengjinKit(KitHandler):
         return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="堇色狂岚")
     def execute(self, ctx: ActionContext):
         for e in self.port.enemies(self.owner_id):
-            self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=2.0, toughness_damage=20.0, damage_tag="Windburst")
+            self.port.attack(self.owner_id, e, element="Wind", atk_multiplier=2.0, toughness_damage=20.0, damage_type=DamageType.SKILL)
         self.port.gain_energy(self.owner_id, 30.0)
 
 
@@ -173,7 +174,7 @@ class XiadieKit(KitHandler):
         return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="幻蝶之翩")
     def execute(self, ctx: ActionContext):
         t = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
-        self.port.attack(self.owner_id, t, element="Quantum", atk_multiplier=2.5, toughness_damage=20.0, damage_tag="Butterfly")
+        self.port.attack(self.owner_id, t, element="Quantum", atk_multiplier=2.5, toughness_damage=20.0, damage_type=DamageType.SKILL)
         self.port.gain_energy(self.owner_id, 30.0)
 
 
@@ -205,5 +206,5 @@ class DahliaKit(KitHandler):
         return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=1 if kind == ActionKind.SKILL else 0), name="冥火大丽花")
     def execute(self, ctx: ActionContext):
         for e in self.port.enemies(self.owner_id):
-            self.port.attack(self.owner_id, e, element="Fire", atk_multiplier=1.8, toughness_damage=20.0, damage_tag="Hellfire")
+            self.port.attack(self.owner_id, e, element="Fire", atk_multiplier=1.8, toughness_damage=20.0, damage_type=DamageType.SKILL)
         self.port.gain_energy(self.owner_id, 30.0)

@@ -25,6 +25,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -116,7 +117,7 @@ class March7thHuntKit(KitHandler):
                     element="Imaginary",
                     atk_multiplier=1.12,
                     toughness_damage=5.0,
-                    damage_tag="EnhancedBasic"
+                    damage_type=DamageType.BASIC
                 )
 
             self.charges = max(0, self.charges - 7)
@@ -130,7 +131,7 @@ class March7thHuntKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=1.40,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack"
+                damage_type=DamageType.BASIC
             )
             self.add_charge(1)
             self.port.gain_energy(self.owner_id, 20.0)
@@ -170,7 +171,7 @@ class March7thHuntKit(KitHandler):
             element="Imaginary",
             atk_multiplier=2.40,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         self.extra_init_hits = 2
         self.port.gain_energy(self.owner_id, 5.0)

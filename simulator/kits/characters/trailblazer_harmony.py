@@ -20,6 +20,7 @@ from typing import Optional, List, Any
 import random
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -139,7 +140,7 @@ class TrailblazerHarmonyKit(KitHandler):
             element="Imaginary",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -154,7 +155,7 @@ class TrailblazerHarmonyKit(KitHandler):
             element="Imaginary",
             atk_multiplier=0.50,
             toughness_damage=10.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 基础 4 段额外弹射，E6 增加 2 段 (共 6 段弹射，总计 7 段攻击)
@@ -167,7 +168,7 @@ class TrailblazerHarmonyKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=0.50,
                 toughness_damage=5.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
 
         # E1 您的最佳观众席: 首次战技返还 1 点 SP

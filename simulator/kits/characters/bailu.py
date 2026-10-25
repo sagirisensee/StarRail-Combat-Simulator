@@ -17,7 +17,7 @@
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
@@ -111,7 +111,7 @@ class BailuKit(KitHandler):
             element="Lightning",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)

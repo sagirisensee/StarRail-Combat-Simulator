@@ -19,6 +19,7 @@ from typing import Optional, List, Any
 import random
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -108,7 +109,7 @@ class MishaKit(KitHandler):
             element="Ice",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -123,7 +124,7 @@ class MishaKit(KitHandler):
             element="Ice",
             atk_multiplier=2.00,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 相邻目标 80% 冰伤，削韧 10
@@ -141,7 +142,7 @@ class MishaKit(KitHandler):
                     element="Ice",
                     atk_multiplier=0.80,
                     toughness_damage=10.0,
-                    damage_tag="Skill"
+                    damage_type=DamageType.SKILL
                 )
 
         # 战技使下次终结技段数 +1
@@ -202,7 +203,7 @@ class MishaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=dmg_per_hit,
                 toughness_damage=5.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
 
         # 终结技重置段数回基础 3 段

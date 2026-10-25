@@ -25,7 +25,7 @@
 from typing import Optional, Any
 from ..base import KitHandler
 from ..registry import register_kit
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...events import ActionExecuteEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
@@ -155,7 +155,7 @@ class RobinKit(KitHandler):
             element="Physical",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -319,7 +319,7 @@ class RobinKit(KitHandler):
                         element="Physical",
                         atk_multiplier=add_mult,
                         toughness_damage=0.0,
-                        damage_tag="AdditionalDamage",
+                        damage_type=DamageType.ADDITIONAL,
                         scaling_stat="atk",
                         force_crit=True,
                         fixed_crit_dmg=fixed_cd

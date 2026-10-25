@@ -23,6 +23,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -103,7 +104,7 @@ class TopazKit(KitHandler):
             element="Fire",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="FollowUpAttack",
+            damage_type=DamageType.FOLLOW_UP,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -183,7 +184,7 @@ class TopazKit(KitHandler):
             element="Fire",
             atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="FollowUpAttack",
+            damage_type=DamageType.FOLLOW_UP,
             scaling_stat="atk"
         )
 

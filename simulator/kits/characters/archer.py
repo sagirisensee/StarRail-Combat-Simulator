@@ -19,6 +19,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -102,7 +103,7 @@ class ArcherKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=1.00,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
         self.charges += 1
 
@@ -114,7 +115,7 @@ class ArcherKit(KitHandler):
             element="Quantum",
             atk_multiplier=1.30,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -130,7 +131,7 @@ class ArcherKit(KitHandler):
             element="Quantum",
             atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # E1 未曾触及的理想: 单回合施放 3 次战技后恢复 2 点 SP
@@ -165,7 +166,7 @@ class ArcherKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=ult_mult,
                 toughness_damage=30.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
 
         self.port.gain_energy(self.owner_id, 5.0)
@@ -180,5 +181,5 @@ class ArcherKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=1.00,
                 toughness_damage=10.0,
-                damage_tag="FollowUp"
+                damage_type=DamageType.FOLLOW_UP
             )

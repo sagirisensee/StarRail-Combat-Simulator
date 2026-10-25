@@ -20,6 +20,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -94,7 +95,7 @@ class SampoKit(KitHandler):
             element="Wind",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self._apply_wind_shear(target_id)
         self.port.gain_energy(self.owner_id, 20.0)
@@ -112,7 +113,7 @@ class SampoKit(KitHandler):
             element="Wind",
             atk_multiplier=0.56,
             toughness_damage=10.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         self._apply_wind_shear(target_id)
 
@@ -125,7 +126,7 @@ class SampoKit(KitHandler):
                 element="Wind",
                 atk_multiplier=0.56,
                 toughness_damage=5.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
             self._apply_wind_shear(target)
 
@@ -137,7 +138,7 @@ class SampoKit(KitHandler):
                     element="Wind",
                     atk_multiplier=0.08,
                     toughness_damage=0.0,
-                    damage_tag="DoT_Detonation"
+                    damage_type=DamageType.DOT
                 )
 
         self.port.gain_energy(self.owner_id, 30.0)
@@ -151,7 +152,7 @@ class SampoKit(KitHandler):
                 element="Wind",
                 atk_multiplier=1.60,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
             # 持续伤害易伤 30%
             self.port.upsert_status(BuffSpec(

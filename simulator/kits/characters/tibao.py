@@ -23,7 +23,7 @@
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
@@ -180,7 +180,7 @@ class TibaoKit(KitHandler):
             element="Quantum",
             atk_multiplier=main_mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="hp"
         )
 
@@ -198,7 +198,7 @@ class TibaoKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=adj_mult,
                     toughness_damage=5.0,
-                    damage_tag="BasicAttack",
+                    damage_type=DamageType.BASIC,
                     scaling_stat="hp"
                 )
         except ValueError:
@@ -324,7 +324,7 @@ class TibaoKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=fu_mult,
                     toughness_damage=10.0,
-                    damage_tag="FollowUpAttack",
+                    damage_type=DamageType.FOLLOW_UP,
                     scaling_stat="hp"
                 )
 
@@ -395,7 +395,7 @@ class TibaoKit(KitHandler):
             is_valid_attacker = self.port.is_ally(attacker) and attacker != self.owner_id
             is_valid_target = not self.port.is_ally(target)
             is_attack_dmg = (
-                getattr(event, "damage_tag", "") not in ("dot", "stage_bleed", "reflect", "environment")
+                getattr(event, "damage_type", None) != DamageType.DOT
                 and getattr(event.breakdown, "is_dot", False) is False
                 and event.damage > 0
             )
@@ -423,7 +423,7 @@ class TibaoKit(KitHandler):
                                 element="Quantum",
                                 atk_multiplier=fu_mult,
                                 toughness_damage=10.0,
-                                damage_tag="FollowUpAttack",
+                                damage_type=DamageType.FOLLOW_UP,
                                 scaling_stat="hp"
                             )
                         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0

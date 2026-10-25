@@ -18,7 +18,7 @@
 from typing import Optional, Any
 from ..base import KitHandler
 from ..registry import register_kit
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...events import ActionExecuteEvent, HealAppliedEvent, HPLostEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
@@ -139,7 +139,7 @@ class ExampleCharacterKit(KitHandler):
                 element="Ice",
                 atk_multiplier=mult,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack",
+                damage_type=DamageType.BASIC,
                 scaling_stat="atk"
             )
             self.port.gain_energy(self.owner_id, 20.0)
@@ -179,7 +179,7 @@ class ExampleCharacterKit(KitHandler):
                     element="Ice",
                     atk_multiplier=mult,
                     toughness_damage=20.0,
-                    damage_tag="Ultimate",
+                    damage_type=DamageType.ULTIMATE,
                     scaling_stat="atk"
                 )
             self.port.gain_energy(self.owner_id, 5.0)
@@ -235,6 +235,6 @@ class ExampleMemospriteKit(KitHandler):
             element="Ice",
             atk_multiplier=0.80,
             toughness_damage=10.0,
-            damage_tag="MemospriteSkill",
+            damage_type=DamageType.SERVANT,
             scaling_stat="hp"
         )

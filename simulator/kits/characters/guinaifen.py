@@ -21,6 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -97,7 +98,7 @@ class GuinaifenKit(KitHandler):
                     element="Fire",
                     atk_multiplier=0.50,
                     toughness_damage=5.0,
-                    damage_tag="Technique"
+                    damage_type=DamageType.TECHNIQUE
                 )
                 self._apply_firekiss(tgt)
 
@@ -109,7 +110,7 @@ class GuinaifenKit(KitHandler):
             element="Fire",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self._apply_firekiss(target_id)
         self.port.gain_energy(self.owner_id, 20.0)
@@ -123,7 +124,7 @@ class GuinaifenKit(KitHandler):
             element="Fire",
             atk_multiplier=1.20,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         # 扩散目标 40%
         for e in self.port.enemies(self.owner_id):
@@ -134,7 +135,7 @@ class GuinaifenKit(KitHandler):
                     element="Fire",
                     atk_multiplier=0.40,
                     toughness_damage=10.0,
-                    damage_tag="Skill_Blast"
+                    damage_type=DamageType.SKILL
                 )
             self.port.upsert_status(BuffSpec(
                 key=self.BURN_DEBUFF,
@@ -172,7 +173,7 @@ class GuinaifenKit(KitHandler):
                 element="Fire",
                 atk_multiplier=1.20,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
             # 引爆灼烧 92%
             self.port.attack(
@@ -181,7 +182,7 @@ class GuinaifenKit(KitHandler):
                 element="Fire",
                 atk_multiplier=0.92,
                 toughness_damage=0.0,
-                damage_tag="DoT_Detonation"
+                damage_type=DamageType.DOT
             )
             self._apply_firekiss(enemy)
 

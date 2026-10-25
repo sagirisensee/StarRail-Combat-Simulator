@@ -25,6 +25,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -108,7 +109,7 @@ class QingqueKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=3.36,
                 toughness_damage=20.0,
-                damage_tag="EnhancedBasic"
+                damage_type=DamageType.BASIC
             )
             enemies = self.port.enemies(self.owner_id)
             for e in enemies:
@@ -119,7 +120,7 @@ class QingqueKit(KitHandler):
                         element="Quantum",
                         atk_multiplier=1.40,
                         toughness_damage=10.0,
-                        damage_tag="EnhancedBasic_Blast"
+                        damage_type=DamageType.BASIC
                     )
 
             # E6: 施放强化普攻后恢复 1 点战技点！
@@ -135,7 +136,7 @@ class QingqueKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=3.36,
                     toughness_damage=20.0,
-                    damage_tag="AutarkyFollowUp"
+                    damage_type=DamageType.FOLLOW_UP
                 )
 
             self.is_hidden_hand = False
@@ -149,7 +150,7 @@ class QingqueKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=1.40,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack"
+                damage_type=DamageType.BASIC
             )
 
         self.port.gain_energy(self.owner_id, 20.0)
@@ -207,7 +208,7 @@ class QingqueKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
         # 必定进入暗杠状态
         self._enter_hidden_hand()

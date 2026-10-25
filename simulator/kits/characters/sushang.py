@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -124,7 +125,7 @@ class SushangKit(KitHandler):
                 element="Physical",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
@@ -135,7 +136,7 @@ class SushangKit(KitHandler):
             element="Physical",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -150,7 +151,7 @@ class SushangKit(KitHandler):
             element="Physical",
             atk_multiplier=2.10,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 剑势判定：基础 1 次 33% 附加伤害
@@ -160,7 +161,7 @@ class SushangKit(KitHandler):
             element="Physical",
             atk_multiplier=0.33,
             toughness_damage=0.0,
-            damage_tag="SwordStance"
+            damage_type=DamageType.ADDITIONAL
         )
 
         # 终结技强化状态下额外触发 2 次剑势 (每次伤害为原剑势 50% = 16.5%)
@@ -172,7 +173,7 @@ class SushangKit(KitHandler):
                     element="Physical",
                     atk_multiplier=0.165,
                     toughness_damage=0.0,
-                    damage_tag="SwordStance"
+                    damage_type=DamageType.ADDITIONAL
                 )
 
         # E2 其身百炼: 触发【剑势】后受到的伤害降低 20%，持续 1 回合
@@ -220,6 +221,6 @@ class SushangKit(KitHandler):
             element="Physical",
             atk_multiplier=3.20,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         self.port.gain_energy(self.owner_id, 5.0)

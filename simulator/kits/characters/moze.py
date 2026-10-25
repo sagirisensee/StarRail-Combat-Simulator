@@ -22,6 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -113,7 +114,7 @@ class MozeKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -130,7 +131,7 @@ class MozeKit(KitHandler):
             element="Lightning",
             atk_multiplier=1.50,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 标记为猎物 (E2: 全体暴伤提高 40%)
@@ -161,7 +162,7 @@ class MozeKit(KitHandler):
             element="Lightning",
             atk_multiplier=0.30,
             toughness_damage=0.0,
-            damage_tag="AdditionalDamage"
+            damage_type=DamageType.ADDITIONAL
         )
 
         # E1: 触发附加伤害回能 2 点
@@ -197,7 +198,7 @@ class MozeKit(KitHandler):
             element="Lightning",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="FollowUpAttack"
+            damage_type=DamageType.FOLLOW_UP
         )
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
@@ -222,7 +223,7 @@ class MozeKit(KitHandler):
             element="Lightning",
             atk_multiplier=2.70,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
 
         # 立即发动追加攻击

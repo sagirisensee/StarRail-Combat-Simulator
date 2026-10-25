@@ -22,7 +22,7 @@
 
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
@@ -110,7 +110,7 @@ class PelaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 scaling_stat="atk"
             )
         for enemy in enemies:
@@ -137,7 +137,7 @@ class PelaKit(KitHandler):
             element="Ice",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
         self.port.gain_energy(self.owner_id, 20.0)
@@ -152,7 +152,7 @@ class PelaKit(KitHandler):
             element="Ice",
             atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="Skill",
+            damage_type=DamageType.SKILL,
             scaling_stat="atk"
         )
 
@@ -203,7 +203,7 @@ class PelaKit(KitHandler):
                 element="Ice",
                 atk_multiplier=ult_mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate",
+                damage_type=DamageType.ULTIMATE,
                 scaling_stat="atk"
             )
             self.port.upsert_status(BuffSpec(

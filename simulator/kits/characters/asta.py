@@ -21,6 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -126,7 +127,7 @@ class AstaKit(KitHandler):
                 element="Fire",
                 atk_multiplier=0.50,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
@@ -137,7 +138,7 @@ class AstaKit(KitHandler):
             element="Fire",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.charging_stacks = min(5, self.charging_stacks + 1)
         self._update_charging_buff()
@@ -156,7 +157,7 @@ class AstaKit(KitHandler):
             element="Fire",
             atk_multiplier=0.50,
             toughness_damage=10.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 弹射其余段
@@ -169,7 +170,7 @@ class AstaKit(KitHandler):
                 element="Fire",
                 atk_multiplier=0.50,
                 toughness_damage=5.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
 
         self.charging_stacks = min(5, self.charging_stacks + 2)

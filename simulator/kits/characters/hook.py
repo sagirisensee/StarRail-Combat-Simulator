@@ -20,6 +20,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -106,7 +107,7 @@ class HookKit(KitHandler):
                 element="Fire",
                 atk_multiplier=0.50,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
         for enemy in enemies:
             self.port.upsert_status(BuffSpec(
@@ -128,7 +129,7 @@ class HookKit(KitHandler):
             element="Fire",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
         self._check_talent(target_id)
@@ -154,7 +155,7 @@ class HookKit(KitHandler):
                 element="Fire",
                 atk_multiplier=main_mult,
                 toughness_damage=20.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
             self._apply_burn(target_id, burn_duration)
 
@@ -173,7 +174,7 @@ class HookKit(KitHandler):
                         element="Fire",
                         atk_multiplier=blast_mult,
                         toughness_damage=10.0,
-                        damage_tag="Skill"
+                        damage_type=DamageType.SKILL
                     )
         else:
             # 常规战技：单体 240%
@@ -183,7 +184,7 @@ class HookKit(KitHandler):
                 element="Fire",
                 atk_multiplier=2.40,
                 toughness_damage=20.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
             self._apply_burn(target_id, burn_duration)
 
@@ -218,7 +219,7 @@ class HookKit(KitHandler):
                 element="Fire",
                 atk_multiplier=1.00,
                 toughness_damage=0.0,
-                damage_tag="AdditionalDamage"
+                damage_type=DamageType.ADDITIONAL
             )
             self.port.gain_energy(self.owner_id, 5.0)
 
@@ -244,7 +245,7 @@ class HookKit(KitHandler):
             element="Fire",
             atk_multiplier=4.00,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         # 强化下一次战技
         self.is_enhanced_skill = True

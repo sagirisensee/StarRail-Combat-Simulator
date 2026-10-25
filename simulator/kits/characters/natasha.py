@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -97,7 +98,7 @@ class NatashaKit(KitHandler):
                 element="Physical",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 scaling_stat="atk"
             )
         for enemy in enemies:
@@ -124,7 +125,7 @@ class NatashaKit(KitHandler):
             element="Physical",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="atk"
         )
 
@@ -136,7 +137,7 @@ class NatashaKit(KitHandler):
                 element="Physical",
                 atk_multiplier=0.40,
                 toughness_damage=0.0,
-                damage_tag="AdditionalDamage",
+                damage_type=DamageType.ADDITIONAL,
                 scaling_stat="hp"
             )
 

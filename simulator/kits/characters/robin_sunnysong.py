@@ -48,6 +48,7 @@ import math
 from ..base import KitHandler
 from ..registry import register_kit
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -94,7 +95,7 @@ class SunnyMusiciansKit(KitHandler):
                 element="Wind",
                 atk_multiplier=mult,
                 toughness_damage=30.0,
-                damage_tag="MemospriteSkill",
+                damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
             )
 
@@ -850,7 +851,7 @@ class RobinSunnySongKit(KitHandler):
             element="Wind",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="hp"
         )
         self.port.gain_energy(self.owner_id, 20.0)

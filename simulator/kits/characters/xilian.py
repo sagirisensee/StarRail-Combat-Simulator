@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -108,7 +109,7 @@ class XilianKit(KitHandler):
                 element="Ice",
                 atk_multiplier=0.42,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack"
+                damage_type=DamageType.BASIC
             )
         else:
             # 常规普攻：70% 生命上限
@@ -119,7 +120,7 @@ class XilianKit(KitHandler):
                 element="Ice",
                 atk_multiplier=0.70,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack"
+                damage_type=DamageType.BASIC
             )
 
         self.port.gain_energy(self.owner_id, 20.0)

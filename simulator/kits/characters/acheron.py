@@ -24,6 +24,7 @@
 from typing import Optional, List, Any, Dict
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -166,7 +167,7 @@ class AcheronKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 scaling_stat="atk",
                 ignore_weakness=True
             )
@@ -177,14 +178,14 @@ class AcheronKit(KitHandler):
         """普攻【三途枯榷】：单体雷属性伤害，140% (Lv 10) / 100% (Lv 6) 攻击力。"""
         target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
         mult = self.skill_param("basic", 0, default=1.40)
-        tag = "Ultimate" if self.eidolon >= 6 else "BasicAttack"
+        tag = DamageType.ULTIMATE if self.eidolon >= 6 else DamageType.BASIC
         self.port.attack(
             self.owner_id,
             target_id,
             element="Lightning",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag=tag,
+            damage_type=tag,
             scaling_stat="atk"
         )
 
@@ -196,7 +197,7 @@ class AcheronKit(KitHandler):
 
         mult_main = self.skill_param("skill", 0, default=1.60)
         mult_adj = self.skill_param("skill", 1, default=0.60)
-        tag = "Ultimate" if self.eidolon >= 6 else "Skill"
+        tag = DamageType.ULTIMATE if self.eidolon >= 6 else DamageType.SKILL
 
         self.port.attack(
             self.owner_id,
@@ -204,7 +205,7 @@ class AcheronKit(KitHandler):
             element="Lightning",
             atk_multiplier=mult_main,
             toughness_damage=20.0,
-            damage_tag=tag,
+            damage_type=tag,
             scaling_stat="atk"
         )
 
@@ -218,7 +219,7 @@ class AcheronKit(KitHandler):
                     element="Lightning",
                     atk_multiplier=mult_adj,
                     toughness_damage=10.0,
-                    damage_tag=tag,
+                    damage_type=tag,
                     scaling_stat="atk"
                 )
 
@@ -251,7 +252,7 @@ class AcheronKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=mult,
                 toughness_damage=30.0,
-                damage_tag="Ultimate",
+                damage_type=DamageType.ULTIMATE,
                 scaling_stat="atk"
             )
         self.crimson_knots.clear()

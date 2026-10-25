@@ -21,6 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -109,7 +110,7 @@ class HanyaKit(KitHandler):
             element="Physical",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -121,7 +122,7 @@ class HanyaKit(KitHandler):
             element="Physical",
             atk_multiplier=2.40,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
 
         # 施加【承负】(E6: 增伤由 30% 提高至 40%)

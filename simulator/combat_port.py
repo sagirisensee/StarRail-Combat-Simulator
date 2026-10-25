@@ -8,7 +8,7 @@
 import sys
 from dataclasses import dataclass
 from typing import Protocol, Tuple, Optional, Any, TYPE_CHECKING
-from .actions import ActionKind, TargetMode
+from .actions import ActionKind, TargetMode, DamageType
 from .effects import (
     AdvanceActionEffect, DelayActionEffect, ModifySPEffect, ApplyDamageEffect, DamageRequest
 )
@@ -105,6 +105,7 @@ class CombatPort(Protocol):
         atk_multiplier: float,
         toughness_damage: float,
         damage_tag: str = "direct",
+        damage_type: Optional[DamageType] = None,
         ignore_weakness: bool = False,
         scaling_stat: str = "atk",
         force_crit: Optional[bool] = None,
@@ -538,11 +539,13 @@ class SimulatorCombatPort:
         atk_multiplier: float,
         toughness_damage: float,
         damage_tag: str = "direct",
+        damage_type: Optional[DamageType] = None,
         ignore_weakness: bool = False,
         scaling_stat: str = "atk",
         force_crit: Optional[bool] = None,
         fixed_crit_dmg: Optional[float] = None
     ) -> None:
+        resolved_damage_type = damage_type or DamageType.from_tag(damage_tag)
         tgt = self._get_entity(target_id)
         src = self._get_entity(source_id)
         if not tgt or not src:
@@ -562,7 +565,7 @@ class SimulatorCombatPort:
             fixed_crit_dmg=fixed_crit_dmg,
             scaling_stat=scaling_stat
         )
-        if damage_tag == "FollowUpAttack":
+        if resolved_damage_type == DamageType.FOLLOW_UP:
             caller_frame = sys._getframe(1)
             if self._last_followup_frame is not caller_frame or getattr(self, "_last_followup_actor", None) != source_id:
                 self._last_followup_frame = caller_frame
@@ -581,7 +584,8 @@ class SimulatorCombatPort:
             toughness_reduction=toughness_damage,
             element=element,
             ignore_weakness=ignore_weakness,
-            damage_tag=damage_tag
+            damage_tag=resolved_damage_type.value,
+            damage_type=resolved_damage_type
         ))
 
     def max_hp(self, entity_id: str) -> float:

@@ -22,6 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -93,7 +94,7 @@ class ServalKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=0.50,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
         for enemy in enemies:
             self.port.upsert_status(BuffSpec(
@@ -117,7 +118,7 @@ class ServalKit(KitHandler):
             element="Lightning",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
 
         # E1: 普攻扩散 60% 伤害
@@ -130,7 +131,7 @@ class ServalKit(KitHandler):
                     element="Lightning",
                     atk_multiplier=mult * 0.60,
                     toughness_damage=5.0,
-                    damage_tag="Basic_Extra"
+                    damage_type=DamageType.BASIC
                 )
 
         # 天赋附加伤害
@@ -146,7 +147,7 @@ class ServalKit(KitHandler):
             element="Lightning",
             atk_multiplier=mult,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         self.port.upsert_status(BuffSpec(
             key=self.SHOCK_DEBUFF,
@@ -168,7 +169,7 @@ class ServalKit(KitHandler):
                     element="Lightning",
                     atk_multiplier=0.60,
                     toughness_damage=10.0,
-                    damage_tag="Skill_Blast"
+                    damage_type=DamageType.SKILL
                 )
                 self.port.upsert_status(BuffSpec(
                     key=self.SHOCK_DEBUFF,
@@ -194,7 +195,7 @@ class ServalKit(KitHandler):
                 element="Lightning",
                 atk_multiplier=mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
             # 延长触电或 E4 施加触电
             duration = 4 if self.eidolon >= 4 else 2
@@ -225,5 +226,5 @@ class ServalKit(KitHandler):
                     element="Lightning",
                     atk_multiplier=0.72,
                     toughness_damage=0.0,
-                    damage_tag="AdditionalDamage"
+                    damage_type=DamageType.ADDITIONAL
                 )

@@ -25,6 +25,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -126,7 +127,7 @@ class BlackSwanKit(KitHandler):
             element="Wind",
             atk_multiplier=0.84,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self._add_arcana(target_id, 1)
         self.port.gain_energy(self.owner_id, 20.0)
@@ -146,7 +147,7 @@ class BlackSwanKit(KitHandler):
                 element="Wind",
                 atk_multiplier=0.90,
                 toughness_damage=20.0 if tgt == target_id else 10.0,
-                damage_tag="Skill"
+                damage_type=DamageType.SKILL
             )
             self._add_arcana(tgt, 1)
             # 降低防御力 20.8%
@@ -172,7 +173,7 @@ class BlackSwanKit(KitHandler):
                 element="Wind",
                 atk_multiplier=1.20,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
             mods = [Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.25)]
             # E4: 泪水，亦是礼物 (揭露状态下效果抵抗降低 10%)

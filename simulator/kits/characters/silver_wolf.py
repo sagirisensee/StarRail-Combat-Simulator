@@ -25,6 +25,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -117,7 +118,7 @@ class SilverWolfKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 ignore_weakness=True
             )
 
@@ -129,7 +130,7 @@ class SilverWolfKit(KitHandler):
             element="Quantum",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -142,7 +143,7 @@ class SilverWolfKit(KitHandler):
             element="Quantum",
             atk_multiplier=1.96,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         # 植入弱点与全属性减抗 10%
         self.port.upsert_status(BuffSpec(
@@ -183,7 +184,7 @@ class SilverWolfKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=atk_mult,
                 toughness_damage=20.0,
-                damage_tag="Ultimate"
+                damage_type=DamageType.ULTIMATE
             )
 
             # E4: 反弹端口 (额外造成最高 100% 量子属性附加伤害)
@@ -194,7 +195,7 @@ class SilverWolfKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=1.0,
                     toughness_damage=0.0,
-                    damage_tag="AdditionalDamage"
+                    damage_type=DamageType.ADDITIONAL
                 )
 
             # 45% 减防

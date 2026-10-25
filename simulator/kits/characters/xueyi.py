@@ -21,6 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -93,7 +94,7 @@ class XueyiKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=0.80,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 ignore_weakness=True
             )
 
@@ -105,7 +106,7 @@ class XueyiKit(KitHandler):
             element="Quantum",
             atk_multiplier=1.40,
             toughness_damage=10.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.add_karma(1)
         self.port.gain_energy(self.owner_id, 20.0)
@@ -119,7 +120,7 @@ class XueyiKit(KitHandler):
             element="Quantum",
             atk_multiplier=1.40,
             toughness_damage=20.0,
-            damage_tag="Skill"
+            damage_type=DamageType.SKILL
         )
         # 扩散目标 70%
         for e in self.port.enemies(self.owner_id):
@@ -130,7 +131,7 @@ class XueyiKit(KitHandler):
                     element="Quantum",
                     atk_multiplier=0.70,
                     toughness_damage=10.0,
-                    damage_tag="Skill_Blast"
+                    damage_type=DamageType.SKILL
                 )
         self.add_karma(2)
         self.port.gain_energy(self.owner_id, 30.0)
@@ -158,7 +159,7 @@ class XueyiKit(KitHandler):
             element="Quantum",
             atk_multiplier=2.50,
             toughness_damage=40.0,
-            damage_tag="Ultimate",
+            damage_type=DamageType.ULTIMATE,
             ignore_weakness=True
         )
         self.add_karma(4)
@@ -182,7 +183,7 @@ class XueyiKit(KitHandler):
                         element="Quantum",
                         atk_multiplier=mult,
                         toughness_damage=5.0,
-                        damage_tag="KarmaFollowUp",
+                        damage_type=DamageType.FOLLOW_UP,
                         ignore_weakness=(self.eidolon >= 2)
                     )
 

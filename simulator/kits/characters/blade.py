@@ -24,6 +24,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -117,7 +118,7 @@ class BladeKit(KitHandler):
                 element="Wind",
                 atk_multiplier=0.40,
                 toughness_damage=20.0,
-                damage_tag="Technique",
+                damage_type=DamageType.TECHNIQUE,
                 scaling_stat="hp"
             )
 
@@ -140,7 +141,7 @@ class BladeKit(KitHandler):
                 element="Wind",
                 atk_multiplier=1.40,
                 toughness_damage=20.0,
-                damage_tag="BasicAttack",
+                damage_type=DamageType.BASIC,
                 scaling_stat="hp"
             )
 
@@ -153,7 +154,7 @@ class BladeKit(KitHandler):
                         element="Wind",
                         atk_multiplier=0.56,
                         toughness_damage=10.0,
-                        damage_tag="BasicAttack",
+                        damage_type=DamageType.BASIC,
                         scaling_stat="hp"
                     )
 
@@ -166,7 +167,7 @@ class BladeKit(KitHandler):
                 element="Wind",
                 atk_multiplier=1.40,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack",
+                damage_type=DamageType.BASIC,
                 scaling_stat="atk"
             )
             self.port.gain_energy(self.owner_id, 20.0)
@@ -221,7 +222,7 @@ class BladeKit(KitHandler):
             element="Wind",
             atk_multiplier=main_mult,
             toughness_damage=20.0,
-            damage_tag="Ultimate",
+            damage_type=DamageType.ULTIMATE,
             scaling_stat="hp"
         )
 
@@ -235,7 +236,7 @@ class BladeKit(KitHandler):
                     element="Wind",
                     atk_multiplier=adj_mult,
                     toughness_damage=10.0,
-                    damage_tag="Ultimate",
+                    damage_type=DamageType.ULTIMATE,
                     scaling_stat="hp"
                 )
 
@@ -264,7 +265,7 @@ class BladeKit(KitHandler):
                 element="Wind",
                 atk_multiplier=base_mult,
                 toughness_damage=10.0,
-                damage_tag="FollowUpAttack",
+                damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="hp"
             )
 

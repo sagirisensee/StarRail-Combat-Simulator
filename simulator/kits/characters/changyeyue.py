@@ -26,7 +26,7 @@
 
 from typing import Optional, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...events import ActionExecuteEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
@@ -244,7 +244,7 @@ class ChangyeyueKit(KitHandler):
             element="Ice",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="MemospriteSkill",
+            damage_type=DamageType.SERVANT,
             scaling_stat="hp"
         )
 
@@ -350,7 +350,7 @@ class ChangyeyueKit(KitHandler):
                     element="Ice",
                     atk_multiplier=factor * spent_memory * 0.50,
                     toughness_damage=90.0 if e == primary_target else 60.0,
-                    damage_tag="MemospriteUltimate",
+                    damage_type=DamageType.SERVANT,
                     scaling_stat="hp"
                 )
 
@@ -606,7 +606,7 @@ class ChangyeyueKit(KitHandler):
                 element="Ice",
                 atk_multiplier=0.70,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack",
+                damage_type=DamageType.BASIC,
                 scaling_stat="hp"
             )
             self.port.gain_energy(self.owner_id, 20.0)
@@ -641,7 +641,7 @@ class ChangyeyueKit(KitHandler):
                     element="Ice",
                     atk_multiplier=1.00,
                     toughness_damage=20.0,
-                    damage_tag="MoonlightUlt",
+                    damage_type=DamageType.ULTIMATE,
                     scaling_stat="hp"
                 )
 

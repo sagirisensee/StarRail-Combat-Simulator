@@ -23,6 +23,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -128,7 +129,7 @@ class YukongKit(KitHandler):
             element="Imaginary",
             atk_multiplier=2.20,
             toughness_damage=20.0,
-            damage_tag="BasicAttack"
+            damage_type=DamageType.BASIC
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -167,6 +168,6 @@ class YukongKit(KitHandler):
             element="Imaginary",
             atk_multiplier=3.80,
             toughness_damage=30.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         self.port.gain_energy(self.owner_id, 5.0)

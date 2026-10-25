@@ -20,6 +20,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -102,7 +103,7 @@ class DanHengTenghuangKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=1.20,
                 toughness_damage=20.0,
-                damage_tag="Technique"
+                damage_type=DamageType.TECHNIQUE
             )
 
     def _execute_skill(self, ctx: ActionContext) -> None:
@@ -126,7 +127,7 @@ class DanHengTenghuangKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=1.40,
                 toughness_damage=10.0,
-                damage_tag="BasicAttack"
+                damage_type=DamageType.BASIC
             )
             self.port.gain_energy(self.owner_id, 20.0)
         elif self.enhance_level == 1:
@@ -137,7 +138,7 @@ class DanHengTenghuangKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=3.64,
                 toughness_damage=20.0,
-                damage_tag="EnhancedBasic"
+                damage_type=DamageType.BASIC
             )
             self.port.gain_energy(self.owner_id, 30.0)
         elif self.enhance_level == 2:
@@ -148,7 +149,7 @@ class DanHengTenghuangKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=5.32,
                 toughness_damage=30.0,
-                damage_tag="EnhancedBasic"
+                damage_type=DamageType.BASIC
             )
             for e in self.port.enemies(self.owner_id):
                 if e != target_id:
@@ -158,7 +159,7 @@ class DanHengTenghuangKit(KitHandler):
                         element="Imaginary",
                         atk_multiplier=0.84,
                         toughness_damage=15.0,
-                        damage_tag="EnhancedBasic_Blast"
+                        damage_type=DamageType.BASIC
                     )
             self.port.gain_energy(self.owner_id, 35.0)
         elif self.enhance_level == 3:
@@ -169,7 +170,7 @@ class DanHengTenghuangKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=7.00,
                 toughness_damage=40.0,
-                damage_tag="EnhancedBasic"
+                damage_type=DamageType.BASIC
             )
             for e in self.port.enemies(self.owner_id):
                 if e != target_id:
@@ -179,7 +180,7 @@ class DanHengTenghuangKit(KitHandler):
                         element="Imaginary",
                         atk_multiplier=2.52,
                         toughness_damage=20.0,
-                        damage_tag="EnhancedBasic_Blast"
+                        damage_type=DamageType.BASIC
                     )
             self.port.gain_energy(self.owner_id, 40.0)
 
@@ -194,7 +195,7 @@ class DanHengTenghuangKit(KitHandler):
             element="Imaginary",
             atk_multiplier=3.00,
             toughness_damage=20.0,
-            damage_tag="Ultimate"
+            damage_type=DamageType.ULTIMATE
         )
         for e in self.port.enemies(self.owner_id):
             if e != target_id:
@@ -204,7 +205,7 @@ class DanHengTenghuangKit(KitHandler):
                     element="Imaginary",
                     atk_multiplier=1.40,
                     toughness_damage=10.0,
-                    damage_tag="Ultimate_Blast"
+                    damage_type=DamageType.ULTIMATE
                 )
 
         # 获得逆鳞 (基础 2 个，E2 额外获得 1 个 = 3 个)

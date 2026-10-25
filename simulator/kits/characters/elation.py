@@ -18,6 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
+    DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -110,7 +111,7 @@ class ElationKit(KitHandler):
             element="Quantum",
             atk_multiplier=total_mult,
             toughness_damage=10.0,
-            damage_tag="ElationBasic"
+            damage_type=DamageType.ELATION
         )
         self.port.gain_energy(self.owner_id, 20.0)
 
@@ -124,7 +125,7 @@ class ElationKit(KitHandler):
             element="Quantum",
             atk_multiplier=total_mult,
             toughness_damage=20.0,
-            damage_tag="ElationSkill"
+            damage_type=DamageType.ELATION
         )
         # 施加欢愉易伤
         self.port.upsert_status(BuffSpec(
@@ -149,7 +150,7 @@ class ElationKit(KitHandler):
                 element="Quantum",
                 atk_multiplier=2.5 + elation_mult * 2.0,
                 toughness_damage=25.0,
-                damage_tag="AhaMoment"
+                damage_type=DamageType.ELATION
             )
         # 全队狂欢：行动提前 30%！
         allies = self.port.allies(self.owner_id)

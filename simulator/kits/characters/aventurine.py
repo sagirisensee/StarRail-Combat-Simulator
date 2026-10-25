@@ -25,7 +25,7 @@
 import random
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
@@ -136,7 +136,7 @@ class AventurineKit(KitHandler):
             element="Imaginary",
             atk_multiplier=mult,
             toughness_damage=10.0,
-            damage_tag="BasicAttack",
+            damage_type=DamageType.BASIC,
             scaling_stat="def"
         )
 
@@ -213,7 +213,7 @@ class AventurineKit(KitHandler):
             element="Imaginary",
             atk_multiplier=mult,
             toughness_damage=30.0,
-            damage_tag="Ultimate",
+            damage_type=DamageType.ULTIMATE,
             scaling_stat="def"
         )
 
@@ -259,6 +259,6 @@ class AventurineKit(KitHandler):
                 element="Imaginary",
                 atk_multiplier=hit_mult,
                 toughness_damage=5.0,
-                damage_tag="FollowUpAttack",
+                damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="def"
             )
