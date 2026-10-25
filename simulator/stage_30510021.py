@@ -13,6 +13,13 @@
 - 第二波 (第一波全灭后, 日志中出现在 AV 101.78): 堕神之血•亚婆离 (HP 6,389,558)
   + 狂兽的胚芽 x2 (HP 1,703,882); 此后约每 76 AV 增援狂兽的胚芽 x2, 共 5 批
   (日志时点 +75.76 / +151.52 / +176.7 / +252.46 / +328.22, 本场景以等间隔近似)。
+- 亚婆离为两段血池 (据日志 OnStatChange 中 uid 100039 的 CurrentHP 全序实测):
+  一阶段 6,389,558 被打空后 (事件约 47% 处) 转入二阶段, 血池 12,779,117
+  (恰为一阶段的 2 倍, 日志 MaxHP 变更值同值); 二阶段生命降至 3,833,735
+  (二阶段血池的 30%) 后冻结至战斗结束——即【血脑屏障】的锁血地板,
+  后续伤害由屏障吸收。注: 本日志中屏障期缇宝星魂 1 真实伤害照常触发
+  (82 次中 42 次在地板生效后), 与社区机制帖的说法不同, 以日志为准,
+  本场景只建模血池与地板, 不做真实伤害压制。
 """
 
 from typing import List, Optional
@@ -20,7 +27,9 @@ from typing import List, Optional
 from .core import Entity, TurnSimulator
 
 GUARD_HP = 459778.0        # 千星戍卫 8032040 (日志实测)
-BOSS_HP = 6389558.0        # 堕神之血•亚婆离 5034010 (日志实测)
+BOSS_HP = 6389558.0        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
+BOSS_PHASE2_HP = 12779117.0    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
+BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 增援批次数 (日志实测)
 SPROUT_INTERVAL_AV = 76.0  # 增援间隔 (日志约 75.76 AV)
@@ -54,8 +63,9 @@ def _boss() -> Entity:
         weaknesses=list(TEAM_WEAKNESSES),
         is_enemy=True,
     )
-    # 日志中亚婆离未被击败 (无 OnEntityDefeated), 战斗由 AV 上限结束:
-    # 其未建模的生存机制 (锁血/屏障等) 以无限生命近似, 保证对账跑满 AV 预算
+    # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
+    # 记账方式管理 (见 Stage30510021Director._manage_boss_phases),
+    # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
     ent.is_infinite_hp = True
     return ent
 
@@ -82,6 +92,7 @@ class Stage30510021Director:
         self.wave2_av: Optional[float] = None
         self.sprout_waves_spawned = 0
         self._sprout_seq = 0
+        self.boss_phase = 1
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
@@ -96,6 +107,23 @@ class Stage30510021Director:
             self._sprout_seq += 1
             self.sim.add_entity(_sprout(f"狂兽的胚芽{self._sprout_seq}"), trigger_battle_start=False)
 
+    def _manage_boss_phases(self) -> None:
+        """亚婆离两段血池与【血脑屏障】地板 (日志 CurrentHP 全序实测, 见模块头注)。
+
+        一阶段血池打空即转入二阶段 (血池回满至 12,779,117); 二阶段生命
+        不低于 3,833,735, 低于地板的伤害视为被屏障吸收 (生命冻结)。
+        """
+        boss = self.sim.get_entity("堕神之血•亚婆离")
+        if boss is None:
+            return
+        if self.boss_phase == 1:
+            if boss.current_hp <= 0:
+                self.boss_phase = 2
+                boss.max_hp = BOSS_PHASE2_HP
+                boss.current_hp = BOSS_PHASE2_HP
+        elif boss.current_hp < BOSS_PHASE2_FLOOR:
+            boss.current_hp = BOSS_PHASE2_FLOOR
+
     def after_step(self) -> None:
         if not self.wave2_started:
             if not any(self._alive(n) for n in ("千星戍卫A", "千星戍卫B", "千星戍卫C")):
@@ -104,6 +132,7 @@ class Stage30510021Director:
                 self.sim.add_entity(_boss(), trigger_battle_start=False)
                 self._spawn_sprouts(2)
             return
+        self._manage_boss_phases()
         if self.sprout_waves_spawned >= SPROUT_WAVE_COUNT:
             return
         if not self._alive("堕神之血•亚婆离"):

@@ -113,3 +113,32 @@ class TestStageDirectorReinforcements(unittest.TestCase):
             guard += 1
         self.assertGreaterEqual(director.sprout_waves_spawned, 1)
         self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"))
+
+
+class TestStageBossPhases(unittest.TestCase):
+    def test_boss_two_pools_and_barrier_floor(self):
+        """亚婆离两段血池: 一阶段打空转二阶段回满 12,779,117; 二阶段不低于 3,833,735。
+
+        数值来源: 官方日志 uid 100039 的 CurrentHP 全序 (一阶段 6,389,558 打空、
+        二阶段回满 12,779,117、最终冻结于其 30% = 3,833,735)。
+        """
+        from simulator.golden_diff import build_stage_sim
+        from simulator.stage_30510021 import BOSS_PHASE2_FLOOR, BOSS_PHASE2_HP
+        sim, director = build_stage_sim()
+        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        boss = sim.get_entity("堕神之血•亚婆离")
+        self.assertIsNotNone(boss)
+        self.assertEqual(director.boss_phase, 1)
+        # 一阶段打空 -> 转入二阶段并回满
+        boss.current_hp = 0.0
+        director.after_step()
+        self.assertEqual(director.boss_phase, 2)
+        self.assertEqual(boss.current_hp, BOSS_PHASE2_HP)
+        self.assertEqual(boss.max_hp, BOSS_PHASE2_HP)
+        # 二阶段打到地板以下 -> 钳制在屏障地板
+        boss.current_hp = BOSS_PHASE2_FLOOR - 500000.0
+        director.after_step()
+        self.assertEqual(boss.current_hp, BOSS_PHASE2_FLOOR)
