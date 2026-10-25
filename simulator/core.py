@@ -411,6 +411,15 @@ class TurnSimulator:
     ) -> Optional[Entity]:
         if not self.entities:
             return None
+        # 战斗结束判定: 任一方无存活实体时不再推进回合
+        # (否则行动方会在空目标列表上执行动作; 波次切换由驱动方在 step 之间完成)
+        def _side_alive(is_enemy_side: bool) -> bool:
+            return any(
+                e.is_enemy == is_enemy_side and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))
+                for e in self.entities
+            )
+        if not _side_alive(True) or not _side_alive(False):
+            return None
         if self._current_turn_entity is None:
             actor = self.advance_to_next_turn()
             if not actor:

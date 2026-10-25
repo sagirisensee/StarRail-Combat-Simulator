@@ -184,7 +184,7 @@ def parse_golden_jsonl(path: str) -> BattleSequence:
     return seq
 
 
-def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400) -> BattleSequence:
+def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400, director: Any = None) -> BattleSequence:
     """运行一场模拟战斗, 将其事件流导出为与官方日志同构的标准时序。
 
     sim 须为已构造完毕的 TurnSimulator (阵容/敌人由调用方决定)。
@@ -265,9 +265,18 @@ def export_sim_sequence(sim: Any, av_budget: float, max_turns: int = 400) -> Bat
     sim.event_bus.subscribe(DamageAppliedEvent, on_damage)
 
     steps = 0
+    idle_steps = 0
     while steps < max_turns * 4 and len(seq.turns) <= max_turns:
-        sim.step()
+        actor = sim.step()
+        if director is not None:
+            director.after_step()
         steps += 1
+        if actor is None:
+            idle_steps += 1
+            if idle_steps > 100:
+                break
+        else:
+            idle_steps = 0
         if float(getattr(sim, "current_av", 0.0)) > av_budget:
             break
 
@@ -391,6 +400,16 @@ def build_default_sim(av_budget: float):
     return sim
 
 
+def build_stage_sim():
+    """构造关卡 30510021 的还原对照场景 (敌方构成/HP/波次按实机日志), 返回 (sim, director)。"""
+    from .db.character_db import CharacterDB
+    from .stage_30510021 import build_stage_30510021
+
+    db = CharacterDB().load("data/character_db_export.json")
+    team = [db.to_combat_entity(n) for n in ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]]
+    return build_stage_30510021(team)
+
+
 def main(argv=None) -> int:
     import argparse
 
@@ -400,10 +419,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     golden = parse_golden_jsonl(args.golden)
-    sim = build_default_sim(golden.final_av)
-    sim_seq = export_sim_sequence(sim, av_budget=golden.final_av)
+    sim, director = build_stage_sim()
+    sim_seq = export_sim_sequence(sim, av_budget=golden.final_av, director=director)
     report = diff_sequences(golden, sim_seq)
-    md = render_markdown(report, args.golden, "默认对照场景 (同阵容 vs 单体耐久桩)")
+    md = render_markdown(report, args.golden, "关卡 30510021 还原场景 (同阵容, 敌方构成/HP/波次按日志实测)")
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(md)

@@ -65,3 +65,21 @@ class TestExportSim(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStage30510021(unittest.TestCase):
+    def test_wave2_and_sprouts_arrive(self):
+        from simulator.golden_diff import build_stage_sim
+        sim, director = build_stage_sim()
+        names_at_start = {e.name for e in sim.entities}
+        self.assertIn("千星戍卫A", names_at_start)
+        self.assertNotIn("堕神之血•亚婆离", names_at_start)
+        for _ in range(400):
+            sim.step()
+            director.after_step()
+            if float(getattr(sim, "current_av", 0.0)) > 320.0:
+                break
+        self.assertTrue(director.wave2_started, "第一波全灭后应进入第二波")
+        self.assertIsNotNone(sim.get_entity("堕神之血•亚婆离"))
+        sprouts = [e for e in sim.entities if e.name.startswith("狂兽的胚芽")]
+        self.assertGreaterEqual(len(sprouts), 2)
