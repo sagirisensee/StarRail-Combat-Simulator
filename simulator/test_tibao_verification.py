@@ -274,6 +274,35 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertAlmostEqual(sim.port.max_hp("缇宝"), 6968.5, places=1)
         self.assertAlmostEqual(sim.get_entity("缇宝").current_hp, 6968.5, places=1)
 
+    def test_glass_ball_derived_status_uses_tags_not_hardcoded_id(self):
+        """验证【长翅膀的玻璃球！】以语义标签实现防自循环 (红线 1/3):
+        状态携带 EXCLUDE_FROM_STAT_TRANSFERS 与 SUPPRESS_STATUS_APPLY_EVENT 标签,
+        且应用时不广播 StatusApplyEvent, 核心引擎无需硬编码任何状态 ID。"""
+        from simulator.events import StatusApplyEvent
+        from simulator.status import StatusTag
+
+        sim = TurnSimulator(
+            entities=self.entities + self.enemies,
+            use_techniques=True,
+            auto_ult=False,
+            stage_mechanics=[]
+        )
+        sim.cast_ultimate("缇宝")
+
+        glass = next(
+            (s for s in sim.port.statuses("缇宝") if s.id == "Tribbie_A4_GlassBallWithWings"),
+            None
+        )
+        self.assertIsNotNone(glass, "结界期间应挂载【长翅膀的玻璃球！】")
+        self.assertIn(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS, glass.tags)
+        self.assertIn(StatusTag.SUPPRESS_STATUS_APPLY_EVENT, glass.tags)
+
+        leaked = [
+            e for e in sim.event_bus.history
+            if isinstance(e, StatusApplyEvent) and e.status_id == "Tribbie_A4_GlassBallWithWings"
+        ]
+        self.assertEqual(leaked, [], "派生同步状态应用时不应广播 StatusApplyEvent")
+
 
 if __name__ == "__main__":
     unittest.main()

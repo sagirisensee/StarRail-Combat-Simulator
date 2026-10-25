@@ -349,7 +349,7 @@ class TibaoKit(KitHandler):
                     self_hp = self.port.stat(
                         ally,
                         StatType.MAX_HP_PERCENT,
-                        exclude_ids=("Tribbie_A4_GlassBallWithWings",)
+                        exclude_tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,)
                     )
                     team_hp_sum += self_hp
                 else:
@@ -366,6 +366,7 @@ class TibaoKit(KitHandler):
             timing=DurationTiming.CASTER_TURN_END,
             skip_current_clock=zone_status.skip_current_clock,
             category="buff",
+            tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS, StatusTag.SUPPRESS_STATUS_APPLY_EVENT),
             description=f"生命上限提升 +{glass_ball_hp:.0f} (全队生命上限之和的 9%)"
         ))
 

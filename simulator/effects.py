@@ -168,15 +168,18 @@ class EffectResolver:
         elif isinstance(effect, ApplyStatusEffect):
             st = effect.status
             self.simulator.status_mgr.add_status(st)
-            bus.publish(StatusApplyEvent(
-                av=round(av, 2),
-                cycle=cycle,
-                source_name=st.source.name,
-                target_name=st.target.name,
-                status_id=st.id,
-                status_name=st.name,
-                duration=st.duration
-            ))
+            # 派生同步类状态 (带 SUPPRESS_STATUS_APPLY_EVENT 标签) 不广播应用事件，防事件自循环
+            from .status import StatusTag
+            if StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (getattr(st, "tags", None) or ()):
+                bus.publish(StatusApplyEvent(
+                    av=round(av, 2),
+                    cycle=cycle,
+                    source_name=st.source.name,
+                    target_name=st.target.name,
+                    status_id=st.id,
+                    status_name=st.name,
+                    duration=st.duration
+                ))
 
         elif isinstance(effect, ReduceToughnessEffect):
             target = effect.target

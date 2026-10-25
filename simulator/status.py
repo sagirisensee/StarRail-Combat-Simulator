@@ -79,6 +79,7 @@ class StatusTag:
     CHARACTER_ONLY = "character_only"                            # 仅角色本体专享 (不继承/不投影至伴生忆灵)
     AURA_SHARED = "aura_shared"                                  # 全队共享光环
     CANNOT_ADVANCE_OTHER_ALLIES = "cannot_advance_other_allies"  # 无法使其他友方目标获得行动提前效果 (如【特邀嘉宾】)
+    SUPPRESS_STATUS_APPLY_EVENT = "suppress_status_apply_event"  # 派生同步类状态: 应用时不广播 StatusApplyEvent (防事件自循环触发同步)
 
 
 @dataclass
@@ -186,7 +187,7 @@ class StatusManager:
             elif hp_delta < 0 and getattr(target, "current_hp", 0.0) > new_max:
                 target.current_hp = new_max
 
-            if abs(hp_delta) > 1e-4 and status.id != "Tribbie_A4_GlassBallWithWings" and self.simulator and hasattr(self.simulator, "event_bus"):
+            if abs(hp_delta) > 1e-4 and StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (status.tags or ()) and self.simulator and hasattr(self.simulator, "event_bus"):
                 from .events import StatusApplyEvent
                 self.simulator.event_bus.publish(StatusApplyEvent(
                     av=round(getattr(self.simulator, "current_av", 0.0), 2),
