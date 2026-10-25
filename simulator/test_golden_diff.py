@@ -85,6 +85,44 @@ class TestStage30510021(unittest.TestCase):
         self.assertGreaterEqual(len(sprouts), 2)
 
 
+class TestStageWave1Roster(unittest.TestCase):
+    def test_wave1_includes_two_large_mechs(self):
+        """第一波除 3 只千星戍卫外还有月夜天马与「灯塔」两只大型敌人。
+
+        回归背景: 两只大型敌人在 Veritas 日志中无初始化事件/名称, 此前
+        关卡只建了 3 只戍卫 (总生命 1.38M), 官方第一波总生命 10.57M、
+        持续到 AV 约 98, 模拟中 Boss 提前约 50 AV 入场。
+        数值来源: Nanoka 关卡数据与日志/录像交叉验证 (天马 HP 4,904,294
+        与录像面板精确一致、速度 132 与日志 ActionDelay 首值 75.76 吻合)。
+        """
+        from simulator.golden_diff import build_stage_sim
+        from simulator.stage_30510021 import LIGHTHOUSE_HP, PEGASUS_HP
+        sim, director = build_stage_sim()
+        enemies = {e.name: e for e in sim.entities if e.is_enemy}
+        self.assertEqual(
+            set(enemies),
+            {"千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C"},
+        )
+        self.assertEqual(enemies["月夜天马"].max_hp, PEGASUS_HP)
+        self.assertEqual(enemies["「灯塔」"].max_hp, LIGHTHOUSE_HP)
+        self.assertEqual(enemies["月夜天马"].base_speed, 132.0)
+        self.assertEqual(enemies["「灯塔」"].base_speed, 190.0)
+        self.assertEqual(enemies["月夜天马"].weaknesses, ["Fire", "Quantum", "Imaginary"])
+        self.assertEqual(enemies["「灯塔」"].weaknesses, ["Fire", "Wind", "Quantum"])
+        # 只击杀戍卫而机甲存活时不得进入第二波
+        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        self.assertFalse(director.wave2_started)
+        # 机甲全灭后进入第二波
+        for name in ("月夜天马", "「灯塔」"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        self.assertTrue(director.wave2_started)
+
+
 class TestStageDirectorReinforcements(unittest.TestCase):
     def test_sprout_reinforcements_continue_after_boss_hp_depleted(self):
         """亚婆离为无限生命近似: 其 HP 被打空后增援胚芽仍应按 AV 继续生成。
@@ -96,7 +134,7 @@ class TestStageDirectorReinforcements(unittest.TestCase):
         from simulator.golden_diff import build_stage_sim
         sim, director = build_stage_sim()
         # 击杀第一波守卫, 触发第二波
-        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+        for name in ("千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C"):
             sim.get_entity(name).current_hp = 0.0
         sim.step()
         director.after_step()
@@ -131,7 +169,7 @@ class TestStageBossPhases(unittest.TestCase):
             BOSS_PHASE2_HP,
         )
         sim, director = build_stage_sim()
-        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+        for name in ("千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C"):
             sim.get_entity(name).current_hp = 0.0
         sim.step()
         director.after_step()
@@ -169,7 +207,7 @@ class TestStageBossAI(unittest.TestCase):
         """亚婆离攻击模组交替: 第 1 动全体群伤 (多名我方掉血), 第 2 动重单点 (仅 1 名掉血)。"""
         from simulator.golden_diff import build_stage_sim
         sim, director = build_stage_sim()
-        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+        for name in ("千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C"):
             sim.get_entity(name).current_hp = 0.0
         sim.step()
         director.after_step()

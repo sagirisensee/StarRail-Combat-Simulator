@@ -1,15 +1,25 @@
 # coding: utf-8
 """关卡 30510021 场景还原 (与实机真值日志 battle_20261025_131019 对照用)。
 
-敌方数据来源分三类, 请勿混淆:
+敌方数据来源分四类, 请勿混淆:
 - 实测值 (官方日志): 敌人构成、生命上限、波次切换与增援出现的 AV 时点;
+- 数据库值 (Nanoka 关卡数据, 与日志交叉验证): 第一波两只大型敌人的名称/
+  生命/速度/弱点/韧性 (见下);
 - 仓库既有值: 千星戍卫 (8032040) 的速度/韧性/弱点沿用 simulate_battle 既有关卡配置;
 - 估算值: 亚婆离与狂兽的胚芽的速度/韧性日志未提供 (日志中的首次行动 AV
   已被行动提前等机制污染, 无法反推), 取中性估算, 仅影响敌方出手频率,
   不影响我方机制对账的结论方向。弱点与抗性已由 Resistance 属性实测 (见下)。
 
 官方日志还原的战斗结构:
-- 第一波: 千星戍卫 x3 (HP 459,778);
+- 第一波: 月夜天马 (HP 4,904,294) + 「灯塔」 (HP 4,291,259) + 千星戍卫 x3
+  (HP 459,778)。两只大型敌人在 Veritas 日志中无初始化事件与名称 (仅以
+  uid 100013/100015 的 CurrentHP/ActionDelay 样本存在), 此前对账一直漏列;
+  录像敌方血量面板与 Nanoka 关卡数据共同证实其存在与数值: 月夜天马 HP
+  与录像面板 100% 读数精确一致, 其速度 132 与日志 ActionDelay 首值
+  75.76 (= 10000/132) 整除吻合; 「灯塔」HP 取 Nanoka 关卡值 4,291,259
+  (日志首样本 4,286,282 为受开场秘技伤害后的采样, 差 0.12%)。
+  千星戍卫为「灯塔」技能【正道战线】召唤 (日志中其初始化事件紧随开场),
+  本场景以开场即在场近似, 不单独建模召唤动作;
 - 第二波 (第一波全灭后, 日志中出现在 AV 101.78): 堕神之血•亚婆离 (HP 6,389,558)
   + 狂兽的胚芽 x2 (HP 1,703,882); 此后约每 76 AV 增援狂兽的胚芽 x2, 共 5 批
   (日志时点 +75.76 / +151.52 / +176.7 / +252.46 / +328.22, 本场景以等间隔近似)。
@@ -50,6 +60,18 @@ SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 增援批次数 (日志实测)
 SPROUT_INTERVAL_AV = 76.0  # 增援间隔 (日志约 75.76 AV)
 
+# 第一波大型敌人 (Nanoka 关卡数据, 与日志/录像交叉验证, 见模块头注):
+# 月夜天马 4023020: 弱点火/量子/虚数, 速度 132, 关卡韧性 160;
+# 「灯塔」 8033020: 弱点火/风/量子, 速度 190, 关卡韧性 160。
+# 抗性无单独实测来源, 按本关卡既定口径取非弱点属性 0.2 (与亚婆离/胚芽
+# 的 Resistance 实测形态一致)。
+PEGASUS_HP = 4904294.0        # 月夜天马 4023020
+LIGHTHOUSE_HP = 4291259.0     # 「灯塔」 8033020
+PEGASUS_WEAKNESSES = ["Fire", "Quantum", "Imaginary"]
+LIGHTHOUSE_WEAKNESSES = ["Fire", "Wind", "Quantum"]
+# 第一波全体 (站位序按录像敌方血量面板的列示顺序: 戍卫/天马/灯塔/戍卫/戍卫)
+WAVE1_NAMES = ("千星戍卫A", "月夜天马", "「灯塔」", "千星戍卫B", "千星戍卫C")
+
 # 弱点与抗性: 据日志 OnStatChange 的 Resistance 属性实测——只有非弱点属性
 # 会以 0.2 记录, 缺失的属性即弱点 (抗性 0)。亚婆离弱点为冰/量子/虚数
 # (风不在弱点内, 风抗 0.2); 胚芽弱点为火/风/虚数 (冰/量子抗 0.2)。
@@ -71,6 +93,25 @@ def _guard(name: str) -> Entity:
         is_enemy=True,
     )
     ent.damage_res = {"Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2}
+    return ent
+
+
+_ELEMENTS = ("Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary")
+
+
+def _mech(name: str, hp: float, speed: float, weaknesses: List[str]) -> Entity:
+    """第一波大型敌人 (月夜天马/「灯塔」): 属性据 Nanoka 关卡数据 (见头注)。"""
+    ent = Entity(
+        name=name,
+        base_speed=speed,
+        base_atk=1600.0,
+        max_hp=hp,
+        current_hp=hp,
+        max_toughness=160.0, current_toughness=160.0,
+        weaknesses=list(weaknesses),
+        is_enemy=True,
+    )
+    ent.damage_res = {el: (0.0 if el in weaknesses else 0.2) for el in _ELEMENTS}
     return ent
 
 
@@ -210,7 +251,7 @@ class Stage30510021Director:
 
     def after_step(self) -> None:
         if not self.wave2_started:
-            if not any(self._alive(n) for n in ("千星戍卫A", "千星戍卫B", "千星戍卫C")):
+            if not any(self._alive(n) for n in WAVE1_NAMES):
                 self.wave2_started = True
                 self.wave2_av = float(getattr(self.sim, "current_av", 0.0))
                 boss = _boss()
@@ -231,7 +272,13 @@ class Stage30510021Director:
 
 def build_stage_30510021(team: List[Entity]) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
-    enemies = [_guard("千星戍卫A"), _guard("千星戍卫B"), _guard("千星戍卫C")]
+    enemies = [
+        _guard("千星戍卫A"),
+        _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES),
+        _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES),
+        _guard("千星戍卫B"),
+        _guard("千星戍卫C"),
+    ]
     # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。日志实证:
     # 我方 CurrentHP 恰好 500.0 的下降次数与各自回合数逐一吻合
     # (长夜月 11、风堇 10、缇宝 3、知更鸟 1; 敌方无此下降, 与插件口径一致)。
