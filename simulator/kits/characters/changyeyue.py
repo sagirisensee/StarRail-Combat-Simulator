@@ -115,7 +115,7 @@ class ChangyeyueKit(KitHandler):
             if is_owner_skill or is_ally_memosprite_skill:
                 if actor_name == self.spirit_name:
                     self._spirit_candle_triggered_by_event = True
-                    if "追忆" in action_type:
+                    if action_type == ChangyeMemospriteKit.SKILL_NAME:
                         self.in_initial_action = True
                 self._trigger_trace_candle_on_skill()
 
@@ -689,6 +689,10 @@ class ChangyeyueKit(KitHandler):
 
 class ChangyeMemospriteKit(KitHandler):
     """伴生忆灵「长夜」独立技能套件。"""
+
+    SKILL_NAME = "追忆，蹁跹，如雨"
+    BURST_NAME = "迷梦，流失，如露"
+
     def __init__(self, owner_id: str, port: CombatPort, master_kit: Any = None):
         super().__init__(owner_id, port)
         self.master_kit = master_kit
@@ -702,7 +706,7 @@ class ChangyeMemospriteKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.ALL_ENEMIES,
                 cost=ResourceCost(sp=0),
-                name="迷梦，流失，如露",
+                name=self.BURST_NAME,
                 tag="终极爆发",
                 is_auto=False
             )
@@ -711,7 +715,7 @@ class ChangyeMemospriteKit(KitHandler):
                 kind=kind,
                 target_mode=TargetMode.SINGLE_ENEMY,
                 cost=ResourceCost(sp=0),
-                name="追忆，蹁跹，如雨",
+                name=self.SKILL_NAME,
                 tag="忆灵技",
                 is_auto=True
             )

@@ -323,5 +323,29 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertEqual(cyy_kit.yizhi, yizhi_before + 3, "倒计时实体行动不应误触发长夜月获得忆质")
 
 
+    def test_spirit_skill_event_uses_exact_skill_name_not_substring(self):
+        """回归: 长夜常规忆灵技事件按技能名精确匹配置位 in_initial_action, 爆发与近似名不置位。"""
+        from simulator.events import ActionExecuteEvent
+        from simulator.kits.characters.changyeyue import ChangyeMemospriteKit
+
+        sim = TurnSimulator(entities=[self.changyeyue, self.boss], auto_ult=False)
+        kit = self.changyeyue.kit
+        self.assertTrue(kit.spirit_alive)
+
+        def publish(action_type):
+            kit.in_initial_action = False
+            sim.event_bus.publish(ActionExecuteEvent(
+                av=sim.current_av, cycle=sim.current_cycle,
+                actor_id=kit.spirit_name, actor_name=kit.spirit_name,
+                action_type=action_type, description=action_type,
+                action_kind=ActionKind.SKILL,
+            ))
+            return kit.in_initial_action
+
+        self.assertTrue(publish(ChangyeMemospriteKit.SKILL_NAME), "长夜施放常规忆灵技应置位首次行动标记")
+        self.assertFalse(publish(ChangyeMemospriteKit.BURST_NAME), "长夜施放终极爆发不应置位首次行动标记")
+        self.assertFalse(publish("追忆"), "仅含技能名片段的动作不应再靠子串误置位")
+
+
 if __name__ == "__main__":
     unittest.main()

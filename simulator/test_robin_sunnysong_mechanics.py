@@ -395,5 +395,19 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertEqual(kit.vibes, 14, "经历 5 次回合联动后氛围值精准结算为 14 点")
 
 
+    def test_is_attack_action_uses_countdown_flag_not_action_name(self):
+        """回归: is_attack_action 只按实体 is_countdown 标记排除倒计时, 不再按动作名字串猜测。"""
+        sim = TurnSimulator(entities=[self.robin_ent, self.cyy_ent, self.enemy], auto_ult=False)
+        kit = self.robin_ent.kit
+        kit.summon_musicians()
+        kit.gain_vibes(12)
+        self.assertTrue(sim.port.is_countdown("晴空乐手•倒计时"))
+
+        # 倒计时实体: 靠实体标记排除 (其动作名 Fever倒计时结算 本就不含英文 Countdown)
+        self.assertFalse(sim.port.is_attack_action("晴空乐手•倒计时", ActionKind.SKILL, "Fever倒计时结算"))
+        # 普通角色: 动作名就算含 Countdown 字样也不应被名字误杀
+        self.assertTrue(sim.port.is_attack_action("长夜月", ActionKind.BASIC, "CountdownNamedBasic"))
+
+
 if __name__ == "__main__":
     unittest.main()

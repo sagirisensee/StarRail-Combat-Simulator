@@ -183,8 +183,6 @@ class SimulatorCombatPort:
         actor_ent = self._get_entity(actor_id)
         if actor_ent and getattr(actor_ent, "is_countdown", False):
             return False
-        if "Countdown" in str(action_type):
-            return False
         if action_kind in (ActionKind.BASIC, ActionKind.FOLLOW_UP) or action_type in ("BasicAttack", "FollowUpAttack"):
             return True
         ent = self._get_entity(actor_id)
