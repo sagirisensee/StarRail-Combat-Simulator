@@ -85,7 +85,11 @@ class Stage30510021Director:
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
-        return ent is not None and ent.current_hp > 0
+        if ent is None:
+            return False
+        # 无限生命实体 (亚婆离的未建模生存机制近似) HP 归零不等于死亡,
+        # 判定须与 core 的存活口径一致, 否则其 HP 被打空后增援将永不触发
+        return ent.current_hp > 0 or getattr(ent, "is_infinite_hp", False)
 
     def _spawn_sprouts(self, count: int) -> None:
         for _ in range(count):

@@ -83,3 +83,33 @@ class TestStage30510021(unittest.TestCase):
         self.assertIsNotNone(sim.get_entity("堕神之血•亚婆离"))
         sprouts = [e for e in sim.entities if e.name.startswith("狂兽的胚芽")]
         self.assertGreaterEqual(len(sprouts), 2)
+
+
+class TestStageDirectorReinforcements(unittest.TestCase):
+    def test_sprout_reinforcements_continue_after_boss_hp_depleted(self):
+        """亚婆离为无限生命近似: 其 HP 被打空后增援胚芽仍应按 AV 继续生成。
+
+        回归背景: 导演的存活判定曾只看 current_hp, Boss HP 归零后
+        sprout_waves_spawned 永远停在 0, 第二波全场只有首批 2 只胚芽,
+        所有全体攻击的命中数系统性偏低。
+        """
+        from simulator.golden_diff import build_stage_sim
+        sim, director = build_stage_sim()
+        # 击杀第一波守卫, 触发第二波
+        for name in ("千星戍卫A", "千星戍卫B", "千星戍卫C"):
+            sim.get_entity(name).current_hp = 0.0
+        sim.step()
+        director.after_step()
+        self.assertTrue(director.wave2_started)
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽1"))
+        # 模拟 Boss 生命被打空 (无限生命实体不死)
+        boss = sim.get_entity("堕神之血•亚婆离")
+        boss.current_hp = 0.0
+        # 推进到第一批增援时点之后
+        guard = 0
+        while float(sim.current_av) < (director.wave2_av or 0.0) + 80.0 and guard < 400:
+            sim.step()
+            director.after_step()
+            guard += 1
+        self.assertGreaterEqual(director.sprout_waves_spawned, 1)
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"))
