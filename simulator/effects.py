@@ -252,6 +252,7 @@ class EffectResolver:
                 target.shield -= absorbed
                 raw_dmg -= absorbed
 
+            was_alive = getattr(target, "current_hp", 0.0) > 0
             if hasattr(target, "current_hp"):
                 old_hp = target.current_hp
                 target.current_hp = max(0.0, target.current_hp - raw_dmg)
@@ -296,6 +297,21 @@ class EffectResolver:
                 hit_base = getattr(effect.request, "hit_energy", 0.0) or 5.0
                 if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
                     self.simulator.port.gain_hit_energy(target.name, hit_base)
+
+            # 4.5 击杀回能: 击败敌方目标时, 击杀者恢复 10 点能量 (受 ERR 放大); 忆灵击杀归其主人
+            if (
+                was_alive
+                and hp_left == 0.0
+                and getattr(target, "is_enemy", False)
+                and not getattr(target, "is_infinite_hp", False)
+                and not getattr(effect.request.attacker, "is_enemy", False)
+            ):
+                killer = effect.request.attacker
+                killer_name = killer.name
+                if getattr(killer, "is_memosprite", False) and getattr(killer, "master_name", None):
+                    killer_name = killer.master_name
+                if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
+                    self.simulator.port.gain_hit_energy(killer_name, 10.0, cause=f"击败【{target.name}】击杀回能 (基础 10.0, 受 ERR 放大)")
 
             # 5. 如果携带削韧属性，入队削韧请求
             if effect.toughness_reduction > 0:

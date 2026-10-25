@@ -32,9 +32,10 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         ult_success = sim.cast_ultimate("缇宝")
         self.assertTrue(ult_success, "终结技施放应成功")
 
-        # 3. 验证回能：大招 5 点 + E6 追击 5 点 + S5 专武追击 12 点 = 22 * 1.1944 = 26.27 (实机截断/显示为 26)
-        self.assertAlmostEqual(tibao.energy, 26.268, places=2)
-        self.assertEqual(round(tibao.energy), 26)
+        # 3. 验证回能：大招 5 点 + E6 追击 5 点 + S5 专武追击 12 点 = 22 * 1.194 = 26.268；
+        #    此外终结技连锁每击败 1 名敌人另提供标准击杀回能 10 * ERR = 11.94 (击败数随伤害浮动, 按实测计)
+        kills = sum(1 for e in self.enemies if e.current_hp <= 0)
+        self.assertAlmostEqual(tibao.energy, 26.268 + kills * 11.94, places=2)
 
         # 4. 获取真理源 status 快照
         snap = sim.query_status("缇宝")
@@ -164,7 +165,9 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         tibao = sim.get_entity("缇宝")
         sim.cast_ultimate("缇宝")
         energy_after_ult = tibao.energy
-        self.assertAlmostEqual(energy_after_ult, 26.268, places=2)
+        # 基线 = 施放回能 26.268 + 终结技连锁击杀回能 (每名敌人 10 * ERR = 11.94, 击败数按实测计)
+        kills = sum(1 for e in self.enemies if e.current_hp <= 0)
+        self.assertAlmostEqual(energy_after_ult, 26.268 + kills * 11.94, places=2)
 
         # 1. 模拟长夜直接攻击命中 2 个敌人 -> 回复 1.5 * 2 = 3.0 点固定能量
         breakdown_valid = DamageBreakdown(
@@ -189,14 +192,14 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         ))
         self.assertAlmostEqual(tibao.energy, energy_after_ult + single_gain, places=2)
 
-        # 命中第 2 个敌人 -> 累计 2 次，受 ERR 放大，实机向下截断显示为 29 点
+        # 命中第 2 个敌人 -> 累计 2 次小石子回能 (受 ERR 放大)
         sim.event_bus.publish(DamageAppliedEvent(
             av=0.0, cycle=0, attacker_name="长夜", target_name="「灯塔」 (Lv.100)",
             damage=1500.0, is_crit=True, breakdown=breakdown_valid, target_hp_left=600000.0
         ))
         expected_two_hits = energy_after_ult + 2 * single_gain
         self.assertAlmostEqual(tibao.energy, expected_two_hits, places=2)
-        self.assertEqual(int(tibao.energy), 29)
+        self.assertEqual(int(tibao.energy), int(expected_two_hits))
 
         # 2. 机制边界验证：DoT 伤害跳伤不应触发回能
         breakdown_dot = DamageBreakdown(
