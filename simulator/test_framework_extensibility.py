@@ -140,6 +140,50 @@ class TestFrameworkExtensibility(unittest.TestCase):
         self.assertEqual(fuxuan.kit.hp_reversals, 0, "符玄跌破半血应自动消耗 1 次生命翻转并回血")
         self.assertGreater(fuxuan.current_hp, 7000.0)
 
+    def test_03_action_advance_ready_queue_lifo_order(self):
+        """验证行动就绪队列 (Ready Queue) 与 100% 拉条的 LIFO 插队机制。
+
+        规则：
+        1. 多个单位同时拉条 100% 时，后拉条者插队到最前端 (后拉条优先出手)；
+        2. 当前正在行动的单位不会被打断，拉条者将在当前行动结算完毕后依次出手；
+        3. 连续多次 100% 拉条形成插队链：如先拉 B，再拉 C，行动顺序为 C -> B。
+        """
+        e_a = Entity(name="角色A", base_speed=150.0, max_hp=5000.0, current_hp=5000.0)
+        e_b = Entity(name="角色B", base_speed=120.0, max_hp=5000.0, current_hp=5000.0)
+        e_c = Entity(name="角色C", base_speed=100.0, max_hp=5000.0, current_hp=5000.0)
+        enemy = Entity(name="木桩", base_speed=80.0, max_hp=100000.0, current_hp=100000.0, is_enemy=True)
+
+        sim = TurnSimulator(entities=[e_a, e_b, e_c, enemy], auto_ult=False)
+
+        # 推进到角色A的自然第一回合
+        actor = sim.advance_to_next_turn()
+        self.assertEqual(actor.name, "角色A")
+
+        # 在角色A行动中，先后给角色B和角色C拉条 100%
+        sim.port.advance("角色A", "角色B", 1.0)
+        self.assertEqual(sim._ready_queue, ["角色B"])
+
+        sim.port.advance("角色A", "角色C", 1.0)
+        # 验证角色C后被拉条，插队到角色B前面
+        self.assertEqual(sim._ready_queue, ["角色C", "角色B"])
+
+        # 观察预测行动条预览
+        order_names = [e.name for e in sim.get_action_order()]
+        self.assertEqual(order_names[:3], ["角色A", "角色C", "角色B"])
+
+        # 角色A执行回合并结束
+        sim.execute_current_turn()
+
+        # 下一个行动者应为角色C
+        next_actor = sim.advance_to_next_turn()
+        self.assertEqual(next_actor.name, "角色C")
+        sim.execute_current_turn()
+
+        # 再下一个行动者应为角色B
+        next_actor = sim.advance_to_next_turn()
+        self.assertEqual(next_actor.name, "角色B")
+        sim.execute_current_turn()
+
 
 if __name__ == "__main__":
     unittest.main()

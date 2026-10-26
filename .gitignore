@@ -17,3 +17,13 @@ data/.hoyolab_config.json
 data/*config*.json
 data/*session*.json
 data/*.backup.json
+
+# Large media files and video inspection tools
+*.mp4
+*.mov
+*.avi
+*.mkv
+video_inspection/
+video_artifacts/
+video_keyframes/
+

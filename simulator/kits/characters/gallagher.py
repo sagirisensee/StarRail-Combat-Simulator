@@ -50,8 +50,7 @@ class GallagherKit(KitHandler):
         2. E6【血与沙】：击破特攻提高 20%，弱点击破效率提高 20%。
         """
         if self.eidolon >= 1:
-            ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-            err = getattr(ent, "err", 1.0) if ent else 1.0
+            err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
             self.port.gain_energy(self.owner_id, 20.0 * err)
             self.port.upsert_status(BuffSpec(
                 key="Gallagher_E1_EffRes",

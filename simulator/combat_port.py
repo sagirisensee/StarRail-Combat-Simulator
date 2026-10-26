@@ -56,6 +56,7 @@ class CombatPort(Protocol):
     def allies(self, actor_id: str) -> Tuple[str, ...]: ...
     def enemies(self, actor_id: str) -> Tuple[str, ...]: ...
     def count_allies_by_path(self, actor_id: str, path_name: str) -> int: ...
+    def entity_path(self, entity_id: str) -> str: ...
     def relic_set_pieces(self, entity_id: str, set_key: Any) -> int: ...
 
     # --- 2. 实时属性与白字基准查询 ---
@@ -64,9 +65,9 @@ class CombatPort(Protocol):
         entity_id: str,
         stat: StatType,
         *,
-        exclude_tags: Tuple[str, ...] = (),
-        exclude_ids: Tuple[str, ...] = ()
+        exclude_tags: Tuple[str, ...] = ()
     ) -> float: ...
+    def base_stat(self, entity_id: str, stat: StatType) -> float: ...
     def white_stat(self, entity_id: str, stat: StatType) -> float: ...
     def max_energy(self, entity_id: str) -> float: ...
     def current_hp(self, entity_id: str) -> float: ...
@@ -115,7 +116,7 @@ class CombatPort(Protocol):
         force_crit: Optional[bool] = None,
         fixed_crit_dmg: Optional[float] = None
     ) -> None: ...
-    def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None: ...
+    def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None: ...
     def publish_action(self, actor_id: str, name: str, kind: Any, skill_id: int = 0) -> None: ...
     @property
     def tracer(self) -> Any: ...
@@ -317,13 +318,35 @@ class SimulatorCombatPort:
             return getattr(ent, "base_dmg_boost", 0.0)
         return 0.0
 
+    def entity_path(self, entity_id: str) -> str:
+        """查询指定实体的命途字符串（未找到或无命途返回空字符串）。"""
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return ""
+        p = getattr(ent, "path", "")
+        return str(getattr(p, "value", p)).strip()
+
+    def base_stat(self, entity_id: str, stat: StatType) -> float:
+        """获取实体的战前静态面板基准属性（不含局内动态 Buff）。"""
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return 0.0
+        if stat == StatType.SPEED:
+            return float(getattr(ent, "base_speed", 0.0))
+        elif stat in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+            return float(getattr(ent, "base_atk", 0.0))
+        elif stat in (StatType.DEF, StatType.DEF_PERCENT, StatType.DEF_BASE):
+            return float(getattr(ent, "base_def", 0.0))
+        elif stat == StatType.MAX_HP_PERCENT:
+            return float(getattr(ent, "max_hp", 0.0))
+        return 0.0
+
     def stat(
         self,
         entity_id: str,
         stat: StatType,
         *,
-        exclude_tags: Tuple[str, ...] = (),
-        exclude_ids: Tuple[str, ...] = ()
+        exclude_tags: Tuple[str, ...] = ()
     ) -> float:
         """动态查询实体当前实时属性，支持全量 StatType 与语义标签排除过滤。"""
         ent = self._get_entity(entity_id)
@@ -358,8 +381,7 @@ class SimulatorCombatPort:
             ent.name,
             base_val,
             stat,
-            exclude_tags=exclude_tags,
-            exclude_ids=exclude_ids
+            exclude_tags=exclude_tags
         )
 
     def has_status(self, target_id: str, key: str) -> bool:
@@ -428,22 +450,22 @@ class SimulatorCombatPort:
             if ratio >= 1.0 and (self.sim.current_turn_entity == tgt or getattr(tgt, "extra_immediate_action", False)):
                 tgt.extra_immediate_action = True
             self.sim.resolver.enqueue(AdvanceActionEffect(source_id, tgt, ratio))
+            if not getattr(self.sim.resolver, "_resolving", False):
+                self.sim.resolver.resolve_all()
 
     def delay(self, source_id: str, target_id: str, ratio: float) -> None:
         tgt = self._get_entity(target_id)
         if tgt:
             self.sim.resolver.enqueue(DelayActionEffect(source_id, tgt, ratio))
+            if not getattr(self.sim.resolver, "_resolving", False):
+                self.sim.resolver.resolve_all()
 
     def request_immediate_action(self, entity_id: str) -> None:
-        """请求一次立即行动 (入行动队列 extra 类): 排在已就绪的正规回合之后、
-        时钟推进之前结算。用于忆灵被召唤后的立即行动等机制——与 advance 至 0
-        (正规回合提前到期) 是两种不同的行动来源。"""
-        fn = getattr(self.sim, "request_immediate_action", None)
-        if fn is not None:
-            fn(entity_id)
+        """请求立即行动（统一按 100% 拉条机制处理）。"""
+        self.advance(entity_id, entity_id, 1.0)
 
     def cancel_immediate_action(self, entity_id: str) -> None:
-        """撤销某实体待服务的立即行动 (如对账驱动已直接补发该次施放)。"""
+        """撤销某实体待服务的立即行动/拉条 (如对账驱动已直接补发该次施放)。"""
         fn = getattr(self.sim, "cancel_immediate_action", None)
         if fn is not None:
             fn(entity_id)
@@ -452,6 +474,9 @@ class SimulatorCombatPort:
         ent = self._get_entity(entity_id)
         if ent:
             ent.distance_remaining = max(0.0, float(distance))
+            if ent.distance_remaining <= 0.0:
+                if hasattr(self.sim, "notify_entity_ready"):
+                    self.sim.notify_entity_ready(ent.name)
 
     def set_base_speed(self, entity_id: str, speed: float) -> None:
         ent = self._get_entity(entity_id)
@@ -627,10 +652,10 @@ class SimulatorCombatPort:
             return base_max_hp
         return 0.0
 
-    def lose_hp(self, entity_id: str, amount: float, cause: str = "") -> None:
+    def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None:
         ent = self._get_entity(entity_id)
         if ent:
-            if cause == "fuxuan_matrix_share" and getattr(ent, "shield", 0.0) > 0:
+            if absorb_by_shield and getattr(ent, "shield", 0.0) > 0:
                 absorbed = min(ent.shield, amount)
                 ent.shield -= absorbed
                 amount -= absorbed

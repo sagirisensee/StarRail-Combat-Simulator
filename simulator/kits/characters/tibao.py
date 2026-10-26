@@ -25,11 +25,13 @@
 
 from typing import Optional, List, Any
 from ..base import KitHandler
+from ..registry import register_kit
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatType, StatusTag
 
 
+@register_kit("1403", "缇宝", "tribbie", "tibao")
 class TibaoKit(KitHandler):
     """缇宝 (ID 1403, 量子 / 同谐)."""
 
@@ -526,8 +528,7 @@ class TibaoKit(KitHandler):
         if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
             self._flush_zone_window()
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent)):
-            if not (isinstance(event, StatusApplyEvent) and event.status_id == "Tribbie_A4_GlassBallWithWings"):
-                self._sync_glass_ball_hp()
+            self._sync_glass_ball_hp()
 
         if isinstance(event, DamageAppliedEvent):
             attacker = event.attacker_name

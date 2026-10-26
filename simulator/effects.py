@@ -85,6 +85,7 @@ class EffectResolver:
         self.simulator = simulator
         self.queue: List[EffectRequest] = []
         self._step_count = 0
+        self._resolving = False
 
     def enqueue(self, effect: EffectRequest):
         """将效果放入待结算队列。"""
@@ -93,13 +94,17 @@ class EffectResolver:
     def resolve_all(self):
         """排空并执行队列中的所有效果。"""
         self._step_count = 0
-        while self.queue:
-            self._step_count += 1
-            if self._step_count > MAX_EFFECT_STEPS:
-                raise RuntimeError(f"效果结算步数超过上限 ({MAX_EFFECT_STEPS})，检测到潜在的无限递归触发！")
+        self._resolving = True
+        try:
+            while self.queue:
+                self._step_count += 1
+                if self._step_count > MAX_EFFECT_STEPS:
+                    raise RuntimeError(f"效果结算步数超过上限 ({MAX_EFFECT_STEPS})，检测到潜在的无限递归触发！")
 
-            effect = self.queue.pop(0)
-            self._resolve_one(effect)
+                effect = self.queue.pop(0)
+                self._resolve_one(effect)
+        finally:
+            self._resolving = False
 
     def _resolve_one(self, effect: EffectRequest):
         av = self.simulator.current_av
@@ -112,6 +117,9 @@ class EffectResolver:
                 effect.target.extra_immediate_action = True
             effect.target.advance_action(effect.percent)
             after = effect.target.distance_remaining
+            if after <= 0.0:
+                if hasattr(self.simulator, "notify_entity_ready"):
+                    self.simulator.notify_entity_ready(effect.target.name)
             bus.publish(ActionAdvanceEvent(
                 av=round(av, 2),
                 cycle=cycle,

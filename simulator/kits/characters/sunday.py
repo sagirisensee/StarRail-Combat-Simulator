@@ -54,8 +54,7 @@ class SundayKit(KitHandler):
         E4【雕塑的卷首语】：战斗开始时恢复 8 点能量 (受能量恢复效率加成)。
         """
         if self.eidolon >= 4:
-            ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-            err = getattr(ent, "err", 1.0) if ent else 1.0
+            err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
             self.port.gain_energy(self.owner_id, 8.0 * err)
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
@@ -140,8 +139,10 @@ class SundayKit(KitHandler):
         # 2. 造成的伤害提高 30% (若有召唤物额外提高 50%)
         base_dmg = self.skill_param("skill", 1, default=0.30)
         extra_summon_dmg = self.skill_param("skill", 3, default=0.50)
-        # 判定召唤物体系 (景元、托帕、灵砂、长夜月等)
-        has_summon = any(s in target_id for s in ("神君", "账账", "浮元", "长夜", "景元", "托帕", "灵砂", "长夜月"))
+        # 通过 CombatPort 契约动态判定该目标是否拥有在场伴生忆灵/召唤物或自身即为忆灵
+        has_summon = self.port.is_memosprite(target_id) or any(
+            self.port.is_own_memosprite(target_id, a) for a in self.port.allies(self.owner_id)
+        )
         total_dmg = base_dmg + (extra_summon_dmg if has_summon else 0.0)
 
         mods = [Modifier(StatType.DMG_BOOST, ModifierOp.ADD, total_dmg)]
@@ -193,8 +194,7 @@ class SundayKit(KitHandler):
             target_id = allies[0] if allies else self.owner_id
 
         # 1. 为目标恢复 20% 能量上限
-        ent = self.port._get_entity(target_id) if hasattr(self.port, "_get_entity") else None
-        max_energy = getattr(ent, "max_energy", 120.0) if ent else 120.0
+        max_energy = self.port.max_energy(target_id)
         self.port.gain_energy(target_id, 0.20 * max_energy)
 
         # 2. 暴击伤害提高: 星期日暴伤 * 30% + 12% (Lv 10)

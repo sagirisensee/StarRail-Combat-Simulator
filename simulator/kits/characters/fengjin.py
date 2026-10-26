@@ -32,11 +32,13 @@
 
 from typing import Optional, List, Any
 from ..base import KitHandler
+from ..registry import register_kit
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
+@register_kit("1409", "风堇", "hyacine", "fengjin")
 class FengjinKit(KitHandler):
     """风堇 (ID 1409, 风 / 记忆)."""
 
@@ -305,13 +307,13 @@ class FengjinKit(KitHandler):
         self.port.gain_energy(self.owner_id, 20.0 * err, cause=f"施放普攻回能 (基础 20.0 × ERR {err*100:.1f}%)", source_plugin="风堇普攻")
 
     def _heal_team_with_ika(self, ally_pct: float, ally_flat: float, ika_pct: float, ika_flat: float) -> None:
-        """风堇技能的团队治疗: 其他我方目标与小伊卡适用不同的回复量 (官方技能描述分开列明)。
+        """风堇技能的团队治疗: 其他我方目标与伴生忆灵适用不同的回复量 (官方技能描述分开列明)。
 
-        两组回复量均以风堇生命上限为基准。
+        两组回复量均以风堇生命上限为基准，通过 CombatPort.is_own_memosprite 判定从属关系。
         """
         max_hp = self.port.max_hp(self.owner_id)
         for ally in self.port.allies(self.owner_id):
-            if ally == "小伊卡":
+            if self.port.is_own_memosprite(self.owner_id, ally):
                 self.port.heal(self.owner_id, ally, max_hp * ika_pct + ika_flat)
             else:
                 self.port.heal(self.owner_id, ally, max_hp * ally_pct + ally_flat)
@@ -353,15 +355,14 @@ class FengjinKit(KitHandler):
         for ally in self.port.allies(self.owner_id):
             # 百分比与固定值分开结算: 百分比按目标白字生命 (忆灵按主人白字),
             # 固定值原额——官方样本逐项实证 (E1 风堇: 队友 +80% x 各自白字
-            # +600, 如长夜月 8,109 -> 10,780)。旧实现把固定值按当前生命折算
-            # 进百分比, 白字越低的目标拿到的固定值越少, 忆灵更被成倍放大。
+            # +600, 如长夜月 8,109 -> 10,780)。
             self.port.upsert_status(BuffSpec(
                 key=f"Fengjin_Ult_SunAfterRain_{ally}",
                 name="雨过天晴",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(
-                    Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_boost),
+                    Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, hp_boost),
                     Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
                 ),
                 duration=3,
@@ -380,21 +381,20 @@ class FengjinKit(KitHandler):
         旧实现以布尔标记记录且置位后永不清除, 导致星魂 1 的攻击后治疗在
         首次终结技后全程常驻; 状态本身有持续时间, 须以状态存续为准。
         """
-        return any(
-            str(getattr(s, "id", "")).startswith("Fengjin_Ult_SunAfterRain_")
-            for s in self.port.statuses(self.owner_id)
-        )
+        return self.in_rain_state()
 
     def on_event(self, event: Any) -> None:
-        # 累计治疗量统计: 风堇与小伊卡造成的治疗计入小伊卡忆灵技的伤害基数
-        from ...events import HealAppliedEvent
-        if isinstance(event, HealAppliedEvent) and event.source_name in (self.owner_id, "小伊卡"):
+        # 累计治疗量统计: 风堇与伴生忆灵造成的治疗计入忆灵技的伤害基数
+        from ...events import HealAppliedEvent, ActionExecuteEvent
+        if isinstance(event, HealAppliedEvent) and (
+            event.source_name == self.owner_id
+            or self.port.is_own_memosprite(self.owner_id, event.source_name)
+        ):
             self.accumulated_healing += float(event.amount)
         self._sync_storm_calm()
         """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
         if self.eidolon >= 1 and self._sun_after_rain_active():
-            event_name = type(event).__name__
-            if event_name == "ActionExecuteEvent":
+            if isinstance(event, ActionExecuteEvent):
                 actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
                 if actor_id in self.port.allies(self.owner_id):
                     heal_amt = 0.08 * self.port.max_hp(self.owner_id)

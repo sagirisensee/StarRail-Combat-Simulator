@@ -75,7 +75,7 @@ class FuXuanKit(KitHandler):
             return raw_damage
         shared_dmg = raw_damage * 0.65
         remaining_dmg = raw_damage * 0.35
-        self.port.lose_hp(self.owner_id, shared_dmg, cause="fuxuan_matrix_share")
+        self.port.lose_hp(self.owner_id, shared_dmg, cause="fuxuan_matrix_share", absorb_by_shield=True)
         if self.eidolon >= 4:
             self.port.gain_energy(self.owner_id, 5.0)
         return remaining_dmg

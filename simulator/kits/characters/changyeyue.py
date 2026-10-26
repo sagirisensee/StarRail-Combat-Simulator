@@ -26,12 +26,14 @@
 
 from typing import Optional, Any
 from ..base import KitHandler
+from ..registry import register_kit
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
 from ...combat_port import BuffSpec, CombatPort
 from ...events import ActionExecuteEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
 
+@register_kit("1413", "长夜月", "evernight", "changyeyue")
 class ChangyeyueKit(KitHandler):
     """长夜月 (ID 1413, 冰 / 记忆, E2)."""
 
@@ -98,6 +100,7 @@ class ChangyeyueKit(KitHandler):
             modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
             duration=2,
             timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=(caster_id == self.owner_id),
             category="buff",
             description="暴击伤害提高 +15.0%"
         ))
@@ -208,18 +211,9 @@ class ChangyeyueKit(KitHandler):
             kit_args={"master_kit": self}
         )
         if spirit_ent:
-            spirit_ent.is_memosprite = True
-            spirit_ent.master_name = self.owner_id
-            spirit_ent.current_hp = self.spirit_hp
-            spirit_ent.max_hp = self.spirit_max_hp
-            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动！
-            # 立即行动入行动队列 (extra 类): 排在同簇已就绪的本体行动之后结算——
-            # 实机第二场 47.9 簇: 终结技召唤长夜后, 主人因行动提前 100% 而来的
-            # 在场版战技 (141309) 先落地入账, 长夜随后以攒满的忆质施放迷梦 (70 点
-            # 一发; 若长夜抢先则被拆成 25+22 两发)。已在场时的召唤 (回血) 不
-            # 产生立即行动。
+            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动 (100% 拉条)
             if not was_alive:
-                self.port.request_immediate_action(self.spirit_name)
+                self.port.advance(self.spirit_name, self.spirit_name, 1.0)
 
             # 行迹【天亮了，雨落了】：赋予忆灵暴击伤害加成 (+50%)
             rem_count = self._get_remembrance_count()
@@ -327,8 +321,7 @@ class ChangyeyueKit(KitHandler):
         self._check_threshold()
 
     def _check_threshold(self) -> None:
-        """检查【忆质】>= 16 点时，触发免控并使长夜立即行动 (入行动队列 extra 类，
-        与召唤立即行动同类: 排在已就绪的本体回合之后结算)。"""
+        """检查【忆质】>= 16 点时，触发免控并使长夜立即行动 (100% 拉条)。"""
         if (
             self.yizhi >= 16
             and self.spirit_alive
@@ -337,7 +330,7 @@ class ChangyeyueKit(KitHandler):
             and not getattr(self, "in_initial_action", False)
         ):
             self.threshold_issued = True
-            self.port.request_immediate_action(self.spirit_name)
+            self.port.advance(self.owner_id, self.spirit_name, 1.0)
 
     def trigger_spirit_burst(self) -> None:
         """忆灵终极爆发【迷梦，流失，如露】：
@@ -557,7 +550,7 @@ class ChangyeyueKit(KitHandler):
                 buffs.append({"name": s.name, "desc": s.description or "局内动态增益"})
             elif cat == "other":
                 target_name = getattr(s.target, "name", str(s.target))
-                if target_name != self.spirit_name and not s.id.startswith("Stage_Mechanic"):
+                if target_name != self.spirit_name and StatusTag.AURA_SHARED not in s_tags:
                     continue
                 if StatusTag.EXCLUDE_FROM_STAT_TRANSFERS in s_tags:
                     continue

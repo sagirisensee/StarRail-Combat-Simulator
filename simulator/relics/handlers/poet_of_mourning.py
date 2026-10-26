@@ -15,8 +15,9 @@ class PoetOfMourningHandler(RelicSetHandler):
         if self.pieces < 4 or not self.port:
             return
 
-        ent = self.port._get_entity(self.owner_id) if hasattr(self.port, "_get_entity") else None
-        spd = getattr(ent, "base_speed", 100.0) if ent else 100.0
+        spd = self.port.base_stat(self.owner_id, StatType.SPEED) if hasattr(self.port, "base_stat") else self.port.stat(self.owner_id, StatType.SPEED)
+        if spd <= 0.0:
+            spd = 100.0
 
         crit_bonus = 0.0
         if spd < 95.0:

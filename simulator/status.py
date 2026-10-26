@@ -283,10 +283,9 @@ class StatusManager:
         stat_type: StatType,
         white_base: float = 0.0,
         *,
-        exclude_tags: Tuple[str, ...] = (),
-        exclude_ids: Tuple[str, ...] = ()
+        exclude_tags: Tuple[str, ...] = ()
     ) -> float:
-        """动态计算指定属性的加成总值（支持按语义标签或状态 ID 排除以防自循环转化）。
+        """动态计算指定属性的加成总值（支持按语义标签 StatusTag 排除以防自循环转化）。
         
         符合星铁官方属性计算公式：
         - 攻击力 ATK = 战前攻击力 + 基础白字攻击 * 攻击力%总和 + 固定攻击力总和
@@ -311,8 +310,6 @@ class StatusManager:
         pct_sum = 0.0
 
         for status in self.get_statuses(entity_name, exclude_tags=exclude_tags):
-            if exclude_ids and status.id in exclude_ids:
-                continue
             for mod in status.modifiers:
                 # 攻击力属性统一聚合 (包含 ATK_BASE, ATK_PERCENT, ATK)
                 if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):

@@ -137,12 +137,11 @@ class LynxKit(KitHandler):
         # 【求生反应】Buff
         # 生命上限加成: 基础 7.5% (E6 额外 +6% = 13.5%)
         hp_pct = 0.135 if self.eidolon >= 6 else 0.075
-        mods = [Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_pct)]
+        mods = [Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, hp_pct)]
 
         # 检查是否为毁灭或存护角色，大幅提升受击概率
-        target_ent = self.port._get_entity(target_id) if hasattr(self.port, "_get_entity") else None
-        target_path = getattr(target_ent, "path", "").lower() if target_ent else ""
-        if target_path in ["destruction", "preservation", "warrior", "knight"]:
+        target_path = self.port.entity_path(target_id).lower() if hasattr(self.port, "entity_path") else ""
+        if target_path in ["destruction", "preservation", "warrior", "knight", "毁灭", "存护"]:
             mods.append(Modifier(StatType.AGGRO, ModifierOp.ADD, 5.0))
 
         # E6: 效果抵抗提高 30%
