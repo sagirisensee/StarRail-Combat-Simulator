@@ -279,6 +279,12 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertAlmostEqual(robin.speed, robin_spd_before + 95.0 * 0.08, places=2)
         # 长夜月白字 99 * 0.08 = 7.92
         self.assertAlmostEqual(cyy.speed, cyy_spd_before + 99.0 * 0.08, places=2)
+        # 但忆灵本体不吃该增益: 其有效速度应恰为召唤快照的继承速度
+        # (基础速度), 不再叠 +8%——两场黄金战斗日志中晴空乐手的实测
+        # 行动间隔恒为 30.0 AV (继承速度 333.4 的节拍), 吃 +8% 则为 27.8。
+        musician = sim.get_entity("晴空乐手")
+        self.assertIsNotNone(musician)
+        self.assertAlmostEqual(musician.speed, musician.base_speed, places=1)
 
 
 

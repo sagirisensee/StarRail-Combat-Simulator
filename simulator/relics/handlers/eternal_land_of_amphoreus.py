@@ -62,6 +62,15 @@ class EternalLandOfAmphoreusHandler(RelicSetHandler):
             # 排除非战斗角色/倒计时跑条实体
             if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                 continue
+            # 排除忆灵本体: 「我方全体」按角色口径结算, 忆灵不吃该速度增益——
+            # 日志实证 (两场黄金战斗): 晴空乐手的行动间隔恒为其继承速度
+            # (知更鸟速度 x1.8) 对应的 30.0 AV, 若她吃 +8% 应为 27.8 AV,
+            # 26 次间隔无一符合; 且该增益由她的在场触发, 不应反哺其自身节拍。
+            if self.port.is_memosprite(ally):
+                # 若历史状态残留 (旧口径下已挂上), 在此一并清除
+                if self.port.has_status(ally, self.BUFF_KEY):
+                    self.port.remove_status(ally, self.BUFF_KEY)
+                continue
             has_buff = self.port.has_status(ally, self.BUFF_KEY)
             if active and not has_buff:
                 self.port.upsert_status(BuffSpec(
