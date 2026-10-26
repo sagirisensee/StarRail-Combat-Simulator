@@ -85,7 +85,7 @@ SPROUT_WEAKNESSES = ["Fire", "Wind", "Imaginary"]
 SPROUT_RES = {"Fire": 0.0, "Wind": 0.0, "Imaginary": 0.0, "Ice": 0.2, "Quantum": 0.2, "Physical": 0.2, "Thunder": 0.2}
 
 
-def _guard(name: str) -> Entity:
+def _guard(name: str, initial_distance: float = 10000.0) -> Entity:
     ent = Entity(
         name=name,
         base_speed=145.0,
@@ -96,6 +96,7 @@ def _guard(name: str) -> Entity:
         weaknesses=["Wind", "Quantum"],
         is_enemy=True,
     )
+    ent.distance_remaining = initial_distance
     ent.damage_res = {"Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2}
     return ent
 
@@ -305,7 +306,7 @@ class Stage30510021Director:
                 for idx in (self._sprout_seq - 1, self._sprout_seq):
                     sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
                     if sp is not None:
-                        sp.current_hp = 180000.0
+                        sp.current_hp = 100000.0
             self._next_sprout_av += SPROUT_INTERVAL_AV
 
 
@@ -317,11 +318,11 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
             member.energy = member.max_energy * 0.5
 
     enemies = [
-        _guard("千星戍卫A"),
+        _guard("千星戍卫A", initial_distance=1.0),
         _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES),
         _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_HP and LIGHTHOUSE_WEAKNESSES),
-        _guard("千星戍卫B"),
-        _guard("千星戍卫C"),
+        _guard("千星戍卫B", initial_distance=2000.0),
+        _guard("千星戍卫C", initial_distance=6000.0),
     ]
     # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。日志实证:
     # 我方 CurrentHP 恰好 500.0 的下降次数与各自回合数逐一吻合

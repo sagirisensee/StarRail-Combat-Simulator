@@ -544,6 +544,14 @@ class IkaKit(KitHandler):
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
             )
+        # 1140901 sp_base = 5: 小伊卡施放忆灵技为风堇恢复 5 点基础能量 (受 ERR 放大)
+        err = self.port.stat(master.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(
+            master.owner_id,
+            5.0 * err,
+            cause=f"忆灵技《乌云乌云快走开！》施放回能 (基础 5.0 × ERR {err*100:.1f}%)",
+            source_plugin="小伊卡忆灵技"
+        )
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
         """记录生命降低的我方目标，待回合开始/行动后由天赋【牵起晴空的手】结算治疗。"""

@@ -473,7 +473,7 @@ class TurnSimulator:
             if active_entity.action_callback:
                 active_entity.action_callback(active_entity, self.resolver, actual_action)
             elif active_entity.is_enemy:
-                allies = [e for e in self.entities if not e.is_enemy]
+                allies = [e for e in self.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]
                 if allies:
                     import random
                     target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))

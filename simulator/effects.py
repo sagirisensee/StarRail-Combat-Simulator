@@ -295,16 +295,17 @@ class EffectResolver:
                 damage_type=resolved_damage_type
             ))
 
-            # 4. 敌方直接攻击命中我方角色时触发标准受击回能 (严格受目标 ERR 能量恢复效率放大)
+            # 4. 敌方直接攻击命中我方角色或忆灵时触发标准受击回能 (忆灵受击回能归其主人, 严格受目标 ERR 放大)
             if (
                 getattr(effect.request.attacker, "is_enemy", False)
                 and not getattr(target, "is_enemy", False)
-                and not getattr(target, "is_memosprite", False)
+                and not getattr(target, "is_countdown", False)
                 and resolved_damage_type == DamageType.DIRECT
             ):
-                hit_base = getattr(effect.request, "hit_energy", 0.0) or 5.0
-                if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
-                    self.simulator.port.gain_hit_energy(target.name, hit_base)
+                hit_base = getattr(effect.request.attacker, "hit_energy", 0.0) or getattr(effect.request, "hit_energy", 0.0) or 5.0
+                energy_recipient = getattr(target, "master_name", None) if getattr(target, "is_memosprite", False) else target.name
+                if energy_recipient and hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
+                    self.simulator.port.gain_hit_energy(energy_recipient, hit_base)
 
             # 4.5 击杀回能: 击败敌方目标时, 击杀者恢复 10 点能量 (受 ERR 放大); 忆灵击杀归其主人
             if (

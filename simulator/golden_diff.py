@@ -1036,11 +1036,16 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             excess = float(kit.yizhi) - 15
             kit.yizhi = 15
             stash["amount"] += excess
+        elif q[0].av - now_av <= 10.0 and stash["amount"] > 0:
+            kit.yizhi = int(float(kit.yizhi) + stash["amount"])
+            stash["amount"] = 0.0
+            if hasattr(kit, "_check_threshold"):
+                kit._check_threshold()
 
     def _master_blocked(cast: TrajectoryCast, now_av: float) -> bool:
         """同 AV 顺序闸门: 官方序位在本施放之前、且同簇 (AV 相差 <=0.5) 的本体
-        施放尚未落地时, 忆灵技不得抢先强制——官方节奏里她的终结技/战技先
-        落地 (再召唤与忆质入账), 忆灵技随后施放。超过簇时点 15 AV 仍未落地
+        或忆灵技施放尚未落地时, 本忆灵技不得抢先强制——官方节奏里前置技能先
+        落地 (再召唤与忆质入账), 后续忆灵技随后施放。超过簇时点 15 AV 仍未落地
         则放行, 避免死锁。"""
         if cast.order < 0 or now_av > cast.av + 15.0:
             return False
@@ -1048,6 +1053,9 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             if j >= cast.order:
                 break
             if j not in fired_master and timeline[j].av <= cast.av + 0.5:
+                return True
+        for other_q in spirit_queues.values():
+            if other_q and other_q[0].order < cast.order and abs(other_q[0].av - cast.av) <= 0.5:
                 return True
         return False
 
@@ -1058,14 +1066,33 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         ent = sim.get_entity("晴空乐手")
         if ent is None:
             return False
+        if ent.name in getattr(sim, "_ready_queue", ()):
+            return True
         if float(getattr(ent, "distance_remaining", 1e9)) <= 5.0:
             return True
         peek = sim.peek_next_actor() if hasattr(sim, "peek_next_actor") else None
         return peek is ent
 
-    def _enforce_spirits() -> None:
-        now_av = float(getattr(sim, "current_av", 0.0))
-        _clamp_memoria(now_av)
+    def _changye_due(sid: int = 1141307) -> bool:
+        """长夜的立即行动是否已在就绪队列待服务 (距离耗尽或队列待服务)。
+        对 1141307 (迷梦，流失，如露)，还需当前忆质加上回合初血噬 (+4) 可达 16 点阈值，
+        否则长夜出队会误放 1141301 (追忆，蹁跹，如雨)。
+        """
+        ent = sim.get_entity("长夜")
+        if ent is None:
+            return False
+        if sid == 1141307:
+            kit = _changye_kit()
+            if kit is None or float(getattr(kit, "yizhi", 0)) + 4 < 16:
+                return False
+        if ent.name in getattr(sim, "_ready_queue", ()):
+            return True
+        if float(getattr(ent, "distance_remaining", 1e9)) <= 5.0:
+            return True
+        peek = sim.peek_next_actor() if hasattr(sim, "peek_next_actor") else None
+        return peek is ent
+
+    def _match_organic_spirits() -> None:
         for sid, q in spirit_queues.items():
             while q:
                 head = q[0]
@@ -1082,6 +1109,11 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 organic_used.add(match_idx)
                 result.records.append(TrajectoryRecord(sid, head.name, head.av, organic[match_idx][1], "organic", ()))
                 q.popleft()
+
+    def _enforce_spirits() -> None:
+        now_av = float(getattr(sim, "current_av", 0.0))
+        _clamp_memoria(now_av)
+        _match_organic_spirits()
         for sid, q in spirit_queues.items():
             while q and q[0].av <= now_av and not _master_blocked(q[0], now_av):
                 # 晴空乐手的四重奏是她的自然回合行动: 时点与知更鸟终结技同 AV
@@ -1090,6 +1122,9 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 # 下一轮执法按自然施放匹配; 同一时点最多让行一次, 防死锁。
                 if sid == 1151201 and (sid, q[0].av) not in deferred_once and _musician_due():
                     deferred_once.add((sid, q[0].av))
+                    break
+                if sid in (1141301, 1141307) and (sid, q[0].av, q[0].order) not in deferred_once and _changye_due(sid):
+                    deferred_once.add((sid, q[0].av, q[0].order))
                     break
                 cast = q.popleft()
                 result.records.append(_force_spirit(cast, now_av))
@@ -1101,6 +1136,13 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             if t_idx >= u_idx:
                 break
             if t_idx not in fired_master and abs(timeline[t_idx].av - u_item.av) <= 0.5:
+                return True
+        mq = spirit_queues.get(1151201)
+        if mq and mq[0].order < u_idx and abs(mq[0].av - u_item.av) <= 0.5 and _musician_due():
+            return True
+        for sid in (1141301, 1141307):
+            cq = spirit_queues.get(sid)
+            if cq and cq[0].order < u_idx and abs(cq[0].av - u_item.av) <= 0.5 and _changye_due(sid):
                 return True
         return False
 
@@ -1118,6 +1160,10 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 ent.energy = float(ent.max_energy)
                 result.ult_energy_granted += deficit
             ok = sim.cast_ultimate(item.actor)
+            for e in list(getattr(sim, "entities", ())):
+                kit = getattr(e, "kit", None)
+                if kit is not None and getattr(kit, "_pending_volley", False) and hasattr(kit, "_flush_zone_window"):
+                    kit._flush_zone_window()
             if director is not None:
                 director.after_step()
             result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, now_av if ok else None))
@@ -1207,6 +1253,7 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         sim.step(action_override=override)
         if director is not None:
             director.after_step()
+        _match_organic_spirits()
         _fire_due_ults()
         _enforce_spirits()
     # 收尾: 剩余终结技与忆灵技排期

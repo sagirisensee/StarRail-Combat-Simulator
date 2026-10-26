@@ -671,6 +671,8 @@ class ChangyeyueKit(KitHandler):
             self._check_threshold()
 
         elif ctx.kind == ActionKind.ULTIMATE:
+            # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15% (持续 2 回合)
+            self._trigger_trace_a2_on_skill(self.owner_id)
             self.summon_spirit()
 
             spirit_cd = self._spirit_crit_dmg()
@@ -742,7 +744,8 @@ class ChangyeMemospriteKit(KitHandler):
 
     def definition(self, kind: ActionKind):
         is_burst = bool(self.master_kit and self.master_kit.yizhi >= 16)
-        self._pending_burst = is_burst
+        if self._pending_burst is None:
+            self._pending_burst = is_burst
         if is_burst:
             return AbilityDefinition(
                 kind=kind,
@@ -763,6 +766,12 @@ class ChangyeMemospriteKit(KitHandler):
                 is_auto=True,
                 skill_id=1141301
             )
+
+    def on_event(self, event: Any) -> None:
+        if isinstance(event, ActionExecuteEvent) and event.actor_name == self.owner_id:
+            sid = int(getattr(event, "skill_config_id", 0) or 0)
+            if sid in (1141301, 1141307):
+                self._pending_burst = (sid == 1141307)
 
     def execute(self, ctx: ActionContext):
         if not self.master_kit:

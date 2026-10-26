@@ -402,7 +402,7 @@ class TestTrajectoryReplay(unittest.TestCase):
         【血噬】在行动开始时扣其 500 生命, 经天赋转化为忆质; 强发路径若直调
         kit 施放会绕过回合开始结算, 扣血与入账双双丢失。
         """
-        from simulator.golden_diff import build_stage_sim, extract_timeline, run_trajectory_replay, parse_golden_jsonl
+        from simulator.golden_diff import TimelineItem, build_stage_sim, extract_timeline, run_trajectory_replay, parse_golden_jsonl
         from simulator.events import HPLostEvent
         path = "battle_logs/battle_20261026_062503.jsonl"
         golden = parse_golden_jsonl(path)
@@ -412,7 +412,10 @@ class TestTrajectoryReplay(unittest.TestCase):
             if getattr(e, "cause", "") == "stage_mechanic_bleed_turn_begin" and e.entity_name == "长夜":
                 bleed_avs.append(float(getattr(e, "av", 0.0)))
         sim.event_bus.subscribe(HPLostEvent, _on_hp)
-        traj = run_trajectory_replay(sim, director, extract_timeline(path), av_budget=golden.final_av)
+        tl = extract_timeline(path)
+        tl.append(TimelineItem(200.0, "spirit", "长夜", 1141301, "追忆，蹁跹，如雨"))
+        tl.sort(key=lambda x: x.av)
+        traj = run_trajectory_replay(sim, director, tl, av_budget=golden.final_av)
         forced = [r for r in traj.records if r.skill_id in (1141301, 1141307) and r.mode == "forced" and r.fired_av is not None]
         self.assertTrue(forced, "预期本场存在强发的长夜施放")
         for r in forced:

@@ -100,7 +100,7 @@ class SunnyMusiciansKit(KitHandler):
         for s in self.port.statuses(self.master_kit.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
                 continue
-            if s.id in (self.master_kit.FEVER_DMG_BUFF, "Robin_Tech_Melody"):
+            if s.id in (self.master_kit.FEVER_DMG_BUFF, "Robin_Tech_Melody") or s.id.startswith("Robin_Talent_TonalChord_"):
                 continue
             mods = tuple(
                 m for m in s.modifiers
@@ -138,8 +138,9 @@ class SunnyMusiciansKit(KitHandler):
         # 施放完毕后重置行动距离, 防止轨迹回放强制施放后 0.46 AV 内的自然回合重复双发
         self.port.set_distance(self.owner_id, 10000.0)
 
-        # 1151201 sp_base = 20：施放忆灵技回能 20 点
-        self.port.gain_energy(self.master_kit.owner_id, 20.0)
+        # 1151201 sp_base = 20：施放忆灵技回能 20 点 (受 ERR 放大)
+        err = self.port.stat(self.master_kit.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.master_kit.owner_id, 20.0 * err)
 
         # 星魂 1【夏日离群飞鸟】：对生命值最高的敌方目标额外造成记录伤害总额 (11% + 气氛值 * 0.1%) 的真实伤害，随后清空记录值的 50%
         if self.master_kit.eidolon >= 1 and getattr(self.master_kit, "recorded_damage", 0.0) > 0 and enemies:
@@ -788,12 +789,11 @@ class RobinSunnySongKit(KitHandler):
         elif isinstance(event, ActionExecuteEvent):
             # 记录当前动作类型 (追加攻击属于同窗口追击反应，不可消耗回合律动)
             self._current_action_kind = getattr(event, "action_kind", None)
-            if self._current_action_kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE):
-                if getattr(self, "_last_turn_actor", None) != event.actor_name:
-                    self._last_turn_actor = event.actor_name
-                    self._rhythm_consumed_in_current_turn = False
-                    self._healed_this_turn = False
-                    self._e2_vibe_bonus_in_turn = False
+            if self._current_action_kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.MEMOSPRITE_SKILL):
+                self._last_turn_actor = event.actor_name
+                self._rhythm_consumed_in_current_turn = False
+                self._healed_this_turn = False
+                self._e2_vibe_bonus_in_turn = False
             # 天赋：我方目标施放攻击时获得 1 点气氛值 (排除纯辅助技能与 Fever 倒计时实体)
             if (
                 self.port.is_ally(event.actor_name)
@@ -949,8 +949,9 @@ class RobinSunnySongKit(KitHandler):
         if not target_id:
             return
 
-        # 终结技自带回能 5 点 (sp_base = 5)
-        self.port.gain_energy(self.owner_id, 5.0)
+        # 终结技自带回能 5 点 (sp_base = 5, 受 ERR 放大)
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 5.0 * err)
 
         # 1. 指定我方单体行动提前 100% (#1=1.0)
         adv_ratio = self.skill_param("ultra", 0, default=1.0)

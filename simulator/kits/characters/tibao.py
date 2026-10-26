@@ -223,13 +223,15 @@ class TibaoKit(KitHandler):
         except ValueError:
             pass
 
-        self.port.gain_energy(self.owner_id, 20.0)
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 20.0 * err)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         """战技【礼物都去哪儿了】：获得【神启】3 回合，我方全体抗穿。"""
         duration = int(self.skill_param("skill", 1, default=3))
         self.apply_divine_revelation(turns=duration)
-        self.port.gain_energy(self.owner_id, 30.0)
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+        self.port.gain_energy(self.owner_id, 30.0 * err)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         """终结技【猜猜这里住着谁】：开启结界，易伤，神启，E4 无视防御，E6 追加攻击。"""
