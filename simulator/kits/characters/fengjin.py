@@ -494,7 +494,9 @@ class IkaKit(KitHandler):
             return
         from ...status import StatusTag
         allowed_stats = {StatType.RES_PEN, StatType.DEF_SHRED}
-        ika_status_ids = {s.id for s in self.port.statuses(self.owner_id)}
+        ika_statuses = list(self.port.statuses(self.owner_id))
+        ika_status_ids = {s.id for s in ika_statuses}
+        ika_status_names = {s.name for s in ika_statuses}
         for s in self.port.statuses(master.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
                 continue
@@ -502,7 +504,7 @@ class IkaKit(KitHandler):
             if not mods:
                 continue
             mapped_key = f"{s.id}_IkaAura"
-            if s.id not in ika_status_ids and mapped_key not in ika_status_ids:
+            if s.id not in ika_status_ids and mapped_key not in ika_status_ids and s.name not in ika_status_names:
                 self.port.upsert_status(BuffSpec(
                     key=mapped_key,
                     name=s.name,
@@ -544,6 +546,8 @@ class IkaKit(KitHandler):
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
             )
+        if hasattr(self.port, "resolve_effects"):
+            self.port.resolve_effects()
         # 1140901 sp_base = 5: 小伊卡施放忆灵技为风堇恢复 5 点基础能量 (受 ERR 放大)
         err = self.port.stat(master.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(

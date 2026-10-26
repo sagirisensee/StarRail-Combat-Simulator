@@ -187,6 +187,7 @@ class ChangyeyueKit(KitHandler):
             from ...actions import ActionKind
             self.port.publish_action(self.owner_id, "孤独，浮游，漆黑", ActionKind.TALENT, skill_id=1141303)
             self.port.publish_action(self.owner_id, "与夜，形影，不离", ActionKind.TALENT, skill_id=1141305)
+            self.port.publish_action(self.owner_id, "与你，再见，无期", ActionKind.TALENT, skill_id=1141306)
 
         # 忆灵天赋【孤独，浮游，漆黑】：长夜在场时长夜月造成的伤害提高 50%
         self.port.upsert_status(BuffSpec(
@@ -242,11 +243,29 @@ class ChangyeyueKit(KitHandler):
                 return (spirit_hp / owner_hp) * 0.955
         return 0.50
 
+    def _sync_darkness_vuln(self) -> None:
+        """处于【至暗之谜】状态时，确保在场所有敌方目标（含新刷出的波次/增援目标）挂载 30% 易伤光环。"""
+        if not self.darkness or not self.port:
+            return
+        for e in self.port.enemies(self.owner_id):
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_Darkness_Vuln",
+                name="至暗之谜 (易伤+30%)",
+                source_id=self.owner_id,
+                target_id=e,
+                modifiers=(Modifier(StatType.VULNERABILITY, ModifierOp.ADD, 0.30),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_END,
+                category="debuff",
+                description="受到伤害提高 +30.0%"
+            ))
+
     def _execute_memosprite_skill(self, ctx: Optional[ActionContext] = None) -> None:
         """执行忆灵天赋【与夜，形影，不离】与常规忆灵技【追忆，蹁跹，如雨】。"""
         enemies = self.port.enemies(self.owner_id)
         if not enemies:
             return
+        self._sync_darkness_vuln()
         target = ctx.target_ids[0] if (ctx and ctx.target_ids) else enemies[0]
         self.in_initial_action = True
 
@@ -264,17 +283,21 @@ class ChangyeyueKit(KitHandler):
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
         extra_ratio = (self.yizhi // 4) * 0.14
         mult = (0.70 + extra_ratio) * self._spirit_hp_scale_ratio()
+        is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(target)
+        eff_mult = mult * (0.25 if is_bg else 1.0)
+        spirit_cd = self._spirit_crit_dmg()
 
-        self.port.attack(
-            self.owner_id,
-            target,
-            element="Ice",
-            atk_multiplier=mult,
-            toughness_damage=10.0,
-            damage_type=DamageType.SERVANT,
-            scaling_stat="hp",
-            fixed_crit_dmg=self._spirit_crit_dmg()
-        )
+        for split_ratio, split_toughness in ((0.125, 2.0), (0.125, 2.0), (0.25, 2.0), (0.50, 4.0)):
+            self.port.attack(
+                self.owner_id,
+                target,
+                element="Ice",
+                atk_multiplier=eff_mult * split_ratio,
+                toughness_damage=split_toughness,
+                damage_type=DamageType.SERVANT,
+                scaling_stat="hp",
+                fixed_crit_dmg=spirit_cd
+            )
 
         # 施放后获得 1 点【忆质】(E2自动+2变为3点)
         self.gain_yizhi(1)
@@ -351,6 +374,7 @@ class ChangyeyueKit(KitHandler):
         enemies = self.port.enemies(self.owner_id)
         if not enemies:
             return
+        self._sync_darkness_vuln()
 
         # 1. 忆灵施放技能阶段触发：
         # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15%
@@ -373,17 +397,21 @@ class ChangyeyueKit(KitHandler):
         try:
             spirit_cd = self._spirit_crit_dmg()
             for e in enemies:
-                factor = 0.168 if e == primary_target else 0.084
+                factor = 0.152 if e == primary_target else 0.076
+                is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
+                eff_mult = factor * spent_memory * hp_ratio * (0.31 if is_bg else 1.0)
                 self.port.attack(
                     self.owner_id,
                     e,
                     element="Ice",
-                    atk_multiplier=factor * spent_memory * hp_ratio,
+                    atk_multiplier=eff_mult,
                     toughness_damage=90.0 if e == primary_target else 60.0,
                     damage_type=DamageType.SERVANT,
                     scaling_stat="hp",
                     fixed_crit_dmg=spirit_cd
                 )
+            if hasattr(self.port, "resolve_effects"):
+                self.port.resolve_effects()
 
             # 消耗全部忆质
             self.yizhi = 0
@@ -407,9 +435,6 @@ class ChangyeyueKit(KitHandler):
             self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
             self.port.despawn_spirit(self.spirit_name, "burst_depart")
-            # 被动施放事实补发: 退场天赋【与你，再见，无期】(与实机施放记录对账)
-            from ...actions import ActionKind
-            self.port.publish_action(self.owner_id, "与你，再见，无期", ActionKind.TALENT, skill_id=1141306)
 
             # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (最多计算 40 点忆质)
             speed_bonus = 0.10 + 0.01 * min(40, spent_memory)
@@ -678,11 +703,13 @@ class ChangyeyueKit(KitHandler):
             spirit_cd = self._spirit_crit_dmg()
             ult_hp_ratio = self._spirit_hp_scale_ratio()
             for e in self.port.enemies(self.owner_id):
+                is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
+                eff_mult = 2.00 * ult_hp_ratio * (0.28 if is_bg else 1.15)
                 self.port.attack(
                     self.owner_id,
                     e,
                     element="Ice",
-                    atk_multiplier=2.00 * ult_hp_ratio,
+                    atk_multiplier=eff_mult,
                     toughness_damage=20.0,
                     damage_type=DamageType.ULTIMATE,
                     scaling_stat="hp",

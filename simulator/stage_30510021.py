@@ -141,6 +141,7 @@ def _boss() -> Entity:
         is_enemy=True,
     )
     ent.damage_res = dict(BOSS_RES)
+    ent.hit_energy = 10.0
     # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
     # 记账方式管理 (见 Stage30510021Director._manage_boss_phases),
     # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
@@ -163,7 +164,7 @@ def _make_boss_ai(sim: TurnSimulator):
     from .status import StatType
     import random
 
-    state = {"actions": 0}
+    state = {"actions": 0, "combat_turns": 0}
 
     def _ai(entity, resolver, action) -> None:
         def _hit(target, multiplier: float) -> None:
@@ -177,6 +178,20 @@ def _make_boss_ai(sim: TurnSimulator):
         if not allies:
             return
         state["actions"] += 1
+        if getattr(sim, "current_turn_entity", None) is entity:
+            state["combat_turns"] += 1
+            for target in allies:
+                _hit(target, 1.2)
+            primary = max(
+                allies,
+                key=lambda a: sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO),
+            )
+            _hit(primary, 2.4)
+            if state["combat_turns"] in (1, 3, 6):
+                for target in allies:
+                    if not getattr(target, "is_memosprite", False):
+                        _hit(target, 0.8)
+            return
         if state["actions"] % 2 == 1:
             # 群伤模组: 全体 (含忆灵) 各承受一次
             for target in allies:
@@ -204,6 +219,7 @@ def _sprout(name: str) -> Entity:
         is_enemy=True,
     )
     ent.damage_res = dict(SPROUT_RES)
+    ent.hit_energy = 10.0
     return ent
 
 
@@ -291,23 +307,32 @@ class Stage30510021Director:
             # 胚芽 (两场该对的 CurrentHP 首样本均为 0——生成即被同簇爆发击杀),
             # 且增援节拍以转阶段时点重锚 (其后增援为转阶段 +75.7/+151.5,
             # 原节拍的后续时点不再生成)。该对计入增援批次上限。
-            self.sprout_waves_spawned += 1
-            self._spawn_sprouts(2)
-            for idx in (self._sprout_seq - 1, self._sprout_seq):
-                sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
-                if sp is not None:
-                    sp.current_hp = 300000.0
             self._next_sprout_av = av + SPROUT_INTERVAL_AV
+            hyacine = self.sim.get_entity("风堇")
+            if hyacine is not None and getattr(hyacine, "energy", 0.0) >= 100.0:
+                self._pending_transition_sprouts = True
+                return
+            self._spawn_transition_sprouts()
             return
-        if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.05:
+        if getattr(self, "_pending_transition_sprouts", False):
+            hyacine = self.sim.get_entity("风堇")
+            if hyacine is None or getattr(hyacine, "energy", 0.0) < 100.0:
+                self._pending_transition_sprouts = False
+                self._spawn_transition_sprouts()
+                return
+            return
+        if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.80:
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
-            if self.sprout_waves_spawned == SPROUT_WAVE_COUNT:
-                for idx in (self._sprout_seq - 1, self._sprout_seq):
-                    sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
-                    if sp is not None:
-                        sp.current_hp = 100000.0
             self._next_sprout_av += SPROUT_INTERVAL_AV
+
+    def _spawn_transition_sprouts(self) -> None:
+        self.sprout_waves_spawned += 1
+        self._spawn_sprouts(2)
+        for idx in (self._sprout_seq - 1, self._sprout_seq):
+            sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
+            if sp is not None:
+                sp.current_hp = 300000.0
 
 
 def build_stage_30510021(team: List[Entity]) -> tuple:
@@ -318,9 +343,9 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
             member.energy = member.max_energy * 0.5
 
     enemies = [
-        _guard("千星戍卫A", initial_distance=1.0),
-        _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES),
         _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_HP and LIGHTHOUSE_WEAKNESSES),
+        _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES),
+        _guard("千星戍卫A", initial_distance=1.0),
         _guard("千星戍卫B", initial_distance=2000.0),
         _guard("千星戍卫C", initial_distance=6000.0),
     ]

@@ -441,7 +441,7 @@ class TibaoKit(KitHandler):
                         if self.port.entity_exists(pending_true["target"]):
                             true_ratio = self.eidolon_param(1, 0, default=0.24)
                             my_max_hp = self.port.max_hp(self.owner_id)
-                            true_base = pending_true["base"] + (pending_true["additional"] / 0.78)
+                            true_base = (pending_true["base"] + pending_true["additional"]) if pending_true["base"] > 0 else 0.0
                             if my_max_hp > 0 and true_base > 0:
                                 # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
                                 self.port.attack(
@@ -508,6 +508,23 @@ class TibaoKit(KitHandler):
                 self.port.remove_status(self.owner_id, "Tribbie_A4_GlassBallWithWings")
             return
 
+        if self.zone_active:
+            zone_vuln = self.skill_param("ultra", 1, default=0.33)
+            for e in self.port.enemies(self.owner_id):
+                if not self.port.has_status(e, f"Tribbie_Ult_Zone_Vulnerability_{e}"):
+                    self.port.upsert_status(BuffSpec(
+                        key=f"Tribbie_Ult_Zone_Vulnerability_{e}",
+                        name="结界易伤 (猜猜这里住着谁)",
+                        source_id=self.owner_id,
+                        target_id=e,
+                        modifiers=(Modifier(StatType.VULNERABILITY, ModifierOp.ADD, zone_vuln),),
+                        duration=zone_status.duration,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        skip_current_clock=True,
+                        category="debuff",
+                        description=f"受到伤害提高 +{zone_vuln * 100:.1f}%"
+                    ))
+
         team_hp_sum = 0.0
         for ally in self.port.allies(self.owner_id):
             if not self.port.is_memosprite(ally) and not self.port.is_countdown(ally):
@@ -539,8 +556,8 @@ class TibaoKit(KitHandler):
     def on_event(self, event: Any) -> None:
         """响应事件：
         1. 我方其他角色施放终结技后触发追加攻击；
-        2. 行迹【岔路旁的小石子？】：我方其他目标攻击后，每击中 1 个目标使缇宝恢复 1.5 点固定能量；
-        3. 动态同步【长翅膀的玻璃球！】生命上限与结界到期清理。
+        2. 行迹【岔路旁的小石子？】：我方目标施放攻击后，每击中 1 个目标使缇宝恢复 1.5 点能量；
+        3. 动态同步【长翅膀的玻璃球！】生命上限与结界易伤光环。
         """
         from ...events import (
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
@@ -549,7 +566,7 @@ class TibaoKit(KitHandler):
         )
         if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
             self._flush_zone_window()
-        if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent)):
+        if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
             self._sync_glass_ball_hp()
 
         if isinstance(event, DamageAppliedEvent):
@@ -560,6 +577,7 @@ class TibaoKit(KitHandler):
 
             # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害与 E1 真实伤害。
             # 结界自身的附加/真实伤害不计入采样, 队友伴随攻击触发的附加伤害 (如小伊卡 E1) 计入本次攻击总伤害池。
+            is_new_target = False
             if (
                 not self._zone_resolving
                 and self.port.is_ally(attacker)
@@ -573,12 +591,13 @@ class TibaoKit(KitHandler):
                 if self._zone_window_actor is None:
                     self._zone_window_actor = attacker
                     self._zone_window_zone = self.zone_active
+                is_new_target = target not in self._zone_window_targets
                 self._zone_window_targets.add(target)
                 self._zone_window_total += float(event.damage)
                 is_guarded = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(target)
                 if not is_guarded:
                     self._zone_window_true_base += float(event.damage)
-                if dtype != DamageType.ADDITIONAL:
+                if is_new_target and dtype != DamageType.ADDITIONAL:
                     self._zone_window_hits += 1
 
             # 汇总待结算真实伤害的基数: 本窗口结界附加伤害的实际值
@@ -589,9 +608,9 @@ class TibaoKit(KitHandler):
             ):
                 self._pending_true["additional"] += float(event.damage)
 
-            # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血误判):
+            # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血、多段同目标重复触发误判):
             # 1. 攻击者必须为我方其他目标 (排除缇宝自身，支持伴生忆灵长夜)
-            # 2. 承受目标必须为敌方目标
+            # 2. 承受目标必须为敌方目标 (每次攻击每击中 1 个不同目标触发 1 次)
             # 3. 必须为直接攻击有效命中 (排除 DoT / stage_bleed / reflect)
             is_valid_attacker = self.port.is_ally(attacker) and attacker != self.owner_id
             is_valid_target = not self.port.is_ally(target)
@@ -601,11 +620,11 @@ class TibaoKit(KitHandler):
                 and event.damage > 0
             )
 
-            if is_valid_attacker and is_valid_target and is_attack_dmg:
+            if is_valid_attacker and is_valid_target and is_attack_dmg and is_new_target:
                 energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
                 # 星铁底层机制：未标明“固定能量”的回能严格享受角色能量恢复效率 (ERR) 放大
                 err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                self.port.gain_energy(self.owner_id, energy_per_hit * err, cause=f"天赋《好忙好忙的缇宝》队友命中[{target}]回能 (基础 {energy_per_hit} × ERR {err*100:.1f}%)", source_plugin="缇宝天赋")
+                self.port.gain_energy(self.owner_id, energy_per_hit * err, cause=f"行迹《岔路旁的小石子？》我方目标命中[{target}]回能 (基础 {energy_per_hit} × ERR {err*100:.1f}%)", source_plugin="缇宝行迹")
 
         elif isinstance(event, ActionExecuteEvent):
             action_kind = getattr(event, "action_kind", None)

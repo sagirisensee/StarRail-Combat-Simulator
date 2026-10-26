@@ -1222,14 +1222,16 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 if due_av >= landing_av - 1e-4 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], due_av):
                     break
                 sim.advance_clock(due_av - now0)
+                if director is not None:
+                    director.after_step()
                 _fire_due_ults()
         # B. 到点终结技
         _fire_due_ults()
         # C. 预览并执行回合
         actor_ent = sim.advance_to_next_turn()
+        if director is not None:
+            director.after_step()
         if actor_ent is None:
-            if director is not None:
-                director.after_step()
             idle_steps += 1
             if idle_steps > 100:
                 break

@@ -57,7 +57,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         并在下一行动开始前结算上一个忆灵攻击行动的蓄池附加伤害。"""
         if not self.port:
             return
-        from ...events import ActionExecuteEvent, DamageAppliedEvent, TurnBeginEvent
+        from ...events import ActionExecuteEvent, DamageAppliedEvent, TurnBeginEvent, TurnEndEvent
 
         if isinstance(event, ActionExecuteEvent):
             if getattr(event, "action_kind", None) == ActionKind.TALENT:
@@ -75,7 +75,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 and event.target_name not in self._spirit_hit_targets
             ):
                 self._spirit_hit_targets.append(event.target_name)
-        elif isinstance(event, TurnBeginEvent):
+        elif isinstance(event, (TurnBeginEvent, TurnEndEvent)):
             self._flush_discharge()
 
     def _apply_vulnerability(self) -> None:
@@ -109,16 +109,30 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         wearer_max_hp = self.port.max_hp(self.owner_id)
         if wearer_max_hp <= 0:
             return
-        # 官方文本：使装备者的忆灵基于已消耗生命值的 250% 造成附加伤害（享受忆灵自身的增伤乘区）
-        # 为保持日志归因在装备者名下 (type=Additional)，将忆灵与装备者的增伤比折算入等效倍率
+        # 官方文本：使装备者的忆灵基于已消耗生命值的 250% 造成附加伤害（享受忆灵自身的增伤与暴伤乘区）
+        # 为保持日志归因在装备者名下 (type=Additional)，将忆灵与装备者的增伤比折算入等效倍率，并汇总忆灵完整暴伤
+        from ...status import StatusTag
         spirit_dmg_mult = 1.0
+        spirit_crit_dmg = float(self.port.stat(self.owner_id, StatType.CRIT_DMG))
         for ally in self.port.allies(self.owner_id):
             if self.port.is_own_memosprite(self.owner_id, ally):
                 s_boost = 1.0 + self.port.stat(ally, StatType.DMG_BOOST)
                 w_boost = 1.0 + self.port.stat(self.owner_id, StatType.DMG_BOOST)
                 if w_boost > 0:
                     spirit_dmg_mult = s_boost / w_boost
+                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
+                    for m in s.modifiers:
+                        if m.stat == StatType.CRIT_DMG:
+                            spirit_crit_dmg += m.value
                 break
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_memosprite(ally) and not self.port.is_own_memosprite(self.owner_id, ally):
+                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
+                    if s.name == "白昼悄然离去":
+                        for m in s.modifiers:
+                            if m.stat == StatType.CRIT_DMG:
+                                spirit_crit_dmg += m.value
+                        break
         eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
         for target in targets:
             if self.port.entity_exists(target):
@@ -129,8 +143,11 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                     atk_multiplier=eq_mult,
                     toughness_damage=0.0,
                     damage_type=DamageType.ADDITIONAL,
-                    scaling_stat="hp"
+                    scaling_stat="hp",
+                    fixed_crit_dmg=spirit_crit_dmg
                 )
+        if hasattr(self.port, "resolve_effects"):
+            self.port.resolve_effects()
 
 
 # 向因果追踪器自注册本光锥的扣血来源描述 (供 tracer 因果报表引用, 核心层不写死本光锥信息)

@@ -94,9 +94,12 @@ class SunnyMusiciansKit(KitHandler):
             mult *= (1.0 + e6_boost)
 
         enemies = self.port.enemies(self.owner_id)
+        self.master_kit._update_musician_aura()
         # 晴空乐手在场时同步主人身上的全队结界抗穿与减防光环, 仅以物理乘区与屏障吸收结算
         from ...status import StatusTag
-        musician_status_ids = {s.id for s in self.port.statuses(self.owner_id)}
+        musician_statuses = list(self.port.statuses(self.owner_id))
+        musician_status_ids = {s.id for s in musician_statuses}
+        musician_status_names = {s.name for s in musician_statuses}
         for s in self.port.statuses(self.master_kit.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
                 continue
@@ -109,7 +112,7 @@ class SunnyMusiciansKit(KitHandler):
             if not mods:
                 continue
             mapped_key = f"{s.id}_MusicianAura"
-            if s.id not in musician_status_ids and mapped_key not in musician_status_ids:
+            if s.id not in musician_status_ids and mapped_key not in musician_status_ids and s.name not in musician_status_names:
                 self.port.upsert_status(BuffSpec(
                     key=mapped_key,
                     name=s.name,
@@ -122,6 +125,24 @@ class SunnyMusiciansKit(KitHandler):
                     description=s.description,
                     tags=tuple(getattr(s, "tags", ()))
                 ))
+                musician_status_names.add(s.name)
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_memosprite(ally) and ally != self.owner_id:
+                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
+                    if s.name == "白昼悄然离去" and s.name not in musician_status_names:
+                        self.port.upsert_status(BuffSpec(
+                            key=f"{s.id}_{self.owner_id}",
+                            name=s.name,
+                            source_id=getattr(s.source, "name", ally),
+                            target_id=self.owner_id,
+                            modifiers=tuple(s.modifiers),
+                            duration=s.duration,
+                            timing=s.timing,
+                            category="buff",
+                            description=s.description,
+                            tags=tuple(getattr(s, "tags", ()))
+                        ))
+                        musician_status_names.add(s.name)
         for enemy_id in enemies:
             is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy_id)
             eff_mult = mult * (0.25 if is_bg else 1.0)
@@ -754,6 +775,8 @@ class RobinSunnySongKit(KitHandler):
             self._rhythm_consumed_in_current_turn = False
             self._healed_this_turn = False
             self._e2_vibe_bonus_in_turn = False
+            if self.musicians_alive:
+                self._update_musician_aura()
 
         elif isinstance(event, (HealAppliedEvent, ShieldAppliedEvent)):
             is_target_robin = (event.target_name == self.owner_id) or (
@@ -787,6 +810,8 @@ class RobinSunnySongKit(KitHandler):
                 self.gain_vibes(1 + extra, trigger_ally_id=event.source_name)
 
         elif isinstance(event, ActionExecuteEvent):
+            if self.musicians_alive:
+                self._update_musician_aura()
             # 记录当前动作类型 (追加攻击属于同窗口追击反应，不可消耗回合律动)
             self._current_action_kind = getattr(event, "action_kind", None)
             if self._current_action_kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.MEMOSPRITE_SKILL):
