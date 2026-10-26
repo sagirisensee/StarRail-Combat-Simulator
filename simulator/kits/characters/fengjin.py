@@ -45,6 +45,12 @@ class FengjinKit(KitHandler):
         self.yika_alive: bool = False
         # (旧实现以布尔标记记录雨过天晴, 置位后永不清除, 已改为实时查询状态)
         self.yika_dmg_stacks: int = 0
+        # 【牵起晴空的手】触发窗口的回合预算: 终结技开启/刷新后按风堇的
+        # 回合计数共 3 回合 (开窗簇计为第 1 回合), 见 _trigger_ika_after_cast。
+        self._rain_budget: int = 0
+        self._rain_opened_av: float = -1e9
+        self._rain_open_cluster_pending: bool = False
+        self._last_regular_cast_av: float = -1e9
         self.ika_kit: Optional[Any] = None
         self._ika_ever_summoned: bool = False
         # 本场战斗风堇与小伊卡的累计治疗量 (小伊卡忆灵技 1140901 的伤害基数)
@@ -236,7 +242,7 @@ class FengjinKit(KitHandler):
             self.use_technique()
         # 忆灵天赋【牵起晴空的手】(1140903)：【雨过天晴】期间, 风堇施放技能后小伊卡立即获得额外回合施放忆灵技
         if ctx.kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE):
-            self._trigger_ika_after_cast()
+            self._trigger_ika_after_cast(ctx.kind)
 
     def in_rain_state(self) -> bool:
         """风堇当前是否处于【雨过天晴】状态 (以其身上的终结技状态存续为准)。"""
@@ -244,11 +250,38 @@ class FengjinKit(KitHandler):
             return False
         return self.port.has_status(self.owner_id, f"Fengjin_Ult_SunAfterRain_{self.owner_id}")
 
-    def _trigger_ika_after_cast(self) -> None:
+    def _trigger_ika_after_cast(self, kind: ActionKind) -> None:
+        """【牵起晴空的手】触发判定 (黄金日志两场逐簇核对):
+        - 终结技施放后必触发一次, 并开启/刷新窗口;
+        - 窗口按风堇的回合计数共 3 回合, 开窗簇计为第 1 回合——官方第一场
+          终结技 @47.9 开窗后, 她的常规施放仅在 47.9/94.0/140.1 三簇触发,
+          第 4 簇 (186.2) 不再触发 (旧实现只查状态存续, 而状态按
+          skip_current_clock 实际覆盖 4 簇, 每场多触发 3 次);
+        - 开窗簇内她的常规施放先于终结技落地 (日志事件序), 当时雨未开、
+          不触发; 本引擎里终结技经插队先行, 故同簇 (ΔAV<=0.5) 紧随的
+          常规施放同样不触发, 但占掉开窗簇的回合计数。
+        """
         if not self.ika_kit or not self.port.entity_exists("小伊卡"):
             return
-        if not self.in_rain_state():
+        now = self.port.battle_av()
+        if kind == ActionKind.ULTIMATE:
+            self._rain_budget = 3
+            self._rain_opened_av = now
+            self._rain_open_cluster_pending = (now - self._last_regular_cast_av) > 0.5
+            self._fire_ika_scatter()
             return
+        self._last_regular_cast_av = now
+        if not self.in_rain_state() or self._rain_budget <= 0:
+            return
+        if self._rain_open_cluster_pending and now <= self._rain_opened_av + 0.5:
+            self._rain_open_cluster_pending = False
+            self._rain_budget -= 1
+            return
+        self._rain_open_cluster_pending = False
+        self._rain_budget -= 1
+        self._fire_ika_scatter()
+
+    def _fire_ika_scatter(self) -> None:
         self.port.publish_action("小伊卡", IkaKit.SKILL_NAME, ActionKind.MEMOSPRITE_SKILL, skill_id=IkaKit.SKILL_ID)
         self.ika_kit.cast_scatter()
 
@@ -318,14 +351,19 @@ class FengjinKit(KitHandler):
         flat_hp = self.skill_param("ultra", 3, default=600.0)
 
         for ally in self.port.allies(self.owner_id):
-            ally_max_hp = self.port.max_hp(ally)
-            pct_val = hp_boost + (flat_hp / max(1.0, ally_max_hp))
+            # 百分比与固定值分开结算: 百分比按目标白字生命 (忆灵按主人白字),
+            # 固定值原额——官方样本逐项实证 (E1 风堇: 队友 +80% x 各自白字
+            # +600, 如长夜月 8,109 -> 10,780)。旧实现把固定值按当前生命折算
+            # 进百分比, 白字越低的目标拿到的固定值越少, 忆灵更被成倍放大。
             self.port.upsert_status(BuffSpec(
                 key=f"Fengjin_Ult_SunAfterRain_{ally}",
                 name="雨过天晴",
                 source_id=self.owner_id,
                 target_id=ally,
-                modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, pct_val),),
+                modifiers=(
+                    Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_boost),
+                    Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
+                ),
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True,

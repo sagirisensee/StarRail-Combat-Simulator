@@ -43,6 +43,8 @@ class BuffSpec:
 
 class CombatPort(Protocol):
     """技能/光锥/遗器处理器调用的安全基础设施端口契约。"""
+    # --- 0. 战斗时钟 ---
+    def battle_av(self) -> float: ...
     # --- 1. 阵营与从属关系查询 ---
     def entity_exists(self, entity_id: str) -> bool: ...
     def is_ally(self, actor_id: str) -> bool: ...
@@ -143,6 +145,10 @@ class SimulatorCombatPort:
     @property
     def tracer(self):
         return getattr(self.sim, 'tracer', None)
+
+    def battle_av(self) -> float:
+        """当前战斗时钟 (AV)。供插件按施放簇/时点判定窗口语义, 只读。"""
+        return float(getattr(self.sim, "current_av", 0.0))
 
     def is_in_turn(self) -> bool:
         """判定当前是否处于正规战斗回合或动作执行期（排除战前秘技阶段）。"""
@@ -685,6 +691,10 @@ class SimulatorCombatPort:
             base_atk=0.0,
             max_hp=max_hp,
             current_hp=max_hp,
+            # 忆灵的百分比生命加成按主人白字生命结算 (官方样本实证: 长夜在
+            # 【雨过天晴】下的 +2,072 = 80% x 长夜月白字 2,590)。不设此值时
+            # 属性聚合会以忆灵的继承生命全额为白字回退, 百分比增益被成倍放大。
+            base_white_hp=getattr(owner, "base_white_hp", 0.0) if owner else 0.0,
             base_crit_rate=owner.base_crit_rate if owner else 0.05,
             base_crit_dmg=owner.base_crit_dmg if owner else 0.50,
             is_enemy=False,

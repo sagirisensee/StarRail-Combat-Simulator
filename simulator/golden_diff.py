@@ -1050,6 +1050,18 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 return True
         return False
 
+    deferred_once = set()
+
+    def _musician_due() -> bool:
+        """晴空乐手的自然回合是否已到期待服务 (距离耗尽或队列待服务)。"""
+        ent = sim.get_entity("晴空乐手")
+        if ent is None:
+            return False
+        if float(getattr(ent, "distance_remaining", 1e9)) <= 5.0:
+            return True
+        peek = sim.peek_next_actor() if hasattr(sim, "peek_next_actor") else None
+        return peek is ent
+
     def _enforce_spirits() -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
         _clamp_memoria(now_av)
@@ -1071,6 +1083,13 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 q.popleft()
         for sid, q in spirit_queues.items():
             while q and q[0].av <= now_av and not _master_blocked(q[0], now_av):
+                # 晴空乐手的四重奏是她的自然回合行动: 时点与知更鸟终结技同 AV
+                # 时她的回合恰好到期——直接强发会与随后被服务的自然回合叠成
+                # 同簇双发 (官方同簇只有一次)。此时让调度器先服务她的回合,
+                # 下一轮执法按自然施放匹配; 同一时点最多让行一次, 防死锁。
+                if sid == 1151201 and (sid, q[0].av) not in deferred_once and _musician_due():
+                    deferred_once.add((sid, q[0].av))
+                    break
                 cast = q.popleft()
                 result.records.append(_force_spirit(cast, now_av))
 
