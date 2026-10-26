@@ -94,9 +94,35 @@ class SunnyMusiciansKit(KitHandler):
             mult *= (1.0 + e6_boost)
 
         enemies = self.port.enemies(self.owner_id)
+        # 晴空乐手在场时同步主人身上的全队结界抗穿与减防光环, 仅以物理乘区与屏障吸收结算
+        from ...status import StatusTag
+        musician_status_ids = {s.id for s in self.port.statuses(self.owner_id)}
+        for s in self.port.statuses(self.master_kit.owner_id, category="buff"):
+            if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
+                continue
+            mods = tuple(
+                m for m in s.modifiers
+                if m.stat in {StatType.CRIT_DMG, StatType.RES_PEN, StatType.DEF_SHRED}
+            )
+            if not mods:
+                continue
+            mapped_key = f"{s.id}_MusicianAura"
+            if s.id not in musician_status_ids and mapped_key not in musician_status_ids:
+                self.port.upsert_status(BuffSpec(
+                    key=mapped_key,
+                    name=s.name,
+                    source_id=getattr(s.source, "name", self.master_kit.owner_id),
+                    target_id=self.owner_id,
+                    modifiers=mods,
+                    duration=s.duration,
+                    timing=s.timing,
+                    category="buff",
+                    description=s.description,
+                    tags=tuple(getattr(s, "tags", ()))
+                ))
         for enemy_id in enemies:
             is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy_id)
-            eff_mult = mult * (0.38 if is_bg else 1.79)
+            eff_mult = mult * (0.25 if is_bg else 1.0)
             self.port.attack(
                 self.owner_id,
                 enemy_id,

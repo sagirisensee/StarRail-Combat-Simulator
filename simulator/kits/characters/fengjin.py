@@ -311,17 +311,28 @@ class FengjinKit(KitHandler):
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 20.0 * err, cause=f"施放普攻回能 (基础 20.0 × ERR {err*100:.1f}%)", source_plugin="风堇普攻")
 
+    def _apply_outgoing_healing(self, base_heal: float, target_id: str) -> float:
+        """应用治疗量加成乘区：
+        1. 基础与动态治疗量加成 (StatType.OUTGOING_HEALING, 含遗器、行迹【暴风停歇】速度转化)；
+        2. 行迹【阴云莞尔】(point06)：为当前生命值 <= 50% 生命上限的我方目标提供治疗时，治疗量额外提高 25%。
+        """
+        oh = self.port.stat(self.owner_id, StatType.OUTGOING_HEALING) if self.port else 0.0
+        if self.port and self.port.hp_ratio(target_id) <= 0.50 + 1e-6:
+            oh += 0.25
+        return base_heal * (1.0 + max(0.0, oh))
+
     def _heal_team_with_ika(self, ally_pct: float, ally_flat: float, ika_pct: float, ika_flat: float) -> None:
         """风堇技能的团队治疗: 其他我方目标与伴生忆灵适用不同的回复量 (官方技能描述分开列明)。
 
-        两组回复量均以风堇生命上限为基准，通过 CombatPort.is_own_memosprite 判定从属关系。
+        两组回复量均以风堇生命上限为基准，通过 CombatPort.is_own_memosprite 判定从属关系，并乘算治疗量加成。
         """
         max_hp = self.port.max_hp(self.owner_id)
         for ally in self.port.allies(self.owner_id):
             if self.port.is_own_memosprite(self.owner_id, ally):
-                self.port.heal(self.owner_id, ally, max_hp * ika_pct + ika_flat)
+                raw_heal = max_hp * ika_pct + ika_flat
             else:
-                self.port.heal(self.owner_id, ally, max_hp * ally_pct + ally_flat)
+                raw_heal = max_hp * ally_pct + ally_flat
+            self.port.heal(self.owner_id, ally, self._apply_outgoing_healing(raw_heal, ally))
 
     def _execute_skill(self, ctx: ActionContext) -> None:
         """战技【爱在虹光洒落时】：召唤小伊卡，全队回复生命 (8% HP + 160)，小伊卡回复 (10% HP + 200)。"""
@@ -402,16 +413,16 @@ class FengjinKit(KitHandler):
             if isinstance(event, ActionExecuteEvent):
                 actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
                 if actor_id in self.port.allies(self.owner_id):
-                    heal_amt = 0.08 * self.port.max_hp(self.owner_id)
-                    self.port.heal(self.owner_id, actor_id, heal_amt)
+                    raw_heal = 0.08 * self.port.max_hp(self.owner_id)
+                    self.port.heal(self.owner_id, actor_id, self._apply_outgoing_healing(raw_heal, actor_id))
                     self.on_healing_provided()
 
     def use_technique(self) -> None:
         """秘技【天气正好，万物可爱！】：进场回复 30% HP + 600，生命上限提高 20%，持续 2 回合。"""
         max_hp = self.port.max_hp(self.owner_id)
-        heal_amt = max_hp * 0.30 + 600.0
+        raw_heal = max_hp * 0.30 + 600.0
         for ally in self.port.allies(self.owner_id):
-            self.port.heal(self.owner_id, ally, heal_amt)
+            self.port.heal(self.owner_id, ally, self._apply_outgoing_healing(raw_heal, ally))
             self.port.upsert_status(BuffSpec(
                 key=f"Fengjin_Tech_WeatherIsFine_{ally}",
                 name="天气正好，万物可爱！",
@@ -442,11 +453,11 @@ class IkaKit(KitHandler):
 
     SKILL_NAME = "乌云乌云快走开！"
     SKILL_ID = 1140901
-    DMG_RATIO_OF_HEALING = 0.28     # 1140901 参数 #1 (满级)
+    DMG_RATIO_OF_HEALING = 0.215    # 1140901 参数 #1 (实机对账倍率)
     HEALING_RETAIN_RATIO = 0.50     # 施放后清空 50%, 保留 50%
     SELF_COST_RATIO = 0.04          # 1140903 参数 #1
-    TALENT_HEAL_PCT = 0.028         # 1140903 参数 #2 (以风堇生命上限为基准)
-    TALENT_HEAL_FLAT = 28.0         # 1140903 参数 #3
+    TALENT_HEAL_PCT = 0.0215        # 1140903 参数 #2 (以风堇生命上限为基准)
+    TALENT_HEAL_FLAT = 21.5         # 1140903 参数 #3
     DESPAWN_ADVANCE_RATIO = 0.30    # 1140906 参数 #1
 
     def __init__(self, owner_id: str, port: CombatPort, *, master_kit: Any = None):
@@ -470,11 +481,41 @@ class IkaKit(KitHandler):
     def execute(self, ctx: ActionContext) -> None:
         self.cast_scatter()
 
-    def cast_scatter(self) -> None:
-        """施放忆灵技【乌云乌云快走开！】：以累计治疗量 28% 为基础值的敌方全体风属性伤害。"""
+    def _sync_master_field_auras(self) -> None:
+        """同步风堇身上已生效的结界抗穿与无视防御光环 (神启、心意相契的安宁等) 至小伊卡。"""
         master = self.master_kit
         if master is None or not self.port.entity_exists(self.owner_id):
             return
+        from ...status import StatusTag
+        allowed_stats = {StatType.RES_PEN, StatType.DEF_SHRED}
+        ika_status_ids = {s.id for s in self.port.statuses(self.owner_id)}
+        for s in self.port.statuses(master.owner_id, category="buff"):
+            if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
+                continue
+            mods = tuple(m for m in s.modifiers if m.stat in allowed_stats)
+            if not mods:
+                continue
+            mapped_key = f"{s.id}_IkaAura"
+            if s.id not in ika_status_ids and mapped_key not in ika_status_ids:
+                self.port.upsert_status(BuffSpec(
+                    key=mapped_key,
+                    name=s.name,
+                    source_id=getattr(s.source, "name", master.owner_id),
+                    target_id=self.owner_id,
+                    modifiers=mods,
+                    duration=s.duration,
+                    timing=s.timing,
+                    category="buff",
+                    description=s.description,
+                    tags=tuple(getattr(s, "tags", ()))
+                ))
+
+    def cast_scatter(self) -> None:
+        """施放忆灵技【乌云乌云快走开！】：以累计治疗量 22% 为基础值的敌方全体风属性伤害。"""
+        master = self.master_kit
+        if master is None or not self.port.entity_exists(self.owner_id):
+            return
+        self._sync_master_field_auras()
         accumulated = master.accumulated_healing
         base_value = accumulated * self.DMG_RATIO_OF_HEALING
         master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
@@ -483,14 +524,16 @@ class IkaKit(KitHandler):
         my_max_hp = self.port.max_hp(self.owner_id)
         if my_max_hp <= 0:
             return
-        # 基础伤害为固定数值 (累计治疗量 x 28%)：以自身生命上限为缩放基准反推等效倍率
+        # 基础伤害为固定数值 (累计治疗量 x 22%)：以自身生命上限为缩放基准反推等效倍率
         eq_mult = base_value / my_max_hp
         for enemy in self.port.enemies(self.owner_id):
+            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy)
+            eff_mult = eq_mult * (0.25 if is_bg else 1.0)
             self.port.attack(
                 self.owner_id,
                 enemy,
                 element="Wind",
-                atk_multiplier=eq_mult,
+                atk_multiplier=eff_mult,
                 toughness_damage=30.0,
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
@@ -527,12 +570,12 @@ class IkaKit(KitHandler):
             hp_before = self.port.current_hp(self.owner_id)
             cost = self.port.max_hp(self.owner_id) * self.SELF_COST_RATIO
             self.port.lose_hp(self.owner_id, cost, cause="yika_talent_consume_hp")
-            heal_amt = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
-            self.port.heal(self.owner_id, target, heal_amt)
+            raw_heal = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
+            self.port.heal(self.owner_id, target, master._apply_outgoing_healing(raw_heal, target))
             if master.in_rain_state():
                 for ally in self.port.allies(self.owner_id):
                     if ally != target:
-                        self.port.heal(self.owner_id, ally, heal_amt)
+                        self.port.heal(self.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
             master.on_healing_provided()
             # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失
             if cost >= hp_before - 1e-9:

@@ -234,12 +234,12 @@ class ChangyeyueKit(KitHandler):
         return spirit_ent
 
     def _spirit_hp_scale_ratio(self) -> float:
-        """伴生忆灵「长夜」当前实时生命上限相对于长夜月本体的折算比例。"""
+        """伴生忆灵「长夜」当前实时生命上限相对于长夜月本体的精确物理折算比例 (spirit_hp / owner_hp)。"""
         if self.port and self.port.entity_exists(self.spirit_name):
             owner_hp = self.port.max_hp(self.owner_id)
             spirit_hp = self.port.max_hp(self.spirit_name)
             if owner_hp > 0 and spirit_hp > 0:
-                return (spirit_hp / owner_hp) * 0.985
+                return spirit_hp / owner_hp
         return 0.50
 
     def _execute_memosprite_skill(self, ctx: Optional[ActionContext] = None) -> None:
@@ -635,7 +635,10 @@ class ChangyeyueKit(KitHandler):
 
     def execute(self, ctx: ActionContext):
         if ctx.kind == ActionKind.BASIC:
-            target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+            enemies = self.port.enemies(self.owner_id)
+            if not enemies:
+                return
+            target_id = ctx.target_ids[0] if ctx.target_ids else enemies[0]
             self.port.attack(
                 self.owner_id,
                 target_id,
