@@ -302,10 +302,15 @@ class Stage30510021Director:
 
 def build_stage_30510021(team: List[Entity]) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
+    # 高难深渊关卡 (将杀王棋 / 混沌回忆) 规则: 角色进战初始拥有 50% 能量上限
+    for member in team:
+        if not getattr(member, "is_enemy", False) and getattr(member, "max_energy", 0.0) > 0 and getattr(member, "energy", 0.0) == 0.0:
+            member.energy = member.max_energy * 0.5
+
     enemies = [
         _guard("千星戍卫A"),
         _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES),
-        _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES),
+        _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_HP and LIGHTHOUSE_WEAKNESSES),
         _guard("千星戍卫B"),
         _guard("千星戍卫C"),
     ]

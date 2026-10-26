@@ -117,6 +117,7 @@ class CombatPort(Protocol):
         fixed_crit_dmg: Optional[float] = None
     ) -> None: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None: ...
+    def resolve_effects(self) -> None: ...
     def publish_action(self, actor_id: str, name: str, kind: Any, skill_id: int = 0) -> None: ...
     @property
     def tracer(self) -> Any: ...
@@ -188,6 +189,10 @@ class SimulatorCombatPort:
     def is_countdown(self, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "is_countdown", False))
+
+    def is_barrier_guarded(self, entity_id: str) -> bool:
+        ent = self._get_entity(entity_id)
+        return bool(ent and getattr(ent, "barrier_guarded", False))
 
     def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool:
         """判定指定实体的某次动作是否属于【攻击】行为（排除纯辅助技能与倒计时实体）。"""
@@ -676,12 +681,20 @@ class SimulatorCombatPort:
                 if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
                     e.kit.on_hp_lost(entity_id, actual, cause)
 
+    def resolve_effects(self) -> None:
+        """立即排空并结算当前挂起的效果队列（供多段独立子动作边界同步结算使用）。"""
+        if hasattr(self.sim, "resolver") and not getattr(self.sim.resolver, "_resolving", False):
+            self.sim.resolver.resolve_all()
+
     def publish_action(self, actor_id: str, name: str, kind: Any, skill_id: int = 0) -> None:
         """广播一次回合外额外行动的施放事实 (如忆灵受主人技能触发的立即行动)。
 
         core 只为回合行动与终结技抢断发布 ActionExecuteEvent; 由机制触发的额外行动
         经此接口补发同构事件, 供事件订阅者 (天赋联动/对账导出/追踪器) 统一消费。
+        广播前先排空上一动作已入队的伤害/状态效果，防止前后两个动作窗口的伤害混窗。
         """
+        if kind != ActionKind.TALENT:
+            self.resolve_effects()
         self.sim.event_bus.publish(ActionExecuteEvent(
             av=round(getattr(self.sim, "current_av", 0.0), 2),
             cycle=getattr(self.sim, "current_cycle", 0),

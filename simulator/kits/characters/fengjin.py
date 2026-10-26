@@ -122,6 +122,11 @@ class FengjinKit(KitHandler):
         self._ika_ever_summoned = True
         self.yika_alive = True
 
+        if first_summon and self.port:
+            self.port.publish_action(self.owner_id, "牵起晴空的手", ActionKind.TALENT, skill_id=1140903)
+            self.port.publish_action(self.owner_id, "展翼，奔向日辉", ActionKind.TALENT, skill_id=1140905)
+            self.port.publish_action(self.owner_id, "坠落，然后飞翔", ActionKind.TALENT, skill_id=1140906)
+
         if self.port and not self.port.entity_exists("小伊卡"):
             spirit = self.port.summon_spirit(
                 self.owner_id,

@@ -310,10 +310,10 @@ class TestStageBossAI(unittest.TestCase):
 
 class TestTrueDamageBarrierSuppression(unittest.TestCase):
     def test_barrier_damage_class_rules(self):
-        """屏障护体的伤害类别规则: 真实伤害归零、附加伤害 25%、直接伤害全额。
+        """屏障护体的伤害类别规则: 真实伤害无视屏障全额结算、附加伤害 25%、直接伤害全额。
 
-        依据: 官方日志逐窗口实测——屏障期真实伤害数值为 0、结界附加单发约
-        为无屏障期的 0.25 倍、终结技等直接伤害打在屏障目标上仍为全额量级。
+        依据: 真实伤害底层铁律为无视防御、抗性与屏障减伤, 绝不被屏障抹零;
+        屏障期结界附加单发约为无屏障期的 0.25 倍、直接伤害打在屏障目标上仍为全额。
         """
         from simulator.actions import DamageType
         from simulator.core import Entity
@@ -321,13 +321,14 @@ class TestTrueDamageBarrierSuppression(unittest.TestCase):
         attacker = Entity(name="攻击者", base_speed=100.0, base_atk=1000.0, max_hp=5000.0, current_hp=5000.0)
         target = Entity(name="目标", base_speed=100.0, base_atk=1000.0, max_hp=5000.0, current_hp=5000.0, is_enemy=True)
         true_req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, is_true_damage=True, damage_type=DamageType.TRUE)
-        self.assertGreater(DamageCalculator.calculate(true_req).final_damage, 0.0)
+        true_full = DamageCalculator.calculate(true_req).final_damage
+        self.assertGreater(true_full, 0.0)
         add_req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, force_crit=False, damage_type=DamageType.ADDITIONAL)
         add_full = DamageCalculator.calculate(add_req).final_damage
         direct_req = DamageRequest(attacker=attacker, target=target, skill_multiplier=1.0, force_crit=False, damage_type=DamageType.ULTIMATE)
         direct_full = DamageCalculator.calculate(direct_req).final_damage
         target.barrier_guarded = True
-        self.assertEqual(DamageCalculator.calculate(true_req).final_damage, 0.0)
+        self.assertAlmostEqual(DamageCalculator.calculate(true_req).final_damage, true_full, places=6)
         self.assertAlmostEqual(DamageCalculator.calculate(add_req).final_damage, add_full * 0.25, places=6)
         self.assertAlmostEqual(DamageCalculator.calculate(direct_req).final_damage, direct_full, places=6)
 

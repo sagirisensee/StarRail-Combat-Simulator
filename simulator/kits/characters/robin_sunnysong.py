@@ -81,8 +81,9 @@ class SunnyMusiciansKit(KitHandler):
         if not self.master_kit:
             return
 
-        # 1151201 官方倍率 (Lv10 为 210% 生命上限)
-        mult = self.master_kit.skill_param("1151201", 1, default=2.10)
+        # 1151201 官方倍率 (忆灵技满级 Lv6 为 150% 生命上限, E5 Lv7 为 165%)
+        default_mult = 1.65 if self.master_kit.eidolon >= 5 else 1.50
+        mult = self.master_kit.skill_param("1151201", 1, default=default_mult)
         if self.master_kit.eidolon >= 6:
             # E6【唱一首未命名的歌】：忆灵技的伤害倍率提高原倍率的 100% (#1=1.0)
             e6_boost = self.master_kit.eidolon_param(6, 0, default=1.0)
@@ -112,7 +113,17 @@ class SunnyMusiciansKit(KitHandler):
 
             true_mult = base_true_pct + self.master_kit.vibes * vibe_true_pct
             true_dmg = self.master_kit.recorded_damage * true_mult
-            self.port.lose_hp(highest_hp_enemy, true_dmg, cause="Robin_E1_TrueDamage")
+            my_max_hp = self.port.max_hp(self.owner_id)
+            if my_max_hp > 0 and true_dmg > 0:
+                self.port.attack(
+                    self.master_kit.owner_id,
+                    highest_hp_enemy,
+                    element="Wind",
+                    atk_multiplier=true_dmg / my_max_hp,
+                    toughness_damage=0.0,
+                    damage_type=DamageType.TRUE,
+                    scaling_stat="hp"
+                )
             self.master_kit.recorded_damage = max(0.0, self.master_kit.recorded_damage * (1.0 - clear_ratio))
 
 
@@ -441,6 +452,12 @@ class RobinSunnySongKit(KitHandler):
         if self.musicians_alive:
             return
 
+        if not getattr(self, "_published_musician_passives", False):
+            self._published_musician_passives = True
+            self.port.publish_action(self.owner_id, "扑翅雀跃的和声", ActionKind.TALENT, skill_id=1151203)
+            self.port.publish_action(self.owner_id, "贴近海的心跳", ActionKind.TALENT, skill_id=1151205)
+            self.port.publish_action(self.owner_id, "乘上夏夜晚风", ActionKind.TALENT, skill_id=1151206)
+
         self.musicians_alive = True
         self.has_bessie = True
         self.member_count = 1
@@ -528,7 +545,7 @@ class RobinSunnySongKit(KitHandler):
             self.port.gain_energy(self.owner_id, e6_energy)
 
         # 1. 结界内我方目标无视防御力 (15% + 气氛值 * 0.5%)
-        # 2. 知更鸟•晴歌与晴空乐手造成的伤害提高 (84% + 气氛值 * 2.8%)
+        # 2. 知更鸟•晴歌与晴空乐手造成的伤害提高 (Lv6 为 60% + 气氛值 * 2.0%)
         self._sync_fever_buffs()
 
         # 3. 将晴空乐手正式部署至行动序列 (起跑点 10000 距离，即刻按速度排轴)
@@ -563,8 +580,10 @@ class RobinSunnySongKit(KitHandler):
         def_per_vibe = self.skill_param("talent", 8, default=0.005)
         def_ignore = round(def_base + self.vibes * def_per_vibe, 4)
 
-        dmg_base = self.skill_param("1151203", 0, default=0.84)
-        dmg_per_vibe = self.skill_param("1151203", 1, default=0.028)
+        default_dmg_base = 0.66 if self.eidolon >= 3 else 0.60
+        default_dmg_per = 0.022 if self.eidolon >= 3 else 0.02
+        dmg_base = self.skill_param("1151203", 0, default=default_dmg_base)
+        dmg_per_vibe = self.skill_param("1151203", 1, default=default_dmg_per)
         dmg_boost = round(dmg_base + self.vibes * dmg_per_vibe, 4)
 
         for ally in self.port.allies(self.owner_id):

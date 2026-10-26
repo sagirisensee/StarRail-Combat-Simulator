@@ -38,13 +38,15 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         self._spirit_action_open: bool = False
         self._spirit_hit_targets: List[str] = []
 
-    def on_action_after(self, ctx: ActionContext) -> None:
-        """装备者施放普攻/战技/终结技后：全队各消耗当前生命值的固定比例，消耗量计入蓄池。"""
+    def on_action_before(self, ctx: ActionContext) -> None:
+        """装备者施放普攻/战技/终结技时：全队各消耗当前生命值的固定比例，消耗量计入蓄池。"""
         if not self.port or ctx.actor_id != self.owner_id:
             return
         if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.BASIC):
             drain_ratio = self.scale(self.DRAIN_VALUES)
             for ally in self.port.allies(self.owner_id):
+                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                    continue
                 cur_hp = self.port.current_hp(ally)
                 drain_amt = max(1.0, cur_hp * drain_ratio)
                 self.port.lose_hp(ally, drain_amt, cause="LC_MayRainbows_HP_Drain")
@@ -58,6 +60,8 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         from ...events import ActionExecuteEvent, DamageAppliedEvent, TurnBeginEvent
 
         if isinstance(event, ActionExecuteEvent):
+            if getattr(event, "action_kind", None) == ActionKind.TALENT:
+                return
             self._flush_discharge()
             actor = event.actor_name or event.actor_id
             if self.port.is_own_memosprite(self.owner_id, actor):
@@ -93,6 +97,8 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         """结算蓄池：对忆灵上一个攻击行动命中过的每个目标造成 1 次附加伤害，随后清池。"""
         if not self._spirit_action_open:
             return
+        if hasattr(self.port, "resolve_effects"):
+            self.port.resolve_effects()
         self._spirit_action_open = False
         targets = self._spirit_hit_targets
         self._spirit_hit_targets = []
@@ -103,8 +109,17 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         wearer_max_hp = self.port.max_hp(self.owner_id)
         if wearer_max_hp <= 0:
             return
-        # 固定基础值经标准伤害管线结算：以装备者生命上限为缩放基准反推等效倍率
-        eq_mult = base_value / wearer_max_hp
+        # 官方文本：使装备者的忆灵基于已消耗生命值的 250% 造成附加伤害（享受忆灵自身的增伤乘区）
+        # 为保持日志归因在装备者名下 (type=Additional)，将忆灵与装备者的增伤比折算入等效倍率
+        spirit_dmg_mult = 1.0
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_own_memosprite(self.owner_id, ally):
+                s_boost = 1.0 + self.port.stat(ally, StatType.DMG_BOOST)
+                w_boost = 1.0 + self.port.stat(self.owner_id, StatType.DMG_BOOST)
+                if w_boost > 0:
+                    spirit_dmg_mult = s_boost / w_boost
+                break
+        eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
         for target in targets:
             if self.port.entity_exists(target):
                 self.port.attack(
