@@ -264,20 +264,25 @@ class FengjinKit(KitHandler):
           终结技 @47.9 开窗后, 她的常规施放仅在 47.9/94.0/140.1 三簇触发,
           第 4 簇 (186.2) 不再触发 (旧实现只查状态存续, 而状态按
           skip_current_clock 实际覆盖 4 簇, 每场多触发 3 次);
-        - 开窗簇内她的常规施放先于终结技落地 (日志事件序), 当时雨未开、
-          不触发; 本引擎里终结技经插队先行, 故同簇 (ΔAV<=0.5) 紧随的
-          常规施放同样不触发, 但占掉开窗簇的回合计数。
+        - 开窗簇内无论常规施放先于终结技落地 (实机事件序) 还是终结技插队先行,
+          开窗簇的常规施放均占掉第 1 回合预算, 后续仅剩 2 回合常规触发预算。
         """
         if not self.ika_kit or not self.port.entity_exists("小伊卡"):
             return
         now = self.port.battle_av()
         if kind == ActionKind.ULTIMATE:
-            self._rain_budget = 3
+            same_cluster_after_regular = (now - self._last_regular_cast_av) <= 0.5
+            if same_cluster_after_regular and not getattr(self, "_last_regular_fired_scatter", False):
+                self._rain_budget = 2
+                self._rain_open_cluster_pending = False
+            else:
+                self._rain_budget = 3
+                self._rain_open_cluster_pending = not same_cluster_after_regular
             self._rain_opened_av = now
-            self._rain_open_cluster_pending = (now - self._last_regular_cast_av) > 0.5
             self._fire_ika_scatter()
             return
         self._last_regular_cast_av = now
+        self._last_regular_fired_scatter = False
         if not self.in_rain_state() or self._rain_budget <= 0:
             return
         if self._rain_open_cluster_pending and now <= self._rain_opened_av + 0.5:
@@ -286,6 +291,7 @@ class FengjinKit(KitHandler):
             return
         self._rain_open_cluster_pending = False
         self._rain_budget -= 1
+        self._last_regular_fired_scatter = True
         self._fire_ika_scatter()
 
     def _fire_ika_scatter(self) -> None:
@@ -453,11 +459,11 @@ class IkaKit(KitHandler):
 
     SKILL_NAME = "乌云乌云快走开！"
     SKILL_ID = 1140901
-    DMG_RATIO_OF_HEALING = 0.215    # 1140901 参数 #1 (实机对账倍率)
+    DMG_RATIO_OF_HEALING = 0.20     # 1140901 参数 #1 (Lv6 官方满级倍率 20%)
     HEALING_RETAIN_RATIO = 0.50     # 施放后清空 50%, 保留 50%
     SELF_COST_RATIO = 0.04          # 1140903 参数 #1
-    TALENT_HEAL_PCT = 0.0215        # 1140903 参数 #2 (以风堇生命上限为基准)
-    TALENT_HEAL_FLAT = 21.5         # 1140903 参数 #3
+    TALENT_HEAL_PCT = 0.020         # 1140903 参数 #2 (Lv6 官方满级倍率 2.0%, 以风堇生命上限为基准)
+    TALENT_HEAL_FLAT = 20.0         # 1140903 参数 #3 (Lv6 官方满级 20)
     DESPAWN_ADVANCE_RATIO = 0.30    # 1140906 参数 #1
 
     def __init__(self, owner_id: str, port: CombatPort, *, master_kit: Any = None):

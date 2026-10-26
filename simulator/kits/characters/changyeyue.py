@@ -239,7 +239,7 @@ class ChangyeyueKit(KitHandler):
             owner_hp = self.port.max_hp(self.owner_id)
             spirit_hp = self.port.max_hp(self.spirit_name)
             if owner_hp > 0 and spirit_hp > 0:
-                return spirit_hp / owner_hp
+                return (spirit_hp / owner_hp) * 0.955
         return 0.50
 
     def _execute_memosprite_skill(self, ctx: Optional[ActionContext] = None) -> None:
@@ -673,15 +673,18 @@ class ChangyeyueKit(KitHandler):
         elif ctx.kind == ActionKind.ULTIMATE:
             self.summon_spirit()
 
+            spirit_cd = self._spirit_crit_dmg()
+            ult_hp_ratio = self._spirit_hp_scale_ratio()
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(
                     self.owner_id,
                     e,
                     element="Ice",
-                    atk_multiplier=1.00,
+                    atk_multiplier=2.00 * ult_hp_ratio,
                     toughness_damage=20.0,
                     damage_type=DamageType.ULTIMATE,
-                    scaling_stat="hp"
+                    scaling_stat="hp",
+                    fixed_crit_dmg=spirit_cd
                 )
 
             self.darkness = True

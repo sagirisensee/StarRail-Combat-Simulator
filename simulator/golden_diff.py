@@ -933,6 +933,7 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             spirit_queues.setdefault(i.skill_id, deque()).append(
                 TrajectoryCast(av=i.av, actor=i.actor, skill_id=i.skill_id, name=i.name, order=idx))
     master_indices = [idx for idx, i in enumerate(timeline) if i.kind in ("basic", "skill", "ult")]
+    turn_indices = [idx for idx, i in enumerate(timeline) if i.kind in ("basic", "skill")]
     fired_master = set()
     organic: List[Tuple[int, float]] = []
     organic_used = set()
@@ -1093,9 +1094,19 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 cast = q.popleft()
                 result.records.append(_force_spirit(cast, now_av))
 
+    def _ult_blocked(u_idx: int, u_item: Any, now_av: float) -> bool:
+        if now_av > u_item.av + 15.0:
+            return False
+        for t_idx in turn_indices:
+            if t_idx >= u_idx:
+                break
+            if t_idx not in fired_master and abs(timeline[t_idx].av - u_item.av) <= 0.5:
+                return True
+        return False
+
     def _fire_due_ults() -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
-        while ult_queue and ult_queue[0][1].av <= now_av:
+        while ult_queue and ult_queue[0][1].av <= now_av and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av):
             _idx, item = ult_queue.popleft()
             fired_master.add(_idx)
             ent = sim.get_entity(item.actor)
@@ -1159,7 +1170,10 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             while ult_queue:
                 now0 = float(getattr(sim, "current_av", 0.0))
                 due_av = ult_queue[0][1].av
-                if not (now0 < due_av <= sim.peek_landing_av()):
+                landing_av = sim.peek_landing_av()
+                if not (now0 < due_av <= landing_av):
+                    break
+                if due_av >= landing_av - 1e-4 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], due_av):
                     break
                 sim.advance_clock(due_av - now0)
                 _fire_due_ults()

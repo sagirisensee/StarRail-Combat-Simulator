@@ -100,9 +100,11 @@ class SunnyMusiciansKit(KitHandler):
         for s in self.port.statuses(self.master_kit.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
                 continue
+            if s.id in (self.master_kit.FEVER_DMG_BUFF, "Robin_Tech_Melody"):
+                continue
             mods = tuple(
                 m for m in s.modifiers
-                if m.stat in {StatType.CRIT_DMG, StatType.RES_PEN, StatType.DEF_SHRED}
+                if m.stat in {StatType.CRIT_DMG, StatType.DMG_BOOST, StatType.RES_PEN, StatType.DEF_SHRED}
             )
             if not mods:
                 continue

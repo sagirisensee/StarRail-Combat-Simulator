@@ -412,7 +412,7 @@ class TibaoKit(KitHandler):
                 living = [t for t in targets if self.port.entity_exists(t) and self.port.current_hp(t) > 0]
             if living:
                 top_target = max(living, key=lambda t: (self.port.current_hp(t), self.port.max_hp(t)))
-                base_mult = self.skill_param("ultra", 2, default=0.12)
+                base_mult = self.skill_param("ultra", 2, default=0.12) * 0.78
                 additional_hits = hit_count
                 if self.eidolon >= 2:
                     base_mult *= self.eidolon_param(2, 0, default=1.2)
@@ -439,7 +439,7 @@ class TibaoKit(KitHandler):
                         if self.port.entity_exists(pending_true["target"]):
                             true_ratio = self.eidolon_param(1, 0, default=0.24)
                             my_max_hp = self.port.max_hp(self.owner_id)
-                            true_base = pending_true["base"] + pending_true["additional"]
+                            true_base = pending_true["base"] + (pending_true["additional"] / 0.78)
                             if my_max_hp > 0 and true_base > 0:
                                 # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
                                 self.port.attack(
