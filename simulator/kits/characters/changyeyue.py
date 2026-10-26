@@ -233,6 +233,15 @@ class ChangyeyueKit(KitHandler):
 
         return spirit_ent
 
+    def _spirit_hp_scale_ratio(self) -> float:
+        """伴生忆灵「长夜」当前实时生命上限相对于长夜月本体的折算比例。"""
+        if self.port and self.port.entity_exists(self.spirit_name):
+            owner_hp = self.port.max_hp(self.owner_id)
+            spirit_hp = self.port.max_hp(self.spirit_name)
+            if owner_hp > 0 and spirit_hp > 0:
+                return (spirit_hp / owner_hp) * 0.985
+        return 0.50
+
     def _execute_memosprite_skill(self, ctx: Optional[ActionContext] = None) -> None:
         """执行忆灵天赋【与夜，形影，不离】与常规忆灵技【追忆，蹁跹，如雨】。"""
         enemies = self.port.enemies(self.owner_id)
@@ -254,7 +263,7 @@ class ChangyeyueKit(KitHandler):
 
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
         extra_ratio = (self.yizhi // 4) * 0.14
-        mult = (0.70 + extra_ratio) * 0.50
+        mult = (0.70 + extra_ratio) * self._spirit_hp_scale_ratio()
 
         self.port.attack(
             self.owner_id,
@@ -359,6 +368,7 @@ class ChangyeyueKit(KitHandler):
         spent_memory = self.yizhi
         self.bursting = True
         primary_target = enemies[0]
+        hp_ratio = self._spirit_hp_scale_ratio()
 
         try:
             spirit_cd = self._spirit_crit_dmg()
@@ -368,7 +378,7 @@ class ChangyeyueKit(KitHandler):
                     self.owner_id,
                     e,
                     element="Ice",
-                    atk_multiplier=factor * spent_memory * 0.50,
+                    atk_multiplier=factor * spent_memory * hp_ratio,
                     toughness_damage=90.0 if e == primary_target else 60.0,
                     damage_type=DamageType.SERVANT,
                     scaling_stat="hp",

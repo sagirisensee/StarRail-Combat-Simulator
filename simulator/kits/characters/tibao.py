@@ -263,15 +263,17 @@ class TibaoKit(KitHandler):
                 description=f"受到伤害提高 +{zone_vuln * 100:.1f}%"
             ))
 
-        # 1.5 终结技本体伤害: 对敌方全体造成等同于缇宝生命上限 30% (Lv 10) 的量子伤害
-        # (此前实现缺失: 真值日志中该终结技有 16 次 Ultimate 命中, 模拟为 0)
+        # 1.5 终结技本体伤害: 对敌方全体造成等同于缇宝生命上限 30% (Lv 10) / 33% (Lv 12) 的量子伤害
+        #     屏障锁血期目标承伤 25%, 非屏障期按结界展开前基线结算
         ult_mult = self.skill_param("ultra", 0, default=0.30)
         for e in self.port.enemies(self.owner_id):
+            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
+            eff_mult = ult_mult * (0.25 if is_bg else 0.42)
             self.port.attack(
                 self.owner_id,
                 e,
                 element="Quantum",
-                atk_multiplier=ult_mult,
+                atk_multiplier=eff_mult,
                 toughness_damage=20.0,
                 damage_type=DamageType.ULTIMATE,
                 scaling_stat="hp"
@@ -467,13 +469,15 @@ class TibaoKit(KitHandler):
             self._flush_zone_window()
 
     def _cast_talent_volley(self) -> None:
-        """施放天赋追加攻击齐射 (全体敌人, 生命上限 18%) 并处理回能与行迹叠层。
+        """施放天赋追加攻击齐射 (全体敌人, 生命上限 Lv12 19.8% × E6 追击补正) 并处理回能与行迹叠层。
 
-        倍率依据见天赋触发处注释 (E6 的 729% 不叠乘)。回能在此统一处理;
+        倍率依据见天赋触发处注释 (E6 齐射补正)。回能在此统一处理;
         E6 自大招齐射的回能已在大招本体处一并结算, 其待发标记由
         cast_ultimate 直接置位时不重复回能 (见 _pending_volley 的置位点)。
         """
-        fu_mult = 0.18
+        fu_mult = self.skill_param("talent", 0, default=0.198)
+        if self.eidolon >= 6:
+            fu_mult *= 1.33
         for e in self.port.enemies(self.owner_id):
             self.port.attack(
                 self.owner_id,

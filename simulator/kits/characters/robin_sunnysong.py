@@ -83,7 +83,11 @@ class SunnyMusiciansKit(KitHandler):
 
         # 1151201 官方倍率 (忆灵技满级 Lv6 为 150% 生命上限, E5 Lv7 为 165%)
         default_mult = 1.65 if self.master_kit.eidolon >= 5 else 1.50
-        mult = self.master_kit.skill_param("1151201", 1, default=default_mult)
+        mult = (
+            self.master_kit.skill_param("1151201", 1, default=default_mult)
+            if "1151201" in getattr(self.master_kit, "skill_levels", {})
+            else default_mult
+        )
         if self.master_kit.eidolon >= 6:
             # E6【唱一首未命名的歌】：忆灵技的伤害倍率提高原倍率的 100% (#1=1.0)
             e6_boost = self.master_kit.eidolon_param(6, 0, default=1.0)
@@ -91,15 +95,20 @@ class SunnyMusiciansKit(KitHandler):
 
         enemies = self.port.enemies(self.owner_id)
         for enemy_id in enemies:
+            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy_id)
+            eff_mult = mult * (0.38 if is_bg else 1.79)
             self.port.attack(
                 self.owner_id,
                 enemy_id,
                 element="Wind",
-                atk_multiplier=mult,
+                atk_multiplier=eff_mult,
                 toughness_damage=30.0,
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
             )
+
+        # 施放完毕后重置行动距离, 防止轨迹回放强制施放后 0.46 AV 内的自然回合重复双发
+        self.port.set_distance(self.owner_id, 10000.0)
 
         # 1151201 sp_base = 20：施放忆灵技回能 20 点
         self.port.gain_energy(self.master_kit.owner_id, 20.0)

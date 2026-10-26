@@ -292,11 +292,20 @@ class Stage30510021Director:
             # 原节拍的后续时点不再生成)。该对计入增援批次上限。
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
+            for idx in (self._sprout_seq - 1, self._sprout_seq):
+                sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
+                if sp is not None:
+                    sp.current_hp = 300000.0
             self._next_sprout_av = av + SPROUT_INTERVAL_AV
             return
-        if self._next_sprout_av is not None and av >= self._next_sprout_av:
+        if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.05:
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
+            if self.sprout_waves_spawned == SPROUT_WAVE_COUNT:
+                for idx in (self._sprout_seq - 1, self._sprout_seq):
+                    sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
+                    if sp is not None:
+                        sp.current_hp = 180000.0
             self._next_sprout_av += SPROUT_INTERVAL_AV
 
 
