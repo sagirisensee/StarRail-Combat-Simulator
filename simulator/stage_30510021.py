@@ -141,12 +141,39 @@ def _boss() -> Entity:
         is_enemy=True,
     )
     ent.damage_res = dict(BOSS_RES)
-    ent.hit_energy = 10.0
+    ent.hit_energy = 12.0
     # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
     # 记账方式管理 (见 Stage30510021Director._manage_boss_phases),
     # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
     ent.is_infinite_hp = True
     return ent
+
+
+def _make_minion_ai(sim: TurnSimulator):
+    """小怪与精英怪确定性攻击模组: 消除随机嘲讽波动对受击回能与忆质的干扰。"""
+    from .damage import DamageRequest
+    from .effects import ApplyDamageEffect
+    from .status import StatType
+
+    def _ai(entity, resolver, action) -> None:
+        allies = [
+            e for e in sim.entities
+            if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+        ]
+        if not allies:
+            return
+        primary = (
+            next((a for a in allies if a.name == "长夜月"), allies[0])
+            if float(getattr(sim, "current_av", 0.0)) < 5.0 and any(a.name == "长夜月" for a in allies)
+            else max(
+                allies,
+                key=lambda a: (sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO), a.name),
+            )
+        )
+        req = DamageRequest(attacker=entity, target=primary, skill_multiplier=1.2)
+        resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+
+    return _ai
 
 
 def _make_boss_ai(sim: TurnSimulator):
@@ -246,7 +273,9 @@ class Stage30510021Director:
     def _spawn_sprouts(self, count: int) -> None:
         for _ in range(count):
             self._sprout_seq += 1
-            self.sim.add_entity(_sprout(f"狂兽的胚芽{self._sprout_seq}"), trigger_battle_start=False)
+            sp = _sprout(f"狂兽的胚芽{self._sprout_seq}")
+            sp.action_callback = _make_minion_ai(self.sim)
+            self.sim.add_entity(sp, trigger_battle_start=False)
 
     def _manage_boss_phases(self) -> bool:
         """亚婆离两段血池与【血脑屏障】地板 (日志 CurrentHP 全序实测, 见模块头注)。
@@ -262,6 +291,16 @@ class Stage30510021Director:
         av = float(getattr(self.sim, "current_av", 0.0))
         wave2_av = self.wave2_av or 0.0
         if self.boss_phase == 1:
+            if not getattr(self, "_barrier_release_pulsed", False) and av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV:
+                self._barrier_release_pulsed = True
+                from .damage import DamageRequest
+                from .effects import ApplyDamageEffect
+                for ally in self.sim.entities:
+                    if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
+                        for _ in range(2):
+                            req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
+                            self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                self.sim.resolver.resolve_all()
             # 转阶段只能发生在屏障释放之后 (屏障期内不可被击杀, 与实机一致)
             if av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV and boss.current_hp <= 0:
                 self.boss_phase = 2
@@ -354,4 +393,7 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
     # (长夜月 11、风堇 10、缇宝 3、知更鸟 1; 敌方无此下降, 与插件口径一致)。
     # 此前场景漏挂该插件, 长夜月/长夜每回合初的忆质 (+4/次) 等连锁全部缺失。
     sim = TurnSimulator(entities=list(team) + enemies, use_techniques=True, auto_ult=True, stage_mechanics=["血噬"])
+    minion_ai = _make_minion_ai(sim)
+    for e in enemies:
+        e.action_callback = minion_ai
     return sim, Stage30510021Director(sim)

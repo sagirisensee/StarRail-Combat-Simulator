@@ -564,6 +564,8 @@ class TibaoKit(KitHandler):
             SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
             TurnBeginEvent, TurnEndEvent
         )
+        if isinstance(event, TurnBeginEvent):
+            self._turn_started = True
         if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
             self._flush_zone_window()
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
@@ -609,10 +611,12 @@ class TibaoKit(KitHandler):
                 self._pending_true["additional"] += float(event.damage)
 
             # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血、多段同目标重复触发误判):
-            # 1. 攻击者必须为我方其他目标 (排除缇宝自身，支持伴生忆灵长夜)
+            # 1. 攻击者必须为我方目标 (支持伴生忆灵长夜及进入正式回合后的缇宝直接攻击)
             # 2. 承受目标必须为敌方目标 (每次攻击每击中 1 个不同目标触发 1 次)
-            # 3. 必须为直接攻击有效命中 (排除 DoT / stage_bleed / reflect)
-            is_valid_attacker = self.port.is_ally(attacker) and attacker != self.owner_id
+            # 3. 必须为直接攻击有效命中 (排除 DoT / stage_bleed / reflect / 结界附加与真伤)
+            is_valid_attacker = self.port.is_ally(attacker) and (
+                attacker != self.owner_id or (getattr(self, "_turn_started", False) and not is_own_zone_dmg)
+            )
             is_valid_target = not self.port.is_ally(target)
             is_attack_dmg = (
                 dtype != DamageType.DOT

@@ -82,7 +82,7 @@ class SunnyMusiciansKit(KitHandler):
             return
 
         # 1151201 官方倍率 (忆灵技满级 Lv6 为 150% 生命上限, E5 Lv7 为 165%)
-        default_mult = 1.65 if self.master_kit.eidolon >= 5 else 1.50
+        default_mult = 1.65
         mult = (
             self.master_kit.skill_param("1151201", 1, default=default_mult)
             if "1151201" in getattr(self.master_kit, "skill_levels", {})
@@ -455,7 +455,8 @@ class RobinSunnySongKit(KitHandler):
                 old_r = self.rhythm_stacks
                 self._rhythm_consumed_in_current_turn = True
                 self.rhythm_stacks -= 1
-                self.port.gain_energy(self.owner_id, 3.0, cause="行迹《即兴蓝调》消耗律动回能 (+3.0 点)", source_plugin="知更鸟行迹《即兴蓝调》")
+                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+                self.port.gain_energy(self.owner_id, 3.0 * err, cause="行迹《即兴蓝调》消耗律动回能 (+3.0 点)", source_plugin="知更鸟行迹《即兴蓝调》")
                 self._sync_rhythm_status()
                 if hasattr(self.port, "tracer") and self.port.tracer:
                     self.port.tracer.record_var_change(
@@ -486,7 +487,8 @@ class RobinSunnySongKit(KitHandler):
         """检测并推进「晴空乐手」啾米与派丁的登台。"""
         drummie_threshold = int(self.skill_param("talent", 5, default=6.0))
         paddie_threshold = int(self.skill_param("talent", 6, default=12.0))
-        summon_energy = self.skill_param("1151205", 0, default=20.0)
+        err = (self.port.stat(self.owner_id, StatType.ERR) or 1.0) if self.port.is_in_turn() else 1.0
+        summon_energy = self.skill_param("1151205", 0, default=20.0) * err
 
         if self.vibes >= drummie_threshold and not self.has_drummie:
             self.has_drummie = True
