@@ -287,7 +287,13 @@ class ChangyeyueKit(KitHandler):
         eff_mult = mult * (0.25 if is_bg else 1.0)
         spirit_cd = self._spirit_crit_dmg()
 
-        for split_ratio, split_toughness in ((0.125, 2.0), (0.125, 2.0), (0.25, 2.0), (0.50, 4.0)):
+        for split_ratio, split_toughness in (
+            (0.125, 2.0),
+            (0.125, 2.0),
+            (0.125, 2.0),
+            (0.125, 2.0),
+            (0.50, 2.0),
+        ):
             self.port.attack(
                 self.owner_id,
                 target,
@@ -399,7 +405,8 @@ class ChangyeyueKit(KitHandler):
             for e in enemies:
                 factor = 0.152 if e == primary_target else 0.076
                 is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
-                eff_mult = factor * spent_memory * hp_ratio * (0.31 if is_bg else 1.0)
+                phase2_exposed = (not is_bg) and self.port.max_hp(e) > 10000000.0
+                eff_mult = factor * spent_memory * hp_ratio * (0.31 if is_bg else (1.10 if phase2_exposed else 1.0))
                 self.port.attack(
                     self.owner_id,
                     e,

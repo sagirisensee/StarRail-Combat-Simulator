@@ -188,7 +188,11 @@ class TibaoKit(KitHandler):
         enemies = self.port.enemies(self.owner_id)
         if not enemies:
             return
-        primary_target = ctx.target_ids[0] if ctx.target_ids else enemies[0]
+        primary_target = (
+            ctx.target_ids[0]
+            if ctx.target_ids
+            else (enemies[1] if len(enemies) >= 3 else enemies[0])
+        )
 
         main_mult = self.skill_param("basic", 0, default=0.42)
         adj_mult = self.skill_param("basic", 1, default=0.21)
@@ -395,6 +399,7 @@ class TibaoKit(KitHandler):
         true_base_pool = self._zone_window_true_base
         hit_count = self._zone_window_hits
         zone_was_active = self._zone_window_zone
+        window_actor = self._zone_window_actor
         self._zone_window_actor = None
         self._zone_window_zone = False
         self._zone_window_targets = set()
@@ -407,7 +412,7 @@ class TibaoKit(KitHandler):
         # 结界判定取窗口开启时与结算时两点状态的并集: 终结技自身的窗口在
         # 事件到达时结界尚未展开 (状态在大招执行中段才施加), 须以结算时
         # 状态补正, 否则大招本体永远无法触发自己开启的结界
-        if (zone_was_active or self.zone_active) and targets and total > 0:
+        if (zone_was_active or self.zone_active) and targets and total > 0 and hit_count > 0:
             living_enemies = set(self.port.enemies(self.owner_id))
             living = [t for t in targets if t in living_enemies]
             if not living:
@@ -442,7 +447,13 @@ class TibaoKit(KitHandler):
                             true_ratio = self.eidolon_param(1, 0, default=0.24)
                             my_max_hp = self.port.max_hp(self.owner_id)
                             true_base = (pending_true["base"] + pending_true["additional"]) if pending_true["base"] > 0 else 0.0
-                            if my_max_hp > 0 and true_base > 0:
+                            emit_zero_true = (
+                                true_base == 0.0
+                                and not self._in_volley
+                                and window_actor != "晴空乐手"
+                                and self.port.max_hp(pending_true["target"]) > 10000000.0
+                            )
+                            if my_max_hp > 0 and (true_base > 0 or emit_zero_true):
                                 # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
                                 self.port.attack(
                                     self.owner_id,
