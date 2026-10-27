@@ -72,10 +72,11 @@ class DamageCalculator:
     @staticmethod
     def calculate(req: DamageRequest) -> DamageBreakdown:
         atk_stat = req.attacker.base_atk
+        base_dmg_boost = float(getattr(req.attacker, "base_dmg_boost", 0.0) or 0.0)
         if hasattr(req.attacker, "simulator") and req.attacker.simulator:
             mgr = req.attacker.simulator.status_mgr
             atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE)
-            dmg_boost = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DMG_BOOST)
+            dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
             target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
@@ -83,7 +84,7 @@ class DamageCalculator:
             def_shred = target_def_shred + attacker_def_ignore
             vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY)
         else:
-            dmg_boost = 0.0
+            dmg_boost = base_dmg_boost
             res_pen = 0.0
             def_shred = 0.0
             vuln = 0.0
@@ -154,14 +155,17 @@ class DamageCalculator:
         # 7. 韧性减伤区 (未破韧固定 0.9，破韧 1.0)
         reduction_mult = 1.0 if req.target_is_broken else 0.9
 
-        # 屏障转化: 目标屏障护体时, 附加伤害按 25% 结算 (直接伤害不受影响;
-        # 实机日志逐窗口实测——屏障期结界附加单发约为无屏障期的 0.25 倍,
-        # 而终结技/忆灵技等直接伤害打在屏障目标上仍为全额)
+        # 屏障转化与关卡独立减伤乘区: 目标屏障护体时, 附加伤害按 25% 结算;
+        # 目标携带关卡独立减伤/易损属性 (damage_reduction) 时统一在此乘区结算,
+        # 彻底消除角色 Kit 插件对特定 Boss 屏障状态的耦合感知。
         barrier_mult = 1.0
         if getattr(req.target, "barrier_guarded", False):
             from .actions import DamageType
             if getattr(req, "damage_type", None) == DamageType.ADDITIONAL:
                 barrier_mult = 0.25
+        if barrier_mult == 1.0:
+            target_dmg_red = float(getattr(req.target, "damage_reduction", 0.0) or 0.0)
+            barrier_mult = max(0.0, 1.0 - target_dmg_red)
 
         # 最终汇总
         final_dmg = (

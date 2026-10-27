@@ -616,6 +616,7 @@ class SimulatorCombatPort:
             attacker=src,
             target=tgt,
             skill_multiplier=atk_multiplier,
+            target_level=int(getattr(tgt, "level", 90) or 90),
             target_base_res=base_res,
             target_is_broken=tgt.is_broken,
             force_crit=force_crit,

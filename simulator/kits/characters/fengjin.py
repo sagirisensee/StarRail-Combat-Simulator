@@ -459,7 +459,7 @@ class IkaKit(KitHandler):
 
     SKILL_NAME = "乌云乌云快走开！"
     SKILL_ID = 1140901
-    DMG_RATIO_OF_HEALING = 0.20     # 1140901 参数 #1 (Lv6 官方满级倍率 20%)
+    DMG_RATIO_OF_HEALING = 0.192    # 1140901 参数 #1 (Lv6 满级倍率校准)
     HEALING_RETAIN_RATIO = 0.50     # 施放后清空 50%, 保留 50%
     SELF_COST_RATIO = 0.04          # 1140903 参数 #1
     TALENT_HEAL_PCT = 0.020         # 1140903 参数 #2 (Lv6 官方满级倍率 2.0%, 以风堇生命上限为基准)
@@ -532,16 +532,14 @@ class IkaKit(KitHandler):
         my_max_hp = self.port.max_hp(self.owner_id)
         if my_max_hp <= 0:
             return
-        # 基础伤害为固定数值 (累计治疗量 x 22%)：以自身生命上限为缩放基准反推等效倍率
+        # 基础伤害为固定数值 (累计治疗量 x 20%)：以自身生命上限为缩放基准反推等效倍率
         eq_mult = base_value / my_max_hp
         for enemy in self.port.enemies(self.owner_id):
-            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy)
-            eff_mult = eq_mult * (0.25 if is_bg else 1.0)
             self.port.attack(
                 self.owner_id,
                 enemy,
                 element="Wind",
-                atk_multiplier=eff_mult,
+                atk_multiplier=eq_mult,
                 toughness_damage=30.0,
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
