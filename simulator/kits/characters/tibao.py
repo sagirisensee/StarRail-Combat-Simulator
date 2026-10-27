@@ -400,6 +400,7 @@ class TibaoKit(KitHandler):
         self._zone_window_actor = None
         self._zone_window_zone = False
         self._zone_window_targets = set()
+        self._zone_window_direct_targets = set()
         self._zone_window_total = 0.0
         self._zone_window_true_base = 0.0
         self._zone_window_hits = 0
@@ -589,8 +590,9 @@ class TibaoKit(KitHandler):
             is_own_zone_dmg = (attacker == self.owner_id and dtype in (DamageType.ADDITIONAL, DamageType.TRUE))
 
             # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害与 E1 真实伤害。
-            # 结界自身的附加/真实伤害不计入采样, 队友伴随攻击触发的附加伤害 (如小伊卡 E1) 计入本次攻击总伤害池。
-            is_new_target = False
+            # 结界自身的附加/真实伤害不计入采样, 队友伴随攻击触发的附加伤害 (如风堇专武) 计入本次攻击总伤害池,
+            # 但直接攻击命中目标集合 (_zone_window_direct_targets) 独立统计, 防止前置附加伤害吞掉后续主攻击命中计数。
+            is_new_direct_target = False
             if (
                 not self._zone_resolving
                 and self.port.is_ally(attacker)
@@ -604,14 +606,18 @@ class TibaoKit(KitHandler):
                 if self._zone_window_actor is None:
                     self._zone_window_actor = attacker
                     self._zone_window_zone = self.zone_active
-                is_new_target = target not in self._zone_window_targets
                 self._zone_window_targets.add(target)
                 self._zone_window_total += float(event.damage)
                 is_guarded = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(target)
                 if not is_guarded:
                     self._zone_window_true_base += float(event.damage)
-                if is_new_target and dtype != DamageType.ADDITIONAL:
-                    self._zone_window_hits += 1
+                if dtype != DamageType.ADDITIONAL:
+                    if not hasattr(self, "_zone_window_direct_targets"):
+                        self._zone_window_direct_targets = set()
+                    if target not in self._zone_window_direct_targets:
+                        self._zone_window_direct_targets.add(target)
+                        is_new_direct_target = True
+                        self._zone_window_hits += 1
 
             # 汇总待结算真实伤害的基数: 本窗口结界附加伤害的实际值
             if (
@@ -635,7 +641,7 @@ class TibaoKit(KitHandler):
                 and event.damage > 0
             )
 
-            if is_valid_attacker and is_valid_target and is_attack_dmg and is_new_target:
+            if is_valid_attacker and is_valid_target and is_attack_dmg and is_new_direct_target:
                 energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
                 # 星铁底层机制：未标明“固定能量”的回能严格享受角色能量恢复效率 (ERR) 放大
                 err = self.port.stat(self.owner_id, StatType.ERR) or 1.0

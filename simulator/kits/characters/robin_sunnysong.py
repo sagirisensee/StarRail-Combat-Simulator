@@ -81,13 +81,8 @@ class SunnyMusiciansKit(KitHandler):
         if not self.master_kit:
             return
 
-        # 1151201 官方倍率 (忆灵技满级 Lv6 为 150% 生命上限, E5 Lv7 为 165%)
-        default_mult = 1.65
-        mult = (
-            self.master_kit.skill_param("1151201", 1, default=default_mult)
-            if "1151201" in getattr(self.master_kit, "skill_levels", {})
-            else default_mult
-        )
+        # 1151201 官方倍率 (忆灵技基准满级 Lv6 为 150% 生命上限, E5 Lv7 为 165%)
+        mult = self.master_kit.skill_param("1151201", 1, default=1.50)
         if self.master_kit.eidolon >= 6:
             # E6【唱一首未命名的歌】：忆灵技的伤害倍率提高原倍率的 100% (#1=1.0)
             e6_boost = self.master_kit.eidolon_param(6, 0, default=1.0)
@@ -279,7 +274,7 @@ class RobinSunnySongKit(KitHandler):
 
     @property
     def musician_max_hp(self) -> float:
-        robin_hp = self.port.max_hp(self.owner_id) if self.port else 6000.0
+        robin_hp = self.port.base_stat(self.owner_id, StatType.MAX_HP_PERCENT) if self.port else 6000.0
         hp_inherit = self.skill_param("talent", 0, default=0.70)
         return robin_hp * hp_inherit
 
@@ -535,6 +530,8 @@ class RobinSunnySongKit(KitHandler):
             kit_args={"master_kit": self}
         )
         if musician_ent:
+            hp_inherit = self.skill_param("talent", 0, default=0.70)
+            musician_ent.base_white_hp = getattr(musician_ent, "base_white_hp", 0.0) * hp_inherit
             # 未进入 Fever 期间，乐手处于准备登台阶段，不先行插入常规行动
             self.port.set_distance(self.MUSICIAN_NAME, 999999.0)
 

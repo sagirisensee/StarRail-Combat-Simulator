@@ -76,7 +76,8 @@ class DamageCalculator:
         base_dmg_boost = float(getattr(req.attacker, "base_dmg_boost", 0.0) or 0.0)
         if hasattr(req.attacker, "simulator") and req.attacker.simulator:
             mgr = req.attacker.simulator.status_mgr
-            atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE)
+            white_atk = getattr(req.attacker, "base_white_atk", 0.0) or req.attacker.base_atk
+            atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE, white_base=white_atk)
             dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST) + getattr(req, "extra_dmg_boost", 0.0)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
@@ -95,12 +96,14 @@ class DamageCalculator:
         if scaling == "hp":
             hp_val = getattr(req.attacker, "max_hp", 0.0)
             if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT)
+                white_hp = getattr(req.attacker, "base_white_hp", 0.0) or hp_val
+                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT, white_base=white_hp)
             base_stat = hp_val
         elif scaling == "def":
             def_val = getattr(req.attacker, "base_def", 0.0)
             if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                def_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, def_val, StatType.DEF_PERCENT)
+                white_def = getattr(req.attacker, "base_white_def", 0.0) or def_val
+                def_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, def_val, StatType.DEF_PERCENT, white_base=white_def)
             base_stat = def_val
         else:
             base_stat = atk_stat

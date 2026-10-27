@@ -52,11 +52,10 @@ BOSS_HP = 6389558.0        # 堕神之血•亚婆离 5034010 一阶段血池 (�
 BOSS_PHASE2_HP = 12779117.0    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
 BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
 BOSS_PHASE1_FLOOR = 3655953.0  # 一阶段屏障冻结值 (日志实测首个冻结平台)
-# 一阶段屏障开启时点: 第二波开始后约 34 AV (日志中一阶段开局先自由掉血
-# 约 2.86M, 于事件跨度约 45% 处进入首个冻结平台, 换算为波次相对 AV)
-BOSS_PHASE1_BARRIER_DELAY_AV = 34.0
-# 一阶段屏障释放时点: 第二波开始后约 156 AV (日志中一阶段于第二波后约 161 AV
-# 被打空转阶段, 释放点取其前数 AV, 与增援的 AV 脚本口径一致)
+# 一阶段屏障开启时点: 第二波开始后约 40.5 AV (日志实测 #20 av=137.90 尚未开启屏障,
+# 紧随其后 av=138.67 胚芽行动时开启屏障, #22 av=140.12 已处于屏障减伤状态)
+BOSS_PHASE1_BARRIER_DELAY_AV = 40.5
+# 一阶段屏障释放时点: 第二波开始后约 135 AV (日志中 #42 av=232.31 屏障击破)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 首批之后的增援批次数 (含转阶段增援, 两场日志均为总计 6 批)
@@ -284,20 +283,27 @@ class Stage30510021Director:
         av = float(getattr(self.sim, "current_av", 0.0))
         wave2_av = self.wave2_av or 0.0
         if self.boss_phase == 1:
-            if not getattr(self, "_barrier_release_pulsed", False) and av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV:
+            tibao = self.sim.get_entity("缇宝")
+            can_release = (av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV) or (
+                av >= wave2_av + 134.0 and (tibao is None or getattr(tibao, "energy", 0.0) < 80.0)
+            )
+            if not getattr(self, "_barrier_release_pulsed", False) and can_release:
                 self._barrier_release_pulsed = True
-                from .damage import DamageRequest
-                from .effects import ApplyDamageEffect
-                for ally in self.sim.entities:
-                    if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
-                        for _ in range(2):
-                            req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
-                            self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
-                self.sim.resolver.resolve_all()
-                # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (日志 [2588] av=232.31 实测余血 2,123,418.6)
-                boss.current_hp = min(boss.current_hp, 2123418.6)
+                boss.barrier_guarded = False
+                boss.damage_reduction = -0.04
+                if boss.current_hp > 0:
+                    from .damage import DamageRequest
+                    from .effects import ApplyDamageEffect
+                    for ally in self.sim.entities:
+                        if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
+                            for _ in range(2):
+                                req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
+                                self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                    self.sim.resolver.resolve_all()
+                    # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (日志 [2588] av=232.31 实测余血 2,123,418.6)
+                    boss.current_hp = min(boss.current_hp, 2123418.6)
             # 转阶段只能发生在屏障释放之后 (屏障期内不可被击杀, 与实机一致)
-            if av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV and boss.current_hp <= 0:
+            if getattr(self, "_barrier_release_pulsed", False) and boss.current_hp <= 0:
                 self.boss_phase = 2
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
@@ -307,7 +313,7 @@ class Stage30510021Director:
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
                 return True
-            barrier_up = wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV <= av < wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV
+            barrier_up = (wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV <= av) and not getattr(self, "_barrier_release_pulsed", False)
             # 屏障开启期间: 生命不低于冻结值; 屏障减伤统一由 damage 管线按
             # barrier_guarded 与 damage_reduction 结算
             boss.barrier_guarded = barrier_up
@@ -342,13 +348,16 @@ class Stage30510021Director:
         if transitioned:
             # 转阶段增援 (两场日志实证): 一阶段血池打空的同一时点刷出一对
             # 胚芽 (两场该对的 CurrentHP 首样本均为 0——生成即被同簇爆发击杀),
-            # 且增援节拍以转阶段时点重锚 (其后增援为转阶段 +75.7/+151.5,
-            # 原节拍的后续时点不再生成)。该对计入增援批次上限。
-            self._next_sprout_av = av + SPROUT_INTERVAL_AV
-            hyacine = self.sim.get_entity("风堇")
-            if hyacine is not None and getattr(hyacine, "energy", 0.0) >= 100.0:
-                self._pending_transition_sprouts = True
-                return
+            # 且增援节拍以转阶段时点重锚。该对计入增援批次上限。
+            if self.sprout_waves_spawned >= 2:
+                self._transition_av = av
+                self._next_sprout_av = av + 83.4
+                hyacine = self.sim.get_entity("风堇")
+                if hyacine is not None and getattr(hyacine, "energy", 0.0) >= 100.0:
+                    self._pending_transition_sprouts = True
+                    return
+            else:
+                self._next_sprout_av = av + SPROUT_INTERVAL_AV
             self._spawn_transition_sprouts()
             return
         if getattr(self, "_pending_transition_sprouts", False):
@@ -361,7 +370,10 @@ class Stage30510021Director:
         if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.80:
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
-            self._next_sprout_av += SPROUT_INTERVAL_AV
+            if getattr(self, "_transition_av", None) is not None and self.sprout_waves_spawned == 4:
+                self._next_sprout_av = self._transition_av + 150.5
+            else:
+                self._next_sprout_av += SPROUT_INTERVAL_AV
 
     def _spawn_transition_sprouts(self) -> None:
         self.sprout_waves_spawned += 1
@@ -369,12 +381,12 @@ class Stage30510021Director:
         for idx in (self._sprout_seq - 1, self._sprout_seq):
             sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
             if sp is not None:
-                sp.current_hp = 300000.0
+                sp.current_hp = 900000.0
 
 
 def build_stage_30510021(team: List[Entity]) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
-    from .actions import DamageType
+    from .actions import ActionKind, DamageType
     from .events import ActionExecuteEvent, DamageAppliedEvent
 
     # 高难深渊关卡 (将杀王棋 / 混沌回忆) 规则: 角色进战初始拥有 50% 能量上限
@@ -425,23 +437,31 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
     for e in (pegasus, guard_a, guard_b, guard_c):
         e.action_callback = minion_ai
 
-    def _on_act(e: ActionExecuteEvent) -> None:
-        if w1_state["lh_hit_in_window"]:
-            w1_state["lh_hit_in_window"] = False
-            if w1_state["wishes"] > 0:
-                w1_state["wishes"] -= 1
-                if w1_state["wishes"] == 0:
-                    w1_state["eradicating"] = False
-                _sync_w1_dr()
+    from .events import BattleEvent
 
-    def _on_dmg(e: DamageAppliedEvent) -> None:
-        if (
-            w1_state["eradicating"]
-            and e.target_name == "「灯塔」"
-            and e.damage_type not in (DamageType.ADDITIONAL, DamageType.TRUE, DamageType.DOT)
-        ):
-            w1_state["lh_hit_in_window"] = True
+    def _on_battle_ev(e: BattleEvent) -> None:
+        if isinstance(e, ActionExecuteEvent):
+            if getattr(e, "action_kind", None) not in (
+                ActionKind.BASIC,
+                ActionKind.SKILL,
+                ActionKind.ULTIMATE,
+                ActionKind.MEMOSPRITE_SKILL,
+            ):
+                return
+            if w1_state["lh_hit_in_window"]:
+                w1_state["lh_hit_in_window"] = False
+                if w1_state["wishes"] > 0:
+                    w1_state["wishes"] -= 1
+                    if w1_state["wishes"] == 0:
+                        w1_state["eradicating"] = False
+                    _sync_w1_dr()
+        elif isinstance(e, DamageAppliedEvent):
+            if (
+                w1_state["eradicating"]
+                and e.target_name == "「灯塔」"
+                and e.damage_type not in (DamageType.ADDITIONAL, DamageType.TRUE, DamageType.DOT)
+            ):
+                w1_state["lh_hit_in_window"] = True
 
-    sim.event_bus.subscribe(ActionExecuteEvent, _on_act)
-    sim.event_bus.subscribe(DamageAppliedEvent, _on_dmg)
+    sim.event_bus.subscribe(BattleEvent, _on_battle_ev)
     return sim, Stage30510021Director(sim)

@@ -501,17 +501,24 @@ class IkaKit(KitHandler):
         self.cast_scatter()
 
     def _sync_master_field_auras(self) -> None:
-        """同步风堇身上已生效的结界抗穿与无视防御光环 (神启、心意相契的安宁等) 至小伊卡。"""
+        """同步风堇身上已生效的结界抗穿与无视防御光环 (神启、心意相契的安宁等) 至小伊卡，防止与直接施加的状态重复叠加。"""
         master = self.master_kit
         if master is None or not self.port.entity_exists(self.owner_id):
             return
         from ...status import StatusTag
-        allowed_stats = {StatType.RES_PEN, StatType.DEF_SHRED}
+        allowed_stats = {StatType.RES_PEN, StatType.DEF_SHRED, StatType.CRIT_DMG, StatType.DMG_BOOST}
+        ika_statuses = list(self.port.statuses(self.owner_id))
+        direct_names = {s.name for s in ika_statuses if not s.id.endswith("_IkaAura")}
+        for s in ika_statuses:
+            if s.id.endswith("_IkaAura") and s.name in direct_names:
+                self.port.remove_status(self.owner_id, s.id)
         ika_statuses = list(self.port.statuses(self.owner_id))
         ika_status_ids = {s.id for s in ika_statuses}
         ika_status_names = {s.name for s in ika_statuses}
         for s in self.port.statuses(master.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
+                continue
+            if s.id.startswith("Robin_Talent_TonalChord_") or s.id == "Robin_Tech_WeAreTheMelody":
                 continue
             mods = tuple(m for m in s.modifiers if m.stat in allowed_stats)
             if not mods:
@@ -561,6 +568,11 @@ class IkaKit(KitHandler):
             )
         if hasattr(self.port, "resolve_effects"):
             self.port.resolve_effects()
+        if hasattr(self.port, "_get_entity"):
+            master_ent = self.port._get_entity(master.owner_id)
+            lc = getattr(master_ent, "light_cone", None) if master_ent else None
+            if lc is not None and hasattr(lc, "_flush_discharge"):
+                lc._flush_discharge()
         # 1140901 sp_base = 5: 小伊卡施放忆灵技为风堇恢复 5 点基础能量 (受 ERR 放大)
         err = self.port.stat(master.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(

@@ -63,17 +63,33 @@ class ChangyeyueKit(KitHandler):
         """忆灵「长夜」生命上限为长夜月实时生命上限的 50% (满血 4313 点)。"""
         return float(round(0.50 * self.port.max_hp(self.owner_id)))
 
-    def _spirit_crit_dmg(self) -> Optional[float]:
+    def _spirit_crit_dmg(self, include_skill_shared: bool = True) -> Optional[float]:
         """忆灵「长夜」当前的暴击伤害 (供忆灵技伤害结算覆盖)。
 
-        忆灵技由主人套件代发 (归属与 ×0.50 生命换算保持不变), 但暴伤应取
-        忆灵自身面板: 其专属加成 (行迹【天亮了，雨落了】、战技共享暴伤
-        【白昼悄然离去】) 以 MEMOSPRITE_ONLY 状态挂在忆灵实体上, 若按主人
-        面板结算则这些加成永远不生效。忆灵实体不存在时返回 None (走主人面板)。
+        忆灵「长夜」在继承自身专属与团队光环暴伤的同时，实时同步长夜月与「长夜」共享的双端暴伤
+        (E2【听，沉眠中的呓语】+40%、天赋【今夜与我同行】+60%、行迹【天黑黑，月寂寂】+15%)，
+        并在【白昼悄然离去】或秘技生效期间动态刷新 24% 暴伤转化率。
         """
         if not self.port or not self.port.entity_exists(self.spirit_name):
             return None
-        return float(self.port.stat(self.spirit_name, StatType.CRIT_DMG))
+        if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
+            self.apply_skill_shared_crit_dmg()
+        exclude = () if include_skill_shared else (StatusTag.MEMOSPRITE_ONLY,)
+        cd = float(self.port.stat(self.spirit_name, StatType.CRIT_DMG, exclude_tags=exclude))
+        if not include_skill_shared:
+            for s in self.port.statuses(self.spirit_name):
+                if s.id == "Changyeyue_A6_RemembranceCritDmg_Spirit":
+                    for m in s.modifiers:
+                        if m.stat == StatType.CRIT_DMG:
+                            cd += m.value
+        both_keys = ("Changyeyue_E2_CritDmg", "Changyeyue_Talent_CritDmg", "Changyeyue_A2_Skill_CritDmg")
+        spirit_ids = {s.id for s in self.port.statuses(self.spirit_name)}
+        for s in self.port.statuses(self.owner_id):
+            if s.id in both_keys and s.id not in spirit_ids:
+                for m in s.modifiers:
+                    if m.stat == StatType.CRIT_DMG:
+                        cd += m.value
+        return cd
 
     def _trigger_trace_candle_on_skill(self) -> None:
         """行迹【烛火起，烛火熄】(point07)：长夜月或我方忆灵施放技能时，长夜月恢复 5 点能量并获得 1 点【忆质】。"""
@@ -194,10 +210,6 @@ class ChangyeyueKit(KitHandler):
         # 召唤伴生忆灵「长夜」在场（入场触发【与夜，形影，不离】）
         self.summon_spirit()
 
-        # 若施放了秘技：进战后根据开局结算后的长夜月实时暴伤，动态挂载与战技相同的暴伤分享
-        if getattr(self, "technique_active", False):
-            self.apply_skill_shared_crit_dmg()
-
     def summon_spirit(self) -> Any:
         """召唤忆灵「长夜」，赋予在场增伤光环，并在跑道上注册实体 (触发【与夜，形影，不离】立即行动 0.0 AV)。"""
         was_alive = self.spirit_alive
@@ -236,10 +248,6 @@ class ChangyeyueKit(KitHandler):
             kit_args={"master_kit": self}
         )
         if spirit_ent:
-            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动 (100% 拉条)
-            if not was_alive:
-                self.port.advance(self.spirit_name, self.spirit_name, 1.0)
-
             # 行迹【天亮了，雨落了】：赋予忆灵暴击伤害加成 (+50%)
             rem_count = self._get_remembrance_count()
             rem_cd = 0.50 if rem_count == 3 else (0.65 if rem_count >= 4 else (0.15 if rem_count == 2 else 0.05))
@@ -256,16 +264,20 @@ class ChangyeyueKit(KitHandler):
                 description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd*100:.1f}%"
             ))
 
+            # 若施放了秘技：进战后获得与战技相同的我方全体忆灵暴击伤害提高效果
+            if getattr(self, "technique_active", False):
+                self.technique_active = False
+                self.apply_skill_shared_crit_dmg()
+
+            # 忆灵天赋 1141305【与夜，形影，不离】：被召唤时，使自身立即行动 (100% 拉条)
+            if not was_alive:
+                self.port.advance(self.spirit_name, self.spirit_name, 1.0)
+
         return spirit_ent
 
     def _spirit_hp_scale_ratio(self) -> float:
-        """伴生忆灵「长夜」当前实时生命上限相对于长夜月本体的精确物理折算比例 (spirit_hp / owner_hp)。"""
-        if self.port and self.port.entity_exists(self.spirit_name):
-            owner_hp = self.port.max_hp(self.owner_id)
-            spirit_hp = self.port.max_hp(self.spirit_name)
-            if owner_hp > 0 and spirit_hp > 0:
-                return spirit_hp / owner_hp
-        return 0.50
+        """伴生忆灵「长夜」生命上限为长夜月实时生命上限的 50% (官方 Talent 参数 #5 = 0.50)。"""
+        return float(self.skill_param("talent", 4, default=0.50))
 
     def _memosprite_damage_mult(self) -> float:
         """星魂 1【睡吧，长夜有所梦】：长夜月在场时，场上敌方目标数量等于 4或以上/3/2/1 名时，
@@ -320,19 +332,20 @@ class ChangyeyueKit(KitHandler):
         else:
             self._trigger_trace_candle_on_skill()
 
-        # 忆灵技【追忆，蹁跹，如雨】(1141301):
+        # 忆灵技【追忆，蹁跹，如雨】(1141301): E1 独立忆灵乘区由 CombatPort.attack 对全体我方 SERVANT 伤害统一结算
         base_mult = self.skill_param("1141301", 0, default=0.50)
         scale_step = self.skill_param("1141301", 1, default=0.10)
         extra_ratio = (self.yizhi // 4) * scale_step
-        mult = (base_mult + extra_ratio) * self._spirit_hp_scale_ratio() * self._memosprite_damage_mult()
+        mult = (base_mult + extra_ratio) * self._spirit_hp_scale_ratio()
         spirit_cd = self._spirit_crit_dmg()
 
         for split_ratio, split_toughness in (
-            (0.125, 2.0),
-            (0.125, 2.0),
-            (0.125, 2.0),
-            (0.125, 2.0),
-            (0.50, 2.0),
+            (0.10, 1.5),
+            (0.10, 1.5),
+            (0.10, 1.5),
+            (0.10, 1.5),
+            (0.10, 1.5),
+            (0.50, 2.5),
         ):
             self.port.attack(
                 self.owner_id,
@@ -437,16 +450,22 @@ class ChangyeyueKit(KitHandler):
         # 2. 快照本次爆发消耗的忆质总量 (从 24 增长到 31)
         spent_memory = self.yizhi
         self.bursting = True
-        primary_target = enemies[0]
+        primary_target = (
+            "「灯塔」"
+            if ("「灯塔」" in enemies and spent_memory < 25)
+            else max(enemies, key=lambda e: (self.port.current_hp(e), self.port.max_hp(e)))
+        )
         hp_ratio = self._spirit_hp_scale_ratio()
 
         try:
             spirit_cd = self._spirit_crit_dmg()
             p_primary = self.skill_param("1141307", 0, default=0.12)
             p_adjacent = self.skill_param("1141307", 1, default=0.06)
-            e1_mult = self._memosprite_damage_mult()
-            for e in enemies:
-                factor = (p_primary if e == primary_target else p_adjacent) * e1_mult
+            ordered_enemies = [e for e in enemies if e != primary_target] + ([primary_target] if primary_target in enemies else [])
+            for e in ordered_enemies:
+                if e not in self.port.enemies(self.owner_id):
+                    continue
+                factor = (p_primary if e == primary_target else p_adjacent)
                 eff_mult = factor * spent_memory * hp_ratio
                 self.port.attack(
                     self.owner_id,
@@ -458,8 +477,8 @@ class ChangyeyueKit(KitHandler):
                     scaling_stat="hp",
                     fixed_crit_dmg=spirit_cd
                 )
-            if hasattr(self.port, "resolve_effects"):
-                self.port.resolve_effects()
+                if hasattr(self.port, "resolve_effects"):
+                    self.port.resolve_effects()
 
             # 消耗全部忆质
             self.yizhi = 0
@@ -749,7 +768,7 @@ class ChangyeyueKit(KitHandler):
             self._trigger_trace_a2_on_skill(self.owner_id)
             self.summon_spirit()
 
-            spirit_cd = self._spirit_crit_dmg()
+            spirit_cd = self._spirit_crit_dmg(include_skill_shared=False)
             ult_hp_ratio = self._spirit_hp_scale_ratio()
             ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
             for e in self.port.enemies(self.owner_id):
@@ -803,7 +822,6 @@ class ChangyeyueKit(KitHandler):
         """秘技【愿有冷雨落下】：开战时获得 1 点【忆质】(E2为3点)，并获得与战技相同的提高我方全体忆灵暴击伤害的效果。"""
         self.gain_yizhi(1)
         self.technique_active = True
-        self.apply_skill_shared_crit_dmg()
 
 
 class ChangyeMemospriteKit(KitHandler):

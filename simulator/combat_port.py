@@ -611,6 +611,13 @@ class SimulatorCombatPort:
         src = self._get_entity(source_id)
         if not tgt or not src:
             return
+        eff_multiplier = atk_multiplier
+        if resolved_damage_type == DamageType.SERVANT and not src.is_enemy:
+            for e in self.sim.entities:
+                if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
+                    fn = getattr(e.kit, "_memosprite_damage_mult", None)
+                    if callable(fn):
+                        eff_multiplier *= float(fn())
         base_res = 0.20
         if hasattr(tgt, "damage_res") and isinstance(tgt.damage_res, dict) and element in tgt.damage_res:
             base_res = tgt.damage_res[element]
@@ -619,7 +626,7 @@ class SimulatorCombatPort:
         req = DamageRequest(
             attacker=src,
             target=tgt,
-            skill_multiplier=atk_multiplier,
+            skill_multiplier=eff_multiplier,
             target_level=int(getattr(tgt, "level", 90) or 90),
             target_base_res=base_res,
             target_is_broken=tgt.is_broken,
@@ -765,8 +772,8 @@ class SimulatorCombatPort:
         if ent and ent in self.sim.entities:
             owner_name = getattr(ent, "master_name", "") or ""
             if hasattr(self.sim, "status_mgr"):
-                self.sim.status_mgr.remove_status(name, f"Fengjin_Ult_SunAfterRain_{name}")
-                self.sim.status_mgr.remove_status(name, f"Fengjin_Tech_WeatherIsFine_{name}")
+                for s in list(self.sim.status_mgr.get_statuses(name)):
+                    self.sim.status_mgr.remove_status(name, s.id)
             self.sim.entities.remove(ent)
             if self.sim._current_turn_entity == ent:
                 self.sim._current_turn_entity = None
