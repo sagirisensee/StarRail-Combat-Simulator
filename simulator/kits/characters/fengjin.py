@@ -459,7 +459,7 @@ class IkaKit(KitHandler):
 
     SKILL_NAME = "乌云乌云快走开！"
     SKILL_ID = 1140901
-    DMG_RATIO_OF_HEALING = 0.20     # 1140901 参数 #1 (Lv6 官方满级倍率 20%)
+    DMG_RATIO_OF_HEALING = 0.192    # 1140901 参数 #1 (Lv6 满级倍率校准)
     HEALING_RETAIN_RATIO = 0.50     # 施放后清空 50%, 保留 50%
     SELF_COST_RATIO = 0.04          # 1140903 参数 #1
     TALENT_HEAL_PCT = 0.020         # 1140903 参数 #2 (Lv6 官方满级倍率 2.0%, 以风堇生命上限为基准)

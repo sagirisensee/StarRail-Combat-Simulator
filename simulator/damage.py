@@ -72,10 +72,11 @@ class DamageCalculator:
     @staticmethod
     def calculate(req: DamageRequest) -> DamageBreakdown:
         atk_stat = req.attacker.base_atk
+        base_dmg_boost = float(getattr(req.attacker, "base_dmg_boost", 0.0) or 0.0)
         if hasattr(req.attacker, "simulator") and req.attacker.simulator:
             mgr = req.attacker.simulator.status_mgr
             atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE)
-            dmg_boost = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DMG_BOOST)
+            dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
             target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
@@ -83,7 +84,7 @@ class DamageCalculator:
             def_shred = target_def_shred + attacker_def_ignore
             vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY)
         else:
-            dmg_boost = 0.0
+            dmg_boost = base_dmg_boost
             res_pen = 0.0
             def_shred = 0.0
             vuln = 0.0

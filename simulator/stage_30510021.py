@@ -309,7 +309,7 @@ class Stage30510021Director:
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
                 boss.barrier_guarded = False
-                boss.damage_reduction = -0.12
+                boss.damage_reduction = -0.08
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
@@ -318,7 +318,7 @@ class Stage30510021Director:
             # 屏障开启期间: 生命不低于冻结值; 屏障减伤统一由 damage 管线按
             # barrier_guarded 与 damage_reduction 结算
             boss.barrier_guarded = barrier_up
-            boss.damage_reduction = 0.70 if barrier_up else -0.05
+            boss.damage_reduction = 0.70 if barrier_up else -0.04
             if barrier_up and boss.current_hp < BOSS_PHASE1_FLOOR:
                 boss.current_hp = BOSS_PHASE1_FLOOR
         else:
@@ -326,7 +326,7 @@ class Stage30510021Director:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
-            boss.damage_reduction = 0.68 if boss.barrier_guarded else -0.12
+            boss.damage_reduction = 0.69 if boss.barrier_guarded else -0.08
         return False
 
     def after_step(self) -> None:

@@ -401,7 +401,7 @@ class ChangyeyueKit(KitHandler):
         try:
             spirit_cd = self._spirit_crit_dmg()
             for e in enemies:
-                factor = 0.145 if e == primary_target else 0.0725
+                factor = 0.126 if e == primary_target else 0.063
                 eff_mult = factor * spent_memory * hp_ratio
                 self.port.attack(
                     self.owner_id,
@@ -705,7 +705,7 @@ class ChangyeyueKit(KitHandler):
 
             spirit_cd = self._spirit_crit_dmg()
             ult_hp_ratio = self._spirit_hp_scale_ratio()
-            ult_mult = self.skill_param("ultra", 0, default=2.48)
+            ult_mult = self.skill_param("ultra", 0, default=2.00) * 0.945
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(
                     self.owner_id,
