@@ -133,9 +133,14 @@ class DamageCalculator:
         if req.force_crit is not None:
             is_crit = req.force_crit
         else:
-            # 默认按暴击率判定 (大于等于 100% 必暴，或概率模拟)
-            import random
-            is_crit = (random.random() < crit_rate) or (crit_rate >= 1.0)
+            sim = getattr(req.attacker, "simulator", None)
+            oracle = getattr(sim, "crit_oracle", None)
+            if callable(oracle) and not req.is_true_damage:
+                is_crit = bool(oracle(req))
+            else:
+                # 默认按暴击率判定 (大于等于 100% 必暴，或概率模拟)
+                import random
+                is_crit = (random.random() < crit_rate) or (crit_rate >= 1.0)
 
         crit_mult = (1.0 + crit_dmg) if is_crit else 1.0
 

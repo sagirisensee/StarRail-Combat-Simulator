@@ -680,6 +680,73 @@ def build_stage_sim():
     return build_stage_30510021(team)
 
 
+# 官方 battle_20261026_062503 实战未暴击段数真值台账 (act_idx, non_true_hit_idx)
+OFFICIAL_20261026_NON_CRITS = {
+    (1, 6),   # #02 缇宝 Follow-Up: 12,486.9 vs 77,189.6 (r=0.162)
+    (1, 8),   # #02 缇宝 Additional: 1,609.4 vs 9,948.5 (r=0.162)
+    (7, 5),   # #08 长夜月 Additional: 4,227.2 vs 26,569.9 (r=0.159)
+    (9, 0),   # #10 知更鸟 Follow-Up: 26,582.3 vs 147,382.2 (r=0.180)
+    (11, 2),  # #12 长夜 Additional: 8,423.1 vs 45,471.8 (r=0.185)
+    (12, 0),  # #13 晴空乐手 Servant: 29,893.7 vs 155,904.7 (r=0.192)
+    (12, 3),  # #13 晴空乐手 Additional: 8,547.5 vs 42,603.6 (r=0.201)
+    (12, 4),  # #13 晴空乐手 Additional: 8,547.5 vs 42,603.6 (r=0.201)
+    (24, 5),  # #25 长夜月 Additional: 2,883.3 vs 18,088.5 (r=0.159)
+    (41, 0),  # #42 缇宝 Ultimate: 5,443.0 vs 52,954.7 (r=0.103)
+    (41, 1),  # #42 缇宝 Additional: 2,612.6 vs 21,181.9 (r=0.123)
+    (42, 5),  # #43 晴空乐手 Additional: 11,747.0 vs 89,909.1 (r=0.131)
+    (46, 8),  # #47 长夜月 Additional: 10,123.6 vs 215,607.5 (r=0.047)
+    (61, 0),  # #62 缇宝 Ultimate: 5,802.9 vs 45,237.5 (r=0.128)
+    (72, 1),  # #73 知更鸟 Follow-Up: 33,352.0 vs 191,903.3 (r=0.174)
+    (72, 3),  # #73 知更鸟 Additional: 2,888.9 vs 17,681.0 (r=0.163)
+    (73, 6),  # #74 长夜月 Additional: 2,888.9 vs 17,681.0 (r=0.163)
+    (73, 8),  # #74 长夜月 Additional: 19,592.7 vs 226,377.0 (r=0.087)
+    (73, 9),  # #74 长夜月 Additional: 19,592.7 vs 226,377.0 (r=0.087)
+    (77, 0),  # #78 晴空乐手 Servant: 11,590.0 vs 72,743.9 (r=0.159)
+    (79, 3),  # #80 依卡 Additional: 2,685.4 vs 16,374.5 (r=0.164)
+    (85, 5),  # #86 长夜 Additional: 2,810.4 vs 16,913.4 (r=0.166)
+    (86, 9),  # #87 长夜月 Additional: 19,351.7 vs 205,692.8 (r=0.094)
+    (87, 6),  # #88 长夜 Additional: 2,888.9 vs 17,681.0 (r=0.163)
+    (88, 1),  # #89 长夜 Additional: 19,506.1 vs 526,575.5 (r=0.037)
+    (89, 0),  # #90 晴空乐手 Servant: 15,039.0 vs 99,257.5 (r=0.152)
+    (90, 1),  # #91 缇宝 Additional: 2,888.9 vs 17,681.0 (r=0.163)
+    (93, 0),  # #94 风堇 Follow-Up: 11,005.9 vs 83,368.0 (r=0.132)
+    (94, 2),  # #95 依卡 Additional: 2,888.9 vs 17,681.0 (r=0.163)
+}
+
+
+def attach_exact_crit_oracle(sim: Any) -> None:
+    """挂载变态对齐暴击真值映射器：将实战未暴击的 29 发严格对齐为未暴击，其余全部对齐为暴击。"""
+    from .actions import ActionKind
+    from .events import ActionExecuteEvent, BattleEvent
+
+    state = {"act_idx": -1, "hit_idx": 0}
+
+    def _on_battle_ev(e: BattleEvent):
+        if isinstance(e, ActionExecuteEvent):
+            ent = sim.get_entity(e.actor_name)
+            if ent is not None and (getattr(ent, "is_countdown", False) or getattr(ent, "is_enemy", False)):
+                return
+            kind = getattr(e, "action_kind", None)
+            if kind not in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.MEMOSPRITE_SKILL):
+                return
+            raw_name = e.action_type or ""
+            if raw_name == "FollowUpAttack" or not raw_name:
+                return
+            state["act_idx"] += 1
+            state["hit_idx"] = 0
+
+    sim.event_bus.subscribe(BattleEvent, _on_battle_ev)
+
+    def _crit_oracle(req: Any) -> bool:
+        h_idx = state["hit_idx"]
+        state["hit_idx"] += 1
+        if (state["act_idx"], h_idx) in OFFICIAL_20261026_NON_CRITS:
+            return False
+        return True
+
+    sim.crit_oracle = _crit_oracle
+
+
 def main(argv=None) -> int:
     import argparse
 
@@ -689,10 +756,13 @@ def main(argv=None) -> int:
     parser.add_argument("--replay", action="store_true", help="回放对齐模式: 按日志中的玩家决策脚本驱动模拟")
     parser.add_argument("--force", action="store_true", help="强制回放: 决策钉死, 能量/战技点按缺口补足并记台账 (隐含 --replay)")
     parser.add_argument("--trajectory", action="store_true", help="轨迹回放: 在强制回放之上再钉死忆灵技轨迹, 缺口补足记账 (隐含 --force)")
+    parser.add_argument("--align-crit", action="store_true", help="暴击真值对齐模式: 100% 对齐实战暴击与未暴击段数 (变态对齐)")
     args = parser.parse_args(argv)
 
     golden = parse_golden_jsonl(args.golden)
     sim, director = build_stage_sim()
+    if args.align_crit:
+        attach_exact_crit_oracle(sim)
     replay_md = ""
     trajectory_md = ""
     if args.trajectory:
