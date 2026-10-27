@@ -768,21 +768,7 @@ class ChangyeyueKit(KitHandler):
             self._trigger_trace_a2_on_skill(self.owner_id)
             self.summon_spirit()
 
-            spirit_cd = self._spirit_crit_dmg(include_skill_shared=False)
-            ult_hp_ratio = self._spirit_hp_scale_ratio()
-            ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
-            for e in self.port.enemies(self.owner_id):
-                self.port.attack(
-                    self.owner_id,
-                    e,
-                    element="Ice",
-                    atk_multiplier=ult_mult * ult_hp_ratio,
-                    toughness_damage=20.0,
-                    damage_type=DamageType.ULTIMATE,
-                    scaling_stat="hp",
-                    fixed_crit_dmg=spirit_cd
-                )
-
+            # 官方 141303 机制时序：先进入【至暗之谜】(敌方易伤+30%, 长夜月与长夜增伤+60%), 终结技伤害本身即享受易伤与增伤
             self.darkness = True
             self.charges = 2 + (2 if self.eidolon >= 2 else 0)
 
@@ -810,6 +796,21 @@ class ChangyeyueKit(KitHandler):
                 category="buff",
                 description="全属性伤害提高 +60.0%"
             ))
+
+            spirit_cd = self._spirit_crit_dmg(include_skill_shared=False)
+            ult_hp_ratio = self._spirit_hp_scale_ratio()
+            ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
+            for e in self.port.enemies(self.owner_id):
+                self.port.attack(
+                    self.owner_id,
+                    e,
+                    element="Ice",
+                    atk_multiplier=ult_mult * ult_hp_ratio,
+                    toughness_damage=20.0,
+                    damage_type=DamageType.ULTIMATE,
+                    scaling_stat="hp",
+                    fixed_crit_dmg=spirit_cd
+                )
 
             # 终结技基础回能 5 点 (官方数据源 141303 sp_base: 5；行迹【烛火起，烛火熄】回能 5 点与忆质由 on_event 统一结算)
             self.port.gain_energy(self.owner_id, 5.0, cause="终结技《晚安，全世界无眠》施放基础回能 (+5.0 点)", source_plugin="长夜月终结技")
