@@ -39,7 +39,8 @@
   屏障与真实伤害: 屏障开启期间打在亚婆离身上的真实伤害数值为 0
   (日志实测: 二阶段地板后 42 次真实伤害中 31 次为 0、一阶段冻结期 5 次
   为 0、无屏障期 0 次; 打在胚芽上的照常全额)——机制帖所述压制以
-  「事件照常、数值归零」的形式存在, 本场景以 barrier_guarded 标记建模。
+  「事件照常、数值归零」的形式存在, 本场景以 barrier_guarded 与关卡独立
+  减伤属性 damage_reduction 建模 (统一由 damage 管线结算, 零角色插件耦合)。
 """
 
 from typing import List, Optional
@@ -57,9 +58,6 @@ BOSS_PHASE1_BARRIER_DELAY_AV = 34.0
 # 一阶段屏障释放时点: 第二波开始后约 156 AV (日志中一阶段于第二波后约 161 AV
 # 被打空转阶段, 释放点取其前数 AV, 与增援的 AV 脚本口径一致)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 156.0
-# 【血脑屏障】的伤害类别规则 (日志逐窗口实测, 结算在 damage 管线):
-# 真实伤害归零、附加伤害按 25% 结算、直接伤害 (普攻/战技/终结技/追击/
-# 忆灵技) 全额——屏障只转化派生类伤害, 不削减直接伤害
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 首批之后的增援批次数 (含转阶段增援, 两场日志均为总计 6 批)
 SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 两场增援间隔交替呈 75.7/75.8)
@@ -96,6 +94,7 @@ def _guard(name: str, initial_distance: float = 10000.0) -> Entity:
         weaknesses=["Wind", "Quantum"],
         is_enemy=True,
     )
+    ent.level = 100
     ent.distance_remaining = initial_distance
     ent.damage_res = {"Wind": 0.0, "Quantum": 0.0, "Physical": 0.2, "Fire": 0.2, "Thunder": 0.2, "Ice": 0.2, "Imaginary": 0.2}
     return ent
@@ -116,6 +115,7 @@ def _mech(name: str, hp: float, speed: float, weaknesses: List[str]) -> Entity:
         weaknesses=list(weaknesses),
         is_enemy=True,
     )
+    ent.level = 100
     ent.damage_res = {el: (0.0 if el in weaknesses else 0.2) for el in _ELEMENTS}
     return ent
 
@@ -140,6 +140,7 @@ def _boss() -> Entity:
         weaknesses=list(BOSS_WEAKNESSES),
         is_enemy=True,
     )
+    ent.level = 100
     ent.damage_res = dict(BOSS_RES)
     ent.hit_energy = 12.0
     # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
@@ -245,6 +246,7 @@ def _sprout(name: str) -> Entity:
         weaknesses=list(SPROUT_WEAKNESSES),
         is_enemy=True,
     )
+    ent.level = 100
     ent.damage_res = dict(SPROUT_RES)
     ent.hit_energy = 10.0
     return ent
@@ -307,14 +309,16 @@ class Stage30510021Director:
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
                 boss.barrier_guarded = False
+                boss.damage_reduction = -0.12
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
                 return True
             barrier_up = wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV <= av < wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV
-            # 屏障开启期间: 生命不低于冻结值; 真实伤害归零、附加伤害按
-            # 25% 结算 (由 damage 管线按 barrier_guarded 与伤害类别处理)
+            # 屏障开启期间: 生命不低于冻结值; 屏障减伤统一由 damage 管线按
+            # barrier_guarded 与 damage_reduction 结算
             boss.barrier_guarded = barrier_up
+            boss.damage_reduction = 0.70 if barrier_up else -0.05
             if barrier_up and boss.current_hp < BOSS_PHASE1_FLOOR:
                 boss.current_hp = BOSS_PHASE1_FLOOR
         else:
@@ -322,6 +326,7 @@ class Stage30510021Director:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
+            boss.damage_reduction = 0.68 if boss.barrier_guarded else -0.12
         return False
 
     def after_step(self) -> None:

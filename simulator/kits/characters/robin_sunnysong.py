@@ -144,13 +144,11 @@ class SunnyMusiciansKit(KitHandler):
                         ))
                         musician_status_names.add(s.name)
         for enemy_id in enemies:
-            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy_id)
-            eff_mult = mult * (0.25 if is_bg else 1.0)
             self.port.attack(
                 self.owner_id,
                 enemy_id,
                 element="Wind",
-                atk_multiplier=eff_mult,
+                atk_multiplier=mult,
                 toughness_damage=30.0,
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"

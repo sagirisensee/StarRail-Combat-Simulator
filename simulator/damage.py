@@ -154,14 +154,17 @@ class DamageCalculator:
         # 7. 韧性减伤区 (未破韧固定 0.9，破韧 1.0)
         reduction_mult = 1.0 if req.target_is_broken else 0.9
 
-        # 屏障转化: 目标屏障护体时, 附加伤害按 25% 结算 (直接伤害不受影响;
-        # 实机日志逐窗口实测——屏障期结界附加单发约为无屏障期的 0.25 倍,
-        # 而终结技/忆灵技等直接伤害打在屏障目标上仍为全额)
+        # 屏障转化与关卡独立减伤乘区: 目标屏障护体时, 附加伤害按 25% 结算;
+        # 目标携带关卡独立减伤/易损属性 (damage_reduction) 时统一在此乘区结算,
+        # 彻底消除角色 Kit 插件对特定 Boss 屏障状态的耦合感知。
         barrier_mult = 1.0
         if getattr(req.target, "barrier_guarded", False):
             from .actions import DamageType
             if getattr(req, "damage_type", None) == DamageType.ADDITIONAL:
                 barrier_mult = 0.25
+        if barrier_mult == 1.0:
+            target_dmg_red = float(getattr(req.target, "damage_reduction", 0.0) or 0.0)
+            barrier_mult = max(0.0, 1.0 - target_dmg_red)
 
         # 最终汇总
         final_dmg = (

@@ -240,7 +240,7 @@ class ChangyeyueKit(KitHandler):
             owner_hp = self.port.max_hp(self.owner_id)
             spirit_hp = self.port.max_hp(self.spirit_name)
             if owner_hp > 0 and spirit_hp > 0:
-                return (spirit_hp / owner_hp) * 0.955
+                return spirit_hp / owner_hp
         return 0.50
 
     def _sync_darkness_vuln(self) -> None:
@@ -283,8 +283,6 @@ class ChangyeyueKit(KitHandler):
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
         extra_ratio = (self.yizhi // 4) * 0.14
         mult = (0.70 + extra_ratio) * self._spirit_hp_scale_ratio()
-        is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(target)
-        eff_mult = mult * (0.25 if is_bg else 1.0)
         spirit_cd = self._spirit_crit_dmg()
 
         for split_ratio, split_toughness in (
@@ -298,7 +296,7 @@ class ChangyeyueKit(KitHandler):
                 self.owner_id,
                 target,
                 element="Ice",
-                atk_multiplier=eff_mult * split_ratio,
+                atk_multiplier=mult * split_ratio,
                 toughness_damage=split_toughness,
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp",
@@ -403,10 +401,8 @@ class ChangyeyueKit(KitHandler):
         try:
             spirit_cd = self._spirit_crit_dmg()
             for e in enemies:
-                factor = 0.152 if e == primary_target else 0.076
-                is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
-                phase2_exposed = (not is_bg) and self.port.max_hp(e) > 10000000.0
-                eff_mult = factor * spent_memory * hp_ratio * (0.31 if is_bg else (1.10 if phase2_exposed else 1.0))
+                factor = 0.145 if e == primary_target else 0.0725
+                eff_mult = factor * spent_memory * hp_ratio
                 self.port.attack(
                     self.owner_id,
                     e,
@@ -709,14 +705,13 @@ class ChangyeyueKit(KitHandler):
 
             spirit_cd = self._spirit_crit_dmg()
             ult_hp_ratio = self._spirit_hp_scale_ratio()
+            ult_mult = self.skill_param("ultra", 0, default=2.48)
             for e in self.port.enemies(self.owner_id):
-                is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
-                eff_mult = 2.00 * ult_hp_ratio * (0.28 if is_bg else 1.15)
                 self.port.attack(
                     self.owner_id,
                     e,
                     element="Ice",
-                    atk_multiplier=eff_mult,
+                    atk_multiplier=ult_mult * ult_hp_ratio,
                     toughness_damage=20.0,
                     damage_type=DamageType.ULTIMATE,
                     scaling_stat="hp",

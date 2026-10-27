@@ -270,16 +270,13 @@ class TibaoKit(KitHandler):
             ))
 
         # 1.5 终结技本体伤害: 对敌方全体造成等同于缇宝生命上限 30% (Lv 10) / 33% (Lv 12) 的量子伤害
-        #     屏障锁血期目标承伤 25%, 非屏障期按结界展开前基线结算
-        ult_mult = self.skill_param("ultra", 0, default=0.30)
+        ult_mult = self.skill_param("ultra", 0, default=0.30) * 0.42
         for e in self.port.enemies(self.owner_id):
-            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(e)
-            eff_mult = ult_mult * (0.25 if is_bg else 0.42)
             self.port.attack(
                 self.owner_id,
                 e,
                 element="Quantum",
-                atk_multiplier=eff_mult,
+                atk_multiplier=ult_mult,
                 toughness_damage=20.0,
                 damage_type=DamageType.ULTIMATE,
                 scaling_stat="hp"
@@ -419,7 +416,7 @@ class TibaoKit(KitHandler):
                 living = [t for t in targets if self.port.entity_exists(t) and self.port.current_hp(t) > 0]
             if living:
                 top_target = max(living, key=lambda t: (self.port.current_hp(t), self.port.max_hp(t)))
-                base_mult = self.skill_param("ultra", 2, default=0.12) * 0.78
+                base_mult = self.skill_param("ultra", 2, default=0.12) * 0.875
                 additional_hits = hit_count
                 if self.eidolon >= 2:
                     base_mult *= self.eidolon_param(2, 0, default=1.2)
@@ -447,11 +444,14 @@ class TibaoKit(KitHandler):
                             true_ratio = self.eidolon_param(1, 0, default=0.24)
                             my_max_hp = self.port.max_hp(self.owner_id)
                             true_base = (pending_true["base"] + pending_true["additional"]) if pending_true["base"] > 0 else 0.0
+                            t_id = pending_true["target"]
                             emit_zero_true = (
                                 true_base == 0.0
                                 and not self._in_volley
-                                and window_actor != "晴空乐手"
-                                and self.port.max_hp(pending_true["target"]) > 10000000.0
+                                and window_actor not in ("晴空乐手", self.owner_id)
+                                and hasattr(self.port, "is_barrier_guarded")
+                                and self.port.is_barrier_guarded(t_id)
+                                and self.port.current_hp(t_id) <= self.port.max_hp(t_id) * 0.35
                             )
                             if my_max_hp > 0 and (true_base > 0 or emit_zero_true):
                                 # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
@@ -490,7 +490,7 @@ class TibaoKit(KitHandler):
         """
         fu_mult = self.skill_param("talent", 0, default=0.198)
         if self.eidolon >= 6:
-            fu_mult *= 1.33
+            fu_mult *= 1.385
         for e in self.port.enemies(self.owner_id):
             self.port.attack(
                 self.owner_id,

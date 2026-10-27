@@ -532,16 +532,14 @@ class IkaKit(KitHandler):
         my_max_hp = self.port.max_hp(self.owner_id)
         if my_max_hp <= 0:
             return
-        # 基础伤害为固定数值 (累计治疗量 x 22%)：以自身生命上限为缩放基准反推等效倍率
+        # 基础伤害为固定数值 (累计治疗量 x 20%)：以自身生命上限为缩放基准反推等效倍率
         eq_mult = base_value / my_max_hp
         for enemy in self.port.enemies(self.owner_id):
-            is_bg = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(enemy)
-            eff_mult = eq_mult * (0.25 if is_bg else 1.0)
             self.port.attack(
                 self.owner_id,
                 enemy,
                 element="Wind",
-                atk_multiplier=eff_mult,
+                atk_multiplier=eq_mult,
                 toughness_damage=30.0,
                 damage_type=DamageType.SERVANT,
                 scaling_stat="hp"
