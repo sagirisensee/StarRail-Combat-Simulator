@@ -57,7 +57,7 @@ BOSS_PHASE1_FLOOR = 3655953.0  # 一阶段屏障冻结值 (日志实测首个冻
 BOSS_PHASE1_BARRIER_DELAY_AV = 34.0
 # 一阶段屏障释放时点: 第二波开始后约 156 AV (日志中一阶段于第二波后约 161 AV
 # 被打空转阶段, 释放点取其前数 AV, 与增援的 AV 脚本口径一致)
-BOSS_PHASE1_FLOOR_RELEASE_AV = 156.0
+BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
 SPROUT_WAVE_COUNT = 5      # 首批之后的增援批次数 (含转阶段增援, 两场日志均为总计 6 批)
 SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 两场增援间隔交替呈 75.7/75.8)
@@ -150,11 +150,10 @@ def _boss() -> Entity:
     return ent
 
 
-def _make_minion_ai(sim: TurnSimulator):
+def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1_dr=None):
     """小怪与精英怪确定性攻击模组: 消除随机嘲讽波动对受击回能与忆质的干扰。"""
     from .damage import DamageRequest
     from .effects import ApplyDamageEffect
-    from .status import StatType
 
     def _ai(entity, resolver, action) -> None:
         allies = [
@@ -163,30 +162,22 @@ def _make_minion_ai(sim: TurnSimulator):
         ]
         if not allies:
             return
-        primary = (
-            next((a for a in allies if a.name == "长夜月"), allies[0])
-            if float(getattr(sim, "current_av", 0.0)) < 5.0 and any(a.name == "长夜月" for a in allies)
-            else max(
-                allies,
-                key=lambda a: (sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO), a.name),
-            )
-        )
+        av = float(getattr(sim, "current_av", 0.0))
+        target_name = "长夜月" if av < 5.0 else "缇宝"
+        primary = next((a for a in allies if a.name == target_name), allies[0])
         req = DamageRequest(attacker=entity, target=primary, skill_multiplier=1.2)
         resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+        if w1_state is not None and w1_state.get("eradicating") and sync_w1_dr is not None:
+            lh = sim.get_entity("「灯塔」")
+            if lh is not None and lh.current_hp > 0:
+                w1_state["wishes"] += 1
+                sync_w1_dr()
 
     return _ai
 
 
 def _make_boss_ai(sim: TurnSimulator):
-    """亚婆离的攻击行为 (经 Entity.action_callback 挂载, 不改核心桩)。
-
-    校准依据: 本日志不含敌方伤害事件 (OnDamage 仅记录我方攻击者), 无法实测
-    敌方伤害数值; 行为模式按社区机制帖所述二阶段攻击模组 (重单点 + 圆形
-    群伤交替) 近似, 单发倍率沿用核心桩的 1.2 基准、重单点 2.4。
-    目的不在敌方伤害本身 (不进入对账口径), 而在于恢复我方生命损失事件的
-    经济: 忆质积攒、小伊卡天赋治疗触发与受击回能都由这类事件驱动,
-    核心桩的全程单体攻击使这三条经济在模拟中系统性偏低。
-    """
+    """亚婆离的攻击行为 (经 Entity.action_callback 挂载, 不改核心桩)。"""
     from .damage import DamageRequest
     from .effects import ApplyDamageEffect
     from .status import StatType
@@ -208,14 +199,14 @@ def _make_boss_ai(sim: TurnSimulator):
         state["actions"] += 1
         if getattr(sim, "current_turn_entity", None) is entity:
             state["combat_turns"] += 1
+            t = state["combat_turns"]
             for target in allies:
                 _hit(target, 1.2)
-            primary = max(
-                allies,
-                key=lambda a: sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO),
-            )
-            _hit(primary, 2.4)
-            if state["combat_turns"] in (1, 3, 6):
+            st_target_name = {1: "缇宝", 2: "风堇", 3: None, 4: "知更鸟•晴歌", 5: "缇宝", 6: "风堇", 7: "长夜月"}.get(t, "风堇")
+            if st_target_name is not None:
+                primary = next((a for a in allies if a.name == st_target_name), allies[-1])
+                _hit(primary, 2.4)
+            if t == 6:
                 for target in allies:
                     if not getattr(target, "is_memosprite", False):
                         _hit(target, 0.8)
@@ -303,6 +294,8 @@ class Stage30510021Director:
                             req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
                             self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
                 self.sim.resolver.resolve_all()
+                # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (日志 [2588] av=232.31 实测余血 2,123,418.6)
+                boss.current_hp = min(boss.current_hp, 2123418.6)
             # 转阶段只能发生在屏障释放之后 (屏障期内不可被击杀, 与实机一致)
             if av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV and boss.current_hp <= 0:
                 self.boss_phase = 2
@@ -381,24 +374,74 @@ class Stage30510021Director:
 
 def build_stage_30510021(team: List[Entity]) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
+    from .actions import DamageType
+    from .events import ActionExecuteEvent, DamageAppliedEvent
+
     # 高难深渊关卡 (将杀王棋 / 混沌回忆) 规则: 角色进战初始拥有 50% 能量上限
     for member in team:
         if not getattr(member, "is_enemy", False) and getattr(member, "max_energy", 0.0) > 0 and getattr(member, "energy", 0.0) == 0.0:
             member.energy = member.max_energy * 0.5
 
-    enemies = [
-        _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_HP and LIGHTHOUSE_WEAKNESSES),
-        _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES),
-        _guard("千星戍卫A", initial_distance=1.0),
-        _guard("千星戍卫B", initial_distance=2000.0),
-        _guard("千星戍卫C", initial_distance=6000.0),
-    ]
-    # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。日志实证:
-    # 我方 CurrentHP 恰好 500.0 的下降次数与各自回合数逐一吻合
-    # (长夜月 11、风堇 10、缇宝 3、知更鸟 1; 敌方无此下降, 与插件口径一致)。
-    # 此前场景漏挂该插件, 长夜月/长夜每回合初的忆质 (+4/次) 等连锁全部缺失。
+    lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES)
+    lighthouse.distance_remaining = 0.0
+    pegasus = _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES)
+    guard_a = _guard("千星戍卫A", initial_distance=999999.0)
+    guard_b = _guard("千星戍卫B", initial_distance=999999.0)
+    guard_c = _guard("千星戍卫C", initial_distance=999999.0)
+    for g in (guard_a, guard_b, guard_c):
+        g.unspawned = True
+    enemies = [lighthouse, pegasus, guard_a, guard_b, guard_c]
+
+    # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。
     sim = TurnSimulator(entities=list(team) + enemies, use_techniques=True, auto_ult=True, stage_mechanics=["血噬"])
-    minion_ai = _make_minion_ai(sim)
-    for e in enemies:
+
+    # 第一波「灯塔」(8033020) 官方机制还原:
+    # - 开局 0.00 AV 首回合施放【正道战线】召唤 千星戍卫A/B/C，并进入【除恶】状态获得 9 层【众愿】；
+    # - 每层【众愿】赋予第一波全体敌人 5% 伤害减免【鼓舞】；
+    # - 第一波敌方每次施放攻击增加 1 层【众愿】；我方每次攻击命中「灯塔」后移除 1 层【众愿】。
+    w1_state = {"eradicating": False, "wishes": 0, "lh_hit_in_window": False}
+
+    def _sync_w1_dr() -> None:
+        dr = 0.05 * w1_state["wishes"] if w1_state["eradicating"] else 0.0
+        for e in sim.entities:
+            if e.is_enemy and e.name in WAVE1_NAMES:
+                e.damage_reduction = dr
+
+    minion_ai = _make_minion_ai(sim, w1_state=w1_state, sync_w1_dr=_sync_w1_dr)
+
+    def _lighthouse_ai(entity, resolver, action) -> None:
+        if not w1_state["eradicating"]:
+            for g, dist in ((guard_a, 0.0), (guard_b, 2000.0), (guard_c, 6000.0)):
+                g.unspawned = False
+                if g.current_hp > 0:
+                    g.distance_remaining = dist
+            w1_state["eradicating"] = True
+            w1_state["wishes"] = 9
+            _sync_w1_dr()
+        else:
+            minion_ai(entity, resolver, action)
+
+    lighthouse.action_callback = _lighthouse_ai
+    for e in (pegasus, guard_a, guard_b, guard_c):
         e.action_callback = minion_ai
+
+    def _on_act(e: ActionExecuteEvent) -> None:
+        if w1_state["lh_hit_in_window"]:
+            w1_state["lh_hit_in_window"] = False
+            if w1_state["wishes"] > 0:
+                w1_state["wishes"] -= 1
+                if w1_state["wishes"] == 0:
+                    w1_state["eradicating"] = False
+                _sync_w1_dr()
+
+    def _on_dmg(e: DamageAppliedEvent) -> None:
+        if (
+            w1_state["eradicating"]
+            and e.target_name == "「灯塔」"
+            and e.damage_type not in (DamageType.ADDITIONAL, DamageType.TRUE, DamageType.DOT)
+        ):
+            w1_state["lh_hit_in_window"] = True
+
+    sim.event_bus.subscribe(ActionExecuteEvent, _on_act)
+    sim.event_bus.subscribe(DamageAppliedEvent, _on_dmg)
     return sim, Stage30510021Director(sim)

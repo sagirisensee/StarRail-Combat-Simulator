@@ -334,6 +334,8 @@ class FengjinKit(KitHandler):
         """
         max_hp = self.port.max_hp(self.owner_id)
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             if self.port.is_own_memosprite(self.owner_id, ally):
                 raw_heal = max_hp * ika_pct + ika_flat
             else:
@@ -375,6 +377,8 @@ class FengjinKit(KitHandler):
         flat_hp = self.skill_param("ultra", 3, default=600.0)
 
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             # 百分比与固定值分开结算: 百分比按目标白字生命 (忆灵按主人白字),
             # 固定值原额——官方样本逐项实证 (E1 风堇: 队友 +80% x 各自白字
             # +600, 如长夜月 8,109 -> 10,780)。
@@ -412,13 +416,20 @@ class FengjinKit(KitHandler):
             event.source_name == self.owner_id
             or self.port.is_own_memosprite(self.owner_id, event.source_name)
         ):
-            self.accumulated_healing += float(event.amount)
+            if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(event.target_name)):
+                self.accumulated_healing += float(event.amount)
         self._sync_storm_calm()
         """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
         if self.eidolon >= 1 and self._sun_after_rain_active():
             if isinstance(event, ActionExecuteEvent):
                 actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
-                if actor_id in self.port.allies(self.owner_id):
+                action_kind = getattr(event, "action_kind", None)
+                action_type = getattr(event, "action_type", "")
+                if (
+                    actor_id in self.port.allies(self.owner_id)
+                    and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_id))
+                    and self.port.is_attack_action(actor_id, action_kind, action_type)
+                ):
                     raw_heal = 0.08 * self.port.max_hp(self.owner_id)
                     self.port.heal(self.owner_id, actor_id, self._apply_outgoing_healing(raw_heal, actor_id))
                     self.on_healing_provided()
@@ -428,6 +439,8 @@ class FengjinKit(KitHandler):
         max_hp = self.port.max_hp(self.owner_id)
         raw_heal = max_hp * 0.30 + 600.0
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             self.port.heal(self.owner_id, ally, self._apply_outgoing_healing(raw_heal, ally))
             self.port.upsert_status(BuffSpec(
                 key=f"Fengjin_Tech_WeatherIsFine_{ally}",
@@ -459,7 +472,7 @@ class IkaKit(KitHandler):
 
     SKILL_NAME = "乌云乌云快走开！"
     SKILL_ID = 1140901
-    DMG_RATIO_OF_HEALING = 0.192    # 1140901 参数 #1 (Lv6 满级倍率校准)
+    DMG_RATIO_OF_HEALING = 0.20     # 1140901 参数 #1 (Lv6 官方满级倍率 20%)
     HEALING_RETAIN_RATIO = 0.50     # 施放后清空 50%, 保留 50%
     SELF_COST_RATIO = 0.04          # 1140903 参数 #1
     TALENT_HEAL_PCT = 0.020         # 1140903 参数 #2 (Lv6 官方满级倍率 2.0%, 以风堇生命上限为基准)
@@ -519,10 +532,12 @@ class IkaKit(KitHandler):
                 ))
 
     def cast_scatter(self) -> None:
-        """施放忆灵技【乌云乌云快走开！】：以累计治疗量 22% 为基础值的敌方全体风属性伤害。"""
+        """施放忆灵技【乌云乌云快走开！】：以累计治疗量 20% 为基础值的敌方全体风属性伤害。"""
         master = self.master_kit
         if master is None or not self.port.entity_exists(self.owner_id):
             return
+        # 行动后/额外回合前先结算【牵起晴空的手】挂起治疗
+        self._resolve_talent_heal()
         self._sync_master_field_auras()
         accumulated = master.accumulated_healing
         base_value = accumulated * self.DMG_RATIO_OF_HEALING
@@ -559,6 +574,8 @@ class IkaKit(KitHandler):
         """记录生命降低的我方目标，待回合开始/行动后由天赋【牵起晴空的手】结算治疗。"""
         if entity_id == self.owner_id or cause == "yika_talent_consume_hp":
             return
+        if hasattr(self.port, "is_countdown") and self.port.is_countdown(entity_id):
+            return
         # 每个降低生命的我方目标都排队等待结算 (同一结算点前同一目标只记一次):
         # 旧实现只记第一个目标, 群体掉血时其余目标的治疗被吞掉, 累计治疗量系统性偏低
         if entity_id in self.port.allies(self.owner_id) and entity_id not in self._pending_heal_targets:
@@ -573,7 +590,10 @@ class IkaKit(KitHandler):
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:
-        targets = self._pending_heal_targets
+        targets = [
+            t for t in self._pending_heal_targets
+            if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(t))
+        ]
         self._pending_heal_targets = []
         master = self.master_kit
         if not targets or master is None:
@@ -590,7 +610,7 @@ class IkaKit(KitHandler):
             self.port.heal(self.owner_id, target, master._apply_outgoing_healing(raw_heal, target))
             if master.in_rain_state():
                 for ally in self.port.allies(self.owner_id):
-                    if ally != target:
+                    if ally != target and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(ally)):
                         self.port.heal(self.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
             master.on_healing_provided()
             # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失

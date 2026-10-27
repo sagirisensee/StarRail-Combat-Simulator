@@ -114,7 +114,8 @@ class CombatPort(Protocol):
         ignore_weakness: bool = False,
         scaling_stat: str = "atk",
         force_crit: Optional[bool] = None,
-        fixed_crit_dmg: Optional[float] = None
+        fixed_crit_dmg: Optional[float] = None,
+        extra_dmg_boost: float = 0.0
     ) -> None: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None: ...
     def resolve_effects(self) -> None: ...
@@ -235,7 +236,9 @@ class SimulatorCombatPort:
             return ()
         return tuple(
             e.name for e in self.sim.entities
-            if e.is_enemy != actor.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))
+            if e.is_enemy != actor.is_enemy
+            and not getattr(e, "unspawned", False)
+            and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))
         )
 
     def count_allies_by_path(self, actor_id: str, path_name: str) -> int:
@@ -600,7 +603,8 @@ class SimulatorCombatPort:
         ignore_weakness: bool = False,
         scaling_stat: str = "atk",
         force_crit: Optional[bool] = None,
-        fixed_crit_dmg: Optional[float] = None
+        fixed_crit_dmg: Optional[float] = None,
+        extra_dmg_boost: float = 0.0
     ) -> None:
         resolved_damage_type = damage_type or DamageType.from_tag(damage_tag)
         tgt = self._get_entity(target_id)
@@ -621,6 +625,7 @@ class SimulatorCombatPort:
             target_is_broken=tgt.is_broken,
             force_crit=force_crit,
             fixed_crit_dmg=fixed_crit_dmg,
+            extra_dmg_boost=extra_dmg_boost,
             scaling_stat=scaling_stat,
             is_true_damage=(resolved_damage_type == DamageType.TRUE),
             damage_type=resolved_damage_type
@@ -759,6 +764,9 @@ class SimulatorCombatPort:
         ent = self.sim.get_entity(name)
         if ent and ent in self.sim.entities:
             owner_name = getattr(ent, "master_name", "") or ""
+            if hasattr(self.sim, "status_mgr"):
+                self.sim.status_mgr.remove_status(name, f"Fengjin_Ult_SunAfterRain_{name}")
+                self.sim.status_mgr.remove_status(name, f"Fengjin_Tech_WeatherIsFine_{name}")
             self.sim.entities.remove(ent)
             if self.sim._current_turn_entity == ent:
                 self.sim._current_turn_entity = None

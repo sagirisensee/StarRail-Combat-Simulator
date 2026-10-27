@@ -106,9 +106,10 @@ class ChangyeyueKit(KitHandler):
         ))
 
     def on_event(self, event: Any) -> None:
-        """监听全局动作执行事件，统一驱动行迹【烛火起，烛火熄】(长夜月或我方忆灵施放技能时回能 5 点并获得 1 点忆质)。"""
+        """监听全局动作执行事件，统一驱动行迹【烛火起，烛火熄】以及【白昼悄然离去】忆灵同步与过期清理。"""
         if not self.port:
             return
+        from ...events import SpiritSummonedEvent, StatusExpireEvent
         if isinstance(event, ActionExecuteEvent):
             actor_name = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
             action_kind = getattr(event, "action_kind", None)
@@ -133,6 +134,29 @@ class ChangyeyueKit(KitHandler):
                     if action_type == ChangyeMemospriteKit.SKILL_NAME:
                         self.in_initial_action = True
                 self._trigger_trace_candle_on_skill()
+        elif isinstance(event, SpiritSummonedEvent):
+            if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
+                shared_cd = self.calc_skill_shared_crit_dmg()
+                sp_name = event.spirit_name
+                if self.port.is_memosprite(sp_name):
+                    self.port.upsert_status(BuffSpec(
+                        key="Changyeyue_Skill_SharedCritDmg_Spirit" if sp_name == self.spirit_name else f"Changyeyue_Skill_SharedCritDmg_Spirit_{sp_name}",
+                        name="白昼悄然离去",
+                        source_id=self.owner_id,
+                        target_id=sp_name,
+                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+                        duration=None,
+                        timing=DurationTiming.TARGET_TURN_START,
+                        category="buff",
+                        tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
+                        description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+                    ))
+        elif isinstance(event, StatusExpireEvent):
+            if event.target_name == self.owner_id and event.status_id == "Changyeyue_Skill_SharedCritDmg":
+                for ally in self.port.allies(self.owner_id):
+                    if self.port.is_memosprite(ally):
+                        self.port.remove_status(ally, "Changyeyue_Skill_SharedCritDmg_Spirit")
+                        self.port.remove_status(ally, f"Changyeyue_Skill_SharedCritDmg_Spirit_{ally}")
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
@@ -243,6 +267,22 @@ class ChangyeyueKit(KitHandler):
                 return spirit_hp / owner_hp
         return 0.50
 
+    def _memosprite_damage_mult(self) -> float:
+        """星魂 1【睡吧，长夜有所梦】：长夜月在场时，场上敌方目标数量等于 4或以上/3/2/1 名时，
+        我方忆灵造成的伤害为原伤害的 120%/125%/130%/150%。"""
+        if self.eidolon < 1 or not self.port:
+            return 1.0
+        living_enemies = len(self.port.enemies(self.owner_id))
+        if living_enemies >= 4:
+            return self.eidolon_param(1, 0, default=1.20)
+        elif living_enemies == 3:
+            return self.eidolon_param(1, 1, default=1.25)
+        elif living_enemies == 2:
+            return self.eidolon_param(1, 2, default=1.30)
+        elif living_enemies <= 1:
+            return self.eidolon_param(1, 3, default=1.50)
+        return 1.0
+
     def _sync_darkness_vuln(self) -> None:
         """处于【至暗之谜】状态时，确保在场所有敌方目标（含新刷出的波次/增援目标）挂载 30% 易伤光环。"""
         if not self.darkness or not self.port:
@@ -281,8 +321,10 @@ class ChangyeyueKit(KitHandler):
             self._trigger_trace_candle_on_skill()
 
         # 忆灵技【追忆，蹁跹，如雨】(1141301):
-        extra_ratio = (self.yizhi // 4) * 0.14
-        mult = (0.70 + extra_ratio) * self._spirit_hp_scale_ratio()
+        base_mult = self.skill_param("1141301", 0, default=0.50)
+        scale_step = self.skill_param("1141301", 1, default=0.10)
+        extra_ratio = (self.yizhi // 4) * scale_step
+        mult = (base_mult + extra_ratio) * self._spirit_hp_scale_ratio() * self._memosprite_damage_mult()
         spirit_cd = self._spirit_crit_dmg()
 
         for split_ratio, split_toughness in (
@@ -400,8 +442,11 @@ class ChangyeyueKit(KitHandler):
 
         try:
             spirit_cd = self._spirit_crit_dmg()
+            p_primary = self.skill_param("1141307", 0, default=0.12)
+            p_adjacent = self.skill_param("1141307", 1, default=0.06)
+            e1_mult = self._memosprite_damage_mult()
             for e in enemies:
-                factor = 0.126 if e == primary_target else 0.063
+                factor = (p_primary if e == primary_target else p_adjacent) * e1_mult
                 eff_mult = factor * spent_memory * hp_ratio
                 self.port.attack(
                     self.owner_id,
@@ -500,8 +545,8 @@ class ChangyeyueKit(KitHandler):
 
     def apply_skill_shared_crit_dmg(self) -> float:
         """动态挂载【白昼悄然离去】：
-        - 对长夜月本体：作为机制状态标记 (category='other')，打上 EXCLUDE 标签，自身不享受忆灵暴伤加成；
-        - 对伴生忆灵长夜：挂载专属暴伤 Buff (提高数值等同于长夜月实时暴伤的 24%)，打上 MEMOSPRITE_ONLY 标签。
+        - 对长夜月本体：作为机制状态标记 (category='other')，打上 EXCLUDE 标签，持续 2 回合 (长夜月每回合开始时持续回合数减 1)；
+        - 对我方全体忆灵：挂载专属暴伤 Buff (提高数值等同于长夜月实时暴伤的 24%)，打上 MEMOSPRITE_ONLY 标签，生命周期跟随本体状态。
         """
         shared_cd = self.calc_skill_shared_crit_dmg()
         self.port.upsert_status(BuffSpec(
@@ -516,19 +561,20 @@ class ChangyeyueKit(KitHandler):
             tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,),
             description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
         ))
-        if self.port.is_own_memosprite(self.owner_id, self.spirit_name):
-            self.port.upsert_status(BuffSpec(
-                key="Changyeyue_Skill_SharedCritDmg_Spirit",
-                name="白昼悄然离去",
-                source_id=self.owner_id,
-                target_id=self.spirit_name,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_START,
-                category="buff",
-                tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
-                description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
-            ))
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_memosprite(ally):
+                self.port.upsert_status(BuffSpec(
+                    key="Changyeyue_Skill_SharedCritDmg_Spirit" if ally == self.spirit_name else f"Changyeyue_Skill_SharedCritDmg_Spirit_{ally}",
+                    name="白昼悄然离去",
+                    source_id=self.owner_id,
+                    target_id=ally,
+                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_START,
+                    category="buff",
+                    tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
+                    description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+                ))
         return shared_cd
 
     def _get_remembrance_count(self) -> int:
@@ -705,7 +751,7 @@ class ChangyeyueKit(KitHandler):
 
             spirit_cd = self._spirit_crit_dmg()
             ult_hp_ratio = self._spirit_hp_scale_ratio()
-            ult_mult = self.skill_param("ultra", 0, default=2.00) * 0.945
+            ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(
                     self.owner_id,
