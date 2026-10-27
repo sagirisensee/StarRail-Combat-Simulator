@@ -25,6 +25,8 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
             return
         crit_val = self.scale(self.ORACLE_CRIT_DMG)
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             self.port.upsert_status(BuffSpec(
                 key="LC_IfTimeWereAFlower_Oracle",
                 name="谕示",
@@ -32,7 +34,7 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
                 target_id=ally,
                 modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, crit_val),),
                 duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
+                timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True,
                 category="buff",
                 description=f"全队暴击伤害 +{crit_val*100:.1f}%"
@@ -53,12 +55,11 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
         self._fua_triggered_this_action = False
 
     def on_event(self, event: Any) -> None:
-        """追击事件：每次追加攻击执行时为装备者恢复 12 点能量 (受 ERR 放大) 并刷新【启示】。"""
-        from ...events import ActionExecuteEvent
+        """追击事件：每次追加攻击执行时为装备者恢复 12 点能量 (受 ERR 放大) 并刷新【谕示】；忆灵入场时若【谕示】生效中则同步挂载。"""
+        from ...events import ActionExecuteEvent, SpiritSummonedEvent
         from ...actions import ActionKind
         if isinstance(event, ActionExecuteEvent):
             if getattr(event, "actor_id", "") == self.owner_id:
-                action_type = getattr(event, "action_type", "")
                 if getattr(event, "action_kind", None) == ActionKind.FOLLOW_UP:
                     if self.port:
                         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
@@ -69,3 +70,6 @@ class IfTimeWereAFlowerHandler(LightConeHandler):
                             source_plugin="光锥《如果时间是一朵花》"
                         )
                         self.apply_oracle_buff()
+        elif isinstance(event, SpiritSummonedEvent):
+            if self.port and self.port.has_status(self.owner_id, "LC_IfTimeWereAFlower_Oracle"):
+                self.apply_oracle_buff()

@@ -61,6 +61,7 @@ class DamageRequest:
     target_is_broken: bool = False      # 敌方是否处于弱点击破状态 (未击破自带 10% 减伤)
     force_crit: Optional[bool] = None   # None: 随机/期望; True: 必暴; False: 不暴
     fixed_crit_dmg: Optional[float] = None # 若指定固定暴击伤害 (如知更鸟协奏附加伤害 150%)，覆盖面板暴伤
+    extra_dmg_boost: float = 0.0        # 技能或星魂专有额外增伤 (如缇宝 E6 追加攻击 +729%)
     scaling_stat: str = "atk"           # "atk" | "hp" | "def"
     is_true_damage: bool = False        # 真实伤害: 仅取基础区数值, 跳过双暴/增伤/防御/抗性/易伤/减伤全部乘区
     damage_type: Any = None             # DamageType 枚举 (供屏障转化等按类别结算的规则读取)
@@ -75,8 +76,9 @@ class DamageCalculator:
         base_dmg_boost = float(getattr(req.attacker, "base_dmg_boost", 0.0) or 0.0)
         if hasattr(req.attacker, "simulator") and req.attacker.simulator:
             mgr = req.attacker.simulator.status_mgr
-            atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE)
-            dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST)
+            white_atk = getattr(req.attacker, "base_white_atk", 0.0) or req.attacker.base_atk
+            atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE, white_base=white_atk)
+            dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST) + getattr(req, "extra_dmg_boost", 0.0)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
             target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
@@ -94,12 +96,14 @@ class DamageCalculator:
         if scaling == "hp":
             hp_val = getattr(req.attacker, "max_hp", 0.0)
             if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT)
+                white_hp = getattr(req.attacker, "base_white_hp", 0.0) or hp_val
+                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT, white_base=white_hp)
             base_stat = hp_val
         elif scaling == "def":
             def_val = getattr(req.attacker, "base_def", 0.0)
             if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                def_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, def_val, StatType.DEF_PERCENT)
+                white_def = getattr(req.attacker, "base_white_def", 0.0) or def_val
+                def_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, def_val, StatType.DEF_PERCENT, white_base=white_def)
             base_stat = def_val
         else:
             base_stat = atk_stat

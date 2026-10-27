@@ -334,6 +334,8 @@ class FengjinKit(KitHandler):
         """
         max_hp = self.port.max_hp(self.owner_id)
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             if self.port.is_own_memosprite(self.owner_id, ally):
                 raw_heal = max_hp * ika_pct + ika_flat
             else:
@@ -375,6 +377,8 @@ class FengjinKit(KitHandler):
         flat_hp = self.skill_param("ultra", 3, default=600.0)
 
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             # 百分比与固定值分开结算: 百分比按目标白字生命 (忆灵按主人白字),
             # 固定值原额——官方样本逐项实证 (E1 风堇: 队友 +80% x 各自白字
             # +600, 如长夜月 8,109 -> 10,780)。
@@ -412,13 +416,20 @@ class FengjinKit(KitHandler):
             event.source_name == self.owner_id
             or self.port.is_own_memosprite(self.owner_id, event.source_name)
         ):
-            self.accumulated_healing += float(event.amount)
+            if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(event.target_name)):
+                self.accumulated_healing += float(event.amount)
         self._sync_storm_calm()
         """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
         if self.eidolon >= 1 and self._sun_after_rain_active():
             if isinstance(event, ActionExecuteEvent):
                 actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
-                if actor_id in self.port.allies(self.owner_id):
+                action_kind = getattr(event, "action_kind", None)
+                action_type = getattr(event, "action_type", "")
+                if (
+                    actor_id in self.port.allies(self.owner_id)
+                    and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_id))
+                    and self.port.is_attack_action(actor_id, action_kind, action_type)
+                ):
                     raw_heal = 0.08 * self.port.max_hp(self.owner_id)
                     self.port.heal(self.owner_id, actor_id, self._apply_outgoing_healing(raw_heal, actor_id))
                     self.on_healing_provided()
@@ -428,6 +439,8 @@ class FengjinKit(KitHandler):
         max_hp = self.port.max_hp(self.owner_id)
         raw_heal = max_hp * 0.30 + 600.0
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             self.port.heal(self.owner_id, ally, self._apply_outgoing_healing(raw_heal, ally))
             self.port.upsert_status(BuffSpec(
                 key=f"Fengjin_Tech_WeatherIsFine_{ally}",
@@ -488,17 +501,24 @@ class IkaKit(KitHandler):
         self.cast_scatter()
 
     def _sync_master_field_auras(self) -> None:
-        """同步风堇身上已生效的结界抗穿与无视防御光环 (神启、心意相契的安宁等) 至小伊卡。"""
+        """同步风堇身上已生效的结界抗穿与无视防御光环 (神启、心意相契的安宁等) 至小伊卡，防止与直接施加的状态重复叠加。"""
         master = self.master_kit
         if master is None or not self.port.entity_exists(self.owner_id):
             return
         from ...status import StatusTag
-        allowed_stats = {StatType.RES_PEN, StatType.DEF_SHRED}
+        allowed_stats = {StatType.RES_PEN, StatType.DEF_SHRED, StatType.CRIT_DMG, StatType.DMG_BOOST}
+        ika_statuses = list(self.port.statuses(self.owner_id))
+        direct_names = {s.name for s in ika_statuses if not s.id.endswith("_IkaAura")}
+        for s in ika_statuses:
+            if s.id.endswith("_IkaAura") and s.name in direct_names:
+                self.port.remove_status(self.owner_id, s.id)
         ika_statuses = list(self.port.statuses(self.owner_id))
         ika_status_ids = {s.id for s in ika_statuses}
         ika_status_names = {s.name for s in ika_statuses}
         for s in self.port.statuses(master.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
+                continue
+            if s.id.startswith("Robin_Talent_TonalChord_") or s.id == "Robin_Tech_WeAreTheMelody":
                 continue
             mods = tuple(m for m in s.modifiers if m.stat in allowed_stats)
             if not mods:
@@ -519,10 +539,12 @@ class IkaKit(KitHandler):
                 ))
 
     def cast_scatter(self) -> None:
-        """施放忆灵技【乌云乌云快走开！】：以累计治疗量 22% 为基础值的敌方全体风属性伤害。"""
+        """施放忆灵技【乌云乌云快走开！】：以累计治疗量 20% 为基础值的敌方全体风属性伤害。"""
         master = self.master_kit
         if master is None or not self.port.entity_exists(self.owner_id):
             return
+        # 行动后/额外回合前先结算【牵起晴空的手】挂起治疗
+        self._resolve_talent_heal()
         self._sync_master_field_auras()
         accumulated = master.accumulated_healing
         base_value = accumulated * self.DMG_RATIO_OF_HEALING
@@ -546,6 +568,11 @@ class IkaKit(KitHandler):
             )
         if hasattr(self.port, "resolve_effects"):
             self.port.resolve_effects()
+        if hasattr(self.port, "_get_entity"):
+            master_ent = self.port._get_entity(master.owner_id)
+            lc = getattr(master_ent, "light_cone", None) if master_ent else None
+            if lc is not None and hasattr(lc, "_flush_discharge"):
+                lc._flush_discharge()
         # 1140901 sp_base = 5: 小伊卡施放忆灵技为风堇恢复 5 点基础能量 (受 ERR 放大)
         err = self.port.stat(master.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(
@@ -558,6 +585,8 @@ class IkaKit(KitHandler):
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
         """记录生命降低的我方目标，待回合开始/行动后由天赋【牵起晴空的手】结算治疗。"""
         if entity_id == self.owner_id or cause == "yika_talent_consume_hp":
+            return
+        if hasattr(self.port, "is_countdown") and self.port.is_countdown(entity_id):
             return
         # 每个降低生命的我方目标都排队等待结算 (同一结算点前同一目标只记一次):
         # 旧实现只记第一个目标, 群体掉血时其余目标的治疗被吞掉, 累计治疗量系统性偏低
@@ -573,7 +602,10 @@ class IkaKit(KitHandler):
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:
-        targets = self._pending_heal_targets
+        targets = [
+            t for t in self._pending_heal_targets
+            if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(t))
+        ]
         self._pending_heal_targets = []
         master = self.master_kit
         if not targets or master is None:
@@ -590,7 +622,7 @@ class IkaKit(KitHandler):
             self.port.heal(self.owner_id, target, master._apply_outgoing_healing(raw_heal, target))
             if master.in_rain_state():
                 for ally in self.port.allies(self.owner_id):
-                    if ally != target:
+                    if ally != target and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(ally)):
                         self.port.heal(self.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
             master.on_healing_provided()
             # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失

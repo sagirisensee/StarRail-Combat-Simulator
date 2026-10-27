@@ -37,8 +37,14 @@ class SkillScaling:
         }
         for sid, skill in self.character.skills.items():
             sem = type_to_semantic.get(skill.type)
+            is_six_cap = (
+                skill.type in ("Normal", "Servant", "ServantTalent")
+                or sem == "basic"
+                or str(sid).startswith("11")
+            )
+            is_one_cap = skill.type == "Maze" or sem == "technique"
+            default_lvl = 6 if is_six_cap else (1 if is_one_cap else 10)
             if sem and sem not in self._bindings:
-                default_lvl = 6 if sem == "basic" else (1 if sem == "technique" else 10)
                 self._bindings[sem] = SkillBinding(
                     semantic_key=sem,
                     skill_id=sid,
@@ -52,7 +58,7 @@ class SkillScaling:
                 skill_id=sid,
                 skill_type=skill.type,
                 skill_name=skill.name,
-                default_trained_level=10,
+                default_trained_level=default_lvl,
             )
 
     def get_skill_asset(self, skill_key: str) -> Optional[CharacterSkillAsset]:
@@ -81,7 +87,11 @@ class SkillScaling:
 
         # 统计解锁星魂带来的技能等级增益
         bonus_delta = 0
-        max_allowed = 15 if binding.skill_type != "Normal" else 10
+        is_normal_or_servant = (
+            binding.skill_type in ("Normal", "Servant", "ServantTalent")
+            or str(binding.skill_id).startswith("11")
+        )
+        max_allowed = 10 if is_normal_or_servant else (1 if binding.skill_type == "Maze" else 15)
         for bonus in self.character.eidolon_skill_bonuses:
             if bonus.eidolon <= self.eidolon and bonus.skill_type == binding.skill_type:
                 bonus_delta += bonus.delta

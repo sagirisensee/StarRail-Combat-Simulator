@@ -270,7 +270,7 @@ class TibaoKit(KitHandler):
             ))
 
         # 1.5 终结技本体伤害: 对敌方全体造成等同于缇宝生命上限 30% (Lv 10) / 33% (Lv 12) 的量子伤害
-        ult_mult = self.skill_param("ultra", 0, default=0.30) * 0.56
+        ult_mult = self.skill_param("ultra", 0, default=0.30)
         for e in self.port.enemies(self.owner_id):
             self.port.attack(
                 self.owner_id,
@@ -400,6 +400,7 @@ class TibaoKit(KitHandler):
         self._zone_window_actor = None
         self._zone_window_zone = False
         self._zone_window_targets = set()
+        self._zone_window_direct_targets = set()
         self._zone_window_total = 0.0
         self._zone_window_true_base = 0.0
         self._zone_window_hits = 0
@@ -416,7 +417,7 @@ class TibaoKit(KitHandler):
                 living = [t for t in targets if self.port.entity_exists(t) and self.port.current_hp(t) > 0]
             if living:
                 top_target = max(living, key=lambda t: (self.port.current_hp(t), self.port.max_hp(t)))
-                base_mult = self.skill_param("ultra", 2, default=0.12) * 0.815
+                base_mult = self.skill_param("ultra", 2, default=0.12)
                 additional_hits = hit_count
                 if self.eidolon >= 2:
                     base_mult *= self.eidolon_param(2, 0, default=1.2)
@@ -468,7 +469,8 @@ class TibaoKit(KitHandler):
                 finally:
                     self._zone_resolving = False
         if pending_volley:
-            # 追击作为独立行动: 开启其专属窗口采样并施放, 同步排空并独立结算其结界窗口
+            # 追击作为独立行动: 开启其专属窗口采样并施放, 同步排空并独立结算其结界窗口;
+            # 行迹【城墙外的羊羔儿】在本次追加攻击及其结界窗口结算完毕后再叠层 (本次齐射不享受自己新叠的层数)
             self._zone_window_actor = self.owner_id
             self._zone_window_zone = self.zone_active
             self._in_volley = True
@@ -479,17 +481,17 @@ class TibaoKit(KitHandler):
             if hasattr(self.port, "resolve_effects"):
                 self.port.resolve_effects()
             self._flush_zone_window()
+            self._apply_lamb_buff()
 
     def _cast_talent_volley(self) -> None:
-        """施放天赋追加攻击齐射 (全体敌人, 生命上限 Lv12 19.8% × E6 追击补正) 并处理回能与行迹叠层。
+        """施放天赋追加攻击齐射 (全体敌人, 生命上限 Lv12 19.8% × E6 追击补正) 并处理回能。
 
         倍率依据见天赋触发处注释 (E6 齐射补正)。回能在此统一处理;
         E6 自大招齐射的回能已在大招本体处一并结算, 其待发标记由
         cast_ultimate 直接置位时不重复回能 (见 _pending_volley 的置位点)。
         """
         fu_mult = self.skill_param("talent", 0, default=0.198)
-        if self.eidolon >= 6:
-            fu_mult *= 1.91
+        e6_boost = self.eidolon_param(6, 0, default=7.29) if self.eidolon >= 6 else 0.0
         for e in self.port.enemies(self.owner_id):
             self.port.attack(
                 self.owner_id,
@@ -498,11 +500,11 @@ class TibaoKit(KitHandler):
                 atk_multiplier=fu_mult,
                 toughness_damage=10.0,
                 damage_type=DamageType.FOLLOW_UP,
-                scaling_stat="hp"
+                scaling_stat="hp",
+                extra_dmg_boost=e6_boost
             )
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 5.0 * err, cause="天赋追加攻击回能 (基础 5.0 × ERR)", source_plugin="缇宝天赋")
-        self._apply_lamb_buff()
 
     def _sync_glass_ball_hp(self) -> None:
         """同步行迹【长翅膀的玻璃球！】生命上限加成 (我方全体角色生命上限之和的 9%)。"""
@@ -588,8 +590,9 @@ class TibaoKit(KitHandler):
             is_own_zone_dmg = (attacker == self.owner_id and dtype in (DamageType.ADDITIONAL, DamageType.TRUE))
 
             # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害与 E1 真实伤害。
-            # 结界自身的附加/真实伤害不计入采样, 队友伴随攻击触发的附加伤害 (如小伊卡 E1) 计入本次攻击总伤害池。
-            is_new_target = False
+            # 结界自身的附加/真实伤害不计入采样, 队友伴随攻击触发的附加伤害 (如风堇专武) 计入本次攻击总伤害池,
+            # 但直接攻击命中目标集合 (_zone_window_direct_targets) 独立统计, 防止前置附加伤害吞掉后续主攻击命中计数。
+            is_new_direct_target = False
             if (
                 not self._zone_resolving
                 and self.port.is_ally(attacker)
@@ -603,14 +606,18 @@ class TibaoKit(KitHandler):
                 if self._zone_window_actor is None:
                     self._zone_window_actor = attacker
                     self._zone_window_zone = self.zone_active
-                is_new_target = target not in self._zone_window_targets
                 self._zone_window_targets.add(target)
                 self._zone_window_total += float(event.damage)
                 is_guarded = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(target)
                 if not is_guarded:
                     self._zone_window_true_base += float(event.damage)
-                if is_new_target and dtype != DamageType.ADDITIONAL:
-                    self._zone_window_hits += 1
+                if dtype != DamageType.ADDITIONAL:
+                    if not hasattr(self, "_zone_window_direct_targets"):
+                        self._zone_window_direct_targets = set()
+                    if target not in self._zone_window_direct_targets:
+                        self._zone_window_direct_targets.add(target)
+                        is_new_direct_target = True
+                        self._zone_window_hits += 1
 
             # 汇总待结算真实伤害的基数: 本窗口结界附加伤害的实际值
             if (
@@ -634,7 +641,7 @@ class TibaoKit(KitHandler):
                 and event.damage > 0
             )
 
-            if is_valid_attacker and is_valid_target and is_attack_dmg and is_new_target:
+            if is_valid_attacker and is_valid_target and is_attack_dmg and is_new_direct_target:
                 energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
                 # 星铁底层机制：未标明“固定能量”的回能严格享受角色能量恢复效率 (ERR) 放大
                 err = self.port.stat(self.owner_id, StatType.ERR) or 1.0

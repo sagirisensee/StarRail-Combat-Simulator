@@ -86,19 +86,19 @@ class TestRobinSunnySongMechanics(unittest.TestCase):
         self.assertTrue(kit.has_bessie)
         self.assertEqual(kit.member_count, 1)
 
-        # 验证 1 位乐手易伤光环 (11.2%)
+        # 验证 1 位乐手易伤光环 (Lv6 官方满级 8.0%)
         snap_enemy = sim.query_status("测试木桩")
         vul_buff = next((b for b in snap_enemy["debuffs"] if "扑翅雀跃的和声" in b["name"]), None)
         self.assertIsNotNone(vul_buff)
-        self.assertIn("11.2%", vul_buff["modifiers_desc"])
+        self.assertIn("8.0%", vul_buff["modifiers_desc"])
 
-        # 获得气氛值至 6 点 -> 召唤啾米 (再回能 20 点，易伤升至 16.8%)
+        # 获得气氛值至 6 点 -> 召唤啾米 (再回能 20 点，易伤升至 12.0%)
         kit.gain_vibes(6)
         self.assertTrue(kit.has_drummie)
         self.assertEqual(kit.member_count, 2)
         snap_enemy = sim.query_status("测试木桩")
         vul_buff = next((b for b in snap_enemy["debuffs"] if "扑翅雀跃的和声" in b["name"]), None)
-        self.assertIn("16.8%", vul_buff["modifiers_desc"])
+        self.assertIn("12.0%", vul_buff["modifiers_desc"])
 
         # 获得气氛值至 12 点 -> 召唤派丁 (再回能 20 点，全员登台进入【Fever】)
         kit.gain_vibes(6)
