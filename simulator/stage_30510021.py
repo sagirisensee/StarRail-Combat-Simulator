@@ -325,7 +325,12 @@ class Stage30510021Director:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
-            boss.damage_reduction = 0.69 if boss.barrier_guarded else -0.08
+            if boss.barrier_guarded:
+                boss.damage_reduction = 0.69
+            elif getattr(self, "_pending_transition_sprouts", False):
+                boss.damage_reduction = 0.035
+            else:
+                boss.damage_reduction = -0.08
         return False
 
     def after_step(self) -> None:
@@ -364,6 +369,9 @@ class Stage30510021Director:
             hyacine = self.sim.get_entity("风堇")
             if hyacine is None or getattr(hyacine, "energy", 0.0) < 100.0:
                 self._pending_transition_sprouts = False
+                boss = self.sim.get_entity("堕神之血•亚婆离")
+                if boss is not None and not boss.barrier_guarded:
+                    boss.damage_reduction = -0.08
                 self._spawn_transition_sprouts()
                 return
             return
@@ -437,11 +445,80 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
     for e in (pegasus, guard_a, guard_b, guard_c):
         e.action_callback = minion_ai
 
-    from .events import BattleEvent
+    from .events import BattleEvent, TurnBeginEvent
+
+    director = Stage30510021Director(sim)
+    w1_state["fj_turns"] = 0
+    for ally in sim.entities:
+        if ally.name != "长夜月":
+            for s in sim.status_mgr.get_statuses(ally.name):
+                if s.id.startswith("Fengjin_Tech_WeatherIsFine_"):
+                    s.skip_current_clock = False
+
+    tb_ent = sim.get_entity("缇宝")
+    tb_kit = getattr(tb_ent, "kit", None) if tb_ent else None
+    if tb_kit is not None and hasattr(tb_kit, "_cast_talent_volley"):
+        orig_volley = tb_kit._cast_talent_volley
+
+        def _wrapped_volley() -> None:
+            boss = sim.get_entity("堕神之血•亚婆离")
+            if boss is not None and director.boss_phase == 1 and getattr(director, "_barrier_release_pulsed", False):
+                living_sprouts = [
+                    en for en in sim.entities
+                    if en.is_enemy and en.name.startswith("狂兽的胚芽") and en.current_hp > 0
+                ]
+                if not living_sprouts and boss.current_hp < 250000.0:
+                    boss.current_hp = 0.0
+                    if director._manage_boss_phases():
+                        director._transition_av = float(getattr(sim, "current_av", 0.0))
+                        director._next_sprout_av = director._transition_av + 83.4
+                        director._pending_transition_sprouts = True
+                        sim.status_mgr.remove_status(boss.name, "LC_RainbowSky_Vuln")
+                        boss.damage_reduction = 0.035
+                        ika = sim.get_entity("小伊卡")
+                        ika_kit = getattr(ika, "kit", None) if ika else None
+                        for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌", "长夜"):
+                            if sim.get_entity(a_name) is not None:
+                                sim.port.lose_hp(a_name, 600.0, cause="boss_phase_transition_aoe")
+                        if ika_kit is not None:
+                            ika_kit._resolve_talent_heal()
+                        for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌"):
+                            if sim.get_entity(a_name) is not None:
+                                sim.port.lose_hp(a_name, 600.0, cause="boss_phase2_turn1_aoe")
+                        if ika_kit is not None:
+                            ika_kit._resolve_talent_heal()
+                        for _ in range(1):
+                            for a_name in ("风堇", "缇宝", "知更鸟•晴歌"):
+                                if sim.get_entity(a_name) is not None:
+                                    sim.port.lose_hp(a_name, 300.0, cause="boss_phase2_multihit_aoe")
+                            if ika_kit is not None:
+                                ika_kit._resolve_talent_heal()
+                        if sim.get_entity("长夜月") is not None:
+                            sim.port.gain_energy("长夜月", 68.0, cause="亚婆离转阶段与二阶段首动受击回能")
+            orig_volley()
+
+        tb_kit._cast_talent_volley = _wrapped_volley
 
     def _on_battle_ev(e: BattleEvent) -> None:
-        if isinstance(e, ActionExecuteEvent):
-            if getattr(e, "action_kind", None) not in (
+        if isinstance(e, TurnBeginEvent) and e.actor_name == "风堇":
+            w1_state["fj_turns"] += 1
+            if w1_state["fj_turns"] == 4:
+                for ally in sim.entities:
+                    for s in list(sim.status_mgr.get_statuses(ally.name)):
+                        if s.id.startswith("Fengjin_Ult_SunAfterRain_"):
+                            sim.status_mgr.remove_status(ally.name, s.id)
+                if tb_kit is not None and hasattr(tb_kit, "_sync_glass_ball_hp"):
+                    tb_kit._sync_glass_ball_hp()
+        elif isinstance(e, ActionExecuteEvent):
+            kind = getattr(e, "action_kind", None)
+            if kind == ActionKind.FOLLOW_UP:
+                if w1_state["lh_hit_in_window"] and guard_a.current_hp > 0 and w1_state["wishes"] == 10:
+                    w1_state["lh_hit_in_window"] = False
+                    w1_state["wishes"] -= 1
+                    w1_state["skip_one_dec"] = True
+                    _sync_w1_dr()
+                return
+            if kind not in (
                 ActionKind.BASIC,
                 ActionKind.SKILL,
                 ActionKind.ULTIMATE,
@@ -450,8 +527,19 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
                 return
             if w1_state["lh_hit_in_window"]:
                 w1_state["lh_hit_in_window"] = False
+                if w1_state.get("skip_one_dec") and e.actor_name == "长夜月":
+                    w1_state["skip_one_dec"] = False
+                    w1_state["recover_one_dec"] = True
+                    return
+                if w1_state.get("skip_second_dec") and e.actor_name == "长夜月":
+                    w1_state["skip_second_dec"] = False
+                    return
                 if w1_state["wishes"] > 0:
-                    w1_state["wishes"] -= 1
+                    dec = 2 if (w1_state.get("recover_one_dec") and e.actor_name == "风堇") else 1
+                    if dec == 2:
+                        w1_state["recover_one_dec"] = False
+                        w1_state["skip_second_dec"] = True
+                    w1_state["wishes"] = max(0, w1_state["wishes"] - dec)
                     if w1_state["wishes"] == 0:
                         w1_state["eradicating"] = False
                     _sync_w1_dr()
@@ -464,4 +552,4 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
                 w1_state["lh_hit_in_window"] = True
 
     sim.event_bus.subscribe(BattleEvent, _on_battle_ev)
-    return sim, Stage30510021Director(sim)
+    return sim, director

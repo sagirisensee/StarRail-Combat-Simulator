@@ -74,6 +74,20 @@ class ChangyeyueKit(KitHandler):
             return None
         if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
             self.apply_skill_shared_crit_dmg()
+        elif self.port.has_status(self.spirit_name, "Changyeyue_Skill_SharedCritDmg_Spirit"):
+            shared_cd = self.calc_skill_shared_crit_dmg()
+            self.port.upsert_status(BuffSpec(
+                key="Changyeyue_Skill_SharedCritDmg_Spirit",
+                name="白昼悄然离去",
+                source_id=self.owner_id,
+                target_id=self.spirit_name,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_START,
+                category="buff",
+                tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
+                description=f"秘技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+            ))
         exclude = () if include_skill_shared else (StatusTag.MEMOSPRITE_ONLY,)
         cd = float(self.port.stat(self.spirit_name, StatType.CRIT_DMG, exclude_tags=exclude))
         if not include_skill_shared:
@@ -82,10 +96,15 @@ class ChangyeyueKit(KitHandler):
                     for m in s.modifiers:
                         if m.stat == StatType.CRIT_DMG:
                             cd += m.value
-        both_keys = ("Changyeyue_E2_CritDmg", "Changyeyue_Talent_CritDmg", "Changyeyue_A2_Skill_CritDmg")
-        spirit_ids = {s.id for s in self.port.statuses(self.spirit_name)}
+        both_keys = (
+            "Changyeyue_E2_CritDmg",
+            "Changyeyue_Talent_CritDmg",
+            "Changyeyue_A2_Skill_CritDmg",
+            f"Relic_Valkyrie_CritDmg_{self.owner_id}",
+        )
+        spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
         for s in self.port.statuses(self.owner_id):
-            if s.id in both_keys and s.id not in spirit_ids:
+            if s.id in both_keys and s.name not in spirit_names:
                 for m in s.modifiers:
                     if m.stat == StatType.CRIT_DMG:
                         cd += m.value
@@ -130,6 +149,14 @@ class ChangyeyueKit(KitHandler):
             actor_name = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
             action_kind = getattr(event, "action_kind", None)
             action_type = str(getattr(event, "action_type", ""))
+            is_countdown = hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_name)
+            if (
+                self.port.is_ally(actor_name)
+                and not is_countdown
+                and actor_name != "晴空乐手"
+                and (action_kind != ActionKind.SKILL or actor_name == self.owner_id)
+            ):
+                self._sync_darkness_vuln()
 
             # 1. 长夜月自身施放技能 (战技 / 终结技)
             is_owner_skill = (
@@ -137,7 +164,6 @@ class ChangyeyueKit(KitHandler):
                 and action_kind in (ActionKind.SKILL, ActionKind.ULTIMATE)
             )
             # 2. 我方任意忆灵施放技能 (含伴生忆灵「长夜」及队友忆灵，排除倒计时等机制实体)
-            is_countdown = hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_name)
             is_ally_memosprite_skill = (
                 self.port.is_ally(actor_name)
                 and self.port.is_memosprite(actor_name)
@@ -765,10 +791,11 @@ class ChangyeyueKit(KitHandler):
 
         elif ctx.kind == ActionKind.ULTIMATE:
             # 行迹【天黑黑，月寂寂】：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15% (持续 2 回合)
+            was_spirit_alive = self.spirit_alive
             self._trigger_trace_a2_on_skill(self.owner_id)
             self.summon_spirit()
 
-            # 官方 141303 机制时序：先进入【至暗之谜】(敌方易伤+30%, 长夜月与长夜增伤+60%), 终结技伤害本身即享受易伤与增伤
+            # 官方 141303 机制时序：进入【至暗之谜】(敌方易伤+30%, 长夜月与长夜增伤+60%), 随后使忆灵「长夜」对敌方全体造成 200% 生命上限冰伤
             self.darkness = True
             self.charges = 2 + (2 if self.eidolon >= 2 else 0)
 
@@ -797,7 +824,21 @@ class ChangyeyueKit(KitHandler):
                 description="全属性伤害提高 +60.0%"
             ))
 
-            spirit_cd = self._spirit_crit_dmg(include_skill_shared=False)
+            full_spirit_sync = was_spirit_alive or self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
+            spirit_cd = self._spirit_crit_dmg(include_skill_shared=full_spirit_sync) or 0.0
+            if full_spirit_sync:
+                spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
+                for s in self.port.statuses(self.owner_id):
+                    if s.id == f"Robin_Talent_TonalChord_{self.owner_id}" and s.name not in spirit_names:
+                        for m in s.modifiers:
+                            if m.stat == StatType.CRIT_DMG:
+                                spirit_cd += m.value
+                if not was_spirit_alive:
+                    for s in self.port.statuses(self.owner_id):
+                        if s.id == "Changyeyue_Talent_CritDmg":
+                            for m in s.modifiers:
+                                if m.stat == StatType.CRIT_DMG:
+                                    spirit_cd -= m.value
             ult_hp_ratio = self._spirit_hp_scale_ratio()
             ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
             for e in self.port.enemies(self.owner_id):

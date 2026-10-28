@@ -449,7 +449,6 @@ class TibaoKit(KitHandler):
                             t_id = pending_true["target"]
                             emit_zero_true = (
                                 true_base == 0.0
-                                and window_actor != "晴空乐手"
                                 and hasattr(self.port, "is_barrier_guarded")
                                 and self.port.is_barrier_guarded(t_id)
                             )
