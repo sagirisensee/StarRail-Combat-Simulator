@@ -188,9 +188,9 @@ class ChangyeyueKit(KitHandler):
                         self.in_initial_action = True
                 self._trigger_trace_candle_on_skill()
         elif isinstance(event, SpiritSummonedEvent):
+            sp_name = event.spirit_name
             if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
                 shared_cd = self.calc_skill_shared_crit_dmg()
-                sp_name = event.spirit_name
                 if self.port.is_memosprite(sp_name):
                     self.port.upsert_status(BuffSpec(
                         key="Changyeyue_Skill_SharedCritDmg_Spirit" if sp_name == self.spirit_name else f"Changyeyue_Skill_SharedCritDmg_Spirit_{sp_name}",
@@ -203,6 +203,49 @@ class ChangyeyueKit(KitHandler):
                         category="buff",
                         tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
                         description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+                    ))
+            if sp_name == self.spirit_name:
+                if self.eidolon >= 2 and not self.port.has_status(self.spirit_name, "Changyeyue_E2_CritDmg_Spirit"):
+                    self.port.upsert_status(BuffSpec(
+                        key="Changyeyue_E2_CritDmg_Spirit",
+                        name="听沉眠中的呓语 (E2暴伤+40%)",
+                        source_id=self.owner_id,
+                        target_id=self.spirit_name,
+                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.40),),
+                        duration=None,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        category="buff",
+                        description="暴击伤害提高 +40.0%"
+                    ))
+                if self.port.has_status(self.owner_id, "Changyeyue_Talent_CritDmg") and not self.port.has_status(self.spirit_name, "Changyeyue_Talent_CritDmg_Spirit"):
+                    talent_status = next((s for s in self.port.statuses(self.owner_id) if s.id == "Changyeyue_Talent_CritDmg"), None)
+                    dur = talent_status.duration if talent_status else 2
+                    self.port.upsert_status(BuffSpec(
+                        key="Changyeyue_Talent_CritDmg_Spirit",
+                        name="今夜与我同行 (生命降低暴伤+60%)",
+                        source_id=self.owner_id,
+                        target_id=self.spirit_name,
+                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.60),),
+                        duration=dur,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        skip_current_clock=True,
+                        category="buff",
+                        description="暴击伤害提高 +60.0%"
+                    ))
+                if self.port.has_status(self.owner_id, "Changyeyue_A2_Skill_CritDmg") and not self.port.has_status(self.spirit_name, "Changyeyue_A2_Skill_CritDmg_Spirit"):
+                    a2_status = next((s for s in self.port.statuses(self.owner_id) if s.id == "Changyeyue_A2_Skill_CritDmg"), None)
+                    dur = a2_status.duration if a2_status else 2
+                    self.port.upsert_status(BuffSpec(
+                        key="Changyeyue_A2_Skill_CritDmg_Spirit",
+                        name="天黑黑，月寂寂 (施法暴伤+15%)",
+                        source_id=self.owner_id,
+                        target_id=self.spirit_name,
+                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+                        duration=dur,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        skip_current_clock=True,
+                        category="buff",
+                        description="暴击伤害提高 +15.0%"
                     ))
         elif isinstance(event, StatusExpireEvent):
             if event.target_name == self.owner_id and event.status_id == "Changyeyue_Skill_SharedCritDmg":

@@ -11,7 +11,7 @@ from typing import Any
 from ..base import LightConeHandler
 from ...actions import ActionContext, ActionKind
 from ...combat_port import BuffSpec
-from ...events import HPLostEvent, SpiritDespawnEvent
+from ...events import HPLostEvent, SpiritDespawnEvent, SpiritSummonedEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
@@ -65,6 +65,9 @@ class MakeFarewellsMoreBeautifulHandler(LightConeHandler):
             is_owner = (event.entity_name == self.owner_id)
             is_own_spirit = self.port.is_own_memosprite(self.owner_id, event.entity_name)
             if (is_owner or is_own_spirit) and event.amount > 0:
+                self.trigger_flower_buff()
+        elif isinstance(event, SpiritSummonedEvent):
+            if event.owner_name == self.owner_id and self.port.has_status(self.owner_id, "LC_Farewells_FlowerBuff"):
                 self.trigger_flower_buff()
         elif isinstance(event, SpiritDespawnEvent):
             if event.owner_name == self.owner_id and not self.advance_triggered:

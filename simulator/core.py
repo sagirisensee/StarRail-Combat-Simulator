@@ -486,11 +486,15 @@ class TurnSimulator:
                     owner_turn_id=owner_turn_id,
                     owner_turn_actor_id=owner_turn_actor,
                 )
+                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_before"):
+                    active_entity.kit.on_action_before(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_before(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
                     rh.on_action_before(ctx)
                 active_entity.kit.execute(ctx)
+                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_after"):
+                    active_entity.kit.on_action_after(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_after(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
@@ -760,11 +764,15 @@ class TurnSimulator:
                 owner_turn_id=owner_turn_id,
                 owner_turn_actor_id=owner_turn_actor,
             )
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_before"):
+                ent.kit.on_action_before(ctx)
             if getattr(ent, "light_cone", None) is not None:
                 ent.light_cone.on_action_before(ctx)
             for rh in getattr(ent, "relic_handlers", []):
                 rh.on_action_before(ctx)
             ent.kit.execute(ctx)
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_after"):
+                ent.kit.on_action_after(ctx)
             if getattr(ent, "light_cone", None) is not None:
                 ent.light_cone.on_action_after(ctx)
             for rh in getattr(ent, "relic_handlers", []):
