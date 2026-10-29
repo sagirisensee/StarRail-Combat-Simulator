@@ -235,6 +235,9 @@ class RobinSunnySongKit(KitHandler):
         self.rhythm_stacks: int = 0     # 律动层数 (上限 12 层)
         self._rhythm_consumed_in_current_turn: bool = False
         self._healed_this_turn: bool = False
+        self._healed_sources_in_turn: set[str] = set()
+        self._healed_in_ult: bool = False
+        self._gained_vibe_in_action: bool = False
         self._e2_vibe_bonus_in_turn: bool = False
 
         # 伴生乐手成员状态
@@ -634,13 +637,13 @@ class RobinSunnySongKit(KitHandler):
 
         def_base = self.skill_param("talent", 7, default=0.15)
         def_per_vibe = self.skill_param("talent", 8, default=0.005)
-        def_ignore = round(def_base + self.vibes * def_per_vibe, 4)
+        def_ignore = def_base + self.vibes * def_per_vibe
 
         default_dmg_base = 0.66 if self.eidolon >= 3 else 0.60
         default_dmg_per = 0.022 if self.eidolon >= 3 else 0.02
         dmg_base = self.skill_param("1151203", 0, default=default_dmg_base)
         dmg_per_vibe = self.skill_param("1151203", 1, default=default_dmg_per)
-        dmg_boost = round(dmg_base + self.vibes * dmg_per_vibe, 4)
+        dmg_boost = dmg_base + self.vibes * dmg_per_vibe
 
         for ally in self.port.allies(self.owner_id):
             self.port.upsert_status(BuffSpec(
@@ -735,7 +738,7 @@ class RobinSunnySongKit(KitHandler):
             mods = (Modifier(StatType.ATK_BASE, ModifierOp.ADD, flat_atk),)
             desc = f"攻击力提高 +{flat_atk:.1f} (知更鸟生命上限的 {atk_ratio * 100:.1f}%)"
         else:
-            cd_val = round(0.40 + self.vibes * 0.015, 4)
+            cd_val = 0.40 + self.vibes * 0.015
             mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
             desc = f"暴击伤害 +{cd_val * 100:.1f}%"
 
@@ -771,6 +774,8 @@ class RobinSunnySongKit(KitHandler):
             self._last_turn_actor = getattr(event, "actor_name", getattr(event, "entity_name", ""))
             self._rhythm_consumed_in_current_turn = False
             self._healed_this_turn = False
+            self._healed_sources_in_turn = set()
+            self._healed_in_ult = False
             self._e2_vibe_bonus_in_turn = False
             if self.musicians_alive:
                 self._update_musician_aura()
@@ -797,25 +802,35 @@ class RobinSunnySongKit(KitHandler):
                     )
                     self.port.tracer.record_plugin("行迹", "《即兴蓝调》 (知更鸟•晴歌)", "受治疗重置 12 层律动")
 
-            # 天赋：在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值 (排除战前非回合治疗)
-            if is_teammate_source and not getattr(self, "_healed_this_turn", False):
-                self._healed_this_turn = True
-                extra = 0
-                if self.eidolon >= 2 and not self._e2_vibe_bonus_in_turn:
-                    self._e2_vibe_bonus_in_turn = True
-                    extra += int(self.eidolon_param(2, 1, default=2.0))
-                self.gain_vibes(1 + extra, trigger_ally_id=event.source_name)
+            # 天赋：我方目标施放攻击时，或在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值
+            # 1. 终结技属于插入独立行动，若该终结技提供治疗/护盾且未通过攻击获得气氛，则该终结技可触发 1 次气氛值
+            # 2. 回合内各治疗/护盾来源目标，首次提供治疗或护盾时触发 1 次气氛值
+            if is_teammate_source and not getattr(self, "_gained_vibe_in_action", False):
+                if getattr(self, "_current_action_kind", None) == ActionKind.ULTIMATE:
+                    if not getattr(self, "_healed_in_ult", False):
+                        self._healed_in_ult = True
+                        self._healed_this_turn = True
+                        self.gain_vibes(1, trigger_ally_id=event.source_name)
+                else:
+                    healed_sources = getattr(self, "_healed_sources_in_turn", None)
+                    if healed_sources is None:
+                        healed_sources = set()
+                        self._healed_sources_in_turn = healed_sources
+                    if event.source_name not in healed_sources:
+                        healed_sources.add(event.source_name)
+                        self._healed_this_turn = True
+                        self.gain_vibes(1, trigger_ally_id=event.source_name)
 
         elif isinstance(event, ActionExecuteEvent):
             if self.musicians_alive:
                 self._update_musician_aura()
-            # 记录当前动作类型 (追加攻击属于同窗口追击反应，不可消耗回合律动)
             self._current_action_kind = getattr(event, "action_kind", None)
-            if self._current_action_kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.MEMOSPRITE_SKILL):
+            self._gained_vibe_in_action = False
+            if self._current_action_kind == ActionKind.ULTIMATE:
+                self._healed_in_ult = False
+            if self._current_action_kind in (ActionKind.BASIC, ActionKind.SKILL, ActionKind.MEMOSPRITE_SKILL):
                 self._last_turn_actor = event.actor_name
-                self._rhythm_consumed_in_current_turn = False
-                self._healed_this_turn = False
-                self._e2_vibe_bonus_in_turn = False
+
             # 天赋：我方目标施放攻击时获得 1 点气氛值 (排除纯辅助技能与 Fever 倒计时实体)
             if (
                 self.port.is_ally(event.actor_name)
@@ -825,11 +840,12 @@ class RobinSunnySongKit(KitHandler):
                     getattr(event, "action_type", "")
                 )
             ):
+                self._gained_vibe_in_action = True
                 extra = 0
                 # 终结技【特邀嘉宾】联动：持有【特邀嘉宾】的角色及其召唤物攻击时额外获得 2 点气氛值
                 if self._is_special_guest_actor(event.actor_name):
                     extra += int(self.skill_param("ultra", 1, default=2.0))
-                # 星魂 2【心似一片湖水】：任意目标回合内第一次施放技能使知更鸟获得气氛值额外 +2 (#2=2)
+                # 星魂 2【心似一片湖水】：在任意目标回合内第一次施放技能使知更鸟•晴歌获得气氛值时额外获得 2 点
                 if self.eidolon >= 2 and not self._e2_vibe_bonus_in_turn:
                     self._e2_vibe_bonus_in_turn = True
                     extra += int(self.eidolon_param(2, 1, default=2.0))

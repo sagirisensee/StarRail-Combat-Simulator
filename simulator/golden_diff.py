@@ -256,6 +256,9 @@ class SequenceRecorder:
     def _on_damage(self, e: Any) -> None:
         if self.current is None:
             self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+        ent = self._lookup_entity(e.attacker_name)
+        if ent is not None and getattr(ent, "is_enemy", False):
+            return
         dtype = getattr(e, "damage_type", None)
         dtype_value = getattr(dtype, "value", "Direct")
         self.current.damages.append(DamageHit(

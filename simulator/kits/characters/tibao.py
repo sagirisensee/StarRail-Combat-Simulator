@@ -549,7 +549,7 @@ class TibaoKit(KitHandler):
                 else:
                     team_hp_sum += self.port.max_hp(ally)
 
-        glass_ball_hp = round(team_hp_sum * 0.09, 1)
+        glass_ball_hp = team_hp_sum * 0.09
         self.port.upsert_status(BuffSpec(
             key="Tribbie_A4_GlassBallWithWings",
             name="长翅膀的玻璃球！",

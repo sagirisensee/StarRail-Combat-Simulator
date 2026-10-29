@@ -123,6 +123,7 @@ class CombatPort(Protocol):
     @property
     def tracer(self) -> Any: ...
     def is_countdown(self, entity_id: str) -> bool: ...
+    def is_boss(self, entity_id: str) -> bool: ...
     def summon_spirit(
         self,
         owner_id: str,
@@ -194,6 +195,10 @@ class SimulatorCombatPort:
     def is_barrier_guarded(self, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "barrier_guarded", False))
+
+    def is_boss(self, entity_id: str) -> bool:
+        ent = self._get_entity(entity_id)
+        return bool(ent and getattr(ent, "is_boss", False))
 
     def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool:
         """判定指定实体的某次动作是否属于【攻击】行为（排除纯辅助技能与倒计时实体）。"""
@@ -612,7 +617,7 @@ class SimulatorCombatPort:
         if not tgt or not src:
             return
         eff_multiplier = atk_multiplier
-        if resolved_damage_type == DamageType.SERVANT and not src.is_enemy:
+        if (resolved_damage_type == DamageType.SERVANT or self.is_memosprite(source_id)) and not src.is_enemy:
             for e in self.sim.entities:
                 if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
                     fn = getattr(e.kit, "_memosprite_damage_mult", None)
