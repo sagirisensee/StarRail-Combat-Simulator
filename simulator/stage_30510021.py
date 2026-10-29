@@ -320,7 +320,7 @@ class Stage30510021Director:
                 self.sim.status_mgr.remove_status(boss.name, "LC_RainbowSky_Vuln")
                 ika = self.sim.get_entity("小伊卡")
                 ika_kit = getattr(ika, "kit", None) if ika else None
-                for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌", "长夜"):
+                for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌"):
                     if self.sim.get_entity(a_name) is not None:
                         self.sim.port.lose_hp(a_name, 600.0, cause="boss_phase_transition_aoe")
                 if ika_kit is not None:

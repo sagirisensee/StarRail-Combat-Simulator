@@ -48,6 +48,16 @@ class ActionExecuteEvent(BattleEvent):
 
 
 @dataclass(frozen=True)
+class ActionEndEvent(BattleEvent):
+    actor_id: str
+    actor_name: str
+    action_type: str = ""
+    description: str = ""
+    action_kind: Any = None
+    skill_config_id: int = 0
+
+
+@dataclass(frozen=True)
 class TechniqueExecuteEvent(BattleEvent):
     actor_id: str
     actor_name: str

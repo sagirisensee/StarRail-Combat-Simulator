@@ -76,7 +76,7 @@ class ChangyeyueKit(KitHandler):
         if not self.port or not self.port.entity_exists(self.spirit_name):
             return None
         if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
-            self.apply_skill_shared_crit_dmg()
+            self._refresh_skill_shared_crit_dmg()
         elif self.port.has_status(self.spirit_name, "Changyeyue_Skill_SharedCritDmg_Spirit"):
             shared_cd = self.calc_skill_shared_crit_dmg()
             self.port.upsert_status(BuffSpec(
@@ -126,7 +126,7 @@ class ChangyeyueKit(KitHandler):
             hp_loss = self.spirit_hp * 0.05
             cause = "memosprite_skill_cost"
         else:
-            hp_loss = 0.05 * self.port.max_hp(self.owner_id)
+            hp_loss = 0.05 * self.port.current_hp(self.owner_id)
             cause = "evernight_a2_cost"
 
         self.port.lose_hp(caster_id, hp_loss, cause=cause)
@@ -864,12 +864,38 @@ class ChangyeyueKit(KitHandler):
             owner_cd = 4.533
         return owner_cd * cd_ratio
 
-    def apply_skill_shared_crit_dmg(self) -> float:
-        """动态挂载【白昼悄然离去】：
-        - 对长夜月本体：作为机制状态标记 (category='other')，打上 EXCLUDE 标签，持续 2 回合 (长夜月每回合开始时持续回合数减 1)；
-        - 对我方全体忆灵：挂载专属暴伤 Buff (提高数值等同于长夜月实时暴伤的 24%)，打上 MEMOSPRITE_ONLY 标签，生命周期跟随本体状态。
-        """
+    def _refresh_skill_shared_crit_dmg(self) -> float:
+        """只同步分享数值；不创建或续期本体战技标记。"""
         shared_cd = self.calc_skill_shared_crit_dmg()
+        marker_active = self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg")
+
+        for ally in self.port.allies(self.owner_id):
+            if not self.port.is_memosprite(ally):
+                continue
+            key = (
+                "Changyeyue_Skill_SharedCritDmg_Spirit"
+                if ally == self.spirit_name
+                else f"Changyeyue_Skill_SharedCritDmg_Spirit_{ally}"
+            )
+            if not marker_active and not self.port.has_status(ally, key):
+                continue
+
+            self.port.upsert_status(BuffSpec(
+                key=key,
+                name="白昼悄然离去",
+                source_id=self.owner_id,
+                target_id=ally,
+                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
+                duration=None,
+                timing=DurationTiming.TARGET_TURN_START,
+                category="buff",
+                tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
+                description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+            ))
+        return shared_cd
+
+    def apply_skill_shared_crit_dmg(self) -> float:
+        """仅在实际施放战技或应用进战秘技效果时调用。"""
         self.port.upsert_status(BuffSpec(
             key="Changyeyue_Skill_SharedCritDmg",
             name="白昼悄然离去",
@@ -880,23 +906,9 @@ class ChangyeyueKit(KitHandler):
             timing=DurationTiming.TARGET_TURN_START,
             category="other",
             tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,),
-            description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
+            description="战技暴伤分享生效"
         ))
-        for ally in self.port.allies(self.owner_id):
-            if self.port.is_memosprite(ally):
-                self.port.upsert_status(BuffSpec(
-                    key="Changyeyue_Skill_SharedCritDmg_Spirit" if ally == self.spirit_name else f"Changyeyue_Skill_SharedCritDmg_Spirit_{ally}",
-                    name="白昼悄然离去",
-                    source_id=self.owner_id,
-                    target_id=ally,
-                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, shared_cd),),
-                    duration=None,
-                    timing=DurationTiming.TARGET_TURN_START,
-                    category="buff",
-                    tags=(StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS),
-                    description=f"战技分享忆灵暴击伤害 +{shared_cd*100:.1f}%"
-                ))
-        return shared_cd
+        return self._refresh_skill_shared_crit_dmg()
 
     def _get_remembrance_count(self) -> int:
         """通过 CombatPort 契约统计队伍中「记忆」命途角色数量 (供行迹【天亮了，雨落了】结算)。"""
@@ -906,8 +918,8 @@ class ChangyeyueKit(KitHandler):
         """返回伴生忆灵「长夜」的完整独立实时战斗快照。
         100% 通过 CombatPort 标准契约动态采样，零私有属性跨层调用，零状态名硬编码！
         """
-        if getattr(self, "technique_active", False) or self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
-            self.apply_skill_shared_crit_dmg()
+        if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
+            self._refresh_skill_shared_crit_dmg()
 
         max_hp = self.spirit_max_hp
         cur_hp = self.spirit_hp if self.spirit_alive else 0.0
@@ -1048,7 +1060,7 @@ class ChangyeyueKit(KitHandler):
             self.port.gain_energy(self.owner_id, 20.0)
 
         elif ctx.kind == ActionKind.SKILL:
-            cur_hp = self.port.max_hp(self.owner_id)
+            cur_hp = self.port.current_hp(self.owner_id)
             self.port.lose_hp(self.owner_id, 0.10 * cur_hp, cause="evernight_skill_cost")
 
             # 行迹【天黑黑，月寂寂】：施放技能时，消耗自身当前生命值的 5% 使双方的暴击伤害提高 15%，持续 2 回合

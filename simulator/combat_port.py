@@ -274,10 +274,18 @@ class SimulatorCombatPort:
         actor = self._get_entity(actor_id)
         if not actor:
             return ()
-        return tuple(
-            e.name for e in self.sim.entities
-            if e.is_enemy == actor.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))
-        )
+        res = []
+        for e in self.sim.entities:
+            if e.is_enemy != actor.is_enemy or getattr(e, "unspawned", False):
+                continue
+            if getattr(e, "is_memosprite", False):
+                master = self.sim.get_entity(getattr(e, "master_name", ""))
+                if master and getattr(master, "kit", None) and hasattr(master.kit, "spirit_alive"):
+                    if not master.kit.spirit_alive:
+                        continue
+            if e.current_hp > 0 or getattr(e, "is_infinite_hp", False):
+                res.append(e.name)
+        return tuple(res)
 
     def enemies(self, actor_id: str) -> Tuple[str, ...]:
         actor = self._get_entity(actor_id)

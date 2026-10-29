@@ -574,11 +574,11 @@ class TibaoKit(KitHandler):
         from ...events import (
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
             SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
-            TurnBeginEvent, TurnEndEvent
+            TurnBeginEvent, TurnEndEvent, ActionEndEvent
         )
         if isinstance(event, TurnBeginEvent):
             self._turn_started = True
-        if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
+        if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
             self._flush_zone_window()
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
             self._sync_glass_ball_hp()

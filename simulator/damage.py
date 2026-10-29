@@ -33,6 +33,19 @@ class DamageBreakdown:
     reduction_mult: float
     # 最终结算伤害
     final_damage: float
+    # 诊断与微观明细 (可选扩展字段，保持 100% 向后兼容)
+    barrier_mult: float = 1.0
+    scaling_stat: str = "atk"
+    base_stat: float = 0.0
+    skill_multiplier: float = 1.0
+    flat_damage: float = 0.0
+    dmg_boost: float = 0.0
+    def_shred: float = 0.0
+    target_def_shred: float = 0.0
+    attacker_def_ignore: float = 0.0
+    eff_res: float = 0.0
+    res_pen: float = 0.0
+    vuln: float = 0.0
 
     def format_details(self) -> str:
         """生成清晰可读的乘区算式账单。"""
@@ -93,6 +106,8 @@ class DamageCalculator:
             dmg_boost = base_dmg_boost
             res_pen = 0.0
             def_shred = 0.0
+            target_def_shred = 0.0
+            attacker_def_ignore = 0.0
             vuln = 0.0
 
         # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
@@ -127,7 +142,12 @@ class DamageCalculator:
                 res_mult=1.0,
                 vuln_mult=1.0,
                 reduction_mult=1.0,
-                final_damage=base_dmg
+                final_damage=base_dmg,
+                barrier_mult=1.0,
+                scaling_stat=scaling,
+                base_stat=base_stat,
+                skill_multiplier=req.skill_multiplier,
+                flat_damage=req.flat_damage,
             )
 
         # 2. 双暴区
@@ -227,5 +247,17 @@ class DamageCalculator:
             res_mult=res_mult,
             vuln_mult=vuln_mult,
             reduction_mult=reduction_mult,
-            final_damage=final_dmg
+            final_damage=final_dmg,
+            barrier_mult=barrier_mult,
+            scaling_stat=scaling,
+            base_stat=base_stat,
+            skill_multiplier=req.skill_multiplier,
+            flat_damage=req.flat_damage,
+            dmg_boost=dmg_boost,
+            def_shred=def_shred,
+            target_def_shred=target_def_shred,
+            attacker_def_ignore=attacker_def_ignore,
+            eff_res=eff_res,
+            res_pen=res_pen,
+            vuln=vuln,
         )

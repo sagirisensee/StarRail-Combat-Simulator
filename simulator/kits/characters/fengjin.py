@@ -33,7 +33,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ..registry import register_kit
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, ActionScheduleCategory
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
@@ -333,8 +333,18 @@ class FengjinKit(KitHandler):
         self._fire_ika_scatter()
 
     def _fire_ika_scatter(self) -> None:
-        self.port.publish_action("小伊卡", IkaKit.SKILL_NAME, ActionKind.MEMOSPRITE_SKILL, skill_id=IkaKit.SKILL_ID)
-        self.ika_kit.cast_scatter()
+        def _cb():
+            self.ika_kit.cast_scatter()
+        self.port.schedule_extra_turn(
+            "小伊卡",
+            _cb,
+            name=IkaKit.SKILL_NAME,
+            category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+            action_kind=ActionKind.MEMOSPRITE_SKILL,
+            skill_id=IkaKit.SKILL_ID,
+            preempt_follow_up=False,
+            publish_execute_event=True,
+        )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         """普攻【当微风轻吻云沫】：等同生命上限 70% (Lv 10) 的风属性伤害。"""
