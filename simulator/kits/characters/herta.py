@@ -20,7 +20,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -29,6 +29,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class HertaKit(KitHandler):
     """黑塔 (ID 1013, 智识 / 冰)."""
+    follow_up_phase = FollowUpPhase.NORMAL
 
     E2_CRIT_BUFF = "Herta_E2_Crit"
     E6_ATK_BUFF = "Herta_E6_Atk"

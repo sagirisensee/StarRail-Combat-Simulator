@@ -23,13 +23,14 @@
 import random
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, FollowUpPhase
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class BronyaKit(KitHandler):
     """布洛妮娅 (ID 1101, 风 / 同谐)."""
+    follow_up_phase = FollowUpPhase.SLOW
 
     SKILL_DMG_BUFF = "Bronya_Skill_Dmg"
     E2_SPEED_BUFF = "Bronya_E2_Speed"

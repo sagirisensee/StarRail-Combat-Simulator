@@ -19,13 +19,15 @@
 5. 秘技【Δ指令-焦土陨击】：每个波次开始为敌方全体添加火属性弱点 3 回合，造成 200% 攻击力火伤。
 """
 
-from typing import Optional, List, Any
+from typing import Optional
 from ..base import KitHandler
 from ...actions import (
+    ActionScheduleCategory,
     DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
+from ...events import BattleEvent, EnemyDefeatedEvent, TurnEndEvent, WeaknessBreakEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
@@ -185,11 +187,6 @@ class FireflyKit(KitHandler):
                         damage_type=DamageType.SKILL,
                         scaling_stat="atk"
                     )
-
-            # E2: 击破敌人或消灭目标获得额外回合 (100% 拉条)
-            if self.eidolon >= 2 and self.e2_cooldown <= 0:
-                self.e2_cooldown = 1
-                self.port.advance(self.owner_id, self.owner_id, 1.0)
         else:
             # 常规战技【指令-天火轰击】: 消耗 40% 生命上限，固定回能 144 点，拉条 25%
             if hasattr(self.port, "lose_hp"):
@@ -234,3 +231,24 @@ class FireflyKit(KitHandler):
             category="buff",
             description="速度提高 60 点，弱点击破效率提高"
         ))
+
+    def _trigger_e2_extra_turn(self) -> None:
+        """E2【自破碎的星空坠落】：获得 1 个预约型追加回合 (RESERVED_EXTRA_TURN)，绝非 100% 拉条。"""
+        if self.eidolon < 2 or not self.is_combustion or self.e2_cooldown > 0:
+            return
+        self.e2_cooldown = 1
+        if hasattr(self.port, "schedule_extra_turn"):
+            self.port.schedule_extra_turn(
+                self.owner_id,
+                name="自破碎的星空坠落 (E2追加回合)",
+                category=ActionScheduleCategory.RESERVED_EXTRA_TURN,
+            )
+
+    def on_event(self, event: BattleEvent) -> None:
+        if isinstance(event, (EnemyDefeatedEvent, WeaknessBreakEvent)):
+            actor = getattr(event, "attacker_name", None) or getattr(event, "breaker_name", None)
+            if actor == self.owner_id and self.is_combustion and self.eidolon >= 2 and self.e2_cooldown <= 0:
+                self._trigger_e2_extra_turn()
+        elif isinstance(event, TurnEndEvent) and event.actor_name == self.owner_id:
+            if self.e2_cooldown > 0:
+                self.e2_cooldown -= 1

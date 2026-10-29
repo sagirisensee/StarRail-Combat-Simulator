@@ -29,6 +29,7 @@ SKILL_TYPE_BY_KIND = {
     ActionKind.SKILL: "BPSkill",
     ActionKind.ULTIMATE: "Ultra",
     ActionKind.MEMOSPRITE_SKILL: "Servant",
+    ActionKind.ELATION_SKILL: "ElationDamage",
 }
 
 # 官方阵容 uid -> 显示名 (由 OnInitializeEnemy 与技能施放者归纳, 仅用于报告展示)

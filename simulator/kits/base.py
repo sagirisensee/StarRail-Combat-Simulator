@@ -13,12 +13,15 @@
 """
 from abc import ABC, abstractmethod
 from typing import Optional, Any
-from ..actions import ActionContext, ActionKind, AbilityDefinition
+from ..actions import ActionContext, ActionKind, AbilityDefinition, FollowUpPhase
 from ..combat_port import CombatPort
 
 
 class KitHandler(ABC):
     """所有角色技能行为处理器的抽象基类。"""
+
+    # 角色追加攻击所属的优先级分组 (FollowUpPhase.FAST / NORMAL / SLOW / COUNTER; None 表示无或由 definition(FOLLOW_UP) 自动识别为 NORMAL)
+    follow_up_phase: Optional[FollowUpPhase] = None
 
     def __init__(
         self,

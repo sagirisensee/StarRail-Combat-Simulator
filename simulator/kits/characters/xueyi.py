@@ -21,7 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -29,6 +29,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class XueyiKit(KitHandler):
+    follow_up_phase = FollowUpPhase.NORMAL
     E4_BREAK_BUFF = "Xueyi_E4_BreakBuff"
 
     def __init__(

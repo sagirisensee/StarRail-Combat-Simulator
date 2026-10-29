@@ -21,7 +21,8 @@ from .effects import (
 )
 from .sp import SkillPointManager
 from .status import StatusManager, StatType
-from .actions import ActionKind, ActionContext
+from .actions import ActionKind, ActionContext, ActionScheduleCategory
+from .scheduler import ActionScheduler
 
 
 # 官方 skill_config_id 的槽位规则: avatar_id * 100 + 槽位 (普攻 01 / 战技 02 / 终结技 03 / 天赋 04 / 秘技 07)
@@ -31,6 +32,7 @@ _SKILL_ID_SLOTS = {
     ActionKind.ULTIMATE: 3,
     ActionKind.TALENT: 4,
     ActionKind.TECHNIQUE: 7,
+    ActionKind.ELATION_SKILL: 20,
 }
 
 
@@ -67,6 +69,7 @@ class TurnSimulator:
         self.event_bus: EventBus = EventBus()
         self.sp: SkillPointManager = SkillPointManager(initial_sp=initial_sp, max_sp=max_sp)
         self.status_mgr: StatusManager = StatusManager(self)
+        self.scheduler: ActionScheduler = ActionScheduler(self)
         self.resolver: EffectResolver = EffectResolver(self)
         self.port: SimulatorCombatPort = SimulatorCombatPort(self)
         self.inspector: BattleInspector = BattleInspector(self)
@@ -74,6 +77,10 @@ class TurnSimulator:
         self.tracer: ActionCausalTracer = ActionCausalTracer(self)
         self.auto_ult: bool = auto_ult
         self._current_turn_entity: Optional[Entity] = None
+        self._turn_id: int = 0
+        self._action_seq: int = 0
+        self._turn_owner_sp_consumed: int = 0
+        self._turn_primary_action_done: bool = False
         # 行动就绪队列 (Ready Queue): 存放当前 AV 到达终点 (距离为 0) 的待行动实体
         # 1. 自然跑条到达终点者按自然速度序追加至队尾 (append);
         # 2. 拉条至 0 (包含 100% 拉条) 者插队至队首 (insert(0));
@@ -357,17 +364,41 @@ class TurnSimulator:
         if active_entity is None:
             return None
 
-        self.status_mgr.tick_on_turn_begin(active_entity)
-        self.event_bus.publish(TurnBeginEvent(
-            av=round(self.current_av, 2),
-            cycle=self.current_cycle,
-            actor_id=active_entity.name,
-            actor_name=active_entity.name,
-            speed=round(active_entity.speed, 1)
-        ))
-        self.run_stage_turn_begin(active_entity)
         self._current_turn_entity = active_entity
+        self._turn_id += 1
+        self._turn_owner_sp_consumed = 0
+        self._turn_primary_action_done = False
+
+        with self.scheduler.action_frame():
+            self.status_mgr.tick_on_turn_begin(active_entity)
+            self.event_bus.publish(TurnBeginEvent(
+                av=round(self.current_av, 2),
+                cycle=self.current_cycle,
+                actor_id=active_entity.name,
+                actor_name=active_entity.name,
+                speed=round(active_entity.speed, 1)
+            ))
+            self.run_stage_turn_begin(active_entity)
+            self.resolver.resolve_all()
         return active_entity
+
+    def record_turn_sp_consumption(self, actor_name: str, amount: int) -> None:
+        """记录单次战技点消耗：仅当消耗者正处于其自身的自然回合内 (actor_name == _current_turn_entity.name)
+        时，才累加至该角色的「自身单回合 SP 消耗计数」(对齐星期日光锥【回到大地的飞行】判定：
+        自身回合内的追加回合耗点计入自身回合，队友回合内触发的追加回合耗点不计入自身回合)。
+        """
+        if amount <= 0:
+            return
+        if self._current_turn_entity is not None and self._current_turn_entity.name == actor_name:
+            self._turn_owner_sp_consumed += int(amount)
+
+    def get_turn_sp_consumed(self, actor_id: str) -> int:
+        """查询某角色在其当前自身单回合内已累计消耗的战技点数；若当前不是该角色的自然回合则返回 0。"""
+        ent = self.get_entity(actor_id)
+        resolved = ent.name if ent is not None else actor_id
+        if self._current_turn_entity is not None and self._current_turn_entity.name == resolved:
+            return self._turn_owner_sp_consumed
+        return 0
 
     def run_stage_turn_begin(self, active_entity: Entity) -> None:
         """结算关卡机制插件的回合开始钩子 (如【血噬】回合初扣血)。
@@ -381,114 +412,165 @@ class TurnSimulator:
         for plugin in getattr(self, "stage_plugins", []):
             plugin.on_turn_begin(active_entity, self)
 
-    def execute_current_turn(
-        self, 
-        action_override: Optional[ActionKind] = None, 
+    def _execute_action(
+        self,
+        active_entity: Entity,
+        *,
+        action_override: Optional[ActionKind] = None,
         target_ids: Optional[Tuple[str, ...]] = None,
-        actor: Optional[Entity] = None
-    ) -> Entity:
-        """执行当前到达终点实体的回合动作，结算伤害、终结技抢断、状态时钟与回合结束。"""
-        active_entity = actor if actor is not None else self._current_turn_entity
-        if active_entity is None:
-            active_entity = self.advance_to_next_turn()
-            if active_entity is None:
-                raise RuntimeError("场上无可用实体执行行动")
+        is_natural_turn_action: bool = True,
+        schedule_category: Optional[ActionScheduleCategory] = None,
+        advance_policy: bool = True,
+        publish_execute_event: bool = True,
+    ) -> None:
+        """执行单次角色/敌方动作 (自然回合主动作或追加回合动作)，严格与回合开始/结束生命周期解耦。
 
-        intent = active_entity.get_next_action_intent()
-        if getattr(active_entity, "kit", None) is not None:
-            if action_override is not None:
-                req_kind = action_override
-            elif getattr(active_entity, "is_memosprite", False):
-                req_kind = ActionKind.SKILL
-            else:
-                req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
-            defn = active_entity.kit.definition(req_kind)
+        在追加回合 (`is_natural_turn_action=False`) 中调用时：
+        - 不发布 `TurnBeginEvent` / `TurnEndEvent`；
+        - 不调用 `status_mgr.tick_on_turn_begin` / `tick_on_turn_end` (Buff 回合不衰减、DoT 不结算)；
+        - 不重置跑道 `distance_remaining`；
+        - 不篡改 `self._current_turn_entity` (保留当前自然回合归属者)。
+        """
+        active_intent = getattr(self.scheduler, "active_intent", None)
+        should_publish = publish_execute_event and not (
+            active_intent is not None and active_intent.publish_execute_event
+        )
+        owner_turn_actor = self._current_turn_entity.name if self._current_turn_entity is not None else None
+        owner_turn_id = self._turn_id if self._current_turn_entity is not None else None
 
-            if defn.cost.sp > 0 and not self.sp.can_consume(defn.cost.sp):
-                actual_kind = ActionKind.BASIC
-                defn = active_entity.kit.definition(actual_kind)
-                actual_action = f"{defn.name} (SP不足降级)"
-            else:
-                actual_kind = req_kind
-                actual_action = defn.name
-
-            if defn.cost.sp != 0:
-                self.resolver.enqueue(ModifySPEffect(active_entity.name, -defn.cost.sp, f"施放{defn.name}"))
-
-            active_entity.advance_policy()
-
-            self.event_bus.publish(ActionExecuteEvent(
-                av=round(self.current_av, 2),
-                cycle=self.current_cycle,
-                actor_id=active_entity.name,
-                actor_name=active_entity.name,
-                action_type=actual_action,
-                description=f"施放【{defn.name}】",
-                action_kind=actual_kind,
-                skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind)
-            ))
-
-            ctx = ActionContext(
-                action_id=f"{active_entity.name}_{self.current_av:.1f}",
-                actor_id=active_entity.name,
-                kind=actual_kind,
-                target_ids=target_ids if target_ids is not None else ()
-            )
-            if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_before"):
-                active_entity.kit.on_action_before(ctx)
-            if getattr(active_entity, "light_cone", None) is not None:
-                active_entity.light_cone.on_action_before(ctx)
-            for rh in getattr(active_entity, "relic_handlers", []):
-                rh.on_action_before(ctx)
-            active_entity.kit.execute(ctx)
-            if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_after"):
-                active_entity.kit.on_action_after(ctx)
-            if getattr(active_entity, "light_cone", None) is not None:
-                active_entity.light_cone.on_action_after(ctx)
-            for rh in getattr(active_entity, "relic_handlers", []):
-                rh.on_action_after(ctx)
-        else:
-            if not active_entity.is_enemy:
-                is_skill = (action_override == ActionKind.SKILL) if action_override is not None else (intent == "E")
-                if is_skill:
-                    if self.sp.can_consume(1):
-                        actual_action = "Skill"
-                        self.resolver.enqueue(ModifySPEffect(active_entity.name, -1, "施放战技"))
-                    else:
-                        actual_action = "BasicAttack (SP不足降级)"
-                        self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "战技点不足，降级普攻"))
+        with self.scheduler.action_frame():
+            self._action_seq += 1
+            intent = active_entity.get_next_action_intent()
+            if getattr(active_entity, "kit", None) is not None:
+                if action_override is not None:
+                    req_kind = action_override
+                elif getattr(active_entity, "is_memosprite", False):
+                    req_kind = ActionKind.SKILL
                 else:
-                    actual_action = "BasicAttack"
-                    self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "施放普攻"))
+                    req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
+                defn = active_entity.kit.definition(req_kind)
+
+                if defn.cost.sp > 0 and not self.sp.can_consume(defn.cost.sp):
+                    actual_kind = ActionKind.BASIC
+                    defn = active_entity.kit.definition(actual_kind)
+                    actual_action = f"{defn.name} (SP不足降级)"
+                else:
+                    actual_kind = req_kind
+                    actual_action = defn.name
+
+                if defn.cost.sp != 0:
+                    self.resolver.enqueue(ModifySPEffect(active_entity.name, -defn.cost.sp, f"施放{defn.name}"))
+
+                if advance_policy:
+                    active_entity.advance_policy()
+
+                if should_publish:
+                    self.event_bus.publish(ActionExecuteEvent(
+                        av=round(self.current_av, 2),
+                        cycle=self.current_cycle,
+                        actor_id=active_entity.name,
+                        actor_name=active_entity.name,
+                        action_type=actual_action,
+                        description=f"施放【{defn.name}】",
+                        action_kind=actual_kind,
+                        skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind)
+                    ))
+
+                ctx = ActionContext(
+                    action_id=f"{active_entity.name}_{self.current_av:.1f}_{self._action_seq}",
+                    actor_id=active_entity.name,
+                    kind=actual_kind,
+                    target_ids=target_ids if target_ids is not None else (),
+                    is_natural_turn_action=is_natural_turn_action,
+                    schedule_category=schedule_category,
+                    owner_turn_id=owner_turn_id,
+                    owner_turn_actor_id=owner_turn_actor,
+                )
+                if getattr(active_entity, "light_cone", None) is not None:
+                    active_entity.light_cone.on_action_before(ctx)
+                for rh in getattr(active_entity, "relic_handlers", []):
+                    rh.on_action_before(ctx)
+                active_entity.kit.execute(ctx)
+                if getattr(active_entity, "light_cone", None) is not None:
+                    active_entity.light_cone.on_action_after(ctx)
+                for rh in getattr(active_entity, "relic_handlers", []):
+                    rh.on_action_after(ctx)
             else:
-                actual_action = "EnemySkill"
+                if not active_entity.is_enemy:
+                    is_skill = (action_override == ActionKind.SKILL) if action_override is not None else (intent == "E")
+                    if is_skill:
+                        if self.sp.can_consume(1):
+                            actual_action = "Skill"
+                            self.resolver.enqueue(ModifySPEffect(active_entity.name, -1, "施放战技"))
+                        else:
+                            actual_action = "BasicAttack (SP不足降级)"
+                            self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "战技点不足，降级普攻"))
+                    else:
+                        actual_action = "BasicAttack"
+                        self.resolver.enqueue(ModifySPEffect(active_entity.name, 1, "施放普攻"))
+                else:
+                    actual_action = "EnemySkill"
 
-            active_entity.advance_policy()
+                if advance_policy:
+                    active_entity.advance_policy()
 
-            self.event_bus.publish(ActionExecuteEvent(
-                av=round(self.current_av, 2),
-                cycle=self.current_cycle,
-                actor_id=active_entity.name,
-                actor_name=active_entity.name,
-                action_type=actual_action,
-                description=f"执行 {actual_action}"
-            ))
+                if should_publish:
+                    self.event_bus.publish(ActionExecuteEvent(
+                        av=round(self.current_av, 2),
+                        cycle=self.current_cycle,
+                        actor_id=active_entity.name,
+                        actor_name=active_entity.name,
+                        action_type=actual_action,
+                        description=f"执行 {actual_action}"
+                    ))
 
-            if active_entity.action_callback:
-                active_entity.action_callback(active_entity, self.resolver, actual_action)
-            elif active_entity.is_enemy:
-                allies = [e for e in self.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]
-                if allies:
-                    import random
-                    target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))
-                    req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
-                    self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                if active_entity.action_callback:
+                    active_entity.action_callback(active_entity, self.resolver, actual_action)
+                elif active_entity.is_enemy:
+                    allies = [e for e in self.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]
+                    if allies:
+                        import random
+                        target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))
+                        req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
+                        self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
-        self.resolver.resolve_all()
+            self.resolver.resolve_all()
 
-        if self.auto_ult:
-            self.check_and_cast_ultimates()
+    def execute_extra_turn(
+        self,
+        actor_id: str,
+        *,
+        action_override: Optional[ActionKind] = None,
+        target_ids: Optional[Tuple[str, ...]] = None,
+        schedule_category: ActionScheduleCategory = ActionScheduleCategory.RESERVED_EXTRA_TURN,
+        advance_policy: bool = True,
+    ) -> Optional[Entity]:
+        """执行指定角色的追加回合 (`追加ターン` = 纯粹的额外 Action，绝非自然回合 Turn)。
 
+        核心语义契约 (对齐 Asagi 视频 1 & 2 与官方 Veritas 日志)：
+        - 不触发 `TurnBeginEvent` / `TurnEndEvent`；
+        - 不结算回合初/回合末状态计时 (`tick_on_turn_begin` / `tick_on_turn_end`)，1 回合 Buff 不会在此衰减，DoT 不会在此跳伤；
+        - 不重置时间轴行动距离 (`reset_distance`)；
+        - 保持 `self._current_turn_entity` 为当前时间轴自然回合拥有者：若该追加回合发生在自身自然回合内，
+          其消耗的 SP 会累加至自身当前回合的 SP 消耗计数；若发生在队友回合内，则不计入自身回合 SP 消耗。
+        """
+        ent = self.get_entity(actor_id)
+        if ent is None or (ent.current_hp <= 0 and not getattr(ent, "is_infinite_hp", False)):
+            return None
+        self._execute_action(
+            ent,
+            action_override=action_override,
+            target_ids=target_ids,
+            is_natural_turn_action=False,
+            schedule_category=schedule_category,
+            advance_policy=advance_policy,
+        )
+        if self.scheduler.can_auto_drain():
+            self.scheduler.drain()
+        return ent
+
+    def _end_current_turn(self, active_entity: Entity) -> None:
+        """执行自然回合收尾：结算回合末状态时钟、韧性恢复、发布 TurnEndEvent 并重置跑道距离。"""
         self.status_mgr.tick_on_turn_end(active_entity)
 
         if active_entity.is_broken:
@@ -511,6 +593,63 @@ class TurnSimulator:
         if active_entity.distance_remaining <= 0.0:
             self.notify_entity_ready(active_entity.name)
         self._current_turn_entity = None
+        self._turn_primary_action_done = False
+        self._turn_owner_sp_consumed = 0
+
+    def finish_continuous_turn(self) -> Optional[Entity]:
+        """解除连续行动锁定 (如 Archer 结束连续战技状态)，排空被锁定的预约动作队列并正式结束当前自然回合。"""
+        self.scheduler.continuous_action_hold = False
+        if self.auto_ult:
+            self.enqueue_ready_ultimates()
+        self.scheduler.drain()
+        if self.auto_ult:
+            self.check_and_cast_ultimates()
+        active_entity = self._current_turn_entity
+        if active_entity is not None and not self.scheduler.continuous_action_hold:
+            self._end_current_turn(active_entity)
+        return active_entity
+
+    def execute_current_turn(
+        self, 
+        action_override: Optional[ActionKind] = None, 
+        target_ids: Optional[Tuple[str, ...]] = None,
+        actor: Optional[Entity] = None
+    ) -> Entity:
+        """执行当前到达终点实体的回合动作，结算伤害、派生追击/自动技、终结技抢断、状态时钟与回合结束。"""
+        if actor is not None:
+            active_entity = actor
+            if self._current_turn_entity is None:
+                self._current_turn_entity = active_entity
+                self._turn_id += 1
+                self._turn_owner_sp_consumed = 0
+                self._turn_primary_action_done = False
+        else:
+            active_entity = self._current_turn_entity
+            if active_entity is None:
+                active_entity = self.advance_to_next_turn()
+                if active_entity is None:
+                    raise RuntimeError("场上无可用实体执行行动")
+
+        self._execute_action(
+            active_entity,
+            action_override=action_override,
+            target_ids=target_ids,
+            is_natural_turn_action=True,
+        )
+        self._turn_primary_action_done = True
+
+        if self.auto_ult:
+            self.enqueue_ready_ultimates()
+
+        # 当前动作结算完毕后，按实机调度规则排空所有已入队的追加攻击 / 即时追加回合 / 预约动作队列 / 旅姬追加回合
+        self.scheduler.drain()
+
+        if self.auto_ult and not self.scheduler.continuous_action_hold:
+            self.check_and_cast_ultimates()
+
+        # 若当前处于连续行动锁定 (如 Archer 灵子回路连接尚未结束)，挂起自然回合结束直至锁定解除
+        if not self.scheduler.continuous_action_hold:
+            self._end_current_turn(active_entity)
         return active_entity
 
     def is_current_turn_auto(self) -> bool:
@@ -561,7 +700,8 @@ class TurnSimulator:
     def get_ready_ultimates(self) -> List[Entity]:
         return [e for e in self.entities if not e.is_enemy and self.can_cast_ultimate(e.name)]
 
-    def cast_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:
+    def _execute_ultimate_now(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:
+        """当预约终结技从 ActionScheduler._reserved_queue 出队时实际执行终结技与扣能。"""
         ent = self.get_entity(actor_id)
         if not ent or getattr(ent, "kit", None) is None:
             return False
@@ -591,45 +731,93 @@ class TurnSimulator:
                 source_plugin="终结技施放"
             )
 
-        self.event_bus.publish(ActionExecuteEvent(
-            av=round(self.current_av, 2),
-            cycle=self.current_cycle,
-            actor_id=ent.name,
-            actor_name=ent.name,
-            action_type=f"Ultimate ({defn.name})",
-            description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！",
-            action_kind=ActionKind.ULTIMATE,
-            skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
-        ))
+        owner_turn_actor = self._current_turn_entity.name if self._current_turn_entity is not None else None
+        owner_turn_id = self._turn_id if self._current_turn_entity is not None else None
+        active_intent = getattr(self.scheduler, "active_intent", None)
+        should_publish = not (active_intent is not None and active_intent.publish_execute_event)
 
-        ctx = ActionContext(
-            action_id=f"{ent.name}_ult_{self.current_av:.1f}",
-            actor_id=ent.name,
-            kind=ActionKind.ULTIMATE,
-            target_ids=target_ids if target_ids is not None else (),
-            is_natural_turn_action=False
-        )
-        if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_before"):
-            ent.kit.on_action_before(ctx)
-        if getattr(ent, "light_cone", None) is not None:
-            ent.light_cone.on_action_before(ctx)
-        for rh in getattr(ent, "relic_handlers", []):
-            rh.on_action_before(ctx)
-        ent.kit.execute(ctx)
-        if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_after"):
-            ent.kit.on_action_after(ctx)
-        if getattr(ent, "light_cone", None) is not None:
-            ent.light_cone.on_action_after(ctx)
-        for rh in getattr(ent, "relic_handlers", []):
-            rh.on_action_after(ctx)
-        self.resolver.resolve_all()
+        with self.scheduler.action_frame():
+            self._action_seq += 1
+            if should_publish:
+                self.event_bus.publish(ActionExecuteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=ent.name,
+                    actor_name=ent.name,
+                    action_type=f"Ultimate ({defn.name})",
+                    description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！",
+                    action_kind=ActionKind.ULTIMATE,
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
+                ))
+
+            ctx = ActionContext(
+                action_id=f"{ent.name}_ult_{self.current_av:.1f}_{self._action_seq}",
+                actor_id=ent.name,
+                kind=ActionKind.ULTIMATE,
+                target_ids=target_ids if target_ids is not None else (),
+                is_natural_turn_action=False,
+                schedule_category=ActionScheduleCategory.ULTIMATE,
+                owner_turn_id=owner_turn_id,
+                owner_turn_actor_id=owner_turn_actor,
+            )
+            if getattr(ent, "light_cone", None) is not None:
+                ent.light_cone.on_action_before(ctx)
+            for rh in getattr(ent, "relic_handlers", []):
+                rh.on_action_before(ctx)
+            ent.kit.execute(ctx)
+            if getattr(ent, "light_cone", None) is not None:
+                ent.light_cone.on_action_after(ctx)
+            for rh in getattr(ent, "relic_handlers", []):
+                rh.on_action_after(ctx)
+            self.resolver.resolve_all()
         return True
 
-    def check_and_cast_ultimates(self) -> List[str]:
-        casted = []
+    def request_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:
+        """预约一次终结技并挂入 ActionScheduler (统一进入 `_reserved_queue` 参与严格 FIFO 排队)。"""
+        ent = self.get_entity(actor_id)
+        if not ent or getattr(ent, "kit", None) is None:
+            return False
+        if not self.can_cast_ultimate(ent.name):
+            return False
+        if self.scheduler.has_pending_ultimate(ent.name):
+            return False
+        try:
+            defn = ent.kit.definition(ActionKind.ULTIMATE)
+        except Exception:
+            return False
+
+        skill_id = resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
+        self.scheduler.enqueue(
+            actor_id=ent.name,
+            callback=lambda: self._execute_ultimate_now(ent.name, target_ids=target_ids),
+            name=f"Ultimate ({defn.name})",
+            category=ActionScheduleCategory.ULTIMATE,
+            action_kind=ActionKind.ULTIMATE,
+            skill_id=skill_id,
+            publish_execute_event=False,
+        )
+        return True
+
+    def cast_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:
+        """预约终结技并在当前处于顶层安全动作边界时立即触发调度器排空。"""
+        if not self.request_ultimate(actor_id, target_ids=target_ids):
+            return False
+        if self.scheduler.can_auto_drain():
+            self.scheduler.drain()
+        return True
+
+    def enqueue_ready_ultimates(self) -> List[str]:
+        """扫描全场能量已满的我方角色并将其终结技按序挂入预约队列。"""
+        queued = []
         for e in self.get_ready_ultimates():
-            if self.cast_ultimate(e.name):
-                casted.append(e.name)
+            if self.request_ultimate(e.name):
+                queued.append(e.name)
+        return queued
+
+    def check_and_cast_ultimates(self) -> List[str]:
+        casted = self.enqueue_ready_ultimates()
+        if casted and self.scheduler.can_auto_drain():
+            self.scheduler.drain()
         return casted
 
     def insert_ultimate(self, entity: Entity, description: str = "释放终结技", sp_change: int = 0):

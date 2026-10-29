@@ -18,7 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -26,6 +26,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class DahliaKit(KitHandler):
+    follow_up_phase = FollowUpPhase.SLOW
     BAIXIE_DEBUFF = "Dahlia_Baixie_Vuln"
     CO_DANCER_BUFF = "Dahlia_Co_Dancer"
     E2_RES_SHRED = "Dahlia_E2_ResShred"

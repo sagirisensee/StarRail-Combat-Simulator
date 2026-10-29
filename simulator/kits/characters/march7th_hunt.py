@@ -25,7 +25,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -33,6 +33,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class March7thHuntKit(KitHandler):
+    follow_up_phase = FollowUpPhase.NORMAL
     SHIFU_SPEED_BUFF = "MarchHunt_Shifu_Speed"
     MARCH_E1_SPEED = "MarchHunt_E1_Speed"
     ENHANCED_DMG_BUFF = "MarchHunt_Enhanced_Dmg"

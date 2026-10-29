@@ -25,13 +25,14 @@
 import random
 from typing import Optional, List, Any
 from ..base import KitHandler
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, FollowUpPhase
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class AventurineKit(KitHandler):
     """砂金 (ID 1304, 虚数 / 存护)."""
+    follow_up_phase = FollowUpPhase.FAST
 
     SHIELD_BUFF = "Aventurine_Fortified_Wager"
     E1_CRIT_BUFF = "Aventurine_E1_CritDmg"

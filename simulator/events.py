@@ -108,11 +108,19 @@ class DamageAppliedEvent(BattleEvent):
     target_hp_left: float
     damage_tag: str = "direct"
     damage_type: Any = None     # DamageType 枚举 (伤害分类的权威字段, damage_tag 仅作展示兼容)
+    target_killed: bool = False # 本次伤害是否将该目标从存活击杀至 0 HP
 
     def __post_init__(self):
         # 手工构造事件未显式给出 damage_type 时, 由 damage_tag 经官方映射收编, 保证该字段恒为枚举
         if self.damage_type is None:
             object.__setattr__(self, "damage_type", DamageType.from_tag(self.damage_tag))
+
+
+@dataclass(frozen=True)
+class EnemyDefeatedEvent(BattleEvent):
+    """敌方目标被击败事实事件 (对应单次攻击的第 3 介入点 on_kill，如希儿【再现】、流萤 E2 击杀触发)。"""
+    attacker_name: str
+    target_name: str
 
 
 @dataclass(frozen=True)

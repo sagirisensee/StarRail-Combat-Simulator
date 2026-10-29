@@ -22,7 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -31,6 +31,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class RatioKit(KitHandler):
     """真理医生 (ID 1305, 巡猎 / 虚数)."""
+    follow_up_phase = FollowUpPhase.NORMAL
 
     TALENT_CRIT_BUFF = "Ratio_Talent_Crit"
     ULT_WISDOM_MARK = "Ratio_Ult_Wisdom_Mark"

@@ -21,7 +21,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -30,6 +30,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class HimekoKit(KitHandler):
     """姬子 (ID 1003, 智识 / 火)."""
+    follow_up_phase = FollowUpPhase.NORMAL
 
     E1_SPEED_BUFF = "Himeko_E1_Speed"
 
