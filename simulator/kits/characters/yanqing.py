@@ -18,7 +18,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -26,6 +26,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class YanqingKit(KitHandler):
+    follow_up_phase = FollowUpPhase.NORMAL
     SOULSTEEL_BUFF = "Yanqing_Soulsteel"
     ULT_CRIT_BUFF = "Yanqing_Ult_Crit"
     TECHNIQUE_BUFF = "Yanqing_Technique"

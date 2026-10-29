@@ -24,7 +24,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -33,6 +33,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class BladeKit(KitHandler):
     """刃 (ID 1205, 毁灭 / 风)."""
+    follow_up_phase = FollowUpPhase.NORMAL
 
     HELLSCAPE_BUFF = "Blade_Hellscape"
     E2_CRIT_BUFF = "Blade_E2_Crit"

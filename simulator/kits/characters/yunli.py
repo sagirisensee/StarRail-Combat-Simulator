@@ -23,7 +23,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -32,6 +32,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class YunliKit(KitHandler):
     """云璃 (ID 1221, 毁灭 / 物理)."""
+    follow_up_phase = FollowUpPhase.COUNTER
 
     PARRY_BUFF = "Yunli_Parry_Stance"
     E4_RES_BUFF = "Yunli_E4_EffectRes"

@@ -22,7 +22,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -30,6 +30,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class MozeKit(KitHandler):
+    follow_up_phase = FollowUpPhase.SLOW
     PREY_DEBUFF = "Moze_Prey_Mark"
     E4_DMG_BUFF = "Moze_E4_DmgBuff"
 

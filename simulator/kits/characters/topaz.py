@@ -23,7 +23,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -32,6 +32,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class TopazKit(KitHandler):
     """托帕&账账 (ID 1112, 巡猎 / 火)."""
+    follow_up_phase = FollowUpPhase.NORMAL
 
     PROOF_OF_DEBT_DEBUFF = "Topaz_Proof_Of_Debt"
     E1_EXEC_DEBUFF = "Topaz_E1_Enforcing"

@@ -11,6 +11,7 @@ from .status import StatType
 
 if TYPE_CHECKING:
     from .effects import EffectResolver
+    from .actions import FollowUpPhase
 
 
 @dataclass
@@ -65,6 +66,8 @@ class Entity:
     barrier_guarded: bool = False
     master_name: Optional[str] = None
     extra_immediate_action: bool = False
+    # 追加攻击调度分组 (FollowUpPhase.FAST / NORMAL / SLOW / COUNTER; None 表示无追加攻击或由 kit 决定)
+    follow_up_phase: Optional["FollowUpPhase"] = None
     # 绑定所属的模拟器引用
     simulator: Optional[Any] = None
     # 动作回调：(actor: Entity, resolver: EffectResolver, action_type: str)

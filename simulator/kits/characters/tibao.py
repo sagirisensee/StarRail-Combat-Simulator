@@ -26,7 +26,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ..registry import register_kit
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, FollowUpPhase
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatType, StatusTag
 
@@ -34,6 +34,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatTyp
 @register_kit("1403", "缇宝", "tribbie", "tibao")
 class TibaoKit(KitHandler):
     """缇宝 (ID 1403, 量子 / 同谐)."""
+    follow_up_phase = FollowUpPhase.NORMAL
 
     # 官方解包数据 (1403.json 行迹 1403103 【岔路旁的小石子？】 param_list: [30, 1.5])
     TRACE_PEBBLE_START_ENERGY: float = 30.0

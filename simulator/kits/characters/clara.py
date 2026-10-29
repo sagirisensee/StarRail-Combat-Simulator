@@ -22,7 +22,7 @@
 from typing import Optional, List, Any, Set
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -31,6 +31,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 class ClaraKit(KitHandler):
     """克拉拉 (ID 1107, 毁灭 / 物理)."""
+    follow_up_phase = FollowUpPhase.COUNTER
 
     COUNTER_MARK_KEY = "Clara_Counter_Mark"
     TALENT_DMG_REDUCE = "Clara_Talent_DmgReduce"

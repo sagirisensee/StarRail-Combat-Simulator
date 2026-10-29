@@ -24,7 +24,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -32,6 +32,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class KafkaKit(KitHandler):
+    follow_up_phase = FollowUpPhase.NORMAL
     SHOCK_DEBUFF = "Kafka_Shock"
     E1_DOT_VULN = "Kafka_E1_DoTVuln"
     E2_DOT_BUFF = "Kafka_E2_DoTBuff"

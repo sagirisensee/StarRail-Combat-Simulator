@@ -13,20 +13,23 @@
    - 对指定敌方单体造成等同于希儿 425% 攻击力的量子属性伤害，削韧 30 点，恢复 5 点能量；
    - 星魂 6【离析】：受击目标陷入【乱蝶】状态持续 1 回合，受到攻击时产生额外量子附加伤害。
 4. 【天赋·再现】(Enhance):
-   - 消灭敌方目标时立即获得 1 个额外回合并进入【增幅】状态 (伤害提高 80%，持续 1 回合)；
+   - 消灭敌方目标时立即获得 1 个额外回合 (属于 `RESERVED_EXTRA_TURN` 预约型追加回合) 并进入【增幅】状态 (伤害提高 80%，持续 1 回合)；
+   - 在【再现】的追加回合中消灭敌方目标不会再次触发【再现】；
    - 星魂 4【掠影】：消灭敌方目标时额外恢复 15 点能量。
 5. 【秘技·幻身】(Enhance):
    - 进战后立即进入【增幅】状态。
 """
 
-from typing import Optional, List, Any
+from typing import Optional
 from ..base import KitHandler
 from ...actions import (
+    ActionScheduleCategory,
     DamageType,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
-from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolicy
+from ...events import BattleEvent, EnemyDefeatedEvent
+from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
 class SeeleKit(KitHandler):
@@ -47,6 +50,8 @@ class SeeleKit(KitHandler):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.kill_stacks: int = 0
         self.speed_stacks: int = 0
+        self._in_resurgence: bool = False
+        self._resurgence_queued: bool = False
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if kind == ActionKind.BASIC:
@@ -80,14 +85,23 @@ class SeeleKit(KitHandler):
         raise ValueError(f"未支持的动作类型: {kind}")
 
     def execute(self, ctx: ActionContext) -> None:
-        if ctx.kind == ActionKind.BASIC:
-            self._execute_basic(ctx)
-        elif ctx.kind == ActionKind.SKILL:
-            self._execute_skill(ctx)
-        elif ctx.kind == ActionKind.ULTIMATE:
-            self._execute_ultimate(ctx)
-        elif ctx.kind == ActionKind.TECHNIQUE:
-            self._execute_technique(ctx)
+        is_extra_turn = getattr(ctx, "schedule_category", None) == ActionScheduleCategory.RESERVED_EXTRA_TURN
+        prev_resurgence = self._in_resurgence
+        if is_extra_turn:
+            self._in_resurgence = True
+            self._resurgence_queued = False
+        try:
+            if ctx.kind == ActionKind.BASIC:
+                self._execute_basic(ctx)
+            elif ctx.kind == ActionKind.SKILL:
+                self._execute_skill(ctx)
+            elif ctx.kind == ActionKind.ULTIMATE:
+                self._execute_ultimate(ctx)
+            elif ctx.kind == ActionKind.TECHNIQUE:
+                self._execute_technique(ctx)
+        finally:
+            if is_extra_turn:
+                self._in_resurgence = prev_resurgence
 
     def _execute_technique(self, ctx: ActionContext) -> None:
         """秘技【幻身】：进战直接进入增幅状态（增伤 80%）。"""
@@ -103,7 +117,10 @@ class SeeleKit(KitHandler):
         ))
 
     def _execute_basic(self, ctx: ActionContext) -> None:
-        target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        enemies = self.port.enemies(self.owner_id)
+        if not enemies and not ctx.target_ids:
+            return
+        target_id = ctx.target_ids[0] if ctx.target_ids else enemies[0]
         self.port.attack(
             self.owner_id,
             target_id,
@@ -115,7 +132,10 @@ class SeeleKit(KitHandler):
         self.port.gain_energy(self.owner_id, 20.0)
 
     def _execute_skill(self, ctx: ActionContext) -> None:
-        target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        enemies = self.port.enemies(self.owner_id)
+        if not enemies and not ctx.target_ids:
+            return
+        target_id = ctx.target_ids[0] if ctx.target_ids else enemies[0]
 
         # E1 斩尽：生命值 <= 80% 时 +15% 暴击率，且无视 20% 防御
         if self.eidolon >= 1 and self.port.hp_ratio(target_id) <= 0.80:
@@ -157,8 +177,8 @@ class SeeleKit(KitHandler):
             damage_type=DamageType.SKILL
         )
 
-        # 残血自动追加 1 次攻击
-        if self.port.hp_ratio(target_id) < 0.50:
+        # 残血 (< 50% HP 且未阵亡) 自动追加 1 次攻击
+        if 0.0 < self.port.hp_ratio(target_id) < 0.50:
             self.port.attack(
                 self.owner_id,
                 target_id,
@@ -171,7 +191,10 @@ class SeeleKit(KitHandler):
         self.port.gain_energy(self.owner_id, 30.0)
 
     def _execute_ultimate(self, ctx: ActionContext) -> None:
-        target_id = ctx.target_ids[0] if ctx.target_ids else self.port.enemies(self.owner_id)[0]
+        enemies = self.port.enemies(self.owner_id)
+        if not enemies and not ctx.target_ids:
+            return
+        target_id = ctx.target_ids[0] if ctx.target_ids else enemies[0]
 
         # 进入增幅状态：增伤 80% (官方 Lv 10 天赋规范)
         self.port.upsert_status(BuffSpec(
@@ -208,6 +231,28 @@ class SeeleKit(KitHandler):
                 skip_current_clock=True
             ))
 
-        # E4: 掠影 (消灭敌方恢复 15 点能量)
-        extra_energy = 15.0 if (self.eidolon >= 4 and self.port.hp_ratio(target_id) <= 0.0) else 0.0
-        self.port.gain_energy(self.owner_id, 5.0 + extra_energy)
+        self.port.gain_energy(self.owner_id, 5.0)
+
+    def on_event(self, event: BattleEvent) -> None:
+        if isinstance(event, EnemyDefeatedEvent) and event.attacker_name == self.owner_id:
+            if self.eidolon >= 4:
+                self.port.gain_energy(self.owner_id, 15.0, cause="E4 掠影击杀额外回能")
+            # 天赋【再现】：消灭敌方目标时立即获得 1 个预约型追加回合 (RESERVED_EXTRA_TURN) 并进入【增幅】状态
+            if not self._in_resurgence and not self._resurgence_queued:
+                self._resurgence_queued = True
+                self.port.upsert_status(BuffSpec(
+                    key=self.AMPLIFY_BUFF,
+                    name="增幅 (希儿再现增伤80%)",
+                    source_id=self.owner_id,
+                    target_id=self.owner_id,
+                    modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.80),),
+                    duration=1,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=True
+                ))
+                if hasattr(self.port, "schedule_extra_turn"):
+                    self.port.schedule_extra_turn(
+                        self.owner_id,
+                        name="再现 (天赋追加回合)",
+                        category=ActionScheduleCategory.RESERVED_EXTRA_TURN,
+                    )

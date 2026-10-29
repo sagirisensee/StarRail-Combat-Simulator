@@ -7,8 +7,14 @@
 """
 import sys
 from dataclasses import dataclass
-from typing import Protocol, Tuple, Optional, Any, TYPE_CHECKING
-from .actions import ActionKind, TargetMode, DamageType
+from typing import Callable, Protocol, Tuple, Optional, Any, TYPE_CHECKING
+from .actions import (
+    ActionKind,
+    ActionScheduleCategory,
+    DamageType,
+    FollowUpPhase,
+    TargetMode,
+)
 from .effects import (
     AdvanceActionEffect, DelayActionEffect, ModifySPEffect, ApplyDamageEffect, DamageRequest
 )
@@ -117,6 +123,44 @@ class CombatPort(Protocol):
         fixed_crit_dmg: Optional[float] = None,
         extra_dmg_boost: float = 0.0
     ) -> None: ...
+    def schedule_follow_up(
+        self,
+        actor_id: str,
+        callback: Callable[[], None],
+        *,
+        name: str = "FollowUpAttack",
+        phase: Optional[FollowUpPhase] = None,
+        skill_id: int = 0,
+        publish_execute_event: bool = True,
+    ) -> None: ...
+    def schedule_extra_action(
+        self,
+        actor_id: str,
+        callback: Callable[[], None],
+        *,
+        name: str = "",
+        category: ActionScheduleCategory = ActionScheduleCategory.AUTO_SKILL,
+        action_kind: Optional[ActionKind] = None,
+        skill_id: int = 0,
+        publish_execute_event: bool = True,
+        preempt_follow_up: bool = False,
+    ) -> None: ...
+    def schedule_extra_turn(
+        self,
+        actor_id: str,
+        callback: Optional[Callable[[], None]] = None,
+        *,
+        name: str = "",
+        category: ActionScheduleCategory = ActionScheduleCategory.RESERVED_EXTRA_TURN,
+        action_kind: Optional[ActionKind] = None,
+        target_ids: Optional[Tuple[str, ...]] = None,
+        skill_id: int = 0,
+        preempt_follow_up: bool = False,
+        advance_policy: bool = True,
+        publish_execute_event: Optional[bool] = None,
+    ) -> None: ...
+    def queue_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool: ...
+    def turn_sp_consumed(self, entity_id: str) -> int: ...
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None: ...
     def resolve_effects(self) -> None: ...
     def publish_action(self, actor_id: str, name: str, kind: Any, skill_id: int = 0) -> None: ...
@@ -204,7 +248,7 @@ class SimulatorCombatPort:
         # 不触发「施放攻击时」类联动 (知更鸟气氛值等)
         if action_kind == ActionKind.TALENT:
             return False
-        if action_kind in (ActionKind.BASIC, ActionKind.FOLLOW_UP) or action_type in ("BasicAttack", "FollowUpAttack"):
+        if action_kind in (ActionKind.BASIC, ActionKind.FOLLOW_UP, ActionKind.ELATION_SKILL) or action_type in ("BasicAttack", "FollowUpAttack"):
             return True
         ent = self._get_entity(actor_id)
         if ent and getattr(ent, "kit", None) is not None and action_kind is not None:
@@ -590,6 +634,122 @@ class SimulatorCombatPort:
             return ent.current_hp / cur_max
         return 1.0
 
+    def schedule_follow_up(
+        self,
+        actor_id: str,
+        callback: Callable[[], None],
+        *,
+        name: str = "FollowUpAttack",
+        phase: Optional[FollowUpPhase] = None,
+        skill_id: int = 0,
+        publish_execute_event: bool = True,
+    ) -> None:
+        """将一个追加攻击意图投递至 ActionScheduler (遵循 FAST/NORMAL循环左移/SLOW/COUNTER 分组与严格 FIFO)。"""
+        scheduler = getattr(self.sim, "scheduler", None)
+        if scheduler is not None:
+            scheduler.enqueue(
+                actor_id=actor_id,
+                callback=callback,
+                name=name,
+                category=ActionScheduleCategory.FOLLOW_UP,
+                phase=phase,
+                action_kind=ActionKind.FOLLOW_UP,
+                skill_id=skill_id,
+                publish_execute_event=publish_execute_event,
+            )
+        else:
+            callback()
+
+    def schedule_extra_action(
+        self,
+        actor_id: str,
+        callback: Callable[[], None],
+        *,
+        name: str = "",
+        category: ActionScheduleCategory = ActionScheduleCategory.AUTO_SKILL,
+        action_kind: Optional[ActionKind] = None,
+        skill_id: int = 0,
+        publish_execute_event: bool = True,
+        preempt_follow_up: bool = False,
+    ) -> None:
+        """将一个回合外自动触发动作 (如 AUTO_SKILL 千刃/互动陷阱 或 ELATION_SKILL 欢愉技) 投递至 ActionScheduler。"""
+        scheduler = getattr(self.sim, "scheduler", None)
+        if scheduler is not None:
+            scheduler.enqueue(
+                actor_id=actor_id,
+                callback=callback,
+                name=name,
+                category=category,
+                action_kind=action_kind,
+                skill_id=skill_id,
+                publish_execute_event=publish_execute_event,
+                preempt_follow_up=preempt_follow_up,
+            )
+        else:
+            callback()
+
+    def schedule_extra_turn(
+        self,
+        actor_id: str,
+        callback: Optional[Callable[[], None]] = None,
+        *,
+        name: str = "",
+        category: ActionScheduleCategory = ActionScheduleCategory.RESERVED_EXTRA_TURN,
+        action_kind: Optional[ActionKind] = None,
+        target_ids: Optional[Tuple[str, ...]] = None,
+        skill_id: int = 0,
+        preempt_follow_up: bool = False,
+        advance_policy: bool = True,
+        publish_execute_event: Optional[bool] = None,
+    ) -> None:
+        """将一个追加回合 (`IMMEDIATE_EXTRA_TURN` / `RESERVED_EXTRA_TURN` / `VOYAGE_EXTRA_TURN`) 投递至 ActionScheduler。
+
+        若未提供自定义 `callback`，则默认在弹出时调用 `sim.execute_extra_turn(...)`，
+        执行一次不触发 `TurnBegin/TurnEnd`、不衰减 Buff、不结算 DoT 且不重置跑道的纯粹额外行动。
+        """
+        if callback is None:
+            def _default_extra_turn_cb():
+                if hasattr(self.sim, "execute_extra_turn"):
+                    self.sim.execute_extra_turn(
+                        actor_id,
+                        action_override=action_kind,
+                        target_ids=target_ids,
+                        schedule_category=category,
+                        advance_policy=advance_policy,
+                    )
+            resolved_cb = _default_extra_turn_cb
+            resolved_pub = False if publish_execute_event is None else publish_execute_event
+        else:
+            resolved_cb = callback
+            resolved_pub = True if publish_execute_event is None else publish_execute_event
+
+        scheduler = getattr(self.sim, "scheduler", None)
+        if scheduler is not None:
+            scheduler.enqueue(
+                actor_id=actor_id,
+                callback=resolved_cb,
+                name=name or "ExtraTurn",
+                category=category,
+                action_kind=action_kind,
+                skill_id=skill_id,
+                publish_execute_event=resolved_pub,
+                preempt_follow_up=preempt_follow_up,
+            )
+        else:
+            resolved_cb()
+
+    def queue_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:
+        """预约指定角色的终结技 (进入 ActionScheduler._reserved_queue)。"""
+        if hasattr(self.sim, "request_ultimate"):
+            return self.sim.request_ultimate(actor_id, target_ids=target_ids)
+        return False
+
+    def turn_sp_consumed(self, entity_id: str) -> int:
+        """查询指定角色在其当前自身单回合内已累计消耗的战技点数 (非自身自然回合返回 0)。"""
+        if hasattr(self.sim, "get_turn_sp_consumed"):
+            return self.sim.get_turn_sp_consumed(entity_id)
+        return 0
+
     def attack(
         self,
         source_id: str,
@@ -638,19 +798,25 @@ class SimulatorCombatPort:
             damage_type=resolved_damage_type
         )
         if resolved_damage_type == DamageType.FOLLOW_UP:
-            caller_frame = sys._getframe(1)
-            if self._last_followup_frame is not caller_frame or getattr(self, "_last_followup_actor", None) != source_id:
-                self._last_followup_frame = caller_frame
-                self._last_followup_actor = source_id
-                self.sim.event_bus.publish(ActionExecuteEvent(
-                    av=round(self.sim.current_av, 2),
-                    cycle=self.sim.current_cycle,
-                    actor_id=source_id,
-                    actor_name=source_id,
-                    action_type="FollowUpAttack",
-                    description=f"【{source_id}】触发追加攻击",
-                    action_kind=ActionKind.FOLLOW_UP
-                ))
+            scheduler = getattr(self.sim, "scheduler", None)
+            active_intent = getattr(scheduler, "active_intent", None) if scheduler is not None else None
+            # 若当前处于 ActionScheduler 调度的动作帧中且已由调度器发布过对应的 ActionExecuteEvent
+            # (例如调度的 FOLLOW_UP 或伤害视为追击但动作归属 AUTO_SKILL 的千刃)，
+            # 则不再重复或误发 ActionKind.FOLLOW_UP 的 ActionExecuteEvent。
+            if active_intent is None or not active_intent.publish_execute_event:
+                caller_frame = sys._getframe(1)
+                if self._last_followup_frame is not caller_frame or getattr(self, "_last_followup_actor", None) != source_id:
+                    self._last_followup_frame = caller_frame
+                    self._last_followup_actor = source_id
+                    self.sim.event_bus.publish(ActionExecuteEvent(
+                        av=round(self.sim.current_av, 2),
+                        cycle=self.sim.current_cycle,
+                        actor_id=source_id,
+                        actor_name=source_id,
+                        action_type="FollowUpAttack",
+                        description=f"【{source_id}】触发追加攻击",
+                        action_kind=ActionKind.FOLLOW_UP
+                    ))
         self.sim.resolver.enqueue(ApplyDamageEffect(
             request=req,
             toughness_reduction=toughness_damage,

@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any, List, Optional
 from .events import (
     ActionAdvanceEvent, ActionDelayEvent, SPChangeEvent, StatusApplyEvent, 
-    ActionExecuteEvent, DamageAppliedEvent, ToughnessReduceEvent, WeaknessBreakEvent,
-    HPLostEvent
+    ActionExecuteEvent, DamageAppliedEvent, EnemyDefeatedEvent,
+    ToughnessReduceEvent, WeaknessBreakEvent, HPLostEvent
 )
 from .damage import DamageCalculator, DamageRequest, DamageBreakdown
 from .actions import DamageType
@@ -106,6 +106,10 @@ class EffectResolver:
         finally:
             self._resolving = False
 
+        scheduler = getattr(self.simulator, "scheduler", None)
+        if scheduler is not None and scheduler.can_auto_drain() and scheduler.has_pending():
+            scheduler.drain()
+
     def _resolve_one(self, effect: EffectRequest):
         av = self.simulator.current_av
         cycle = self.simulator.current_cycle
@@ -149,6 +153,8 @@ class EffectResolver:
                 self.simulator.sp.generate(effect.delta, effect.actor_name, effect.reason, av)
             elif effect.delta < 0:
                 self.simulator.sp.consume(abs(effect.delta), effect.actor_name, effect.reason, av)
+                if hasattr(self.simulator, "record_turn_sp_consumption"):
+                    self.simulator.record_turn_sp_consumption(effect.actor_name, abs(effect.delta))
             bus.publish(SPChangeEvent(
                 av=round(av, 2),
                 cycle=cycle,
@@ -239,8 +245,15 @@ class EffectResolver:
                             break_damage=break_dmg,
                             action_delay_pct=0.25
                         ))
+                        scheduler = getattr(self.simulator, "scheduler", None)
+                        if scheduler is not None:
+                            scheduler.commit_reserved_wave()
 
         elif isinstance(effect, ApplyDamageEffect):
+            scheduler = getattr(self.simulator, "scheduler", None)
+            if scheduler is not None:
+                # 介入点 1 (before_hit): 命中前先提交攻击开始阶段预约的动作波次
+                scheduler.commit_reserved_wave()
             target = effect.request.target
             effect.request.target_is_broken = getattr(target, "is_broken", False)
 
@@ -281,6 +294,11 @@ class EffectResolver:
             else:
                 hp_left = 0.0
 
+            target_killed = bool(
+                was_alive
+                and hp_left == 0.0
+                and not getattr(target, "is_infinite_hp", False)
+            )
             resolved_damage_type = getattr(effect, "damage_type", None) or DamageType.from_tag(getattr(effect, "damage_tag", "direct"))
             bus.publish(DamageAppliedEvent(
                 av=round(av, 2),
@@ -292,8 +310,12 @@ class EffectResolver:
                 breakdown=breakdown,
                 target_hp_left=hp_left,
                 damage_tag=resolved_damage_type.value,
-                damage_type=resolved_damage_type
+                damage_type=resolved_damage_type,
+                target_killed=target_killed
             ))
+            if scheduler is not None:
+                # 介入点 2 (after_hit): 命中后提交命中触发的动作波次 (如银狼 E2 追加回合、千刃等)
+                scheduler.commit_reserved_wave()
 
             # 4. 敌方直接攻击命中我方角色或忆灵时触发标准受击回能 (忆灵受击回能归其主人, 严格受目标 ERR 放大)
             if (
@@ -307,12 +329,10 @@ class EffectResolver:
                 if energy_recipient and hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
                     self.simulator.port.gain_hit_energy(energy_recipient, hit_base)
 
-            # 4.5 击杀回能: 击败敌方目标时, 击杀者恢复 10 点能量 (受 ERR 放大); 忆灵击杀归其主人
+            # 4.5 击杀回能与击败事件: 击败敌方目标时, 击杀者恢复 10 点能量 (受 ERR 放大); 忆灵击杀归其主人
             if (
-                was_alive
-                and hp_left == 0.0
+                target_killed
                 and getattr(target, "is_enemy", False)
-                and not getattr(target, "is_infinite_hp", False)
                 and not getattr(effect.request.attacker, "is_enemy", False)
             ):
                 killer = effect.request.attacker
@@ -321,6 +341,15 @@ class EffectResolver:
                     killer_name = killer.master_name
                 if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
                     self.simulator.port.gain_hit_energy(killer_name, 10.0, cause=f"击败【{target.name}】击杀回能 (基础 10.0, 受 ERR 放大)")
+                bus.publish(EnemyDefeatedEvent(
+                    av=round(av, 2),
+                    cycle=cycle,
+                    attacker_name=killer_name,
+                    target_name=target.name
+                ))
+                if scheduler is not None:
+                    # 介入点 3 (on_kill): 击杀时提交击杀触发的动作波次 (如希儿再现追加回合)
+                    scheduler.commit_reserved_wave()
 
             # 5. 如果携带削韧属性，入队削韧请求
             if effect.toughness_reduction > 0:

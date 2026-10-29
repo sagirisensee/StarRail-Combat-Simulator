@@ -19,7 +19,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ...actions import (
-    DamageType,
+    DamageType, FollowUpPhase,
     ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode
 )
 from ...combat_port import BuffSpec, CombatPort
@@ -27,6 +27,7 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType, StackPolic
 
 
 class ArcherKit(KitHandler):
+    follow_up_phase = FollowUpPhase.FAST
     E2_QUANTUM_RES_DEBUFF = "Archer_E2_QuantumResDebuff"
     CIRCUIT_CONNECTED_BUFF = "Archer_Circuit_Connected"
 
