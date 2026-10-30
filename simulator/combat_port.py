@@ -852,6 +852,8 @@ class SimulatorCombatPort:
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None:
         ent = self._get_entity(entity_id)
         if ent:
+            if getattr(ent, "current_hp", 0.0) <= 0:
+                return
             if absorb_by_shield and getattr(ent, "shield", 0.0) > 0:
                 absorbed = min(ent.shield, amount)
                 ent.shield -= absorbed

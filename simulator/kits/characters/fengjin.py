@@ -254,6 +254,9 @@ class FengjinKit(KitHandler):
                 if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                     continue
                 if self.port.is_memosprite(ally):
+                    prev_max = self.port.max_hp(ally)
+                    ent = self.port._get_entity(ally)
+                    prev_hp = getattr(ent, "current_hp", 0.0) if ent else 0.0
                     self.port.upsert_status(BuffSpec(
                         key=f"Fengjin_Ult_SunAfterRain_{ally}",
                         name="雨过天晴",
@@ -270,11 +273,12 @@ class FengjinKit(KitHandler):
                         description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
                     ))
                     cur_max = self.port.max_hp(ally)
-                    ent = self.port._get_entity(ally)
                     if ent and cur_max > 0:
-                        if ally == "小伊卡":
-                            cur_max = 5143.08
-                        ent.current_hp = cur_max
+                        delta = max(0.0, cur_max - prev_max)
+                        if ent.current_hp < prev_hp + delta:
+                            ent.current_hp = min(cur_max, ent.current_hp + delta)
+                        else:
+                            ent.current_hp = min(cur_max, ent.current_hp)
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:

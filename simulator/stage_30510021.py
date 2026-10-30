@@ -58,7 +58,7 @@ BOSS_PHASE1_BARRIER_DELAY_AV = 40.5
 # 一阶段屏障释放时点: 第二波开始后约 135 AV (日志中 #42 av=232.31 屏障击破)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
 SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
-SPROUT_WAVE_COUNT = 6      # 包含转阶段增援总计 6 批增援 (12 只胚芽)
+SPROUT_WAVE_COUNT = 5      # 增援批次上限: 连同波 2 开场首对共 6 批 (12 只胚芽)
 SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 两场增援间隔交替呈 75.7/75.8)
 
 # 第一波大型敌人 (Nanoka 关卡数据, 与日志/录像交叉验证, 见模块头注):
@@ -321,18 +321,21 @@ class Stage30510021Director:
                 ika = self.sim.get_entity("小伊卡")
                 ika_kit = getattr(ika, "kit", None) if ika else None
                 for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌"):
-                    if self.sim.get_entity(a_name) is not None:
+                    ent = self.sim.get_entity(a_name)
+                    if ent is not None and getattr(ent, "current_hp", 0.0) > 0:
                         self.sim.port.lose_hp(a_name, 600.0, cause="boss_phase_transition_aoe")
                 if ika_kit is not None:
                     ika_kit._resolve_talent_heal()
                 for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌"):
-                    if self.sim.get_entity(a_name) is not None:
+                    ent = self.sim.get_entity(a_name)
+                    if ent is not None and getattr(ent, "current_hp", 0.0) > 0:
                         self.sim.port.lose_hp(a_name, 600.0, cause="boss_phase2_turn1_aoe")
                 if ika_kit is not None:
                     ika_kit._resolve_talent_heal()
                 for _ in range(1):
                     for a_name in ("风堇", "缇宝", "知更鸟•晴歌"):
-                        if self.sim.get_entity(a_name) is not None:
+                        ent = self.sim.get_entity(a_name)
+                        if ent is not None and getattr(ent, "current_hp", 0.0) > 0:
                             self.sim.port.lose_hp(a_name, 300.0, cause="boss_phase2_multihit_aoe")
                     if ika_kit is not None:
                         ika_kit._resolve_talent_heal()

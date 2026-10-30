@@ -530,6 +530,21 @@ class ChangyeyueKit(KitHandler):
                     description="巡游在无界的天空无视防御"
                 ))
 
+            # 知更鸟•晴歌 E2 全队抗穿 (心似一片湖水 +18.0%)
+            robin_e2 = next((s for s in self.port.statuses(self.owner_id) if s.id == "Robin_E2_ResPen"), None)
+            if robin_e2 and not self.port.has_status(self.spirit_name, "Robin_E2_ResPen"):
+                self.port.upsert_status(BuffSpec(
+                    key="Robin_E2_ResPen",
+                    name="心似一片湖水",
+                    source_id=robin_e2.source.name if hasattr(robin_e2, "source") else self.owner_id,
+                    target_id=self.spirit_name,
+                    modifiers=tuple(robin_e2.modifiers),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    description="全队全属性抗性穿透提高 +18.0%"
+                ))
+
             # 行迹【天亮了，雨落了】：赋予忆灵暴击伤害加成 (+50%)
             rem_count = self._get_remembrance_count()
             rem_cd = 0.50 if rem_count == 3 else (0.65 if rem_count >= 4 else (0.15 if rem_count == 2 else 0.05))
