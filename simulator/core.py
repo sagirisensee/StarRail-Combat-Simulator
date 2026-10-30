@@ -13,7 +13,8 @@ from .entity import Entity
 from .combat_port import CombatPort, BuffSpec, SimulatorCombatPort
 from .inspector import BattleInspector
 from .events import (
-    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, ActionEndEvent, 
+    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent,
+    PrimaryDamageCompleteEvent, ActionEndEvent, 
     ToughnessRecoverEvent, TechniqueExecuteEvent
 )
 from .effects import (
@@ -540,6 +541,15 @@ class TurnSimulator:
 
             self.resolver.resolve_all()
             if should_publish:
+                self.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=active_entity.name,
+                    actor_name=active_entity.name,
+                    action_type=actual_action,
+                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0
+                ))
                 self.event_bus.publish(ActionEndEvent(
                     av=round(self.current_av, 2),
                     cycle=self.current_cycle,
@@ -789,6 +799,15 @@ class TurnSimulator:
                 rh.on_action_after(ctx)
             self.resolver.resolve_all()
             if should_publish:
+                self.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=ent.name,
+                    actor_name=ent.name,
+                    action_type=f"Ultimate ({defn.name})",
+                    action_kind=ActionKind.ULTIMATE,
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
+                ))
                 self.event_bus.publish(ActionEndEvent(
                     av=round(self.current_av, 2),
                     cycle=self.current_cycle,

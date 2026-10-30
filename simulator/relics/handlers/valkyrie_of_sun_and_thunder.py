@@ -2,6 +2,7 @@
 from ..base import RelicSetHandler
 from ...combat_port import BuffSpec
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
+from ...events import SpiritSummonedEvent
 
 
 class ValkyrieOfSunAndThunderHandler(RelicSetHandler):
@@ -41,3 +42,22 @@ class ValkyrieOfSunAndThunderHandler(RelicSetHandler):
                 category="buff",
                 description="全队暴击伤害 +15.0%"
             ))
+
+    def on_event(self, event) -> None:
+        if self.pieces < 4 or not self.port:
+            return
+        if isinstance(event, SpiritSummonedEvent):
+            sp_name = event.spirit_name
+            if self.port.entity_exists(sp_name):
+                self.port.upsert_status(BuffSpec(
+                    key=f"Relic_Valkyrie_CritDmg_{sp_name}",
+                    name="烈阳惊雷的女武神",
+                    source_id=self.owner_id,
+                    target_id=sp_name,
+                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    description="全队暴击伤害 +15.0%"
+                ))
+

@@ -53,7 +53,8 @@ from ...actions import (
 )
 from ...combat_port import BuffSpec, CombatPort
 from ...events import (
-    ActionExecuteEvent, DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent
+    ActionExecuteEvent, PrimaryDamageCompleteEvent, ActionEndEvent,
+    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent
 )
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
@@ -231,14 +232,13 @@ class RobinSunnySongKit(KitHandler):
         self.vibes: int = 0             # 气氛值
         self._custom_max_vibes: Optional[int] = None
 
-        # 行迹【即兴蓝调】
+        # 行迹【即兴蓝调】与气氛值门禁
         self.rhythm_stacks: int = 0     # 律动层数 (上限 12 层)
         self._rhythm_consumed_in_current_turn: bool = False
         self._healed_this_turn: bool = False
         self._healed_sources_in_turn: set[str] = set()
-        self._healed_in_ult: bool = False
-        self._gained_vibe_in_action: bool = False
         self._e2_vibe_bonus_in_turn: bool = False
+        self._defer_fever_sync: bool = False
 
         # 伴生乐手成员状态
         self.musicians_alive: bool = False
@@ -469,9 +469,10 @@ class RobinSunnySongKit(KitHandler):
         if trigger_ally_id:
             self.apply_tonal_chord_to_ally(trigger_ally_id)
 
-        # 若处于 Fever 期间，实时刷新结界属性与乐手速度
+        # 若处于 Fever 期间，实时刷新结界属性与乐手速度 (主动/大招/忆灵攻击在主伤完成后统一刷新结界)
         if self.in_fever:
-            self._sync_fever_buffs()
+            if not getattr(self, "_defer_fever_sync", False):
+                self._sync_fever_buffs()
             if self.port.entity_exists(self.MUSICIAN_NAME):
                 self.port.set_base_speed(self.MUSICIAN_NAME, self.musician_speed)
 
@@ -721,24 +722,25 @@ class RobinSunnySongKit(KitHandler):
         adv_ratio = self.skill_param("1151206", 0, default=0.50)
         self.port.set_distance(self.owner_id, 10000.0 * (1.0 - adv_ratio))
 
-    def apply_tonal_chord_to_ally(self, ally_id: str) -> None:
+    def apply_tonal_chord_to_ally(self, ally_id: str, vibes_override: Optional[int] = None) -> None:
         """行迹【偏离和弦】(point06)：
         我方目标使知更鸟•晴歌获得气氛值时：
         - 若该目标攻击力 > 知更鸟：使该目标的攻击力提高等同于知更鸟生命上限的 (16% + 气氛值 * 0.4%)；
         - 否则：使该目标的暴击伤害提高 (40% + 气氛值 * 1.5%)；
         持续 2 回合。
         """
+        vibes = self.vibes if vibes_override is None else vibes_override
         target_atk = self.port.stat(ally_id, StatType.ATK_BASE)
         robin_atk = self.port.stat(self.owner_id, StatType.ATK_BASE)
 
         if target_atk > robin_atk:
             robin_hp = self.port.max_hp(self.owner_id)
-            atk_ratio = 0.16 + self.vibes * 0.004
+            atk_ratio = 0.16 + vibes * 0.004
             flat_atk = robin_hp * atk_ratio
             mods = (Modifier(StatType.ATK_BASE, ModifierOp.ADD, flat_atk),)
             desc = f"攻击力提高 +{flat_atk:.1f} (知更鸟生命上限的 {atk_ratio * 100:.1f}%)"
         else:
-            cd_val = 0.40 + self.vibes * 0.015
+            cd_val = 0.40 + vibes * 0.015
             mods = (Modifier(StatType.CRIT_DMG, ModifierOp.ADD, cd_val),)
             desc = f"暴击伤害 +{cd_val * 100:.1f}%"
 
@@ -775,8 +777,8 @@ class RobinSunnySongKit(KitHandler):
             self._rhythm_consumed_in_current_turn = False
             self._healed_this_turn = False
             self._healed_sources_in_turn = set()
-            self._healed_in_ult = False
             self._e2_vibe_bonus_in_turn = False
+            self._defer_fever_sync = False
             if self.musicians_alive:
                 self._update_musician_aura()
 
@@ -832,6 +834,8 @@ class RobinSunnySongKit(KitHandler):
                 self._last_turn_actor = event.actor_name
 
             # 天赋：我方目标施放攻击时获得 1 点气氛值 (排除纯辅助技能与 Fever 倒计时实体)
+            # 架构因果律：攻击本体在此快照登记，不提前增加攻击自身带来的结界防御无视；
+            # 攻击者的【偏离和弦】(Tonal Chord) 个人增益在发动时正常生效
             if (
                 self.port.is_ally(event.actor_name)
                 and self.port.is_attack_action(
@@ -846,16 +850,25 @@ class RobinSunnySongKit(KitHandler):
                 if self._is_special_guest_actor(event.actor_name):
                     extra += int(self.skill_param("ultra", 1, default=2.0))
                 # 星魂 2【心似一片湖水】：在任意目标回合内第一次施放技能使知更鸟•晴歌获得气氛值时额外获得 2 点
-                if self.eidolon >= 2 and not self._e2_vibe_bonus_in_turn:
+                if self.eidolon >= 2 and not getattr(self, "_e2_vibe_bonus_in_turn", False):
                     self._e2_vibe_bonus_in_turn = True
                     extra += int(self.eidolon_param(2, 1, default=2.0))
+
+                self._defer_fever_sync = self._current_action_kind == ActionKind.ULTIMATE
                 self.gain_vibes(1 + extra, trigger_ally_id=event.actor_name)
+
+        elif isinstance(event, (PrimaryDamageCompleteEvent, ActionEndEvent)):
+            if getattr(self, "_defer_fever_sync", False):
+                self._defer_fever_sync = False
+                if self.in_fever:
+                    self._sync_fever_buffs()
 
         elif isinstance(event, DamageAppliedEvent):
             # 星魂 1【夏日离群飞鸟】：记录我方目标造成的非真实伤害的 100% (#3=1.0)
             if self.eidolon >= 1 and self.port.is_ally(event.attacker_name):
-                record_ratio = self.eidolon_param(1, 2, default=1.0)
-                self.recorded_damage += event.damage * record_ratio
+                if getattr(event, "damage_type", None) != DamageType.TRUE and getattr(getattr(event, "breakdown", None), "is_dot", False) is False:
+                    record_ratio = self.eidolon_param(1, 2, default=1.0)
+                    self.recorded_damage += event.damage * record_ratio
 
     def use_technique(self) -> None:
         """秘技【我们自成旋律】(151207)：

@@ -43,7 +43,7 @@
   减伤属性 damage_reduction 建模 (统一由 damage 管线结算, 零角色插件耦合)。
 """
 
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from .core import Entity, TurnSimulator
 
@@ -416,7 +416,10 @@ class Stage30510021Director:
                 sp.current_hp = 900000.0
 
 
-def build_stage_30510021(team: List[Entity]) -> tuple:
+def build_stage_30510021(
+    team: List[Entity],
+    technique_users: Optional[Sequence[str]] = None,
+) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
     from .actions import ActionKind, DamageType
     from .events import ActionExecuteEvent, DamageAppliedEvent
@@ -438,7 +441,14 @@ def build_stage_30510021(team: List[Entity]) -> tuple:
     enemies = [pegasus, lighthouse, guard_a, guard_b, guard_c]
 
     # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。
-    sim = TurnSimulator(entities=list(team) + enemies, use_techniques=True, auto_ult=True, stage_mechanics=["血噬"])
+    tech_list = list(technique_users) if technique_users is not None else None
+    sim = TurnSimulator(
+        entities=list(team) + enemies,
+        use_techniques=True,
+        technique_users=tech_list,
+        auto_ult=True,
+        stage_mechanics=["血噬"],
+    )
 
     # 第一波「灯塔」(8033020) 官方机制还原:
     # - 开局 0.00 AV 首回合施放【正道战线】召唤 千星戍卫A/B/C，并进入【除恶】状态获得 9 层【众愿】；

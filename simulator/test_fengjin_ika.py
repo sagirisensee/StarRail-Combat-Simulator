@@ -55,6 +55,7 @@ class TestIkaScatterWindowBudget(unittest.TestCase):
         from simulator.actions import ActionContext, ActionKind
 
         sim = build_default_sim(av_budget=465.0)
+        sim.auto_ult = False
         fengjin = sim.get_entity("风堇")
         kit = fengjin.kit
         scatters = []
@@ -104,6 +105,7 @@ class TestRainBuffWhiteBase(unittest.TestCase):
         from simulator.actions import ActionContext, ActionKind
 
         sim = build_default_sim(av_budget=465.0)
+        sim.auto_ult = False
         fengjin = sim.get_entity("风堇")
         kit = fengjin.kit
         # 以终结技前后的增量断言, 与队内其他常驻生命加成 (如 +518 的前期

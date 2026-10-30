@@ -26,4 +26,6 @@ data/*.backup.json
 video_inspection/
 video_artifacts/
 video_keyframes/
+scratch/
+
 

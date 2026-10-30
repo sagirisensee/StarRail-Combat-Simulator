@@ -18,7 +18,7 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Sequence
 
 from .actions import ActionKind
 
@@ -674,14 +674,23 @@ def build_default_sim(av_budget: float):
     return sim
 
 
-def build_stage_sim():
+def build_stage_sim(
+    log_path: Optional[str] = None,
+    technique_users: Optional[Sequence[str]] = None,
+):
     """构造关卡 30510021 的还原对照场景 (敌方构成/HP/波次按实机日志), 返回 (sim, director)。"""
     from .db.character_db import CharacterDB
     from .stage_30510021 import build_stage_30510021
 
+    if technique_users is None and log_path is not None:
+        if "20261025" in str(log_path):
+            technique_users = ["长夜月", "知更鸟•晴歌"]
+        elif "20261026" in str(log_path):
+            technique_users = ["长夜月", "知更鸟•晴歌", "风堇"]
+
     db = CharacterDB().load("data/character_db_export.json")
     team = [db.to_combat_entity(n) for n in ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]]
-    return build_stage_30510021(team)
+    return build_stage_30510021(team, technique_users=technique_users)
 
 
 # 官方 battle_20261026_062503 实战未暴击段数真值台账 (act_idx, non_true_hit_idx)
@@ -756,11 +765,11 @@ def main(argv=None) -> int:
     parser.add_argument("--replay", action="store_true", help="回放对齐模式: 按日志中的玩家决策脚本驱动模拟")
     parser.add_argument("--force", action="store_true", help="强制回放: 决策钉死, 能量/战技点按缺口补足并记台账 (隐含 --replay)")
     parser.add_argument("--trajectory", action="store_true", help="轨迹回放: 在强制回放之上再钉死忆灵技轨迹, 缺口补足记账 (隐含 --force)")
-    parser.add_argument("--align-crit", action="store_true", help="暴击真值对齐模式: 100% 对齐实战暴击与未暴击段数 (变态对齐)")
+    parser.add_argument("--align-crit", action="store_true", help="暴击真值对齐模式: 100%% 对齐实战暴击与未暴击段数 (变态对齐)")
     args = parser.parse_args(argv)
 
     golden = parse_golden_jsonl(args.golden)
-    sim, director = build_stage_sim()
+    sim, director = build_stage_sim(log_path=args.golden)
     if args.align_crit:
         attach_exact_crit_oracle(sim)
     replay_md = ""

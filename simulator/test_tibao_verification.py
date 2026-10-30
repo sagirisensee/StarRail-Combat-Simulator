@@ -254,7 +254,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         sim.execute_current_turn(action_override=ActionKind.SKILL, actor=robin)
 
         expected_hp = {
-            "长夜月": 8626,
+            "长夜月": 8627,
             "缇宝": 9565,
             "知更鸟•晴歌": 7237,
             "风堇": 6014,

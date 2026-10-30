@@ -29,7 +29,7 @@ from .actions import (
     FollowUpPhase,
     ScheduledActionIntent,
 )
-from .events import ActionExecuteEvent, ActionEndEvent
+from .events import ActionExecuteEvent, PrimaryDamageCompleteEvent, ActionEndEvent, TurnBeginEvent
 
 if TYPE_CHECKING:
     from .core import TurnSimulator
@@ -452,6 +452,17 @@ class ActionScheduler:
                         intent.callback()
                         self.sim.resolver.resolve_all()
                         if intent.publish_execute_event:
+                            self.sim.event_bus.publish(
+                                PrimaryDamageCompleteEvent(
+                                    av=round(getattr(self.sim, "current_av", 0.0), 2),
+                                    cycle=getattr(self.sim, "current_cycle", 0),
+                                    actor_id=intent.actor_id,
+                                    actor_name=intent.actor_id,
+                                    action_type=intent.name,
+                                    action_kind=intent.action_kind,
+                                    skill_config_id=intent.skill_id,
+                                )
+                            )
                             self.sim.event_bus.publish(
                                 ActionEndEvent(
                                     av=round(getattr(self.sim, "current_av", 0.0), 2),

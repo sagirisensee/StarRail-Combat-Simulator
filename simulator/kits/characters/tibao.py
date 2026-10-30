@@ -28,6 +28,7 @@ from ..base import KitHandler
 from ..registry import register_kit
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, FollowUpPhase
 from ...combat_port import BuffSpec, CombatPort
+from ...events import PrimaryDamageCompleteEvent, ActionEndEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatType, StatusTag
 
 
@@ -480,7 +481,25 @@ class TibaoKit(KitHandler):
                 self._in_volley = False
             if hasattr(self.port, "resolve_effects"):
                 self.port.resolve_effects()
+            if hasattr(self.port, "sim") and hasattr(self.port.sim, "event_bus"):
+                self.port.sim.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(getattr(self.port.sim, "current_av", 0.0), 2),
+                    cycle=getattr(self.port.sim, "current_cycle", 0),
+                    actor_id=self.owner_id,
+                    actor_name=self.owner_id,
+                    action_type="FollowUpAttack",
+                    action_kind=ActionKind.FOLLOW_UP
+                ))
             self._flush_zone_window()
+            if hasattr(self.port, "sim") and hasattr(self.port.sim, "event_bus"):
+                self.port.sim.event_bus.publish(ActionEndEvent(
+                    av=round(getattr(self.port.sim, "current_av", 0.0), 2),
+                    cycle=getattr(self.port.sim, "current_cycle", 0),
+                    actor_id=self.owner_id,
+                    actor_name=self.owner_id,
+                    action_type="FollowUpAttack",
+                    action_kind=ActionKind.FOLLOW_UP
+                ))
             self._apply_lamb_buff()
 
     def _cast_talent_volley(self) -> None:
