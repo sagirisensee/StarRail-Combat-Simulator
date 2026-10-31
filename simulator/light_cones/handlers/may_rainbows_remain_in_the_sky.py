@@ -45,7 +45,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.BASIC):
             drain_ratio = self.scale(self.DRAIN_VALUES)
             for ally in self.port.allies(self.owner_id):
-                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                if ally.endswith("•倒计时") or (hasattr(self.port, "is_countdown") and self.port.is_countdown(ally)):
                     continue
                 cur_hp = self.port.current_hp(ally)
                 drain_amt = max(1.0, cur_hp * drain_ratio)
@@ -100,7 +100,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         if hasattr(self.port, "resolve_effects"):
             self.port.resolve_effects()
         self._spirit_action_open = False
-        targets = self._spirit_hit_targets
+        targets = list(dict.fromkeys(self._spirit_hit_targets))
         self._spirit_hit_targets = []
         if self._pool <= 0 or not targets:
             return
@@ -109,30 +109,27 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         wearer_max_hp = self.port.max_hp(self.owner_id)
         if wearer_max_hp <= 0:
             return
-        # 官方文本：使装备者的忆灵基于已消耗生命值的 250% 造成附加伤害（享受忆灵自身的增伤与暴伤乘区）
-        # 为保持日志归因在装备者名下 (type=Additional)，将忆灵与装备者的增伤比折算入等效倍率，并汇总忆灵完整暴伤
-        from ...status import StatusTag
-        spirit_dmg_mult = 1.0
+
+        # 官方文本：使装备者的忆灵基于已消耗生命值的 250% 造成基于忆灵属性的附加伤害
+        # 忆灵属性乘区：增伤比折算、忆灵自身动态暴伤、长夜月星魂1忆灵伤害乘区
         spirit_crit_dmg = float(self.port.stat(self.owner_id, StatType.CRIT_DMG))
+        spirit_dmg_mult = 1.0
         for ally in self.port.allies(self.owner_id):
             if self.port.is_own_memosprite(self.owner_id, ally):
                 s_boost = 1.0 + self.port.stat(ally, StatType.DMG_BOOST)
                 w_boost = 1.0 + self.port.stat(self.owner_id, StatType.DMG_BOOST)
                 if w_boost > 0:
                     spirit_dmg_mult = s_boost / w_boost
-                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
-                    for m in s.modifiers:
-                        if m.stat == StatType.CRIT_DMG:
-                            spirit_crit_dmg += m.value
+                spirit_crit_dmg = float(self.port.stat(ally, StatType.CRIT_DMG))
                 break
-        for ally in self.port.allies(self.owner_id):
-            if self.port.is_memosprite(ally) and not self.port.is_own_memosprite(self.owner_id, ally):
-                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
-                    if s.name == "白昼悄然离去":
-                        for m in s.modifiers:
-                            if m.stat == StatType.CRIT_DMG:
-                                spirit_crit_dmg += m.value
-                        break
+
+        # 长夜月 E1【睡吧，长夜有所梦】：当敌方数量 >=4 时我方忆灵伤害乘区 1.20x
+        for e in getattr(self.port, "sim", None).entities if hasattr(self.port, "sim") else ():
+            if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
+                fn = getattr(e.kit, "_memosprite_damage_mult", None)
+                if callable(fn):
+                    spirit_dmg_mult *= float(fn())
+
         eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
         for target in targets:
             if self.port.entity_exists(target):

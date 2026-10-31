@@ -28,6 +28,7 @@ from ..base import KitHandler
 from ..registry import register_kit
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, FollowUpPhase
 from ...combat_port import BuffSpec, CombatPort
+from ...events import PrimaryDamageCompleteEvent, ActionEndEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatType, StatusTag
 
 
@@ -450,7 +451,6 @@ class TibaoKit(KitHandler):
                             t_id = pending_true["target"]
                             emit_zero_true = (
                                 true_base == 0.0
-                                and window_actor != "晴空乐手"
                                 and hasattr(self.port, "is_barrier_guarded")
                                 and self.port.is_barrier_guarded(t_id)
                             )
@@ -481,7 +481,25 @@ class TibaoKit(KitHandler):
                 self._in_volley = False
             if hasattr(self.port, "resolve_effects"):
                 self.port.resolve_effects()
+            if hasattr(self.port, "sim") and hasattr(self.port.sim, "event_bus"):
+                self.port.sim.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(getattr(self.port.sim, "current_av", 0.0), 2),
+                    cycle=getattr(self.port.sim, "current_cycle", 0),
+                    actor_id=self.owner_id,
+                    actor_name=self.owner_id,
+                    action_type="FollowUpAttack",
+                    action_kind=ActionKind.FOLLOW_UP
+                ))
             self._flush_zone_window()
+            if hasattr(self.port, "sim") and hasattr(self.port.sim, "event_bus"):
+                self.port.sim.event_bus.publish(ActionEndEvent(
+                    av=round(getattr(self.port.sim, "current_av", 0.0), 2),
+                    cycle=getattr(self.port.sim, "current_cycle", 0),
+                    actor_id=self.owner_id,
+                    actor_name=self.owner_id,
+                    action_type="FollowUpAttack",
+                    action_kind=ActionKind.FOLLOW_UP
+                ))
             self._apply_lamb_buff()
 
     def _cast_talent_volley(self) -> None:
@@ -551,7 +569,7 @@ class TibaoKit(KitHandler):
                 else:
                     team_hp_sum += self.port.max_hp(ally)
 
-        glass_ball_hp = round(team_hp_sum * 0.09, 1)
+        glass_ball_hp = team_hp_sum * 0.09
         self.port.upsert_status(BuffSpec(
             key="Tribbie_A4_GlassBallWithWings",
             name="长翅膀的玻璃球！",
@@ -575,11 +593,11 @@ class TibaoKit(KitHandler):
         from ...events import (
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
             SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
-            TurnBeginEvent, TurnEndEvent
+            TurnBeginEvent, TurnEndEvent, ActionEndEvent
         )
         if isinstance(event, TurnBeginEvent):
             self._turn_started = True
-        if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
+        if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
             self._flush_zone_window()
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
             self._sync_glass_ball_hp()

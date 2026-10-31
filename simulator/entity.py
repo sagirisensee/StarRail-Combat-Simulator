@@ -64,6 +64,8 @@ class Entity:
     # 屏障护体 (如【血脑屏障】展开期间): 受到的真实伤害归零、附加伤害按
     # 25% 结算, 直接伤害不受影响; 由关卡/机制侧按状态切换
     barrier_guarded: bool = False
+    # 是否为关卡头目/首领级实体 (用于自动战斗首领优先规则)
+    is_boss: bool = False
     master_name: Optional[str] = None
     extra_immediate_action: bool = False
     # 追加攻击调度分组 (FollowUpPhase.FAST / NORMAL / SLOW / COUNTER; None 表示无追加攻击或由 kit 决定)

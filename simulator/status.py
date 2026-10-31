@@ -21,6 +21,7 @@ class DurationTiming(Enum):
     TARGET_TURN_START = auto()   # 目标自身回合开始扣减
     TARGET_TURN_END = auto()     # 目标自身回合结束扣减
     CASTER_TURN_END = auto()     # 施法者自身行动结束扣减 (结界时钟)
+    CASTER_TURN_START = auto()   # 施法者自身回合开始扣减 (如风堇雨过天晴: 施法者每回合开始时持续回合数减1)
 
 
 class StackPolicy(Enum):
@@ -215,11 +216,18 @@ class StatusManager:
         return any(s.id == status_id for s in self.get_statuses(target_name))
 
     def tick_on_turn_begin(self, actor: Any):
-        """在回合开始时结算 TARGET_TURN_START 类型的状态。"""
+        """在回合开始时结算 TARGET_TURN_START 与 CASTER_TURN_START 类型的状态。"""
+        # 1. 作为目标自身回合开始
         self._tick_and_clean(
             condition=lambda s: s.target.name == actor.name and s.timing == DurationTiming.TARGET_TURN_START,
             actor_name=actor.name,
-            phase="回合开始"
+            phase="目标回合开始"
+        )
+        # 2. 作为施法者回合开始（如风堇【雨过天晴】: 风堇每回合开始持续回合数减1）
+        self._tick_and_clean(
+            condition=lambda s: s.source.name == actor.name and s.timing == DurationTiming.CASTER_TURN_START,
+            actor_name=actor.name,
+            phase="施法者回合开始"
         )
 
     def tick_on_turn_end(self, actor: Any):
@@ -283,7 +291,8 @@ class StatusManager:
         stat_type: StatType,
         white_base: float = 0.0,
         *,
-        exclude_tags: Tuple[str, ...] = ()
+        exclude_tags: Tuple[str, ...] = (),
+        category: Optional[str] = None
     ) -> float:
         """动态计算指定属性的加成总值（支持按语义标签 StatusTag 排除以防自循环转化）。
         
@@ -309,7 +318,7 @@ class StatusManager:
         flat_sum = 0.0
         pct_sum = 0.0
 
-        for status in self.get_statuses(entity_name, exclude_tags=exclude_tags):
+        for status in self.get_statuses(entity_name, exclude_tags=exclude_tags, category=category):
             for mod in status.modifiers:
                 # 攻击力属性统一聚合 (包含 ATK_BASE, ATK_PERCENT, ATK)
                 if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):

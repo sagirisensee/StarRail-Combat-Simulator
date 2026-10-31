@@ -14,7 +14,8 @@
 """
 from dataclasses import dataclass
 from typing import Optional, Any
-from .status import StatType
+from .actions import DamageType
+from .status import StatType, StatusTag
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,19 @@ class DamageBreakdown:
     reduction_mult: float
     # 最终结算伤害
     final_damage: float
+    # 诊断与微观明细 (可选扩展字段，保持 100% 向后兼容)
+    barrier_mult: float = 1.0
+    scaling_stat: str = "atk"
+    base_stat: float = 0.0
+    skill_multiplier: float = 1.0
+    flat_damage: float = 0.0
+    dmg_boost: float = 0.0
+    def_shred: float = 0.0
+    target_def_shred: float = 0.0
+    attacker_def_ignore: float = 0.0
+    eff_res: float = 0.0
+    res_pen: float = 0.0
+    vuln: float = 0.0
 
     def format_details(self) -> str:
         """生成清晰可读的乘区算式账单。"""
@@ -81,14 +95,19 @@ class DamageCalculator:
             dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST) + getattr(req, "extra_dmg_boost", 0.0)
             res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
-            target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
-            attacker_def_ignore = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DEF_SHRED)
+            if getattr(req.target, "is_enemy", False):
+                target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
+            else:
+                target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED, category="debuff")
+            attacker_def_ignore = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DEF_SHRED, category="buff")
             def_shred = target_def_shred + attacker_def_ignore
             vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY)
         else:
             dmg_boost = base_dmg_boost
             res_pen = 0.0
             def_shred = 0.0
+            target_def_shred = 0.0
+            attacker_def_ignore = 0.0
             vuln = 0.0
 
         # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
@@ -123,7 +142,12 @@ class DamageCalculator:
                 res_mult=1.0,
                 vuln_mult=1.0,
                 reduction_mult=1.0,
-                final_damage=base_dmg
+                final_damage=base_dmg,
+                barrier_mult=1.0,
+                scaling_stat=scaling,
+                base_stat=base_stat,
+                skill_multiplier=req.skill_multiplier,
+                flat_damage=req.flat_damage,
             )
 
         # 2. 双暴区
@@ -132,10 +156,18 @@ class DamageCalculator:
 
         if req.force_crit is not None:
             is_crit = req.force_crit
+        elif getattr(req.attacker, "is_enemy", False):
+            # 敌方怪物攻击默认不可暴击 (星铁全系列普通怪物/首领均无暴击能力)
+            is_crit = False
         else:
-            # 默认按暴击率判定 (大于等于 100% 必暴，或概率模拟)
-            import random
-            is_crit = (random.random() < crit_rate) or (crit_rate >= 1.0)
+            sim = getattr(req.attacker, "simulator", None)
+            oracle = getattr(sim, "crit_oracle", None)
+            if callable(oracle) and not req.is_true_damage:
+                is_crit = bool(oracle(req))
+            else:
+                # 默认按暴击率判定 (大于等于 100% 必暴，或概率模拟)
+                import random
+                is_crit = (random.random() < crit_rate) or (crit_rate >= 1.0)
 
         crit_mult = (1.0 + crit_dmg) if is_crit else 1.0
 
@@ -143,28 +175,49 @@ class DamageCalculator:
         dmg_boost_mult = 1.0 + dmg_boost
 
         # 4. 防御区
-        # 敌方基准防御: Lv * 10 + 200
-        enemy_def_base = req.target_level * 10 + 200
-        effective_def = enemy_def_base * max(0.0, (1.0 - min(1.0, def_shred)))
-        attacker_factor = req.attacker_level * 10 + 200
+        # 目标防御力:
+        # - 若目标为我方角色 (is_enemy=False 且具备 defense/base_def 属性), 承伤严格基于角色实际防御力属性;
+        # - 若目标为敌方怪物, 按星铁底层公式基准防御: Lv * 10 + 200
+        is_target_enemy = getattr(req.target, "is_enemy", False)
+        attacker_lvl = getattr(req.attacker, "level", None) or req.attacker_level
+        target_lvl = getattr(req.target, "level", None) or req.target_level
+
+        if not is_target_enemy and hasattr(req.target, "defense"):
+            target_def_base = req.target.defense
+        elif not is_target_enemy and hasattr(req.target, "base_def"):
+            target_def_base = req.target.base_def
+        else:
+            target_def_base = target_lvl * 10 + 200
+
+        effective_def = target_def_base * max(0.0, (1.0 - min(1.0, def_shred)))
+        attacker_factor = attacker_lvl * 10 + 200
         def_mult = attacker_factor / (attacker_factor + effective_def)
 
         # 5. 抗性区
-        eff_res = req.target_base_res - res_pen
+        # 我方角色基础全属性抗性默认为 0.0 (除非指定 damage_res); 敌方非弱点抗性默认为 req.target_base_res (通常 0.20)
+        if not is_target_enemy and req.target_base_res == 0.20:
+            target_base_res = 0.0
+            if hasattr(req.target, "damage_res") and isinstance(req.target.damage_res, dict):
+                target_base_res = req.target.damage_res.get(getattr(req, "element", ""), 0.0)
+        else:
+            target_base_res = req.target_base_res
+        eff_res = target_base_res - res_pen
         res_mult = max(0.0, min(2.0, 1.0 - eff_res))
 
         # 6. 易伤区
         vuln_mult = 1.0 + vuln
 
-        # 7. 韧性减伤区 (未破韧固定 0.9，破韧 1.0)
-        reduction_mult = 1.0 if req.target_is_broken else 0.9
+        # 7. 韧性减伤区 (敌方未破韧固定 0.9，破韧 1.0; 我方角色无韧性减伤条固定 1.0)
+        if not is_target_enemy:
+            reduction_mult = 1.0
+        else:
+            reduction_mult = 1.0 if req.target_is_broken else 0.9
 
         # 屏障转化与关卡独立减伤乘区: 目标屏障护体时, 附加伤害按 25% 结算;
         # 目标携带关卡独立减伤/易损属性 (damage_reduction) 时统一在此乘区结算,
         # 彻底消除角色 Kit 插件对特定 Boss 屏障状态的耦合感知。
         barrier_mult = 1.0
         if getattr(req.target, "barrier_guarded", False):
-            from .actions import DamageType
             if getattr(req, "damage_type", None) == DamageType.ADDITIONAL:
                 barrier_mult = 0.25
         if barrier_mult == 1.0:
@@ -194,5 +247,17 @@ class DamageCalculator:
             res_mult=res_mult,
             vuln_mult=vuln_mult,
             reduction_mult=reduction_mult,
-            final_damage=final_dmg
+            final_damage=final_dmg,
+            barrier_mult=barrier_mult,
+            scaling_stat=scaling,
+            base_stat=base_stat,
+            skill_multiplier=req.skill_multiplier,
+            flat_damage=req.flat_damage,
+            dmg_boost=dmg_boost,
+            def_shred=def_shred,
+            target_def_shred=target_def_shred,
+            attacker_def_ignore=attacker_def_ignore,
+            eff_res=eff_res,
+            res_pen=res_pen,
+            vuln=vuln,
         )

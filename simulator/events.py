@@ -48,6 +48,26 @@ class ActionExecuteEvent(BattleEvent):
 
 
 @dataclass(frozen=True)
+class PrimaryDamageCompleteEvent(BattleEvent):
+    """攻击动作本体伤害结算完成事实事件 (架构屏障点：本体计算结束，提交攻击奖励与后置状态，再结算随动附加伤害)。"""
+    actor_id: str
+    actor_name: str
+    action_type: str = ""
+    action_kind: Any = None
+    skill_config_id: int = 0
+
+
+@dataclass(frozen=True)
+class ActionEndEvent(BattleEvent):
+    actor_id: str
+    actor_name: str
+    action_type: str = ""
+    description: str = ""
+    action_kind: Any = None
+    skill_config_id: int = 0
+
+
+@dataclass(frozen=True)
 class TechniqueExecuteEvent(BattleEvent):
     actor_id: str
     actor_name: str

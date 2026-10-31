@@ -13,7 +13,8 @@ from .entity import Entity
 from .combat_port import CombatPort, BuffSpec, SimulatorCombatPort
 from .inspector import BattleInspector
 from .events import (
-    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, 
+    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent,
+    PrimaryDamageCompleteEvent, ActionEndEvent, 
     ToughnessRecoverEvent, TechniqueExecuteEvent
 )
 from .effects import (
@@ -486,11 +487,15 @@ class TurnSimulator:
                     owner_turn_id=owner_turn_id,
                     owner_turn_actor_id=owner_turn_actor,
                 )
+                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_before"):
+                    active_entity.kit.on_action_before(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_before(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
                     rh.on_action_before(ctx)
                 active_entity.kit.execute(ctx)
+                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_after"):
+                    active_entity.kit.on_action_after(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_after(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
@@ -535,6 +540,25 @@ class TurnSimulator:
                         self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
             self.resolver.resolve_all()
+            if should_publish:
+                self.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=active_entity.name,
+                    actor_name=active_entity.name,
+                    action_type=actual_action,
+                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0
+                ))
+                self.event_bus.publish(ActionEndEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=active_entity.name,
+                    actor_name=active_entity.name,
+                    action_type=actual_action,
+                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0
+                ))
 
     def execute_extra_turn(
         self,
@@ -760,16 +784,39 @@ class TurnSimulator:
                 owner_turn_id=owner_turn_id,
                 owner_turn_actor_id=owner_turn_actor,
             )
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_before"):
+                ent.kit.on_action_before(ctx)
             if getattr(ent, "light_cone", None) is not None:
                 ent.light_cone.on_action_before(ctx)
             for rh in getattr(ent, "relic_handlers", []):
                 rh.on_action_before(ctx)
             ent.kit.execute(ctx)
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_after"):
+                ent.kit.on_action_after(ctx)
             if getattr(ent, "light_cone", None) is not None:
                 ent.light_cone.on_action_after(ctx)
             for rh in getattr(ent, "relic_handlers", []):
                 rh.on_action_after(ctx)
             self.resolver.resolve_all()
+            if should_publish:
+                self.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=ent.name,
+                    actor_name=ent.name,
+                    action_type=f"Ultimate ({defn.name})",
+                    action_kind=ActionKind.ULTIMATE,
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
+                ))
+                self.event_bus.publish(ActionEndEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=ent.name,
+                    actor_name=ent.name,
+                    action_type=f"Ultimate ({defn.name})",
+                    action_kind=ActionKind.ULTIMATE,
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
+                ))
         return True
 
     def request_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:

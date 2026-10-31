@@ -167,6 +167,7 @@ class CombatPort(Protocol):
     @property
     def tracer(self) -> Any: ...
     def is_countdown(self, entity_id: str) -> bool: ...
+    def is_boss(self, entity_id: str) -> bool: ...
     def summon_spirit(
         self,
         owner_id: str,
@@ -239,6 +240,10 @@ class SimulatorCombatPort:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "barrier_guarded", False))
 
+    def is_boss(self, entity_id: str) -> bool:
+        ent = self._get_entity(entity_id)
+        return bool(ent and getattr(ent, "is_boss", False))
+
     def is_attack_action(self, actor_id: str, action_kind: Any = None, action_type: str = "") -> bool:
         """判定指定实体的某次动作是否属于【攻击】行为（排除纯辅助技能与倒计时实体）。"""
         actor_ent = self._get_entity(actor_id)
@@ -269,10 +274,18 @@ class SimulatorCombatPort:
         actor = self._get_entity(actor_id)
         if not actor:
             return ()
-        return tuple(
-            e.name for e in self.sim.entities
-            if e.is_enemy == actor.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))
-        )
+        res = []
+        for e in self.sim.entities:
+            if e.is_enemy != actor.is_enemy or getattr(e, "unspawned", False):
+                continue
+            if getattr(e, "is_memosprite", False):
+                master = self.sim.get_entity(getattr(e, "master_name", ""))
+                if master and getattr(master, "kit", None) and hasattr(master.kit, "spirit_alive"):
+                    if not master.kit.spirit_alive:
+                        continue
+            if e.current_hp > 0 or getattr(e, "is_infinite_hp", False):
+                res.append(e.name)
+        return tuple(res)
 
     def enemies(self, actor_id: str) -> Tuple[str, ...]:
         actor = self._get_entity(actor_id)
@@ -772,7 +785,7 @@ class SimulatorCombatPort:
         if not tgt or not src:
             return
         eff_multiplier = atk_multiplier
-        if resolved_damage_type == DamageType.SERVANT and not src.is_enemy:
+        if (resolved_damage_type == DamageType.SERVANT or self.is_memosprite(source_id)) and not src.is_enemy:
             for e in self.sim.entities:
                 if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
                     fn = getattr(e.kit, "_memosprite_damage_mult", None)
@@ -839,6 +852,8 @@ class SimulatorCombatPort:
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None:
         ent = self._get_entity(entity_id)
         if ent:
+            if getattr(ent, "current_hp", 0.0) <= 0:
+                return
             if absorb_by_shield and getattr(ent, "shield", 0.0) > 0:
                 absorbed = min(ent.shield, amount)
                 ent.shield -= absorbed
