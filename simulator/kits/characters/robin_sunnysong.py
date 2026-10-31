@@ -54,7 +54,7 @@ from ...actions import (
 from ...combat_port import BuffSpec, CombatPort
 from ...events import (
     ActionExecuteEvent, PrimaryDamageCompleteEvent, ActionEndEvent,
-    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent
+    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent, SpiritSummonedEvent
 )
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
@@ -93,25 +93,14 @@ class SunnyMusiciansKit(KitHandler):
         self.master_kit._update_musician_aura()
         # 晴空乐手在场时同步主人身上的全队结界抗穿与减防光环, 仅以物理乘区与屏障吸收结算
         from ...status import StatusTag
-        # 长夜月战技窗口已结束时，先清掉此前从队友忆灵复制来的「白昼悄然离去」映射副本：
-        # 来源状态已不在任一队友忆灵身上，即视为过期，避免无战技窗口期残留该暴伤。
-        live_shared_ids = set()
-        for ally in self.port.allies(self.owner_id):
-            if self.port.is_memosprite(ally) and ally != self.owner_id:
-                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
-                    if s.name == "白昼悄然离去":
-                        live_shared_ids.add(s.id)
-        for s in list(self.port.statuses(self.owner_id)):
-            if not s.id.startswith("Changyeyue_Skill_SharedCritDmg_Spirit"):
-                continue
-            src_id = s.id[: -len(f"_{self.owner_id}")] if s.id.endswith(f"_{self.owner_id}") else s.id
-            if src_id not in live_shared_ids:
-                self.port.remove_status(self.owner_id, s.id)
+
         musician_statuses = list(self.port.statuses(self.owner_id))
         musician_status_ids = {s.id for s in musician_statuses}
         musician_status_names = {s.name for s in musician_statuses}
         for s in self.port.statuses(self.master_kit.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
+                continue
+            if s.id.startswith(("Changyeyue_Skill_SharedCritDmg", "Changyeyue_A6_RemembranceCritDmg")):
                 continue
             if s.id in (self.master_kit.FEVER_DMG_BUFF, "Robin_Tech_Melody") or s.id.startswith("Robin_Talent_TonalChord_"):
                 continue
@@ -136,23 +125,7 @@ class SunnyMusiciansKit(KitHandler):
                     tags=tuple(getattr(s, "tags", ()))
                 ))
                 musician_status_names.add(s.name)
-        for ally in self.port.allies(self.owner_id):
-            if self.port.is_memosprite(ally) and ally != self.owner_id:
-                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
-                    if s.name == "白昼悄然离去" and s.name not in musician_status_names:
-                        self.port.upsert_status(BuffSpec(
-                            key=f"{s.id}_{self.owner_id}",
-                            name=s.name,
-                            source_id=getattr(s.source, "name", ally),
-                            target_id=self.owner_id,
-                            modifiers=tuple(s.modifiers),
-                            duration=s.duration,
-                            timing=s.timing,
-                            category="buff",
-                            description=s.description,
-                            tags=tuple(getattr(s, "tags", ()))
-                        ))
-                        musician_status_names.add(s.name)
+
         for enemy_id in enemies:
             self.port.attack(
                 self.owner_id,
@@ -837,6 +810,34 @@ class RobinSunnySongKit(KitHandler):
                         self._healed_this_turn = True
                         self.gain_vibes(1, trigger_ally_id=event.source_name)
 
+        elif isinstance(event, SpiritSummonedEvent):
+            target_id = getattr(event, "spirit_name", "")
+            if (
+                not self.port.entity_exists(target_id)
+                or not self.port.is_ally(target_id)
+                or not self.port.is_memosprite(target_id)
+            ):
+                return
+
+            if self.eidolon >= 2:
+                res_pen = self.eidolon_param(2, 2, default=0.18)
+                self.port.upsert_status(BuffSpec(
+                    key=self.E2_RES_PEN_BUFF,
+                    name="心似一片湖水",
+                    source_id=self.owner_id,
+                    target_id=target_id,
+                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, res_pen),),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    description=f"全队全属性抗性穿透提高 +{res_pen * 100:.1f}%"
+                ))
+
+            if self.in_fever:
+                self._sync_fever_buffs()
+
+
+
         elif isinstance(event, ActionExecuteEvent):
             if self.musicians_alive:
                 self._update_musician_aura()
@@ -904,7 +905,7 @@ class RobinSunnySongKit(KitHandler):
                 modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, tech_dmg),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
+                skip_current_clock=False,
                 category="buff",
                 description=f"全队造成伤害提高 +{tech_dmg * 100:.1f}%"
             ))

@@ -79,6 +79,7 @@ class CombatPort(Protocol):
     def current_hp(self, entity_id: str) -> float: ...
     def max_hp(self, entity_id: str) -> float: ...
     def hp_ratio(self, entity_id: str) -> float: ...
+    def adjust_current_hp(self, entity_id: str, delta: float) -> float: ...
 
     # --- 3. 状态管理与语义检索 ---
     def has_status(self, target_id: str, key: str) -> bool: ...
@@ -848,6 +849,17 @@ class SimulatorCombatPort:
                 return self.sim.status_mgr.calculate_stat(ent.name, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp)
             return base_max_hp
         return 0.0
+
+    def adjust_current_hp(self, entity_id: str, delta: float) -> float:
+        """非治疗/非伤害口径的生命调整（如生命上限增减时同步当前生命），返回实际调整量。"""
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return 0.0
+        cur_max = self.max_hp(entity_id)
+        prev_hp = getattr(ent, "current_hp", 0.0)
+        new_hp = max(0.0, min(cur_max, prev_hp + delta))
+        ent.current_hp = new_hp
+        return new_hp - prev_hp
 
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None:
         ent = self._get_entity(entity_id)

@@ -602,6 +602,42 @@ class TibaoKit(KitHandler):
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
             self._sync_glass_ball_hp()
 
+        if isinstance(event, SpiritSummonedEvent):
+            target_id = getattr(event, "spirit_name", "")
+            if (
+                self.port.entity_exists(target_id)
+                and self.port.is_ally(target_id)
+                and self.port.is_memosprite(target_id)
+            ):
+                divine_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Tribbie_Ult_DivineRevelation_")), None)
+                if divine_buff and not self.port.has_status(target_id, f"Tribbie_Ult_DivineRevelation_{target_id}"):
+                    self.port.upsert_status(BuffSpec(
+                        key=f"Tribbie_Ult_DivineRevelation_{target_id}",
+                        name="神启",
+                        source_id=self.owner_id,
+                        target_id=target_id,
+                        modifiers=tuple(divine_buff.modifiers),
+                        duration=divine_buff.duration,
+                        timing=divine_buff.timing,
+                        skip_current_clock=True,
+                        category="buff",
+                        description="全属性抗性穿透"
+                    ))
+                e4_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Tribbie_E4_PeaceInConcord_")), None)
+                if e4_buff and not self.port.has_status(target_id, f"Tribbie_E4_PeaceInConcord_{target_id}"):
+                    self.port.upsert_status(BuffSpec(
+                        key=f"Tribbie_E4_PeaceInConcord_{target_id}",
+                        name="心意相契的安宁",
+                        source_id=self.owner_id,
+                        target_id=target_id,
+                        modifiers=tuple(e4_buff.modifiers),
+                        duration=e4_buff.duration,
+                        timing=e4_buff.timing,
+                        skip_current_clock=True,
+                        category="buff",
+                        description="全队造成的伤害无视目标 18.0% 防御"
+                    ))
+
         if isinstance(event, DamageAppliedEvent):
             attacker = event.attacker_name
             target = event.target_name

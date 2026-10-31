@@ -487,11 +487,7 @@ def build_stage_30510021(
 
     director = Stage30510021Director(sim)
     killed_sprouts = set()
-    for ally in sim.entities:
-        if ally.name != "长夜月":
-            for s in sim.status_mgr.get_statuses(ally.name):
-                if s.id.startswith("Fengjin_Tech_WeatherIsFine_"):
-                    s.skip_current_clock = False
+    # 进战秘技持续时间由各套件自然定义，无需额外硬编码干涉
 
     def _on_battle_ev(e: BattleEvent) -> None:
         if isinstance(e, ActionExecuteEvent):

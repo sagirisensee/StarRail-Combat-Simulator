@@ -188,6 +188,8 @@ class FengjinKit(KitHandler):
         星魂 2【请来我的庭院坐坐】：我方目标生命值降低时，速度提高 30%，持续 2 回合。
         (忆灵天赋【牵起晴空的手】的治疗已移交 IkaKit 本体实现, 见文件末尾。)
         """
+        if actual_loss <= 0.0:
+            return
         if entity_id in self.port.allies(self.owner_id):
             if self.eidolon >= 2:
                 self.port.upsert_status(BuffSpec(
@@ -238,6 +240,39 @@ class FengjinKit(KitHandler):
             )
         raise ValueError(f"未支持的动作类型: {kind}")
 
+    def _apply_sun_after_rain_to_memosprite(self, target_id: str, duration: int = 3) -> None:
+        """统一为忆灵施加【雨过天晴】生命上限 Buff，并通过 CombatPort 原子同步当前生命值。"""
+        if not self.port.entity_exists(target_id) or not self.port.is_memosprite(target_id):
+            return
+        if self.port.has_status(target_id, f"Fengjin_Ult_SunAfterRain_{target_id}"):
+            return
+
+        hp_boost = self.skill_param("ultra", 2, default=0.30)
+        if self.eidolon >= 1:
+            hp_boost += 0.50
+        flat_hp = self.skill_param("ultra", 3, default=600.0)
+
+        prev_max = self.port.max_hp(target_id)
+        self.port.upsert_status(BuffSpec(
+            key=f"Fengjin_Ult_SunAfterRain_{target_id}",
+            name="雨过天晴",
+            source_id=self.owner_id,
+            target_id=target_id,
+            modifiers=(
+                Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, hp_boost),
+                Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
+            ),
+            duration=duration,
+            timing=DurationTiming.CASTER_TURN_END,
+            skip_current_clock=True,
+            category="buff",
+            description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
+        ))
+        cur_max = self.port.max_hp(target_id)
+        if cur_max > prev_max:
+            delta = cur_max - prev_max
+            self.port.adjust_current_hp(target_id, delta)
+
     def on_action_before(self, ctx: ActionContext) -> None:
         """动作声明期钩子：
         施放终结技时展开【雨过天晴】场域基准，伴生忆灵依附场域实时生命基准，
@@ -254,31 +289,7 @@ class FengjinKit(KitHandler):
                 if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                     continue
                 if self.port.is_memosprite(ally):
-                    prev_max = self.port.max_hp(ally)
-                    ent = self.port._get_entity(ally)
-                    prev_hp = getattr(ent, "current_hp", 0.0) if ent else 0.0
-                    self.port.upsert_status(BuffSpec(
-                        key=f"Fengjin_Ult_SunAfterRain_{ally}",
-                        name="雨过天晴",
-                        source_id=self.owner_id,
-                        target_id=ally,
-                        modifiers=(
-                            Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, hp_boost),
-                            Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
-                        ),
-                        duration=3,
-                        timing=DurationTiming.CASTER_TURN_END,
-                        skip_current_clock=True,
-                        category="buff",
-                        description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
-                    ))
-                    cur_max = self.port.max_hp(ally)
-                    if ent and cur_max > 0:
-                        delta = max(0.0, cur_max - prev_max)
-                        if ent.current_hp < prev_hp + delta:
-                            ent.current_hp = min(cur_max, ent.current_hp + delta)
-                        else:
-                            ent.current_hp = min(cur_max, ent.current_hp)
+                    self._apply_sun_after_rain_to_memosprite(ally, duration=3)
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
@@ -464,7 +475,7 @@ class FengjinKit(KitHandler):
 
     def on_event(self, event: Any) -> None:
         # 累计治疗量统计: 风堇与伴生忆灵造成的治疗计入忆灵技的伤害基数
-        from ...events import HealAppliedEvent, ActionExecuteEvent
+        from ...events import HealAppliedEvent, ActionExecuteEvent, SpiritSummonedEvent
         if isinstance(event, HealAppliedEvent) and (
             event.source_name == self.owner_id
             or self.port.is_own_memosprite(self.owner_id, event.source_name)
@@ -472,6 +483,21 @@ class FengjinKit(KitHandler):
             if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(event.target_name)):
                 self.accumulated_healing += float(event.amount)
         self._sync_storm_calm()
+
+        if isinstance(event, SpiritSummonedEvent):
+            target_id = getattr(event, "spirit_name", "")
+            if (
+                self.port.entity_exists(target_id)
+                and self.port.is_ally(target_id)
+                and self.port.is_memosprite(target_id)
+            ):
+                if self._sun_after_rain_active():
+                    ult_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Fengjin_Ult_SunAfterRain_")), None)
+                    if ult_buff:
+                        self._apply_sun_after_rain_to_memosprite(target_id, duration=ult_buff.duration)
+
+
+
         """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
         if self.eidolon >= 1 and self._sun_after_rain_active():
             if isinstance(event, ActionExecuteEvent):
@@ -490,6 +516,7 @@ class FengjinKit(KitHandler):
 
     def use_technique(self) -> None:
         """秘技【天气正好，万物可爱！】：进场回复 30% HP + 600，生命上限提高 20%，持续 2 回合。"""
+        self._sync_storm_calm()
         max_hp = self.port.max_hp(self.owner_id)
         raw_heal = max_hp * 0.30 + 600.0
         for ally in self.port.allies(self.owner_id):
@@ -504,12 +531,11 @@ class FengjinKit(KitHandler):
                 modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
+                skip_current_clock=False,
                 category="buff",
                 description="全队生命上限提高 +20.0%"
             ))
-        # 补齐开战秘技由于战前动态属性尚未初始化的 144.86 点累计治疗基准，使第 #07 动累计治疗精准收敛至台账 40,342.55 点
-        self.accumulated_healing += 144.86
+
 
 
 class IkaKit(KitHandler):
@@ -661,6 +687,8 @@ class IkaKit(KitHandler):
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
         """记录生命降低的我方目标，待回合开始/行动后由天赋【牵起晴空的手】结算治疗。"""
+        if actual_loss <= 0.0:
+            return
         if entity_id == self.owner_id or cause == "yika_talent_consume_hp":
             return
         if hasattr(self.port, "is_countdown") and self.port.is_countdown(entity_id):
