@@ -813,7 +813,9 @@ class ChangyeyueKit(KitHandler):
                     timing=DurationTiming.TARGET_TURN_START,
                     category="buff",
                     tags=tags,
-                    description=f"战技分享忆灵暴击伤害 +{shared_cd * 100:.1f}%"
+                    description=f"战技分享忆灵暴击伤害 +{shared_cd * 100:.1f}%",
+                    parent_key="Changyeyue_Skill_SharedCritDmg",
+                    parent_target_name=self.owner_id
                 ))
             else:
                 self.port.remove_status(ally_id, shared_key)

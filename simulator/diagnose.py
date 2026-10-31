@@ -403,10 +403,11 @@ class MultiplierDiagnosticsEngine:
         base_match = True
         if attacker in stat_snap:
             char_stats = stat_snap[attacker]
-            if stat_key == "hp" and "CurrentHP" in char_stats:
-                gt_hp = char_stats["CurrentHP"]
-                gt_base_stat_str = f"{gt_hp:,.2f}"
-                base_match = abs(sim_base_stat - gt_hp) / gt_hp < 0.001
+            if stat_key == "hp":
+                gt_hp = char_stats.get("MaxHP", char_stats.get("HP", char_stats.get("CurrentHP", None)))
+                if gt_hp is not None:
+                    gt_base_stat_str = f"{gt_hp:,.2f}"
+                    base_match = abs(sim_base_stat - gt_hp) / gt_hp < 0.001
             elif stat_key == "atk" and "ATK" in char_stats:
                 gt_atk = char_stats["ATK"]
                 gt_base_stat_str = f"{gt_atk:,.2f}"

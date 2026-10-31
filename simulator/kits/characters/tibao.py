@@ -621,7 +621,9 @@ class TibaoKit(KitHandler):
                         timing=divine_buff.timing,
                         skip_current_clock=True,
                         category="buff",
-                        description="全属性抗性穿透"
+                        description="全属性抗性穿透",
+                        parent_key=divine_buff.id,
+                        parent_target_name=self.owner_id
                     ))
                 e4_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Tribbie_E4_PeaceInConcord_")), None)
                 if e4_buff and not self.port.has_status(target_id, f"Tribbie_E4_PeaceInConcord_{target_id}"):
@@ -635,7 +637,9 @@ class TibaoKit(KitHandler):
                         timing=e4_buff.timing,
                         skip_current_clock=True,
                         category="buff",
-                        description="全队造成的伤害无视目标 18.0% 防御"
+                        description="全队造成的伤害无视目标 18.0% 防御",
+                        parent_key=e4_buff.id,
+                        parent_target_name=self.owner_id
                     ))
 
         if isinstance(event, DamageAppliedEvent):

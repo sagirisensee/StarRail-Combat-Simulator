@@ -6,8 +6,9 @@
 - `SimulatorCombatPort` 将插件的窄接口请求桥接为 `EffectResolver` 队列事务、`StatusManager` 状态更新与 `EventBus` 事实事件。
 """
 import sys
-from dataclasses import dataclass
-from typing import Callable, Protocol, Tuple, Optional, Any, TYPE_CHECKING
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Callable, Protocol, Tuple, Optional, Any, Dict, TYPE_CHECKING
 from .actions import (
     ActionKind,
     ActionScheduleCategory,
@@ -45,6 +46,27 @@ class BuffSpec:
     tags: Tuple[str, ...] = ()
     stacks: int = 1
     max_stacks: int = 1
+    parent_key: Optional[str] = None
+    parent_target_name: Optional[str] = None
+
+
+class SpawnPhase(Enum):
+    """召唤物入场生命周期四阶段状态机。"""
+    REGISTER = auto()      # 实体注册与基础数据就绪 (可查询但不可行动)
+    BROADCAST = auto()     # 入场事件广播与阶段插件通知
+    STABILIZE = auto()     # 因果链稳定化 (属性对账、光环同步与被动效果排空)
+    ACTION_GATE = auto()   # 行动门释放 (校验 generation 存活并移交 Scheduler 调度)
+
+
+@dataclass
+class SpawnContext:
+    """召唤物入场屏障上下文。"""
+    token: int
+    entity_id: str
+    entity_generation: int
+    phase: SpawnPhase = SpawnPhase.REGISTER
+    ready: bool = False
+    cancelled: bool = False
 
 
 class CombatPort(Protocol):
@@ -53,6 +75,7 @@ class CombatPort(Protocol):
     def battle_av(self) -> float: ...
     # --- 1. 阵营与从属关系查询 ---
     def entity_exists(self, entity_id: str) -> bool: ...
+    def is_action_ready(self, entity_id: str) -> bool: ...
     def is_ally(self, actor_id: str) -> bool: ...
     def is_memosprite(self, entity_id: str) -> bool: ...
     def get_master_name(self, entity_id: str) -> Optional[str]: ...
@@ -190,6 +213,19 @@ class SimulatorCombatPort:
         self.sim = simulator
         self._last_followup_frame = None
         self._last_followup_actor = None
+        self._spawn_token_seq: int = 0
+        self._spawn_generations: Dict[str, int] = {}
+        self._spawn_barriers: Dict[str, SpawnContext] = {}
+
+    def is_action_ready(self, entity_id: str) -> bool:
+        """检查实体是否已完成入场屏障稳定化并具备行动资格。"""
+        ent = self._get_entity(entity_id)
+        if not ent:
+            return False
+        ctx = self._spawn_barriers.get(ent.name)
+        if ctx is not None:
+            return ctx.ready and not ctx.cancelled
+        return True
 
     @property
     def tracer(self):
@@ -480,6 +516,11 @@ class SimulatorCombatPort:
         tgt = self._get_entity(spec.target_id)
         if not src or not tgt:
             return
+        p_tgt_name = None
+        if spec.parent_target_name:
+            p_ent = self._get_entity(spec.parent_target_name)
+            p_tgt_name = p_ent.name if p_ent else spec.parent_target_name
+
         status = StatusInstance(
             id=spec.key,
             name=spec.name,
@@ -494,7 +535,9 @@ class SimulatorCombatPort:
             description=getattr(spec, "description", None),
             tags=list(getattr(spec, "tags", ())),
             stacks=getattr(spec, "stacks", 1),
-            max_stacks=getattr(spec, "max_stacks", 1)
+            max_stacks=getattr(spec, "max_stacks", 1),
+            parent_key=spec.parent_key,
+            parent_target_name=p_tgt_name
         )
         self.sim.status_mgr.add_status(status)
 
@@ -926,8 +969,23 @@ class SimulatorCombatPort:
     ) -> Any:
         from .entity import Entity
         existing = self.sim.get_entity(name)
-        if existing:
+        if existing and existing in self.sim.entities:
             return existing
+
+        # --- Phase 1: REGISTER ---
+        self._spawn_token_seq += 1
+        token = self._spawn_token_seq
+        gen = self._spawn_generations.get(name, 0) + 1
+        self._spawn_generations[name] = gen
+        ctx = SpawnContext(
+            token=token,
+            entity_id=name,
+            entity_generation=gen,
+            phase=SpawnPhase.REGISTER,
+            ready=False
+        )
+        self._spawn_barriers[name] = ctx
+
         owner = self._get_entity(owner_id)
         spirit = Entity(
             name=name,
@@ -950,6 +1008,9 @@ class SimulatorCombatPort:
         if kit_class:
             spirit.kit = kit_class(name, self, **(kit_args or {}))
         self.sim.add_entity(spirit, trigger_battle_start=False)
+
+        # --- Phase 2: BROADCAST ---
+        ctx.phase = SpawnPhase.BROADCAST
         self.sim.event_bus.publish(SpiritSummonedEvent(
             av=round(getattr(self.sim, "current_av", 0.0), 2),
             cycle=getattr(self.sim, "current_cycle", 0),
@@ -958,15 +1019,30 @@ class SimulatorCombatPort:
         ))
         for plugin in getattr(self.sim, "stage_plugins", []):
             plugin.on_entity_summoned(spirit, self.sim)
+
+        # --- Phase 3: STABILIZE ---
+        ctx.phase = SpawnPhase.STABILIZE
+        if hasattr(self.sim, "resolver") and not getattr(self.sim.resolver, "_resolving", False):
+            self.sim.resolver.resolve_all()
+        if hasattr(self.sim, "status_mgr"):
+            calc_hp = self.sim.status_mgr._calc_entity_max_hp(spirit)
+            if 0 < calc_hp != float("inf") and spirit.current_hp > calc_hp:
+                spirit.current_hp = calc_hp
+
+        # --- Phase 4: ACTION_GATE ---
+        ctx.phase = SpawnPhase.ACTION_GATE
+        ctx.ready = True
         return spirit
 
     def despawn_spirit(self, name: str, reason: str = "") -> None:
         ent = self.sim.get_entity(name)
         if ent and ent in self.sim.entities:
             owner_name = getattr(ent, "master_name", "") or ""
+            if name in self._spawn_barriers:
+                self._spawn_barriers[name].cancelled = True
+                del self._spawn_barriers[name]
             if hasattr(self.sim, "status_mgr"):
-                for s in list(self.sim.status_mgr.get_statuses(name)):
-                    self.sim.status_mgr.remove_status(name, s.id)
+                self.sim.status_mgr.remove_all_for_target(name)
             self.sim.entities.remove(ent)
             if self.sim._current_turn_entity == ent:
                 self.sim._current_turn_entity = None
