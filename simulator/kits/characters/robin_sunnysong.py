@@ -93,6 +93,20 @@ class SunnyMusiciansKit(KitHandler):
         self.master_kit._update_musician_aura()
         # 晴空乐手在场时同步主人身上的全队结界抗穿与减防光环, 仅以物理乘区与屏障吸收结算
         from ...status import StatusTag
+        # 长夜月战技窗口已结束时，先清掉此前从队友忆灵复制来的「白昼悄然离去」映射副本：
+        # 来源状态已不在任一队友忆灵身上，即视为过期，避免无战技窗口期残留该暴伤。
+        live_shared_ids = set()
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_memosprite(ally) and ally != self.owner_id:
+                for s in self.port.statuses(ally, include_tags=(StatusTag.MEMOSPRITE_ONLY,)):
+                    if s.name == "白昼悄然离去":
+                        live_shared_ids.add(s.id)
+        for s in list(self.port.statuses(self.owner_id)):
+            if not s.id.startswith("Changyeyue_Skill_SharedCritDmg_Spirit"):
+                continue
+            src_id = s.id[: -len(f"_{self.owner_id}")] if s.id.endswith(f"_{self.owner_id}") else s.id
+            if src_id not in live_shared_ids:
+                self.port.remove_status(self.owner_id, s.id)
         musician_statuses = list(self.port.statuses(self.owner_id))
         musician_status_ids = {s.id for s in musician_statuses}
         musician_status_names = {s.name for s in musician_statuses}

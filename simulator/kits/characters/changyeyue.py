@@ -253,6 +253,11 @@ class ChangyeyueKit(KitHandler):
                     if self.port.is_memosprite(ally):
                         self.port.remove_status(ally, "Changyeyue_Skill_SharedCritDmg_Spirit")
                         self.port.remove_status(ally, f"Changyeyue_Skill_SharedCritDmg_Spirit_{ally}")
+                        # 映射副本（如晴空乐手 execute() 复制的 ..._Spirit_{来源}_{乐手}）不在上述
+                        # 两键覆盖内，战技窗口结束时按前缀一并清扫，避免无战技窗口期残留暴伤。
+                        for s in list(self.port.statuses(ally)):
+                            if s.id.startswith("Changyeyue_Skill_SharedCritDmg_Spirit_"):
+                                self.port.remove_status(ally, s.id)
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
