@@ -23,6 +23,7 @@
 6. 行迹【岔路旁的小石子？】：进战回能 30 点 (受 ERR 加成)。
 """
 
+from dataclasses import dataclass, field
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ..registry import register_kit
@@ -30,6 +31,22 @@ from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCos
 from ...combat_port import BuffSpec, CombatPort
 from ...events import PrimaryDamageCompleteEvent, ActionEndEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StackPolicy, StatType, StatusTag
+
+
+@dataclass
+class _ZoneWindow:
+    actor_id: str
+    kind: ActionKind
+    zone_seen: bool = False
+
+    targets: set[str] = field(default_factory=set)
+    direct_targets: set[str] = field(default_factory=set)
+
+    damage_total: float = 0.0
+    true_base: float = 0.0
+    direct_hits: int = 0
+
+    request_volley: bool = False
 
 
 @register_kit("1403", "缇宝", "tribbie", "tibao")
@@ -46,21 +63,14 @@ class TibaoKit(KitHandler):
         self.zone_active: bool = False
         self.zone_duration: int = 0
         self.talent_used_by: set = set()
-        # 结界附加伤害的动作窗口: 记录上一个我方行动窗口内被攻击命中的敌方目标与总伤害
-        self._zone_window_actor: Optional[str] = None
-        self._zone_window_zone: bool = False
-        self._zone_window_targets: set = set()
-        self._zone_window_total: float = 0.0
-        self._zone_window_true_base: float = 0.0
-        self._zone_window_hits: int = 0
-        self._zone_resolving: bool = False
-        self._in_volley: bool = False
-        # 星魂 1 待结算真实伤害: 汇总本动作窗口内命中非屏障锁血目标的实际伤害与
-        # 结界附加伤害实际值, 按 24% 派发真实伤害至当前生命值最高的目标
-        self._pending_true: Optional[dict] = None
-        # 天赋追加攻击待发标记: 追击在官方时序中是独立行动, 须等触发行动的
-        # 结界窗口结算完毕后再施放并单独结算其窗口 (见 _flush_zone_window)
-        self._pending_volley: bool = False
+
+        # 基于 action_id 的结界因果账本
+        self._zone_windows: dict[int, _ZoneWindow] = {}
+        self._zone_finished_actions: set[int] = set()
+        self._zone_seen_effects: set[int] = set()
+        self._zone_settling_action: Optional[int] = None
+        self._zone_additional_actual: float = 0.0
+        self._turn_started: bool = False
 
     def apply_trace_passives(self, entity: Any) -> None:
         """战前静态基线校准：注入缇宝基础白字生命（以实机数据 breakdowns.base_white 为准，默认 2317.0）。"""
@@ -343,12 +353,7 @@ class TibaoKit(KitHandler):
         self.port.gain_energy(self.owner_id, 5.0 * err)
 
         # 6. 星魂 6【星月漫天的明日】：施放终结技时立即触发一次追加攻击。
-        #    先排空并结算终结技本体伤害的结界窗口, 再置待发标记触发 E6 齐射并独立结算。
-        if self.eidolon >= 6:
-            if hasattr(self.port, "resolve_effects"):
-                self.port.resolve_effects()
-            self._pending_volley = True
-            self._flush_zone_window()
+        # 由大招行动窗口在主伤完成后统一安排 (见 _flush_zone_window)
 
     def _apply_lamb_buff(self) -> None:
         """行迹【城墙外的羊羔儿】: 施放天赋追加攻击后, 自身造成伤害提高 72%,
@@ -370,137 +375,239 @@ class TibaoKit(KitHandler):
             description="造成伤害提高 +72.0% (每层, 最多 3 层)"
         ))
 
-    def _flush_zone_window(self) -> None:
-        """结算上一个我方攻击动作窗口的结界附加伤害 (140303) 与星魂 1 真实伤害。
+    def _on_zone_action_execute(self, event: Any) -> None:
+        from ._causal import actor_of, require_id
 
-        触发规则以官方真值日志 (battle_20261025_131019) 逐窗口对账为准:
-        - 附加命中数 = 该行动对敌方造成的伤害段数 + (星魂 2 时额外 1 次, 每次行动
-          仅 1 次, 而非每个目标 1 次)。实测: 单目标行动 1 段→2 命中、三目标全体
-          攻击 3 段→4 命中、长夜迷梦 5 段→6 命中。旧实现按「不同目标数 × 2」
-          计数, 三目标时打出 6 命中, 系统性偏高。
-        - 附加伤害全部落在被攻击目标中当前生命值最高者身上, 每段等同于缇宝
-          12% 生命上限 (星魂 2 倍率提高至 120%) 的量子属性伤害。
-        - 星魂 1 真实伤害的基数 = 本次攻击总伤害 + 本次结界附加实际打出的伤害:
-          实测两窗口 0.24 × (712,020 + 277,564) = 237,501、0.24 × (569,426 +
-          268,756) = 201,164, 与日志真实伤害逐点吻合。
-        结算完成后, 若有待发的天赋追加攻击, 在此开启其专属窗口并施放
-        (官方时序中追击是独立行动, 与触发它的终结技各结算一次结界)。
-        延迟真实伤害: 引擎的伤害经效果队列延迟结算, 本窗口附加的实际值在
-        结算当下尚未产生, 故星魂 1 真实伤害登记为待结算, 在下一次窗口结算
-        时以 (本次攻击总伤害 + 附加实际值) 为基数先行发出。
-        """
-        if self._zone_resolving:
+        action_id = require_id(event, "action_id")
+        if (
+            action_id in self._zone_windows
+            or action_id in self._zone_finished_actions
+        ):
             return
-        if hasattr(self.port, "resolve_effects"):
-            self.port.resolve_effects()
-        targets = self._zone_window_targets
-        total = self._zone_window_total
-        true_base_pool = self._zone_window_true_base
-        hit_count = self._zone_window_hits
-        zone_was_active = self._zone_window_zone
-        window_actor = self._zone_window_actor
-        self._zone_window_actor = None
-        self._zone_window_zone = False
-        self._zone_window_targets = set()
-        self._zone_window_direct_targets = set()
-        self._zone_window_total = 0.0
-        self._zone_window_true_base = 0.0
-        self._zone_window_hits = 0
-        pending_volley = self._pending_volley
-        self._pending_volley = False
 
-        # 结界判定取窗口开启时与结算时两点状态的并集: 终结技自身的窗口在
-        # 事件到达时结界尚未展开 (状态在大招执行中段才施加), 须以结算时
-        # 状态补正, 否则大招本体永远无法触发自己开启的结界
-        if (zone_was_active or self.zone_active) and targets and total > 0 and hit_count > 0:
-            living_enemies = set(self.port.enemies(self.owner_id))
-            living = [t for t in targets if t in living_enemies]
-            if not living:
-                living = [t for t in targets if self.port.entity_exists(t) and self.port.current_hp(t) > 0]
-            if living:
-                top_target = max(living, key=lambda t: (self.port.current_hp(t), self.port.max_hp(t)))
-                base_mult = self.skill_param("ultra", 2, default=0.12)
-                additional_hits = hit_count
+        actor = actor_of(event)
+        kind = event.action_kind
+
+        if (
+            kind == ActionKind.TALENT
+            or not self.port.is_ally(actor)
+            or self.port.is_countdown(actor)
+        ):
+            return
+
+        window = _ZoneWindow(
+            actor_id=actor,
+            kind=kind,
+            zone_seen=self.zone_active,
+        )
+        self._zone_windows[action_id] = window
+
+        if kind != ActionKind.ULTIMATE:
+            return
+
+        is_other_character = (
+            actor != self.owner_id
+            and not self.port.is_memosprite(actor)
+        )
+
+        if is_other_character and actor not in self.talent_used_by:
+            self.talent_used_by.add(actor)
+            window.request_volley = True
+
+        if actor == self.owner_id and self.eidolon >= 6:
+            window.request_volley = True
+
+    def _on_zone_damage(self, event: Any) -> None:
+        from ._causal import require_id
+
+        action_id = require_id(event, "action_id")
+        effect_id = require_id(event, "effect_id")
+
+        if effect_id in self._zone_seen_effects:
+            return
+        self._zone_seen_effects.add(effect_id)
+
+        attacker = event.attacker_name
+        target = event.target_name
+        dtype = event.damage_type
+        damage = float(event.damage)
+
+        # 结界自身附加伤害仅进入本次真实伤害基数，不反过来触发更多结界伤害
+        if (
+            self._zone_settling_action == action_id
+            and attacker == self.owner_id
+            and dtype == DamageType.ADDITIONAL
+        ):
+            if not self.port.is_barrier_guarded(target):
+                self._zone_additional_actual += max(0.0, damage)
+            return
+
+        if self._zone_settling_action == action_id:
+            return
+
+        window = self._zone_windows.get(action_id)
+        if window is None:
+            # 兼容测试桩未显式声明 ActionExecuteEvent 的裸 DamageAppliedEvent
+            window = self._zone_windows.setdefault(
+                action_id,
+                _ZoneWindow(actor_id=attacker, kind=ActionKind.BASIC, zone_seen=self.zone_active)
+            )
+
+        if (
+            not self.port.is_ally(attacker)
+            or self.port.is_countdown(attacker)
+            or self.port.is_ally(target)
+            or dtype in (DamageType.DOT, DamageType.TRUE)
+            or getattr(
+                getattr(event, "breakdown", None),
+                "is_dot",
+                False,
+            )
+            or damage <= 0
+        ):
+            return
+
+        window.zone_seen |= self.zone_active
+        window.targets.add(target)
+        window.damage_total += damage
+
+        if not self.port.is_barrier_guarded(target):
+            window.true_base += damage
+
+        if dtype == DamageType.ADDITIONAL:
+            return
+
+        window.direct_hits += 1
+
+        if target not in window.direct_targets:
+            window.direct_targets.add(target)
+
+            # 行迹【岔路旁的小石子？】：仅限我方其他目标 (队友及忆灵) 攻击命中时回能，缇宝自身攻击不触发
+            if attacker != self.owner_id:
+                amount = self.skill_param(
+                    "trace_pebble_per_hit",
+                    1,
+                    default=self.TRACE_PEBBLE_ENERGY_PER_HIT,
+                )
+                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+                self.port.gain_energy(
+                    self.owner_id,
+                    amount * err,
+                    cause=f"小石子：行动 {action_id} 首次命中 {target}",
+                    source_plugin="缇宝行迹",
+                )
+
+    def _flush_zone_window(self, action_id: Optional[int] = None) -> None:
+        """结算我方攻击动作窗口的结界附加伤害 (140303) 与星魂 1 真实伤害。"""
+        if action_id is None:
+            if self._zone_windows:
+                action_id = next(iter(self._zone_windows))
+            else:
+                return
+
+        if action_id in self._zone_finished_actions:
+            return
+
+        if self._zone_settling_action is not None:
+            return
+
+        window = self._zone_windows.get(action_id)
+        if window is None:
+            return
+
+        self._zone_windows.pop(action_id)
+        self._zone_finished_actions.add(action_id)
+
+        self._zone_settling_action = action_id
+        self._zone_additional_actual = 0.0
+
+        try:
+            living = set(self.port.enemies(self.owner_id))
+            candidates = [
+                target
+                for target in window.targets
+                if target in living
+                and self.port.current_hp(target) > 0
+            ]
+
+            if (
+                window.zone_seen
+                and candidates
+                and window.direct_hits > 0
+            ):
+                target = max(
+                    candidates,
+                    key=lambda t: (
+                        self.port.current_hp(t),
+                        self.port.max_hp(t),
+                    ),
+                )
+
+                multiplier = self.skill_param(
+                    "ultra", 2, default=0.12,
+                )
+                hits = window.direct_hits
+
                 if self.eidolon >= 2:
-                    base_mult *= self.eidolon_param(2, 0, default=1.2)
-                    if not self._in_volley:
-                        additional_hits += 1
-                self._zone_resolving = True
-                try:
-                    if self.eidolon >= 1:
-                        self._pending_true = {"target": top_target, "base": true_base_pool, "additional": 0.0}
-                    for _ in range(additional_hits):
+                    multiplier *= self.eidolon_param(
+                        2, 0, default=1.2,
+                    )
+                    hits += 1
+
+                for _ in range(hits):
+                    if target not in self.port.enemies(self.owner_id):
+                        break
+
+                    self.port.attack(
+                        self.owner_id,
+                        target,
+                        element="Quantum",
+                        atk_multiplier=multiplier,
+                        toughness_damage=0.0,
+                        damage_type=DamageType.ADDITIONAL,
+                        scaling_stat="hp",
+                    )
+                    self.port.resolve_effects()
+
+                true_base = (
+                    window.true_base
+                    + self._zone_additional_actual
+                )
+                if (
+                    self.eidolon >= 1
+                    and true_base > 0
+                    and target in self.port.enemies(self.owner_id)
+                ):
+                    hp = self.port.max_hp(self.owner_id)
+                    if hp > 0:
+                        true_amount = true_base * self.eidolon_param(
+                            1, 0, default=0.24,
+                        )
                         self.port.attack(
                             self.owner_id,
-                            top_target,
+                            target,
                             element="Quantum",
-                            atk_multiplier=base_mult,
+                            atk_multiplier=true_amount / hp,
                             toughness_damage=0.0,
-                            damage_type=DamageType.ADDITIONAL,
-                            scaling_stat="hp"
+                            damage_type=DamageType.TRUE,
+                            scaling_stat="hp",
                         )
-                    if hasattr(self.port, "resolve_effects"):
                         self.port.resolve_effects()
-                    if self._pending_true is not None:
-                        pending_true = self._pending_true
-                        self._pending_true = None
-                        if self.port.entity_exists(pending_true["target"]):
-                            true_ratio = self.eidolon_param(1, 0, default=0.24)
-                            my_max_hp = self.port.max_hp(self.owner_id)
-                            true_base = (pending_true["base"] + pending_true["additional"]) if pending_true["base"] > 0 else 0.0
-                            t_id = pending_true["target"]
-                            emit_zero_true = (
-                                true_base == 0.0
-                                and hasattr(self.port, "is_barrier_guarded")
-                                and self.port.is_barrier_guarded(t_id)
-                            )
-                            if my_max_hp > 0 and (true_base > 0 or emit_zero_true):
-                                # 真实伤害为固定数值: 以生命上限为缩放基准反推等效倍率 (真实伤害结算只取基础区)
-                                self.port.attack(
-                                    self.owner_id,
-                                    pending_true["target"],
-                                    element="Quantum",
-                                    atk_multiplier=(true_base * true_ratio) / my_max_hp,
-                                    toughness_damage=0.0,
-                                    damage_type=DamageType.TRUE,
-                                    scaling_stat="hp"
-                                )
-                                if hasattr(self.port, "resolve_effects"):
-                                    self.port.resolve_effects()
-                finally:
-                    self._zone_resolving = False
-        if pending_volley:
-            # 追击作为独立行动: 开启其专属窗口采样并施放, 同步排空并独立结算其结界窗口;
-            # 行迹【城墙外的羊羔儿】在本次追加攻击及其结界窗口结算完毕后再叠层 (本次齐射不享受自己新叠的层数)
-            self._zone_window_actor = self.owner_id
-            self._zone_window_zone = self.zone_active
-            self._in_volley = True
-            try:
-                self._cast_talent_volley()
-            finally:
-                self._in_volley = False
-            if hasattr(self.port, "resolve_effects"):
-                self.port.resolve_effects()
-            if hasattr(self.port, "sim") and hasattr(self.port.sim, "event_bus"):
-                self.port.sim.event_bus.publish(PrimaryDamageCompleteEvent(
-                    av=round(getattr(self.port.sim, "current_av", 0.0), 2),
-                    cycle=getattr(self.port.sim, "current_cycle", 0),
-                    actor_id=self.owner_id,
-                    actor_name=self.owner_id,
-                    action_type="FollowUpAttack",
-                    action_kind=ActionKind.FOLLOW_UP
-                ))
-            self._flush_zone_window()
-            if hasattr(self.port, "sim") and hasattr(self.port.sim, "event_bus"):
-                self.port.sim.event_bus.publish(ActionEndEvent(
-                    av=round(getattr(self.port.sim, "current_av", 0.0), 2),
-                    cycle=getattr(self.port.sim, "current_cycle", 0),
-                    actor_id=self.owner_id,
-                    actor_name=self.owner_id,
-                    action_type="FollowUpAttack",
-                    action_kind=ActionKind.FOLLOW_UP
-                ))
-            self._apply_lamb_buff()
+        finally:
+            self._zone_settling_action = None
+            self._zone_additional_actual = 0.0
+
+        if window.kind == ActionKind.FOLLOW_UP:
+            if window.actor_id == self.owner_id:
+                self._apply_lamb_buff()
+
+        if window.request_volley and self.port.enemies(self.owner_id):
+            self.port.enqueue_follow_up(
+                actor_id=self.owner_id,
+                name="好忙好忙的缇宝",
+                skill_id=None,
+                callback=self._cast_talent_volley,
+            )
 
     def _cast_talent_volley(self) -> None:
         """施放天赋追加攻击齐射 (全体敌人, 生命上限 Lv12 19.8% × E6 追击补正) 并处理回能。
@@ -593,12 +700,10 @@ class TibaoKit(KitHandler):
         from ...events import (
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
             SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
-            TurnBeginEvent, TurnEndEvent, ActionEndEvent
+            TurnBeginEvent, TurnEndEvent, ActionEndEvent, PrimaryDamageCompleteEvent
         )
         if isinstance(event, TurnBeginEvent):
             self._turn_started = True
-        if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
-            self._flush_zone_window()
         if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
             self._sync_glass_ball_hp()
 
@@ -642,91 +747,17 @@ class TibaoKit(KitHandler):
                         parent_target_name=self.owner_id
                     ))
 
-        if isinstance(event, DamageAppliedEvent):
-            attacker = event.attacker_name
-            target = event.target_name
-            dtype = getattr(event, "damage_type", None)
-            is_own_zone_dmg = (attacker == self.owner_id and dtype in (DamageType.ADDITIONAL, DamageType.TRUE))
+        if isinstance(event, ActionExecuteEvent):
+            self._on_zone_action_execute(event)
 
-            # 结界窗口采样: 收集我方攻击命中的敌方目标与伤害总量, 供动作结束时结算附加伤害与 E1 真实伤害。
-            # 结界自身的附加/真实伤害不计入采样, 队友伴随攻击触发的附加伤害 (如风堇专武) 计入本次攻击总伤害池,
-            # 但直接攻击命中目标集合 (_zone_window_direct_targets) 独立统计, 防止前置附加伤害吞掉后续主攻击命中计数。
-            is_new_direct_target = False
-            if (
-                not self._zone_resolving
-                and self.port.is_ally(attacker)
-                and not self.port.is_countdown(attacker)
-                and not self.port.is_ally(target)
-                and dtype not in (DamageType.DOT, DamageType.TRUE)
-                and not is_own_zone_dmg
-                and getattr(event.breakdown, "is_dot", False) is False
-                and event.damage > 0
-            ):
-                if self._zone_window_actor is None:
-                    self._zone_window_actor = attacker
-                    self._zone_window_zone = self.zone_active
-                self._zone_window_targets.add(target)
-                self._zone_window_total += float(event.damage)
-                is_guarded = hasattr(self.port, "is_barrier_guarded") and self.port.is_barrier_guarded(target)
-                if not is_guarded:
-                    self._zone_window_true_base += float(event.damage)
-                if dtype != DamageType.ADDITIONAL:
-                    if not hasattr(self, "_zone_window_direct_targets"):
-                        self._zone_window_direct_targets = set()
-                    if target not in self._zone_window_direct_targets:
-                        self._zone_window_direct_targets.add(target)
-                        is_new_direct_target = True
-                        self._zone_window_hits += 1
+        elif isinstance(event, DamageAppliedEvent):
+            self._on_zone_damage(event)
 
-            # 汇总待结算真实伤害的基数: 本窗口结界附加伤害的实际值
-            if (
-                self._pending_true is not None
-                and attacker == self.owner_id
-                and dtype == DamageType.ADDITIONAL
-            ):
-                self._pending_true["additional"] += float(event.damage)
+        elif isinstance(event, PrimaryDamageCompleteEvent):
+            from ._causal import require_id
+            self._flush_zone_window(require_id(event, "action_id"))
 
-            # 严格机制边界校验 (避免 DoT、环境反伤、自残扣血、多段同目标重复触发误判):
-            # 1. 攻击者必须为我方目标 (支持伴生忆灵长夜及进入正式回合后的缇宝直接攻击)
-            # 2. 承受目标必须为敌方目标 (每次攻击每击中 1 个不同目标触发 1 次)
-            # 3. 必须为直接攻击有效命中 (排除 DoT / stage_bleed / reflect / 结界附加与真伤)
-            is_valid_attacker = self.port.is_ally(attacker) and (
-                attacker != self.owner_id or (getattr(self, "_turn_started", False) and not is_own_zone_dmg)
-            )
-            is_valid_target = not self.port.is_ally(target)
-            is_attack_dmg = (
-                dtype != DamageType.DOT
-                and getattr(event.breakdown, "is_dot", False) is False
-                and event.damage > 0
-            )
-
-            if is_valid_attacker and is_valid_target and is_attack_dmg and is_new_direct_target:
-                energy_per_hit = self.skill_param("trace_pebble_per_hit", 1, default=self.TRACE_PEBBLE_ENERGY_PER_HIT)
-                # 星铁底层机制：未标明“固定能量”的回能严格享受角色能量恢复效率 (ERR) 放大
-                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                self.port.gain_energy(self.owner_id, energy_per_hit * err, cause=f"行迹《岔路旁的小石子？》我方目标命中[{target}]回能 (基础 {energy_per_hit} × ERR {err*100:.1f}%)", source_plugin="缇宝行迹")
-
-        elif isinstance(event, ActionExecuteEvent):
-            action_kind = getattr(event, "action_kind", None)
-            if action_kind == ActionKind.TALENT:
-                return
-            actor_id = event.actor_name or event.actor_id
-            if getattr(self, "_in_volley", False) and actor_id == self.owner_id and action_kind == ActionKind.FOLLOW_UP:
-                return
-            # 新动作开始: 先排空挂起伤害并结算上一个动作窗口的结界附加伤害, 再开启本动作的采样窗口
-            if hasattr(self.port, "resolve_effects"):
-                self.port.resolve_effects()
-            self._flush_zone_window()
-            if self.port.is_ally(actor_id) and not self.port.is_countdown(actor_id):
-                self._zone_window_actor = actor_id
-                self._zone_window_zone = self.zone_active
-            action_type = getattr(event, "action_type", "")
-
-            if self.port.is_ally(actor_id) and actor_id != self.owner_id and not self.port.is_memosprite(actor_id) and not self.port.is_countdown(actor_id):
-                if action_kind == ActionKind.ULTIMATE:
-                    if actor_id not in self.talent_used_by:
-                        self.talent_used_by.add(actor_id)
-                        # 置待发标记: 齐射在大招的结界窗口结算后作为独立行动施放
-                        # 并单独结算其结界窗口 (见 _flush_zone_window); 倍率依据
-                        # (E6 的 729% 不叠乘) 见 _cast_talent_volley。
-                        self._pending_volley = True
+        elif isinstance(event, ActionEndEvent):
+            from ._causal import require_id
+            # 无主伤行动或生命周期兜底；已结算的 action_id 自动忽略。
+            self._flush_zone_window(require_id(event, "action_id"))

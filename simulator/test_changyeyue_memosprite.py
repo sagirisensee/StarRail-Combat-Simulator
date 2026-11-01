@@ -252,7 +252,7 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
 
         team = [self.db.to_combat_entity(n) for n in ["长夜月", "风堇", "知更鸟•晴歌"]]
         enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
-        sim = TurnSimulator(entities=team + enemies, use_techniques=False)
+        sim = TurnSimulator(entities=team + enemies, use_techniques=True)
 
         port = sim.port
         # 1. 验证动态身份判定

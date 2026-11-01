@@ -141,6 +141,9 @@ class Entity:
         if getattr(self, "extra_immediate_action", False):
             self.distance_remaining = 0.0
             self.extra_immediate_action = False
+        elif getattr(self, "custom_reset_distance", None) is not None:
+            self.distance_remaining = float(self.custom_reset_distance)
+            self.custom_reset_distance = None
         else:
             self.distance_remaining = 10000.0
 

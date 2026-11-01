@@ -50,8 +50,8 @@ def run_micro_audit_96(seed: int = 1) -> Dict[str, Any]:
     with open(GROUND_TRUTH_JSON, encoding="utf-8") as f:
         gt: List[Dict[str, Any]] = json.load(f)
 
-    sim, director = build_stage_sim()
-    attach_exact_crit_oracle(sim)
+    sim, director = build_stage_sim(log_path=GOLDEN_20261026)
+    attach_exact_crit_oracle(sim, log_path=GOLDEN_20261026)
     sim_casts: List[Dict[str, Any]] = []
     cur_sim: Dict[str, Any] = {}
 

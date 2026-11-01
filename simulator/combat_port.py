@@ -157,6 +157,14 @@ class CombatPort(Protocol):
         skill_id: int = 0,
         publish_execute_event: bool = True,
     ) -> None: ...
+    def enqueue_follow_up(
+        self,
+        *,
+        actor_id: str,
+        name: str,
+        skill_id: Optional[int] = None,
+        callback: Callable[[], None],
+    ) -> None: ...
     def schedule_extra_action(
         self,
         actor_id: str,
@@ -718,6 +726,23 @@ class SimulatorCombatPort:
         else:
             callback()
 
+    def enqueue_follow_up(
+        self,
+        *,
+        actor_id: str,
+        name: str,
+        skill_id: Optional[int] = None,
+        callback: Callable[[], None],
+    ) -> None:
+        """Causal Follow-up submission contract: enqueues to ActionScheduler without immediate stack execution."""
+        self.schedule_follow_up(
+            actor_id=actor_id,
+            callback=callback,
+            name=name,
+            skill_id=skill_id or 0,
+            publish_execute_event=True,
+        )
+
     def schedule_extra_action(
         self,
         actor_id: str,
@@ -881,12 +906,19 @@ class SimulatorCombatPort:
             element=element,
             ignore_weakness=ignore_weakness,
             damage_tag=resolved_damage_type.value,
-            damage_type=resolved_damage_type
+            damage_type=resolved_damage_type,
+            action_id=getattr(self.sim, "current_action_id", 0)
         ))
 
     def max_hp(self, entity_id: str) -> float:
         ent = self._get_entity(entity_id)
         if ent:
+            if getattr(ent, "is_memosprite", False):
+                master_kit = getattr(getattr(ent, "kit", None), "master_kit", None)
+                if master_kit is not None and hasattr(master_kit, "spirit_max_hp"):
+                    return float(master_kit.spirit_max_hp)
+                if master_kit is not None and hasattr(master_kit, "musician_max_hp"):
+                    return float(master_kit.musician_max_hp)
             base_max_hp = getattr(ent, "max_hp", 0.0)
             if hasattr(self.sim, "status_mgr") and base_max_hp > 0 and base_max_hp != float("inf"):
                 white_hp = getattr(ent, "base_white_hp", 0.0) or base_max_hp

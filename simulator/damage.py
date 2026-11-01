@@ -113,10 +113,21 @@ class DamageCalculator:
         # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
         scaling = getattr(req, "scaling_stat", "atk")
         if scaling == "hp":
-            hp_val = getattr(req.attacker, "max_hp", 0.0)
-            if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                white_hp = getattr(req.attacker, "base_white_hp", 0.0) or hp_val
-                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT, white_base=white_hp)
+            if getattr(req.attacker, "is_memosprite", False):
+                master_kit = getattr(getattr(req.attacker, "kit", None), "master_kit", None)
+                if master_kit is not None and hasattr(master_kit, "spirit_max_hp"):
+                    hp_val = float(master_kit.spirit_max_hp)
+                elif master_kit is not None and hasattr(master_kit, "musician_max_hp"):
+                    hp_val = float(master_kit.musician_max_hp)
+                elif hasattr(req.attacker, "simulator") and req.attacker.simulator:
+                    hp_val = req.attacker.simulator.port.max_hp(req.attacker.name)
+                else:
+                    hp_val = getattr(req.attacker, "max_hp", 0.0)
+            else:
+                hp_val = getattr(req.attacker, "max_hp", 0.0)
+                if hasattr(req.attacker, "simulator") and req.attacker.simulator:
+                    white_hp = getattr(req.attacker, "base_white_hp", 0.0) or hp_val
+                    hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT, white_base=white_hp)
             base_stat = hp_val
         elif scaling == "def":
             def_val = getattr(req.attacker, "base_def", 0.0)

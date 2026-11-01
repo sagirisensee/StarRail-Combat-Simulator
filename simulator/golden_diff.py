@@ -682,11 +682,12 @@ def build_stage_sim(
     from .db.character_db import CharacterDB
     from .stage_30510021 import build_stage_30510021
 
-    if technique_users is None and log_path is not None:
-        if "20261025" in str(log_path):
+    if technique_users is None:
+        if log_path is not None and "20261025" in str(log_path):
             technique_users = ["长夜月", "知更鸟•晴歌"]
-        elif "20261026" in str(log_path):
-            technique_users = ["长夜月", "知更鸟•晴歌", "风堇"]
+        else:
+            # 无论是 20261026 还是 20261101 及最新实战基准: 全员 4 人开启秘技进战
+            technique_users = ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]
 
     db = CharacterDB().load("data/character_db_export.json")
     team = [db.to_combat_entity(n) for n in ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]]
@@ -722,11 +723,38 @@ OFFICIAL_20261026_NON_CRITS = {
     (94, 2),  # #95 依卡 Additional: 2,888.9 vs 17,681.0 (r=0.163)
 }
 
+# 官方 battle_20261101_171232 实战未暴击段数真值台账 (act_idx, non_true_hit_idx)
+OFFICIAL_20261101_NON_CRITS = {
+    (1, 0),   # #01 缇宝 Ultimate: 3352.8 vs 20675.8 (r=0.162)
+    (6, 11),  # #06 小伊卡 Additional: 3213.8 vs 20129.1 (r=0.160)
+    (7, 5),   # #07 知更鸟•晴歌 Additional: 3583.5 vs 22606.3 (r=0.159)
+    (8, 7),   # #08 长夜月 Additional: 5773.6 vs 36554.5 (r=0.158)
+    (8, 11),  # #08 长夜月 Follow-Up: 22784.9 vs 145981.7 (r=0.156)
+    (9, 0),   # #09 缇宝 Ultimate: 14317.1 vs 91617.6 (r=0.156)
+    (9, 5),   # #09 缇宝 Follow-Up: 26773.1 vs 173383.2 (r=0.154)
+    (10, 2),  # #10 长夜 Additional: 8073.8 vs 52487.6 (r=0.154)
+    (18, 2),  # #18 缇宝 Basic: 9585.7 vs 74471.7 (r=0.129)
+    (19, 0),  # #19 晴空乐手 Servant: 59495.0 vs 273669.8 (r=0.217)
+    (36, 0),  # #36 小伊卡 Servant: 45461.1 vs 135822.2 (r=0.335)
+    (38, 0),  # #38 缇宝 Basic: 38914.2 vs 157603.5 (r=0.247)
+    (41, 0),  # #41 长夜 Servant: 292178.1 vs 2381826.0 (r=0.123)
+    (45, 4),  # #45 长夜月 Additional: 10971.7 vs 67788.2 (r=0.162)
+    (49, 0),  # #49 小伊卡 Servant: 75742.9 vs 734275.2 (r=0.103)
+    (65, 0),  # #65 长夜 Servant: 83840.9 vs 480911.6 (r=0.174)
+    (77, 3),  # #77 长夜月 Follow-Up: 10000.3 vs 83184.6 (r=0.120)
+    (83, 2),  # #83 小伊卡 Additional: 2888.9 vs 17681.2 (r=0.163)
+}
 
-def attach_exact_crit_oracle(sim: Any) -> None:
-    """挂载变态对齐暴击真值映射器：将实战未暴击的 29 发严格对齐为未暴击，其余全部对齐为暴击。"""
+
+def attach_exact_crit_oracle(sim: Any, log_path: Optional[str] = None) -> None:
+    """挂载变态对齐暴击真值映射器：将实战未暴击段数严格对齐为未暴击，其余全部对齐为暴击。"""
     from .actions import ActionKind
     from .events import ActionExecuteEvent, BattleEvent
+
+    if log_path is not None and "20261026" in str(log_path):
+        non_crits = OFFICIAL_20261026_NON_CRITS
+    else:
+        non_crits = OFFICIAL_20261101_NON_CRITS
 
     state = {"act_idx": -1, "hit_idx": 0}
 
@@ -749,7 +777,7 @@ def attach_exact_crit_oracle(sim: Any) -> None:
     def _crit_oracle(req: Any) -> bool:
         h_idx = state["hit_idx"]
         state["hit_idx"] += 1
-        if (state["act_idx"], h_idx) in OFFICIAL_20261026_NON_CRITS:
+        if (state["act_idx"], h_idx) in non_crits:
             return False
         return True
 
@@ -771,7 +799,7 @@ def main(argv=None) -> int:
     golden = parse_golden_jsonl(args.golden)
     sim, director = build_stage_sim(log_path=args.golden)
     if args.align_crit:
-        attach_exact_crit_oracle(sim)
+        attach_exact_crit_oracle(sim, log_path=args.golden)
     replay_md = ""
     trajectory_md = ""
     if args.trajectory:
@@ -1060,6 +1088,15 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                 # 否则强发路径会绕过扣血与联动入账 (官方她每次行动都吃血噬)。
                 changye_ent = sim.get_entity("长夜")
                 if changye_ent is not None:
+                    sim._turn_id += 1
+                    sim.event_bus.publish(TurnBeginEvent(
+                        av=round(sim.current_av, 2),
+                        cycle=sim.current_cycle,
+                        actor_id=changye_ent.name,
+                        actor_name=changye_ent.name,
+                        speed=round(changye_ent.speed, 1),
+                        turn_id=sim._turn_id
+                    ))
                     sim.run_stage_turn_begin(changye_ent)
                 if sid == 1141307:
                     if stash["amount"] > 0:
@@ -1337,8 +1374,8 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         _match_organic_spirits()
         _fire_due_ults()
         _enforce_spirits()
-    # 收尾: 剩余终结技与忆灵技排期
-    while ult_queue:
+    # 收尾: 预算内剩余终结技与忆灵技排期
+    while ult_queue and ult_queue[0][1].av <= av_budget:
         _idx, item = ult_queue.popleft()
         fired_master.add(_idx)
         ent = sim.get_entity(item.actor)
@@ -1350,6 +1387,9 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
             result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, float(getattr(sim, "current_av", 0.0)) if ok else None))
         else:
             result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
+    while ult_queue:
+        _idx, item = ult_queue.popleft()
+        result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
     now_av = float(getattr(sim, "current_av", 0.0))
     for sid, q in spirit_queues.items():
         while q and q[0].av <= av_budget:

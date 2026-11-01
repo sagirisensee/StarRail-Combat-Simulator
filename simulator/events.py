@@ -21,6 +21,7 @@ class TurnBeginEvent(BattleEvent):
     actor_id: str
     actor_name: str
     speed: float
+    turn_id: int = 0
 
     @property
     def entity_name(self) -> str:
@@ -31,6 +32,7 @@ class TurnBeginEvent(BattleEvent):
 class TurnEndEvent(BattleEvent):
     actor_id: str
     actor_name: str
+    turn_id: int = 0
 
     @property
     def entity_name(self) -> str:
@@ -45,6 +47,7 @@ class ActionExecuteEvent(BattleEvent):
     description: str
     action_kind: Any = None     # 可选 ActionKind 枚举，便于强类型判断
     skill_config_id: int = 0    # 官方 skill_config_id (与实机日志 OnUseSkill 对齐); 0 表示未知/不适用
+    action_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ class PrimaryDamageCompleteEvent(BattleEvent):
     action_type: str = ""
     action_kind: Any = None
     skill_config_id: int = 0
+    action_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,7 @@ class ActionEndEvent(BattleEvent):
     description: str = ""
     action_kind: Any = None
     skill_config_id: int = 0
+    action_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,8 @@ class DamageAppliedEvent(BattleEvent):
     damage_tag: str = "direct"
     damage_type: Any = None     # DamageType 枚举 (伤害分类的权威字段, damage_tag 仅作展示兼容)
     target_killed: bool = False # 本次伤害是否将该目标从存活击杀至 0 HP
+    action_id: int = 0
+    effect_id: int = 0
 
     def __post_init__(self):
         # 手工构造事件未显式给出 damage_type 时, 由 damage_tag 经官方映射收编, 保证该字段恒为枚举

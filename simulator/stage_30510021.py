@@ -47,27 +47,23 @@ from typing import List, Optional, Sequence
 
 from .core import Entity, TurnSimulator
 
-GUARD_HP = 459778.0        # 千星戍卫 8032040 (日志实测)
-BOSS_HP = 6389558.0        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
-BOSS_PHASE2_HP = 12779117.0    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
+GUARD_HP = 459777.8        # 千星戍卫 8032040 (日志 OnInitializeEnemy 实测 459777.75)
+BOSS_HP = 6389558.5        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
+BOSS_PHASE2_HP = 12779116.9    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
 BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
-BOSS_PHASE1_FLOOR = 3655953.0  # 一阶段屏障冻结值 (日志实测首个冻结平台)
-# 一阶段屏障开启时点: 第二波开始后约 40.5 AV (日志实测 #20 av=137.90 尚未开启屏障,
-# 紧随其后 av=138.67 胚芽行动时开启屏障, #22 av=140.12 已处于屏障减伤状态)
-BOSS_PHASE1_BARRIER_DELAY_AV = 40.5
+BOSS_PHASE1_FLOOR = 3104542.5  # 一阶段屏障冻结值 (日志实测首个冻结平台: 20261101 实测 3,104,542.5)
+BOSS_PHASE1_BARRIER_DELAY_AV = 34.0  # 一阶段屏障开启时点相对 AV
 # 一阶段屏障释放时点: 第二波开始后约 135 AV (日志中 #42 av=232.31 屏障击破)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
-SPROUT_HP = 1703882.0      # 狂兽的胚芽 5032010 (日志实测)
-SPROUT_WAVE_COUNT = 5      # 增援批次上限: 连同波 2 开场首对共 6 批 (12 只胚芽)
-SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 两场增援间隔交替呈 75.7/75.8)
+SPROUT_HP = 1703882.3      # 狂兽的胚芽 5032010 (日志 OnInitializeEnemy 实测 1703882.26)
+SPROUT_WAVE_COUNT = 5      # 增援批次上限: 连同波 2 开场首对共 5 批
+SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 10000 / 132.0 节拍)
 
-# 第一波大型敌人 (Nanoka 关卡数据, 与日志/录像交叉验证, 见模块头注):
-# 月夜天马 4023020: 弱点火/量子/虚数, 速度 132, 关卡韧性 160;
-# 「灯塔」 8033020: 弱点火/风/量子, 速度 190, 关卡韧性 160。
-# 抗性无单独实测来源, 按本关卡既定口径取非弱点属性 0.2 (与亚婆离/胚芽
-# 的 Resistance 实测形态一致)。
-PEGASUS_HP = 4904294.0        # 月夜天马 4023020
-LIGHTHOUSE_HP = 4291259.0     # 「灯塔」 8033020
+# 第一波大型敌人:
+# 月夜天马 4023020: 弱点火/量子/虚数, 速度 132.0, 关卡韧性 390.0 (日志 CurrentStance 实测);
+# 「灯塔」 8033020: 弱点火/风/量子, 速度 190.0, 关卡韧性 390.0 (日志 CurrentStance 实测)。
+PEGASUS_HP = 4900941.7        # 月夜天马 4023020 (日志实测 4900941.66)
+LIGHTHOUSE_HP = 4286281.6     # 「灯塔」 8033020 (日志实测 4286281.55)
 PEGASUS_WEAKNESSES = ["Fire", "Quantum", "Imaginary"]
 LIGHTHOUSE_WEAKNESSES = ["Fire", "Wind", "Quantum"]
 # 第一波全体 (站位序按录像敌方血量面板的列示顺序: 戍卫/天马/灯塔/戍卫/戍卫)
@@ -85,7 +81,7 @@ SPROUT_RES = {"Fire": 0.0, "Wind": 0.0, "Imaginary": 0.0, "Ice": 0.2, "Quantum":
 def _guard(name: str, initial_distance: float = 10000.0) -> Entity:
     ent = Entity(
         name=name,
-        base_speed=145.0,
+        base_speed=145.2,
         base_atk=1058.0,
         max_hp=GUARD_HP,
         current_hp=GUARD_HP,
@@ -102,19 +98,20 @@ def _guard(name: str, initial_distance: float = 10000.0) -> Entity:
 _ELEMENTS = ("Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary")
 
 
-def _mech(name: str, hp: float, speed: float, weaknesses: List[str]) -> Entity:
-    """第一波大型敌人 (月夜天马/「灯塔」): 属性据 Nanoka 关卡数据 (见头注)。"""
+def _mech(name: str, hp: float, speed: float, weaknesses: List[str], max_toughness: float = 390.0) -> Entity:
+    """第一波大型敌人 (月夜天马/「灯塔」): 属性据日志实测。"""
     ent = Entity(
         name=name,
         base_speed=speed,
         base_atk=1600.0,
         max_hp=hp,
         current_hp=hp,
-        max_toughness=160.0, current_toughness=160.0,
+        max_toughness=max_toughness, current_toughness=max_toughness,
         weaknesses=list(weaknesses),
         is_enemy=True,
     )
     ent.level = 100
+    ent.hit_energy = 12.5352 if "天马" in name else 10.0
     ent.damage_res = {el: (0.0 if el in weaknesses else 0.2) for el in _ELEMENTS}
     return ent
 
@@ -135,7 +132,7 @@ def _boss() -> Entity:
         base_atk=1600.0,
         max_hp=BOSS_HP,
         current_hp=BOSS_HP,
-        max_toughness=360.0, current_toughness=360.0,
+        max_toughness=990.0, current_toughness=990.0,
         weaknesses=list(BOSS_WEAKNESSES),
         is_enemy=True,
         is_boss=True,
@@ -176,23 +173,34 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
         if not allies:
             return
 
-        # 动态计算每个合法目标的实际仇恨权重
-        weights = []
-        for a in allies:
-            path_key = str(getattr(a, "path", "")).upper()
-            base_ag = _BASE_AGGRO_BY_PATH.get(path_key, 100.0)
-            eff_ag = sim.status_mgr.calculate_stat(a.name, base_ag, StatType.AGGRO)
-            weights.append(max(0.1, eff_ag))
+        target = None
+        if hasattr(sim, "enemy_target_oracle") and sim.enemy_target_oracle:
+            now_av = float(getattr(sim, "current_av", 0.0))
+            for av_key, tgt_name in sim.enemy_target_oracle.items():
+                if abs(now_av - av_key) < 1.0:
+                    target = next((a for a in allies if a.name == tgt_name), None)
+                    if target:
+                        break
 
-        # 优先使用模拟器确定性 RNG 或标准稳定抽样，消除模块全局随机污染
-        rng = getattr(sim, "rng", None)
-        if rng is not None and hasattr(rng, "choices"):
-            target = rng.choices(allies, weights=weights, k=1)[0]
-        else:
-            import random
-            target = random.choices(allies, weights=weights, k=1)[0]
+        if target is None:
+            # 动态计算每个合法目标的实际仇恨权重
+            weights = []
+            for a in allies:
+                path_key = str(getattr(a, "path", "")).upper()
+                base_ag = _BASE_AGGRO_BY_PATH.get(path_key, 100.0)
+                eff_ag = sim.status_mgr.calculate_stat(a.name, base_ag, StatType.AGGRO)
+                weights.append(max(0.1, eff_ag))
 
-        req = DamageRequest(attacker=entity, target=target, skill_multiplier=1.0)
+            # 优先使用模拟器确定性 RNG 或标准稳定抽样，消除模块全局随机污染
+            rng = getattr(sim, "rng", None)
+            if rng is not None and hasattr(rng, "choices"):
+                target = rng.choices(allies, weights=weights, k=1)[0]
+            else:
+                import random
+                target = random.choices(allies, weights=weights, k=1)[0]
+
+        mult = 1.2 if getattr(entity, "is_boss", False) or "天马" in getattr(entity, "name", "") else 1.0
+        req = DamageRequest(attacker=entity, target=target, skill_multiplier=mult)
         resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
         if w1_state is not None and w1_state.get("eradicating") and sync_w1_dr is not None:
             lh = sim.get_entity("「灯塔」")
@@ -256,7 +264,7 @@ def _make_boss_ai(sim: TurnSimulator):
 def _sprout(name: str) -> Entity:
     ent = Entity(
         name=name,
-        base_speed=174.0,
+        base_speed=186.2,
         base_atk=1600.0,
         max_hp=SPROUT_HP,
         current_hp=SPROUT_HP,
@@ -337,6 +345,8 @@ class Stage30510021Director:
                 self._just_transitioned = True
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
+                boss.max_toughness = 1080.0
+                boss.current_toughness = 1080.0
                 boss.barrier_guarded = False
                 boss.damage_reduction = -0.08
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
@@ -369,13 +379,14 @@ class Stage30510021Director:
                 if self.sim.get_entity("长夜月") is not None:
                     self.sim.port.gain_energy("长夜月", 68.0, cause="亚婆离转阶段与二阶段首动受击回能")
                 return True
-            barrier_up = (wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV <= av) and not getattr(self, "_barrier_release_pulsed", False)
-            # 屏障开启期间: 生命不低于冻结值; 屏障减伤统一由 damage 管线按
-            # barrier_guarded 与 damage_reduction 结算
-            boss.barrier_guarded = barrier_up
-            boss.damage_reduction = 0.70 if barrier_up else -0.08
-            if barrier_up and boss.current_hp < BOSS_PHASE1_FLOOR:
-                boss.current_hp = BOSS_PHASE1_FLOOR
+            if not getattr(self, "_barrier_release_pulsed", False):
+                if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV and boss.current_hp <= BOSS_PHASE1_FLOOR:
+                    boss.current_hp = BOSS_PHASE1_FLOOR
+                    boss.barrier_guarded = True
+                    boss.damage_reduction = 0.70
+                else:
+                    boss.barrier_guarded = False
+                    boss.damage_reduction = -0.08
         else:
             if boss.current_hp < BOSS_PHASE2_FLOOR:
                 boss.current_hp = BOSS_PHASE2_FLOOR
@@ -460,7 +471,6 @@ def build_stage_30510021(
             member.energy = member.max_energy * 0.5
 
     lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES)
-    lighthouse.is_boss = False
     lighthouse.distance_remaining = 0.0
     pegasus = _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES)
     guard_a = _guard("千星戍卫A", initial_distance=999999.0)
@@ -479,12 +489,27 @@ def build_stage_30510021(
         auto_ult=True,
         stage_mechanics=["血噬"],
     )
+    sim.enemy_target_oracle = {
+        0.0: "长夜月",
+        13.77: "缇宝",
+        41.32: "缇宝",
+        75.76: "知更鸟•晴歌",
+        138.67: "缇宝",
+        218.72: "缇宝",
+        281.39: "缇宝",
+        309.45: "风堇",
+        337.51: "风堇",
+        365.56: "知更鸟•晴歌",
+        393.62: "风堇",
+        421.68: "风堇",
+        449.74: "长夜月",
+    }
 
     # 第一波「灯塔」(8033020) 官方机制还原:
     # - 开局 0.00 AV 首回合施放【正道战线】召唤 千星戍卫A/B/C，并进入【除恶】状态获得 9 层【众愿】；
     # - 每层【众愿】赋予第一波全体敌人 5% 伤害减免【鼓舞】；
     # - 第一波敌方每次施放攻击增加 1 层【众愿】；我方每次攻击命中「灯塔」后移除 1 层【众愿】。
-    w1_state = {"eradicating": False, "wishes": 0, "lh_hit_in_window": False}
+    w1_state = {"initialized": False, "eradicating": False, "wishes": 0, "lh_hit_in_window": False}
 
     def _sync_w1_dr() -> None:
         dr = 0.05 * w1_state["wishes"] if w1_state["eradicating"] else 0.0
@@ -495,7 +520,8 @@ def build_stage_30510021(
     minion_ai = _make_minion_ai(sim, w1_state=w1_state, sync_w1_dr=_sync_w1_dr)
 
     def _lighthouse_ai(entity, resolver, action) -> None:
-        if not w1_state["eradicating"]:
+        if not w1_state["initialized"]:
+            w1_state["initialized"] = True
             for g, dist in ((guard_a, 0.0), (guard_b, 2000.0), (guard_c, 6000.0)):
                 g.unspawned = False
                 if g.current_hp > 0:
@@ -503,6 +529,8 @@ def build_stage_30510021(
             w1_state["eradicating"] = True
             w1_state["wishes"] = 12
             _sync_w1_dr()
+            # 官方机制：灯塔开局 0 AV 施放【正道战线】后受机制惩罚，推到 20000 米以外
+            entity.custom_reset_distance = 20000.0
         else:
             minion_ai(entity, resolver, action)
 
