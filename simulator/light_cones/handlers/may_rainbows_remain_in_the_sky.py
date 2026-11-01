@@ -67,7 +67,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
             if self.port.is_own_memosprite(self.owner_id, actor):
                 self._spirit_action_open = True
                 if getattr(event, "action_kind", None) == ActionKind.MEMOSPRITE_SKILL:
-                    self._apply_vulnerability()
+                    self._pending_vuln = True
         elif isinstance(event, DamageAppliedEvent):
             if (
                 self._spirit_action_open
@@ -99,6 +99,9 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
             return
         if hasattr(self.port, "resolve_effects"):
             self.port.resolve_effects()
+        if getattr(self, "_pending_vuln", False):
+            self._pending_vuln = False
+            self._apply_vulnerability()
         self._spirit_action_open = False
         targets = list(dict.fromkeys(self._spirit_hit_targets))
         self._spirit_hit_targets = []
@@ -145,6 +148,9 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 )
         if hasattr(self.port, "resolve_effects"):
             self.port.resolve_effects()
+        if getattr(self, "_pending_vuln", False):
+            self._pending_vuln = False
+            self._apply_vulnerability()
 
 
 # 向因果追踪器自注册本光锥的扣血来源描述 (供 tracer 因果报表引用, 核心层不写死本光锥信息)

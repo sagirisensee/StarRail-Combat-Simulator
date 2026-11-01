@@ -507,7 +507,6 @@ class FengjinKit(KitHandler):
                 if (
                     actor_id in self.port.allies(self.owner_id)
                     and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_id))
-                    and not (hasattr(self.port, "is_memosprite") and self.port.is_memosprite(actor_id))
                     and self.port.is_attack_action(actor_id, action_kind, action_type)
                 ):
                     raw_heal = 0.08 * self.port.max_hp(self.owner_id)

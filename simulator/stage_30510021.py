@@ -155,7 +155,10 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
     from .damage import DamageRequest
     from .effects import ApplyDamageEffect
 
+    attack_seq = 0
+
     def _ai(entity, resolver, action) -> None:
+        nonlocal attack_seq
         allies = [
             e for e in sim.entities
             if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
@@ -163,7 +166,17 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
         if not allies:
             return
         av = float(getattr(sim, "current_av", 0.0))
-        target_name = "长夜月" if av < 5.0 else "缇宝"
+        # 实时剧本：长夜自爆后的第一波敌方动，打了知更鸟•晴歌
+        if attack_seq == 0:
+            target_name = "知更鸟•晴歌"
+        elif attack_seq == 1:
+            target_name = "缇宝"
+        elif attack_seq == 2:
+            target_name = "风堇"
+        else:
+            target_name = "缇宝"
+        attack_seq += 1
+
         primary = next((a for a in allies if a.name == target_name), allies[0])
         req = DamageRequest(attacker=entity, target=primary, skill_multiplier=1.0)
         resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
@@ -432,8 +445,8 @@ def build_stage_30510021(
         if not getattr(member, "is_enemy", False) and getattr(member, "max_energy", 0.0) > 0 and getattr(member, "energy", 0.0) == 0.0:
             member.energy = member.max_energy * 0.5
 
-    lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES)
-    lighthouse.is_boss = True
+    lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 95.04, LIGHTHOUSE_WEAKNESSES)
+    lighthouse.is_boss = False
     lighthouse.distance_remaining = 0.0
     pegasus = _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES)
     guard_a = _guard("千星戍卫A", initial_distance=999999.0)

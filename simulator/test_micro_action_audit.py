@@ -366,6 +366,26 @@ class TestMicroActionAudit(unittest.TestCase):
         rel_err = abs(sim_total - off_total) / off_total
         self.assertLess(rel_err, 0.02, f"纯官方数据全场总伤害偏差应 < 2%，实际: {sim_total:,.0f} vs {off_total:,.0f} ({rel_err:.2%})")
 
+    def test_06_strict_sub_0_2_percent_per_action(self):
+        """严格门禁：全场 96 动中所有非零动作相对误差必须严格 <= 0.2% (0.002)，大于 0.2% 即刻阻断报错。"""
+        over_threshold = []
+        for i in range(len(self.gt)):
+            g_dmg = sum(h["damage"] for h in self.gt[i]["hits"])
+            s_dmg = sum(h["damage"] for h in self.sim_casts[i]["hits"])
+            if g_dmg == 0.0 and s_dmg == 0.0:
+                continue
+            err = abs(s_dmg - g_dmg) / g_dmg if g_dmg > 0 else 1.0
+            if err > 0.002:
+                over_threshold.append(
+                    f"Action #{i+1:02d} [{self.gt[i]['actor']} - {self.gt[i]['skill_name']}]: "
+                    f"GT={g_dmg:,.1f}, SIM={s_dmg:,.1f}, err={err:.4%} (> 0.2%)"
+                )
+        self.assertEqual(
+            len(over_threshold),
+            0,
+            f"共发现 {len(over_threshold)} 个动作偏差超过 0.2%:\n" + "\n".join(over_threshold[:20]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

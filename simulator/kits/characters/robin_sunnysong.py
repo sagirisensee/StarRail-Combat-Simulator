@@ -433,7 +433,10 @@ class RobinSunnySongKit(KitHandler):
 
         # 行迹【即兴蓝调】回能与律动消耗 (每回合/行动仅限首次获得气氛值消耗 1 次，追加攻击属于同回合反应不触发扣除)
         is_follow_up = getattr(self, "_current_action_kind", None) == ActionKind.FOLLOW_UP
-        if self.port.is_in_turn() and not is_follow_up and not getattr(self, "_rhythm_consumed_in_current_turn", False):
+        is_countdown_actor = self.port.is_countdown(getattr(self, "_last_turn_actor", "")) or (
+            trigger_ally_id is not None and self.port.is_countdown(trigger_ally_id)
+        )
+        if self.port.is_in_turn() and not is_countdown_actor and not is_follow_up and not getattr(self, "_rhythm_consumed_in_current_turn", False):
             if self.rhythm_stacks > 0:
                 old_r = self.rhythm_stacks
                 self._rhythm_consumed_in_current_turn = True
@@ -759,12 +762,16 @@ class RobinSunnySongKit(KitHandler):
     def on_event(self, event: Any) -> None:
         """监听行动、治疗、护盾、伤害与回合时钟事件。"""
         if isinstance(event, TurnBeginEvent):
+            actor_name = getattr(event, "actor_name", getattr(event, "entity_name", ""))
+            if self.port.is_countdown(actor_name):
+                return
             # 新回合开始：重置本回合律动消耗门禁、治疗门禁与 E2 技能首获门禁
-            self._last_turn_actor = getattr(event, "actor_name", getattr(event, "entity_name", ""))
+            self._last_turn_actor = actor_name
             self._rhythm_consumed_in_current_turn = False
             self._healed_this_turn = False
             self._healed_sources_in_turn = set()
             self._e2_vibe_bonus_in_turn = False
+            self._gained_vibe_in_action = False
             self._defer_fever_sync = False
             if self.musicians_alive:
                 self._update_musician_aura()
@@ -794,7 +801,7 @@ class RobinSunnySongKit(KitHandler):
             # 天赋：我方目标施放攻击时，或在任意目标回合第一次提供治疗效果或护盾时，知更鸟•晴歌获得 1 点气氛值
             # 1. 终结技属于插入独立行动，若该终结技提供治疗/护盾且未通过攻击获得气氛，则该终结技可触发 1 次气氛值
             # 2. 回合内各治疗/护盾来源目标，首次提供治疗或护盾时触发 1 次气氛值
-            if is_teammate_source and not getattr(self, "_gained_vibe_in_action", False):
+            if is_teammate_source:
                 if getattr(self, "_current_action_kind", None) == ActionKind.ULTIMATE:
                     if not getattr(self, "_healed_in_ult", False):
                         self._healed_in_ult = True
@@ -1018,6 +1025,9 @@ class RobinSunnySongKit(KitHandler):
         # 终结技自带回能 5 点 (sp_base = 5, 受 ERR 放大)
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 5.0 * err)
+
+        # 施放终结技使自身获得 1 点气氛值
+        self.gain_vibes(1, trigger_ally_id=self.owner_id)
 
         # 1. 指定我方单体行动提前 100% (#1=1.0)
         adv_ratio = self.skill_param("ultra", 0, default=1.0)

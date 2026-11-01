@@ -216,6 +216,7 @@ class SimulatorCombatPort:
         self._spawn_token_seq: int = 0
         self._spawn_generations: Dict[str, int] = {}
         self._spawn_barriers: Dict[str, SpawnContext] = {}
+        self._preserved_memosprite_statuses: Dict[str, List[Any]] = {}
 
     def is_action_ready(self, entity_id: str) -> bool:
         """检查实体是否已完成入场屏障稳定化并具备行动资格。"""
@@ -1032,6 +1033,11 @@ class SimulatorCombatPort:
         # --- Phase 4: ACTION_GATE ---
         ctx.phase = SpawnPhase.ACTION_GATE
         ctx.ready = True
+        # 恢复退场时保留的外部回合 Buff
+        if hasattr(self.sim, "status_mgr") and name in getattr(self, "_preserved_memosprite_statuses", {}):
+            for s in self._preserved_memosprite_statuses.pop(name, []):
+                s.target = spirit
+                self.sim.status_mgr.add_status(s)
         return spirit
 
     def despawn_spirit(self, name: str, reason: str = "") -> None:
@@ -1042,6 +1048,16 @@ class SimulatorCombatPort:
                 self._spawn_barriers[name].cancelled = True
                 del self._spawn_barriers[name]
             if hasattr(self.sim, "status_mgr"):
+                all_statuses = self.sim.status_mgr.get_statuses(name)
+                preserved = [
+                    s for s in all_statuses
+                    if getattr(getattr(s, "source", None), "name", str(getattr(s, "source", ""))) != name
+                    and s.duration is not None and s.duration > 0
+                ]
+                if preserved:
+                    if not hasattr(self, "_preserved_memosprite_statuses"):
+                        self._preserved_memosprite_statuses = {}
+                    self._preserved_memosprite_statuses[name] = preserved
                 self.sim.status_mgr.remove_all_for_target(name)
             self.sim.entities.remove(ent)
             if self.sim._current_turn_entity == ent:

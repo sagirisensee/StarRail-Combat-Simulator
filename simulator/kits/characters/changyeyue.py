@@ -142,7 +142,7 @@ class ChangyeyueKit(KitHandler):
             category="buff",
             description="暴击伤害提高 +15.0%"
         ))
-        if self.port.entity_exists(self.spirit_name):
+        if self.spirit_alive and self.port.entity_exists(self.spirit_name):
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_A2_Skill_CritDmg_Spirit",
                 name="天黑黑，月寂寂 (施法暴伤+15%)",
@@ -202,36 +202,6 @@ class ChangyeyueKit(KitHandler):
                         timing=DurationTiming.TARGET_TURN_END,
                         category="buff",
                         description="暴击伤害提高 +40.0%"
-                    ))
-                if self.port.has_status(self.owner_id, "Changyeyue_Talent_CritDmg") and not self.port.has_status(self.spirit_name, "Changyeyue_Talent_CritDmg_Spirit"):
-                    talent_status = next((s for s in self.port.statuses(self.owner_id) if s.id == "Changyeyue_Talent_CritDmg"), None)
-                    dur = talent_status.duration if talent_status else 2
-                    self.port.upsert_status(BuffSpec(
-                        key="Changyeyue_Talent_CritDmg_Spirit",
-                        name="今夜与我同行 (生命降低暴伤+60%)",
-                        source_id=self.owner_id,
-                        target_id=self.spirit_name,
-                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.60),),
-                        duration=dur,
-                        timing=DurationTiming.TARGET_TURN_END,
-                        skip_current_clock=True,
-                        category="buff",
-                        description="暴击伤害提高 +60.0%"
-                    ))
-                if self.port.has_status(self.owner_id, "Changyeyue_A2_Skill_CritDmg") and not self.port.has_status(self.spirit_name, "Changyeyue_A2_Skill_CritDmg_Spirit"):
-                    a2_status = next((s for s in self.port.statuses(self.owner_id) if s.id == "Changyeyue_A2_Skill_CritDmg"), None)
-                    dur = a2_status.duration if a2_status else 2
-                    self.port.upsert_status(BuffSpec(
-                        key="Changyeyue_A2_Skill_CritDmg_Spirit",
-                        name="天黑黑，月寂寂 (施法暴伤+15%)",
-                        source_id=self.owner_id,
-                        target_id=self.spirit_name,
-                        modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
-                        duration=dur,
-                        timing=DurationTiming.TARGET_TURN_END,
-                        skip_current_clock=True,
-                        category="buff",
-                        description="暴击伤害提高 +15.0%"
                     ))
         elif isinstance(event, StatusExpireEvent):
             if (
@@ -657,6 +627,8 @@ class ChangyeyueKit(KitHandler):
             self.spirit_alive = False
             self.spirit_hp = 0.0
             self.port.remove_status(self.owner_id, "Changyeyue_Memosprite_Presence")
+            self.port.remove_status(self.spirit_name, "Changyeyue_Talent_CritDmg_Spirit")
+            self.port.remove_status(self.spirit_name, "Changyeyue_A2_Skill_CritDmg_Spirit")
             self.port.despawn_spirit(self.spirit_name, "burst_depart")
 
             # 天赋【与你，再见，无期】：消失时速度提高 10% + 消耗忆质*1% (最多计算 40 点忆质)
@@ -699,7 +671,7 @@ class ChangyeyueKit(KitHandler):
                 category="buff",
                 description="暴击伤害提高 +60.0%"
             ))
-            if self.port.entity_exists(self.spirit_name):
+            if self.spirit_alive and self.port.entity_exists(self.spirit_name):
                 self.port.upsert_status(BuffSpec(
                     key="Changyeyue_Talent_CritDmg_Spirit",
                     name="今夜与我同行 (生命降低暴伤+60%)",
@@ -758,9 +730,10 @@ class ChangyeyueKit(KitHandler):
                     self.port.remove_status(target_id, status_id)
 
     def _sync_memosprite_crit_buffs(self, target_id: Optional[str] = None) -> float:
-        """长夜月是战技分享与 A6 的唯一权威写入方。
-        - 战技【白昼悄然离去】：面向全体忆灵，严格在战技窗口期生效；
-        - 行迹【天亮了，雨落了】(A6)：伴生忆灵「长夜」专属行迹加成，在场常驻生效。
+        """长夜月是战技分享与 A6 的权威写入方。
+        - 战技【白昼悄然离去】与行迹【天亮了，雨落了】(A6)：
+          官方 1413103 机制：“长夜月的战技持续期间额外使我方全体忆灵暴击伤害提高 5%/15%/50%/65%”。
+          因此在战技生效期间 (marker_active)，我方全体忆灵 (包括「长夜」与「小伊卡」等) 均同步获得战技分享与 A6 暴伤加成。
         """
         if not self.port:
             return 0.0
@@ -774,23 +747,6 @@ class ChangyeyueKit(KitHandler):
         targets = [target_id] if target_id is not None else list(self.port.allies(self.owner_id))
         tags = (StatusTag.MEMOSPRITE_ONLY, StatusTag.EXCLUDE_FROM_STAT_TRANSFERS)
 
-        # 1. 伴生忆灵「长夜」专属 A6 暴伤同步
-        if self.port.entity_exists(self.spirit_name):
-            if target_id is None or target_id == self.spirit_name:
-                self.port.upsert_status(BuffSpec(
-                    key="Changyeyue_A6_RemembranceCritDmg_Spirit",
-                    name="天亮了，雨落了",
-                    source_id=self.owner_id,
-                    target_id=self.spirit_name,
-                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, rem_cd),),
-                    duration=None,
-                    timing=DurationTiming.TARGET_TURN_END,
-                    category="buff",
-                    tags=tags,
-                    description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd * 100:.1f}%"
-                ))
-
-        # 2. 全体忆灵战技暴伤分享同步
         for ally_id in targets:
             if (
                 not self.port.entity_exists(ally_id)
@@ -800,7 +756,7 @@ class ChangyeyueKit(KitHandler):
                 continue
 
             shared_key, a6_key = self._memosprite_effect_keys(ally_id)
-            self._remove_legacy_memosprite_copies(ally_id, keep_shared=marker_active, keep_a6=(ally_id == self.spirit_name))
+            self._remove_legacy_memosprite_copies(ally_id, keep_shared=marker_active, keep_a6=marker_active)
 
             if marker_active:
                 self.port.upsert_status(BuffSpec(
@@ -817,10 +773,23 @@ class ChangyeyueKit(KitHandler):
                     parent_key="Changyeyue_Skill_SharedCritDmg",
                     parent_target_name=self.owner_id
                 ))
+                self.port.upsert_status(BuffSpec(
+                    key=a6_key,
+                    name="天亮了，雨落了",
+                    source_id=self.owner_id,
+                    target_id=ally_id,
+                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, rem_cd),),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    tags=tags,
+                    description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd * 100:.1f}%",
+                    parent_key="Changyeyue_Skill_SharedCritDmg",
+                    parent_target_name=self.owner_id
+                ))
             else:
                 self.port.remove_status(ally_id, shared_key)
-                if ally_id != self.spirit_name:
-                    self.port.remove_status(ally_id, a6_key)
+                self.port.remove_status(ally_id, a6_key)
 
         return shared_cd
 
@@ -1007,7 +976,10 @@ class ChangyeyueKit(KitHandler):
             self._trigger_trace_a2_on_skill(self.owner_id)
 
             if self.spirit_alive:
-                self.spirit_hp = min(self.spirit_max_hp, self.spirit_hp + 0.50 * self.spirit_max_hp)
+                heal_amt = 0.50 * self.spirit_max_hp
+                self.spirit_hp = min(self.spirit_max_hp, self.spirit_hp + heal_amt)
+                if self.port.entity_exists(self.spirit_name):
+                    self.port.heal(self.owner_id, self.spirit_name, heal_amt)
             else:
                 self.summon_spirit()
 
@@ -1064,6 +1036,24 @@ class ChangyeyueKit(KitHandler):
                     timing=DurationTiming.TARGET_TURN_END,
                     category="buff",
                     description="全属性伤害提高 +60.0%"
+                ))
+
+            # 官方 141303 机制时序：长夜月大招召唤忆灵「长夜」，随后由「长夜」对敌方全体发动攻击
+            # 攻击触发的知更鸟【偏离和弦】(Tonal Chord) 暴伤增益主体为「长夜」，而非长夜月本体
+            owner_tonal = next((s for s in self.port.statuses(self.owner_id) if s.id == f"Robin_Talent_TonalChord_{self.owner_id}"), None)
+            if owner_tonal and self.port.entity_exists(self.spirit_name):
+                self.port.remove_status(self.owner_id, f"Robin_Talent_TonalChord_{self.owner_id}")
+                self.port.upsert_status(BuffSpec(
+                    key=f"Robin_Talent_TonalChord_{self.spirit_name}",
+                    name="偏离和弦",
+                    source_id=getattr(owner_tonal.source, "name", "知更鸟•晴歌"),
+                    target_id=self.spirit_name,
+                    modifiers=owner_tonal.modifiers,
+                    duration=owner_tonal.duration,
+                    timing=owner_tonal.timing,
+                    category="buff",
+                    tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS, StatusTag.MEMOSPRITE_ONLY),
+                    description=owner_tonal.description
                 ))
 
             full_spirit_sync = was_spirit_alive or self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
