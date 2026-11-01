@@ -252,7 +252,7 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
 
         team = [self.db.to_combat_entity(n) for n in ["长夜月", "风堇", "知更鸟•晴歌"]]
         enemies = [create_enemy_from_config(c) for c in STAGE_CONFIG["waves"][0]["enemies"]]
-        sim = TurnSimulator(entities=team + enemies, use_techniques=True)
+        sim = TurnSimulator(entities=team + enemies, use_techniques=False)
 
         port = sim.port
         # 1. 验证动态身份判定
@@ -265,7 +265,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertTrue(port.is_ally("风堇"))
         self.assertFalse(port.is_ally(enemies[0].name))
 
-        # 2. 验证 StatusTag 语义过滤 (天亮了雨落了具有 MEMOSPRITE_ONLY 标签)
+        # 2. 验证 StatusTag 语义过滤 (长夜月战技期间行迹【天亮了，雨落了】具有 MEMOSPRITE_ONLY 标签)
+        sim.get_entity("长夜月").kit.apply_skill_shared_crit_dmg()
         spirit_statuses = sim.status_mgr.get_statuses("长夜")
         rain_buff = next((s for s in spirit_statuses if "天亮了，雨落了" in s.name), None)
         self.assertIsNotNone(rain_buff)

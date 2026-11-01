@@ -283,11 +283,6 @@ class RobinSunnySongKit(KitHandler):
 
     @property
     def musician_max_hp(self) -> float:
-        if self.port:
-            owner_cur_max = self.port.max_hp(self.owner_id)
-            if owner_cur_max > 0:
-                hp_inherit = self.skill_param("talent", 0, default=0.70)
-                return owner_cur_max * hp_inherit
         robin_hp = self.port.base_stat(self.owner_id, StatType.MAX_HP_PERCENT) if self.port else 6000.0
         hp_inherit = self.skill_param("talent", 0, default=0.70)
         return robin_hp * hp_inherit

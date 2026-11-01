@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Sequence
 
 from .actions import ActionKind
+from .events import TurnBeginEvent
 
 
 # 我方 ActionKind -> 官方 OnUseSkill 的 skill.type 对照
@@ -751,10 +752,10 @@ def attach_exact_crit_oracle(sim: Any, log_path: Optional[str] = None) -> None:
     from .actions import ActionKind
     from .events import ActionExecuteEvent, BattleEvent
 
-    if log_path is not None and "20261026" in str(log_path):
-        non_crits = OFFICIAL_20261026_NON_CRITS
-    else:
+    if log_path is not None and "20261101" in str(log_path):
         non_crits = OFFICIAL_20261101_NON_CRITS
+    else:
+        non_crits = OFFICIAL_20261026_NON_CRITS
 
     state = {"act_idx": -1, "hit_idx": 0}
 

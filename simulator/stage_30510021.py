@@ -51,8 +51,8 @@ GUARD_HP = 459777.8        # 千星戍卫 8032040 (日志 OnInitializeEnemy 实�
 BOSS_HP = 6389558.5        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
 BOSS_PHASE2_HP = 12779116.9    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
 BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
-BOSS_PHASE1_FLOOR = 3104542.5  # 一阶段屏障冻结值 (日志实测首个冻结平台: 20261101 实测 3,104,542.5)
-BOSS_PHASE1_BARRIER_DELAY_AV = 34.0  # 一阶段屏障开启时点相对 AV
+BOSS_PHASE1_FLOOR = 3655953.0  # 一阶段屏障冻结值 (日志实存首个冻结平台: 3,655,953.09)
+BOSS_PHASE1_BARRIER_DELAY_AV = 40.5  # 一阶段屏障开启时点相对 AV
 # 一阶段屏障释放时点: 第二波开始后约 135 AV (日志中 #42 av=232.31 屏障击破)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
 SPROUT_HP = 1703882.3      # 狂兽的胚芽 5032010 (日志 OnInitializeEnemy 实测 1703882.26)
@@ -60,9 +60,9 @@ SPROUT_WAVE_COUNT = 5      # 增援批次上限: 连同波 2 开场首对共 5 �
 SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 10000 / 132.0 节拍)
 
 # 第一波大型敌人:
-# 月夜天马 4023020: 弱点火/量子/虚数, 速度 132.0, 关卡韧性 390.0 (日志 CurrentStance 实测);
-# 「灯塔」 8033020: 弱点火/风/量子, 速度 190.0, 关卡韧性 390.0 (日志 CurrentStance 实测)。
-PEGASUS_HP = 4900941.7        # 月夜天马 4023020 (日志实测 4900941.66)
+# 月夜天马 4023020: 弱点火/量子/虚数, 速度 132.0, 关卡韧性 160.0 (Nanoka 关卡数据);
+# 「灯塔」 8033020: 弱点火/风/量子, 速度 190.0, 关卡韧性 160.0 (Nanoka 关卡数据)。
+PEGASUS_HP = 4904294.0        # 月夜天马 4023020 (Nanoka 关卡数据与录像面板读数 4904294)
 LIGHTHOUSE_HP = 4286281.6     # 「灯塔」 8033020 (日志实测 4286281.55)
 PEGASUS_WEAKNESSES = ["Fire", "Quantum", "Imaginary"]
 LIGHTHOUSE_WEAKNESSES = ["Fire", "Wind", "Quantum"]
@@ -98,8 +98,8 @@ def _guard(name: str, initial_distance: float = 10000.0) -> Entity:
 _ELEMENTS = ("Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary")
 
 
-def _mech(name: str, hp: float, speed: float, weaknesses: List[str], max_toughness: float = 390.0) -> Entity:
-    """第一波大型敌人 (月夜天马/「灯塔」): 属性据日志实测。"""
+def _mech(name: str, hp: float, speed: float, weaknesses: List[str], max_toughness: float = 160.0) -> Entity:
+    """第一波大型敌人 (月夜天马/「灯塔」): 属性据 Nanoka 关卡数据。"""
     ent = Entity(
         name=name,
         base_speed=speed,
@@ -111,7 +111,7 @@ def _mech(name: str, hp: float, speed: float, weaknesses: List[str], max_toughne
         is_enemy=True,
     )
     ent.level = 100
-    ent.hit_energy = 12.5352 if "天马" in name else 10.0
+    ent.hit_energy = 10.0
     ent.damage_res = {el: (0.0 if el in weaknesses else 0.2) for el in _ELEMENTS}
     return ent
 
@@ -132,11 +132,19 @@ def _boss() -> Entity:
         base_atk=1600.0,
         max_hp=BOSS_HP,
         current_hp=BOSS_HP,
-        max_toughness=990.0, current_toughness=990.0,
+        max_toughness=360.0, current_toughness=360.0,
         weaknesses=list(BOSS_WEAKNESSES),
         is_enemy=True,
         is_boss=True,
     )
+    ent.level = 100
+    ent.damage_res = dict(BOSS_RES)
+    ent.hit_energy = 12.0
+    # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
+    # 记账方式管理 (见 Stage30510021Director._manage_boss_phases),
+    # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
+    ent.is_infinite_hp = True
+    return ent
     ent.level = 100
     ent.damage_res = dict(BOSS_RES)
     ent.hit_energy = 12.0
@@ -199,7 +207,7 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
                 import random
                 target = random.choices(allies, weights=weights, k=1)[0]
 
-        mult = 1.2 if getattr(entity, "is_boss", False) or "天马" in getattr(entity, "name", "") else 1.0
+        mult = 1.2 if getattr(entity, "is_boss", False) else 1.0
         req = DamageRequest(attacker=entity, target=target, skill_multiplier=mult)
         resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
         if w1_state is not None and w1_state.get("eradicating") and sync_w1_dr is not None:
@@ -274,7 +282,6 @@ def _sprout(name: str) -> Entity:
     )
     ent.level = 100
     ent.damage_res = dict(SPROUT_RES)
-    ent.damage_reduction = -0.08
     ent.hit_energy = 10.0
     return ent
 
@@ -327,7 +334,7 @@ class Stage30510021Director:
             if not getattr(self, "_barrier_release_pulsed", False) and can_release:
                 self._barrier_release_pulsed = True
                 boss.barrier_guarded = False
-                boss.damage_reduction = -0.04
+                boss.damage_reduction = 0.0
                 if boss.current_hp > 0:
                     from .damage import DamageRequest
                     from .effects import ApplyDamageEffect
@@ -345,10 +352,10 @@ class Stage30510021Director:
                 self._just_transitioned = True
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
-                boss.max_toughness = 1080.0
-                boss.current_toughness = 1080.0
+                boss.max_toughness = 360.0
+                boss.current_toughness = 360.0
                 boss.barrier_guarded = False
-                boss.damage_reduction = -0.08
+                boss.damage_reduction = 0.0
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
@@ -386,18 +393,13 @@ class Stage30510021Director:
                     boss.damage_reduction = 0.70
                 else:
                     boss.barrier_guarded = False
-                    boss.damage_reduction = -0.08
+                    boss.damage_reduction = 0.0
         else:
             if boss.current_hp < BOSS_PHASE2_FLOOR:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
-            if boss.barrier_guarded:
-                boss.damage_reduction = 0.69
-            elif getattr(self, "_pending_transition_sprouts", False):
-                boss.damage_reduction = 0.035
-            else:
-                boss.damage_reduction = -0.08
+            boss.damage_reduction = 0.70 if boss.barrier_guarded else 0.0
         return False
 
     def after_step(self) -> None:
@@ -422,26 +424,9 @@ class Stage30510021Director:
             # 转阶段增援 (两场日志实证): 一阶段血池打空的同一时点刷出一对
             # 胚芽 (两场该对的 CurrentHP 首样本均为 0——生成即被同簇爆发击杀),
             # 且增援节拍以转阶段时点重锚。该对计入增援批次上限。
-            if self.sprout_waves_spawned >= 2:
-                self._transition_av = av
-                self._next_sprout_av = av + SPROUT_INTERVAL_AV
-                hyacine = self.sim.get_entity("风堇")
-                if hyacine is not None and getattr(hyacine, "energy", 0.0) >= 100.0:
-                    self._pending_transition_sprouts = True
-                    return
-            else:
-                self._next_sprout_av = av + SPROUT_INTERVAL_AV
+            self._transition_av = av
+            self._next_sprout_av = av + SPROUT_INTERVAL_AV
             self._spawn_transition_sprouts()
-            return
-        if getattr(self, "_pending_transition_sprouts", False):
-            hyacine = self.sim.get_entity("风堇")
-            if hyacine is None or getattr(hyacine, "energy", 0.0) < 100.0:
-                self._pending_transition_sprouts = False
-                boss = self.sim.get_entity("堕神之血•亚婆离")
-                if boss is not None and not boss.barrier_guarded:
-                    boss.damage_reduction = -0.08
-                self._spawn_transition_sprouts()
-                return
             return
         if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.80:
             self.sprout_waves_spawned += 1
@@ -451,10 +436,6 @@ class Stage30510021Director:
     def _spawn_transition_sprouts(self) -> None:
         self.sprout_waves_spawned += 1
         self._spawn_sprouts(2)
-        for idx in (self._sprout_seq - 1, self._sprout_seq):
-            sp = self.sim.get_entity(f"狂兽的胚芽{idx}")
-            if sp is not None:
-                sp.current_hp = 900000.0
 
 
 def build_stage_30510021(
