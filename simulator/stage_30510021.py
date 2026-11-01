@@ -445,7 +445,7 @@ def build_stage_30510021(
         if not getattr(member, "is_enemy", False) and getattr(member, "max_energy", 0.0) > 0 and getattr(member, "energy", 0.0) == 0.0:
             member.energy = member.max_energy * 0.5
 
-    lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 95.04, LIGHTHOUSE_WEAKNESSES)
+    lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES)
     lighthouse.is_boss = False
     lighthouse.distance_remaining = 0.0
     pegasus = _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES)
