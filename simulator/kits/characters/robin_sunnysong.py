@@ -1026,9 +1026,6 @@ class RobinSunnySongKit(KitHandler):
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 5.0 * err)
 
-        # 施放终结技使自身获得 1 点气氛值
-        self.gain_vibes(1, trigger_ally_id=self.owner_id)
-
         # 1. 指定我方单体行动提前 100% (#1=1.0)
         adv_ratio = self.skill_param("ultra", 0, default=1.0)
         self.port.advance(self.owner_id, target_id, adv_ratio)

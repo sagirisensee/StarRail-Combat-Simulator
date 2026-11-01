@@ -181,7 +181,12 @@ class StatusManager:
                 )
             p_uids = self._by_key.get((status.parent_target_name, status.parent_key), set())
             if not p_uids:
-                # 宿主不存在或已失效：按架构契约拒绝创建无宿主派生状态
+                # 宿主不存在或已失效：按架构契约拒绝创建无宿主派生状态，并记录明确警告防静默失效
+                import logging
+                logging.getLogger("status").warning(
+                    f"[ParentLinkage] Cannot attach child status '{status.id}' to '{target_name}': "
+                    f"parent '{status.parent_key}' on '{status.parent_target_name}' not found. Rejected."
+                )
                 return
             parent_uid = next(iter(p_uids))
 
@@ -196,9 +201,12 @@ class StatusManager:
         if existing:
             if status.stack_policy == StackPolicy.REPLACE:
                 existing.modifiers = list(status.modifiers)
-                existing.duration = status.duration
+                if status.duration is not None:
+                    if existing.duration is not None:
+                        existing.duration = max(existing.duration, status.duration)
+                    # 若现有状态为常驻 (duration is None)，保持常驻不降级
                 existing.stacks = min(existing.max_stacks, max(existing.stacks, status.stacks))
-                existing.skip_current_clock = status.skip_current_clock
+                existing.skip_current_clock = status.skip_current_clock or existing.skip_current_clock
                 if status.description is not None:
                     existing.description = status.description
                 if status.tags:

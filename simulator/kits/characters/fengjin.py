@@ -268,10 +268,6 @@ class FengjinKit(KitHandler):
             category="buff",
             description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
         ))
-        cur_max = self.port.max_hp(target_id)
-        if cur_max > prev_max:
-            delta = cur_max - prev_max
-            self.port.adjust_current_hp(target_id, delta)
 
     def on_action_before(self, ctx: ActionContext) -> None:
         """动作声明期钩子：

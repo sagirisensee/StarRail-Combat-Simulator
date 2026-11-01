@@ -756,7 +756,7 @@ class ChangyeyueKit(KitHandler):
                 continue
 
             shared_key, a6_key = self._memosprite_effect_keys(ally_id)
-            self._remove_legacy_memosprite_copies(ally_id, keep_shared=marker_active, keep_a6=marker_active)
+            self._remove_legacy_memosprite_copies(ally_id, keep_shared=marker_active, keep_a6=(ally_id == self.spirit_name))
 
             if marker_active:
                 self.port.upsert_status(BuffSpec(
@@ -773,6 +773,10 @@ class ChangyeyueKit(KitHandler):
                     parent_key="Changyeyue_Skill_SharedCritDmg",
                     parent_target_name=self.owner_id
                 ))
+            else:
+                self.port.remove_status(ally_id, shared_key)
+
+            if ally_id == self.spirit_name:
                 self.port.upsert_status(BuffSpec(
                     key=a6_key,
                     name="天亮了，雨落了",
@@ -783,12 +787,9 @@ class ChangyeyueKit(KitHandler):
                     timing=DurationTiming.TARGET_TURN_END,
                     category="buff",
                     tags=tags,
-                    description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd * 100:.1f}%",
-                    parent_key="Changyeyue_Skill_SharedCritDmg",
-                    parent_target_name=self.owner_id
+                    description=f"队伍存在 {rem_count} 名「记忆」命途角色，忆灵暴击伤害提高 +{rem_cd * 100:.1f}%"
                 ))
             else:
-                self.port.remove_status(ally_id, shared_key)
                 self.port.remove_status(ally_id, a6_key)
 
         return shared_cd

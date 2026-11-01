@@ -151,34 +151,48 @@ def _boss() -> Entity:
 
 
 def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1_dr=None):
-    """小怪与精英怪确定性攻击模组: 消除随机嘲讽波动对受击回能与忆质的干扰。"""
+    """小怪与精英怪索敌模组: 遵循星铁官方基础嘲讽值 (Aggro) 权重进行概率抽样选择合法目标。"""
     from .damage import DamageRequest
     from .effects import ApplyDamageEffect
+    from .status import StatType
 
-    attack_seq = 0
+    # 官方各命途基础嘲讽值: 存护 150, 毁灭 125, 同谐/虚无/丰饶/记忆 100, 巡猎/智识 75
+    _BASE_AGGRO_BY_PATH = {
+        "PRESERVATION": 150.0,
+        "DESTRUCTION": 125.0,
+        "HARMONY": 100.0,
+        "NIHILITY": 100.0,
+        "ABUNDANCE": 100.0,
+        "REMEMBRANCE": 100.0,
+        "HUNT": 75.0,
+        "ERUDITION": 75.0,
+    }
 
     def _ai(entity, resolver, action) -> None:
-        nonlocal attack_seq
         allies = [
             e for e in sim.entities
-            if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+            if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False)
         ]
         if not allies:
             return
-        av = float(getattr(sim, "current_av", 0.0))
-        # 实时剧本：长夜自爆后的第一波敌方动，打了知更鸟•晴歌
-        if attack_seq == 0:
-            target_name = "知更鸟•晴歌"
-        elif attack_seq == 1:
-            target_name = "缇宝"
-        elif attack_seq == 2:
-            target_name = "风堇"
-        else:
-            target_name = "缇宝"
-        attack_seq += 1
 
-        primary = next((a for a in allies if a.name == target_name), allies[0])
-        req = DamageRequest(attacker=entity, target=primary, skill_multiplier=1.0)
+        # 动态计算每个合法目标的实际仇恨权重
+        weights = []
+        for a in allies:
+            path_key = str(getattr(a, "path", "")).upper()
+            base_ag = _BASE_AGGRO_BY_PATH.get(path_key, 100.0)
+            eff_ag = sim.status_mgr.calculate_stat(a.name, base_ag, StatType.AGGRO)
+            weights.append(max(0.1, eff_ag))
+
+        # 优先使用模拟器确定性 RNG 或标准稳定抽样，消除模块全局随机污染
+        rng = getattr(sim, "rng", None)
+        if rng is not None and hasattr(rng, "choices"):
+            target = rng.choices(allies, weights=weights, k=1)[0]
+        else:
+            import random
+            target = random.choices(allies, weights=weights, k=1)[0]
+
+        req = DamageRequest(attacker=entity, target=target, skill_multiplier=1.0)
         resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
         if w1_state is not None and w1_state.get("eradicating") and sync_w1_dr is not None:
             lh = sim.get_entity("「灯塔」")
