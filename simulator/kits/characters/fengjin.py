@@ -315,7 +315,7 @@ class FengjinKit(KitHandler):
             ),
             duration=duration,
             timing=DurationTiming.CASTER_TURN_END,
-            skip_current_clock=True,
+            skip_current_clock=False,
             category="buff",
             description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
         ))
@@ -325,6 +325,9 @@ class FengjinKit(KitHandler):
         施放终结技时展开【雨过天晴】场域基准，伴生忆灵依附场域实时生命基准，
         确保光锥/遗器等动作前扣血与生命联动自然读取到实时场域生命。
         """
+        if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE):
+            self.summon_yika()
+
         if ctx.kind == ActionKind.ULTIMATE:
             self._pre_ult_max_hp = self.port.max_hp(self.owner_id)
             hp_boost = self.skill_param("ultra", 2, default=0.30)
@@ -504,7 +507,7 @@ class FengjinKit(KitHandler):
                 ),
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
-                skip_current_clock=True,
+                skip_current_clock=False,
                 category="buff",
                 description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
             ))
@@ -809,11 +812,11 @@ class IkaKit(KitHandler):
             self._pending_heal_targets.append(entity_id)
 
     def on_event(self, event: Any) -> None:
-        from ...events import TurnBeginEvent, TurnEndEvent, HPLostEvent
+        from ...events import TurnBeginEvent, TurnEndEvent, HPLostEvent, ActionEndEvent
         if isinstance(event, HPLostEvent) and event.entity_name == self.owner_id and event.hp_left <= 0:
             self._on_despawned()
             return
-        if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
+        if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:

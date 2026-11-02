@@ -67,7 +67,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
             if self.port.is_own_memosprite(self.owner_id, actor):
                 self._spirit_action_open = True
                 if getattr(event, "action_kind", None) == ActionKind.MEMOSPRITE_SKILL:
-                    self._pending_vuln = True
+                    self._apply_vulnerability()
         elif isinstance(event, DamageAppliedEvent):
             if (
                 self._spirit_action_open

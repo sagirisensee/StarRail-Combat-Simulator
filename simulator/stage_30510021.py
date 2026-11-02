@@ -51,7 +51,7 @@ GUARD_HP = 459777.8        # 千星戍卫 8032040 (日志 OnInitializeEnemy 实�
 BOSS_HP = 6389558.5        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
 BOSS_PHASE2_HP = 12779116.9    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
 BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
-BOSS_PHASE1_FLOOR = 3655953.0  # 一阶段屏障冻结值 (日志实存首个冻结平台: 3,655,953.09)
+BOSS_PHASE1_FLOOR = 4540781.72  # 一阶段屏障冻结值 (日志实存首个冻结平台: 4,540,781.72)
 BOSS_PHASE1_BARRIER_DELAY_AV = 40.5  # 一阶段屏障开启时点相对 AV
 # 一阶段屏障释放时点: 第二波开始后约 135 AV (日志中 #42 av=232.31 屏障击破)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
@@ -358,8 +358,8 @@ class Stage30510021Director:
                                 req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
                                 self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
                     self.sim.resolver.resolve_all()
-                    # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (日志 [2588] av=232.31 实测余血 2,123,418.6)
-                    boss.current_hp = min(boss.current_hp, 2123418.6)
+                    # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (日志 [2588] av=232.31 实测余血 2,330,602.24)
+                    boss.current_hp = min(boss.current_hp, 2330602.24)
             # 转阶段只能发生在屏障释放之后 (屏障期内不可被击杀, 与实机一致)
             if getattr(self, "_barrier_release_pulsed", False) and boss.current_hp <= 0:
                 self.boss_phase = 2
@@ -479,6 +479,7 @@ def build_stage_30510021(
 
     lighthouse = _mech("「灯塔」", LIGHTHOUSE_HP, 190.0, LIGHTHOUSE_WEAKNESSES)
     lighthouse.distance_remaining = 0.0
+    lighthouse.is_boss = True
     pegasus = _mech("月夜天马", PEGASUS_HP, 132.0, PEGASUS_WEAKNESSES)
     guard_a = _guard("千星戍卫A", initial_distance=999999.0)
     guard_b = _guard("千星戍卫B", initial_distance=999999.0)
