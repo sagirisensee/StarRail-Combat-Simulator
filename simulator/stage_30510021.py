@@ -454,7 +454,8 @@ class Stage30510021Director:
                     if boss.current_hp <= self.phase1_barrier_floor:
                         boss.current_hp = self.phase1_barrier_floor
                         boss.barrier_guarded = True
-                        boss.damage_reduction = 0.70
+                        # 屏障减伤 75%: 同簇均匀性+抗性修正实测 Boss 切片比值 0.25000
+                        boss.damage_reduction = 0.75
                 else:
                     boss.barrier_guarded = False
                     boss.damage_reduction = 0.0
@@ -463,7 +464,7 @@ class Stage30510021Director:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
-            boss.damage_reduction = 0.70 if boss.barrier_guarded else 0.0
+            boss.damage_reduction = 0.75 if boss.barrier_guarded else 0.0
         return False
 
     def after_step(self) -> None:
