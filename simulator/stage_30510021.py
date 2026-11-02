@@ -298,11 +298,19 @@ class Stage30510021Director:
         self.boss_phase = 1
         self._next_sprout_av: Optional[float] = None
 
-        from .events import ActionEndEvent
+        from .events import ActionEndEvent, ActionExecuteEvent
         def _on_action_end(event: Any) -> None:
             if self.wave2_started:
                 self._manage_boss_phases()
         self.sim.event_bus.subscribe(ActionEndEvent, _on_action_end)
+
+        def _on_action_exec(event: Any) -> None:
+            if getattr(self, "_unspawned_transition_sprouts", None):
+                if getattr(event, "actor_name", "") in ("长夜", "堕神之血•亚婆离"):
+                    for sp in self._unspawned_transition_sprouts:
+                        sp.unspawned = False
+                    self._unspawned_transition_sprouts = None
+        self.sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec)
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
@@ -434,6 +442,10 @@ class Stage30510021Director:
             self._next_sprout_av = av + SPROUT_INTERVAL_AV
             self._spawn_transition_sprouts()
             return
+        if getattr(self, "_unspawned_transition_sprouts", None) and av > (self._transition_av or 0.0) + 0.05:
+            for sp in self._unspawned_transition_sprouts:
+                sp.unspawned = False
+            self._unspawned_transition_sprouts = None
         if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.80:
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
@@ -441,7 +453,15 @@ class Stage30510021Director:
 
     def _spawn_transition_sprouts(self) -> None:
         self.sprout_waves_spawned += 1
-        self._spawn_sprouts(2)
+        created = []
+        for _ in range(2):
+            self._sprout_seq += 1
+            sp = _sprout(f"狂兽的胚芽{self._sprout_seq}")
+            sp.action_callback = _make_minion_ai(self.sim)
+            sp.unspawned = True
+            self.sim.add_entity(sp, trigger_battle_start=False)
+            created.append(sp)
+        self._unspawned_transition_sprouts = created
 
 
 def build_stage_30510021(
