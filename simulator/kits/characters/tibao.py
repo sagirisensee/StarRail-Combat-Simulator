@@ -442,7 +442,7 @@ class TibaoKit(KitHandler):
                 self._zone_additional_actual += max(0.0, damage)
             return
 
-        if self._zone_settling_action == action_id:
+        if self._zone_settling_action == action_id or action_id in self._zone_finished_actions:
             return
 
         window = self._zone_windows.get(action_id)
@@ -540,6 +540,7 @@ class TibaoKit(KitHandler):
                     key=lambda t: (
                         self.port.current_hp(t),
                         self.port.max_hp(t),
+                        t,
                     ),
                 )
 
@@ -575,7 +576,7 @@ class TibaoKit(KitHandler):
                 )
                 if (
                     self.eidolon >= 1
-                    and true_base > 0
+                    and true_base >= 0
                     and target in self.port.enemies(self.owner_id)
                 ):
                     hp = self.port.max_hp(self.owner_id)
