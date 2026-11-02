@@ -43,7 +43,7 @@
   减伤属性 damage_reduction 建模 (统一由 damage 管线结算, 零角色插件耦合)。
 """
 
-from typing import List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 from .core import Entity, TurnSimulator
 
@@ -297,6 +297,12 @@ class Stage30510021Director:
         self._sprout_seq = 0
         self.boss_phase = 1
         self._next_sprout_av: Optional[float] = None
+
+        from .events import ActionEndEvent
+        def _on_action_end(event: Any) -> None:
+            if self.wave2_started:
+                self._manage_boss_phases()
+        self.sim.event_bus.subscribe(ActionEndEvent, _on_action_end)
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
