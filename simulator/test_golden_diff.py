@@ -224,7 +224,7 @@ class TestStageBossPhases(unittest.TestCase):
         sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_BARRIER_DELAY_AV + 1.0
         director.after_step()
         self.assertEqual(director.boss_phase, 1)
-        self.assertEqual(boss.current_hp, BOSS_PHASE1_FLOOR)
+        self.assertEqual(boss.current_hp, director.phase1_barrier_floor)
         self.assertTrue(boss.barrier_guarded)
         # 屏障释放 (AV 越过脚本时点) 后一阶段可打空 -> 转入二阶段并回满, 压制解除
         sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_FLOOR_RELEASE_AV + 1.0

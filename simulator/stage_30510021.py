@@ -297,6 +297,7 @@ class Stage30510021Director:
         self._sprout_seq = 0
         self.boss_phase = 1
         self._next_sprout_av: Optional[float] = None
+        self.phase1_barrier_floor: Optional[float] = None
 
         from .events import ActionEndEvent, ActionExecuteEvent
         def _on_action_end(event: Any) -> None:
@@ -358,8 +359,9 @@ class Stage30510021Director:
                                 req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
                                 self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
                     self.sim.resolver.resolve_all()
-                    # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (日志 [2588] av=232.31 实测余血 2,330,602.24)
-                    boss.current_hp = min(boss.current_hp, 2330602.24)
+                    # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (两场官方日志实测恒定为 Boss 最大生命的 35%)
+                    break_penalty = getattr(boss, "max_hp", BOSS_HP) * 0.35
+                    boss.current_hp = max(0.0, boss.current_hp - break_penalty)
             # 转阶段只能发生在屏障释放之后 (屏障期内不可被击杀, 与实机一致)
             if getattr(self, "_barrier_release_pulsed", False) and boss.current_hp <= 0:
                 self.boss_phase = 2
@@ -401,10 +403,13 @@ class Stage30510021Director:
                     self.sim.port.gain_energy("长夜月", 68.0, cause="亚婆离转阶段与二阶段首动受击回能")
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
-                if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV and boss.current_hp <= BOSS_PHASE1_FLOOR:
-                    boss.current_hp = BOSS_PHASE1_FLOOR
-                    boss.barrier_guarded = True
-                    boss.damage_reduction = 0.70
+                if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:
+                    if getattr(self, "phase1_barrier_floor", None) is None:
+                        self.phase1_barrier_floor = boss.current_hp
+                    if boss.current_hp <= self.phase1_barrier_floor:
+                        boss.current_hp = self.phase1_barrier_floor
+                        boss.barrier_guarded = True
+                        boss.damage_reduction = 0.70
                 else:
                     boss.barrier_guarded = False
                     boss.damage_reduction = 0.0
