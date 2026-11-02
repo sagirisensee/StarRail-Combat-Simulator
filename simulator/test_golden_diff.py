@@ -274,6 +274,9 @@ class TestStageBossActionCadence(unittest.TestCase):
             sim.step()
             director.after_step()
             if boss_avs:
+                while getattr(sim, "current_turn_entity", None) is boss:
+                    sim.step()
+                    director.after_step()
                 break
         self.assertGreaterEqual(len(boss_avs), 1, "二阶段亚婆离应开始行动")
         self.assertAlmostEqual(boss_avs[0], wave2_av + 200.0, delta=1.0, msg="二阶段首动应在转阶段时点")

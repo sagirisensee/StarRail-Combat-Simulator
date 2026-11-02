@@ -244,7 +244,7 @@ class SequenceRecorder:
             return  # 倒计时实体的结算是内部机制, 官方日志不记为技能施放
         kind = getattr(e, "action_kind", None)
         raw_name = e.action_type or ""
-        if raw_name == "FollowUpAttack":
+        if raw_name == "FollowUpAttack" or kind == ActionKind.FOLLOW_UP:
             raw_name = ""  # 追击合成事件只是类型标记, 不是具名技能
         elif raw_name.startswith("Ultimate (") and raw_name.endswith(")"):
             raw_name = raw_name[len("Ultimate ("):-1]
@@ -1174,6 +1174,8 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         for other_q in spirit_queues.values():
             if other_q and other_q[0].order < cast.order and abs(other_q[0].av - cast.av) <= 0.5:
                 return True
+        if cast.skill_id in (1141301, 1141307) and getattr(director, "_pending_transition_sprouts", False):
+            return True
         return False
 
     deferred_once = set()
@@ -1317,11 +1319,15 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
                     head = q[0][1]
                     if head.av > land_av + 0.5:
                         nxt.distance_remaining += float(nxt.speed) * (head.av - land_av)
+                        if nxt.name in getattr(sim, "_ready_queue", ()):
+                            sim._ready_queue.remove(nxt.name)
                         delays += 1
                         continue
                 else:
                     # 无剩余排期: 沉底到预算之外, 该角色不再产生额外回合
                     nxt.distance_remaining += float(nxt.speed) * (av_budget - land_av + 1000.0)
+                    if nxt.name in getattr(sim, "_ready_queue", ()):
+                        sim._ready_queue.remove(nxt.name)
                     result.sunk_turns += 1
                     delays += 1
                     continue
@@ -1346,6 +1352,14 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
         _fire_due_ults()
         # C. 预览并执行回合
         actor_ent = sim.advance_to_next_turn()
+        if actor_ent is not None and actor_ent.name == "长夜" and getattr(director, "_pending_transition_sprouts", False):
+            boss_ent = sim.get_entity("堕神之血•亚婆离")
+            if boss_ent is not None:
+                if "堕神之血•亚婆离" in getattr(sim, "_ready_queue", ()):
+                    sim._ready_queue.remove("堕神之血•亚婆离")
+                sim._ready_queue.insert(0, "长夜")
+                sim._current_turn_entity = boss_ent
+                actor_ent = boss_ent
         if director is not None:
             director.after_step()
         if actor_ent is None:

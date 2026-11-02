@@ -56,7 +56,7 @@ BOSS_PHASE1_BARRIER_DELAY_AV = 40.5  # 一阶段屏障开启时点相对 AV
 # 一阶段屏障释放时点: 第二波开始后约 135 AV (日志中 #42 av=232.31 屏障击破)
 BOSS_PHASE1_FLOOR_RELEASE_AV = 135.0
 SPROUT_HP = 1703882.3      # 狂兽的胚芽 5032010 (日志 OnInitializeEnemy 实测 1703882.26)
-SPROUT_WAVE_COUNT = 5      # 增援批次上限: 连同波 2 开场首对共 5 批
+SPROUT_WAVE_COUNT = 6      # 增援批次上限: 一阶段 3 批 + 二阶段 3 批共 6 批 (日志 OnInitializeEnemy 实测 6 批)
 SPROUT_INTERVAL_AV = 75.76  # 增援间隔 (日志实测: 10000 / 132.0 节拍)
 
 # 第一波大型敌人:
@@ -219,14 +219,46 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
     return _ai
 
 
-def _make_boss_ai(sim: TurnSimulator):
-    """亚婆离的攻击行为 (经 Entity.action_callback 挂载, 不改核心桩)。"""
+def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"] = None):
+    """亚婆离二阶段多动与插队窗口状态机 (经 Entity.action_callback 挂载)。
+
+    官方实机全序行为模组：
+    - 一个 Boss 自然回合只触发一次自然回合开始、结束和行动条重置；
+    - 每个子动 (Subaction) 结算后开放插队窗口 (continuous_action_hold=True)；
+    - 允许合法终结技抢断插队并结算派生追击；
+    - 最后一个子动结算后解除锁定 (continuous_action_hold=False) 正常结束回合。
+    """
     from .damage import DamageRequest
     from .effects import ApplyDamageEffect
     from .status import StatType
     import random
 
-    state = {"actions": 0, "combat_turns": 0}
+    state = {
+        "actions": 0,
+        "combat_turns": 0,
+        "subaction_idx": 0,
+    }
+
+    # 官方七回合连续行动模组 (经双场日志全序验证)
+    PHASE2_PLAN = {
+        1: ["HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"],
+        2: ["PARTY_AOE", "HEAVY_ST"],
+        3: ["PARTY_AOE", "HEAVY_ST", "CHANNEL_PULSE"],
+        4: ["PARTY_AOE", "HEAVY_ST"],
+        5: ["PARTY_AOE", "HEAVY_ST"],
+        6: ["PARTY_AOE", "HEAVY_ST", "CHANNEL_PULSE"],
+        7: ["HEAVY_ST", "PARTY_AOE"],
+    }
+
+    PHASE2_ST_TARGETS = {
+        1: "缇宝",
+        2: "风堇",
+        3: "风堇",
+        4: "知更鸟•晴歌",
+        5: "缇宝",
+        6: "风堇",
+        7: "长夜月",
+    }
 
     def _ai(entity, resolver, action) -> None:
         def _hit(target, multiplier: float) -> None:
@@ -239,32 +271,66 @@ def _make_boss_ai(sim: TurnSimulator):
         ]
         if not allies:
             return
-        state["actions"] += 1
-        if getattr(sim, "current_turn_entity", None) is entity:
-            state["combat_turns"] += 1
-            t = state["combat_turns"]
-            for target in allies:
-                _hit(target, 1.2)
-            st_target_name = {1: "缇宝", 2: "风堇", 3: None, 4: "知更鸟•晴歌", 5: "缇宝", 6: "风堇", 7: "长夜月"}.get(t, "风堇")
-            if st_target_name is not None:
-                primary = next((a for a in allies if a.name == st_target_name), allies[-1])
-                _hit(primary, 2.4)
-            if t == 6:
+
+        # 非自然回合调用 (例如单测单独测试 action_callback 模组交替)
+        if getattr(sim, "current_turn_entity", None) is not entity:
+            state["actions"] += 1
+            if state["actions"] % 2 == 1:
                 for target in allies:
-                    if not getattr(target, "is_memosprite", False):
-                        _hit(target, 0.8)
+                    _hit(target, 1.2)
+            else:
+                target = max(
+                    allies,
+                    key=lambda a: sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30),
+                )
+                _hit(target, 2.4)
             return
-        if state["actions"] % 2 == 1:
-            # 群伤模组: 全体 (含忆灵) 各承受一次
+
+        # 自然回合处理：按状态机推进子动序列
+        if state["subaction_idx"] == 0:
+            state["combat_turns"] += 1
+
+        t = state["combat_turns"]
+        plan = PHASE2_PLAN.get(t, ["PARTY_AOE", "HEAVY_ST"])
+        subaction = plan[state["subaction_idx"]]
+
+        if subaction == "HEAVY_ST":
+            st_target_name = PHASE2_ST_TARGETS.get(t, "风堇")
+            primary = next((a for a in allies if a.name == st_target_name), None)
+            if primary is None:
+                primary = max(
+                    allies,
+                    key=lambda a: sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30),
+                )
+            _hit(primary, 2.4)
+
+        elif subaction == "PARTY_AOE":
             for target in allies:
                 _hit(target, 1.2)
+
+        elif subaction == "SUMMON_SPROUTS":
+            # 横幅: "吸引了更多【狂兽的胚芽】！" (录像 03:48 实机画面)
+            d = director or getattr(sim, "_stage_director", None)
+            if d is not None:
+                d._spawn_transition_sprouts()
+
+        elif subaction == "CHANNEL_PULSE":
+            # 8 次小 AOE 脉冲 tick (0.1 系数) + 1 次终结 AOE (0.8 系数)
+            for _ in range(8):
+                for target in allies:
+                    _hit(target, 0.1)
+            for target in allies:
+                if not getattr(target, "is_memosprite", False):
+                    _hit(target, 0.8)
+
+        state["subaction_idx"] += 1
+
+        # 若当前回合内还有后续子动，设置 continuous_action_hold = True 挂起回合结束并开放插队窗口
+        if state["subaction_idx"] < len(plan):
+            sim.scheduler.continuous_action_hold = True
         else:
-            # 重单点模组: 按嘲讽选取 (与核心桩同口径)
-            target = max(
-                allies,
-                key=lambda a: sim.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30),
-            )
-            _hit(target, 2.4)
+            state["subaction_idx"] = 0
+            sim.scheduler.continuous_action_hold = False
 
     return _ai
 
@@ -291,6 +357,7 @@ class Stage30510021Director:
 
     def __init__(self, sim: TurnSimulator):
         self.sim = sim
+        self.sim._stage_director = self
         self.wave2_started = False
         self.wave2_av: Optional[float] = None
         self.sprout_waves_spawned = 0
@@ -300,27 +367,11 @@ class Stage30510021Director:
         self.phase1_barrier_floor: Optional[float] = None
         self._pending_transition_sprouts: bool = False
 
-        from .events import ActionEndEvent, ActionExecuteEvent
+        from .events import ActionEndEvent
         def _on_action_end(event: Any) -> None:
             if self.wave2_started:
                 self._manage_boss_phases()
-            # 官方微时序: 亚婆离二阶段行动序列 [动一次 (转阶段AOE) -> (插入) -> 第二动 (单点) -> (插入) -> 召唤]
-            # 当 Boss 二阶段行动结算完成, 且已待召唤, 执行召唤「吸引了更多【狂兽的胚芽】！」
-            if (
-                getattr(self, "_pending_transition_sprouts", False)
-                and getattr(event, "actor_name", "") == "堕神之血•亚婆离"
-                and self.boss_phase == 2
-            ):
-                self._spawn_transition_sprouts()
         self.sim.event_bus.subscribe(ActionEndEvent, _on_action_end)
-
-        def _on_action_exec(event: Any) -> None:
-            # 官方微时序: 亚婆离二阶段行动序列 [动一次 (转阶段AOE) -> (插入) -> 第二动 (单点) -> (插入) -> 召唤]
-            # 召唤发生在第二段插队大招打完、长夜 (忆灵) 即将施放【迷梦，流失，如露】(Action #53) 索敌的刹那
-            if getattr(self, "_pending_transition_sprouts", False):
-                if getattr(event, "actor_name", "") == "长夜":
-                    self._spawn_transition_sprouts()
-        self.sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec)
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
@@ -336,6 +387,14 @@ class Stage30510021Director:
             sp = _sprout(f"狂兽的胚芽{self._sprout_seq}")
             sp.action_callback = _make_minion_ai(self.sim)
             self.sim.add_entity(sp, trigger_battle_start=False)
+
+    def _spawn_transition_sprouts(self) -> None:
+        """二阶段转阶段首动连招结算后，增援一对胚芽。"""
+        if not getattr(self, "_pending_transition_sprouts", False):
+            return
+        self._pending_transition_sprouts = False
+        self._spawn_sprouts(2)
+        self._next_sprout_av = float(getattr(self.sim, "current_av", 0.0)) + SPROUT_INTERVAL_AV
 
     def _manage_boss_phases(self) -> bool:
         """亚婆离两段血池与【血脑屏障】地板 (日志 CurrentHP 全序实测, 见模块头注)。
@@ -384,32 +443,9 @@ class Stage30510021Director:
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
-
-                # 官方亚婆离转阶段全场脉冲与二阶段首动物理时序 (实机日志 [2927~2946]):
+                self._pending_transition_sprouts = True
+                self._next_sprout_av = av + SPROUT_INTERVAL_AV
                 self.sim.status_mgr.remove_status(boss.name, "LC_RainbowSky_Vuln")
-                ika = self.sim.get_entity("小伊卡")
-                ika_kit = getattr(ika, "kit", None) if ika else None
-                for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌"):
-                    ent = self.sim.get_entity(a_name)
-                    if ent is not None and getattr(ent, "current_hp", 0.0) > 0:
-                        self.sim.port.lose_hp(a_name, 600.0, cause="boss_phase_transition_aoe")
-                if ika_kit is not None:
-                    ika_kit._resolve_talent_heal()
-                for a_name in ("风堇", "缇宝", "长夜月", "知更鸟•晴歌"):
-                    ent = self.sim.get_entity(a_name)
-                    if ent is not None and getattr(ent, "current_hp", 0.0) > 0:
-                        self.sim.port.lose_hp(a_name, 600.0, cause="boss_phase2_turn1_aoe")
-                if ika_kit is not None:
-                    ika_kit._resolve_talent_heal()
-                for _ in range(1):
-                    for a_name in ("风堇", "缇宝", "知更鸟•晴歌"):
-                        ent = self.sim.get_entity(a_name)
-                        if ent is not None and getattr(ent, "current_hp", 0.0) > 0:
-                            self.sim.port.lose_hp(a_name, 300.0, cause="boss_phase2_multihit_aoe")
-                    if ika_kit is not None:
-                        ika_kit._resolve_talent_heal()
-                if self.sim.get_entity("长夜月") is not None:
-                    self.sim.port.gain_energy("长夜月", 68.0, cause="亚婆离转阶段与二阶段首动受击回能")
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
                 if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:
@@ -436,7 +472,7 @@ class Stage30510021Director:
                 self.wave2_started = True
                 self.wave2_av = float(getattr(self.sim, "current_av", 0.0))
                 boss = _boss()
-                boss.action_callback = _make_boss_ai(self.sim)
+                boss.action_callback = _make_boss_ai(self.sim, self)
                 self.sim.add_entity(boss, trigger_battle_start=False)
                 self._spawn_sprouts(2)
                 self._next_sprout_av = self.wave2_av + SPROUT_INTERVAL_AV
@@ -471,15 +507,7 @@ class Stage30510021Director:
             self._spawn_sprouts(2)
             self._next_sprout_av += SPROUT_INTERVAL_AV
 
-    def _spawn_transition_sprouts(self) -> None:
-        """转阶段胚芽召唤 (官方真值: 亚婆离二阶段连招 [动一次 -> (插入) -> 第二动 -> (插入) -> 召唤])。
 
-        在 Boss 第二动结束或长夜忆灵出手时正式入场, 实体池不再保留 unspawned 隐身状态。
-        """
-        if not getattr(self, "_pending_transition_sprouts", False):
-            return
-        self._pending_transition_sprouts = False
-        self._spawn_sprouts(2)
 
 
 def build_stage_30510021(
