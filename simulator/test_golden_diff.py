@@ -178,7 +178,10 @@ class TestStageDirectorReinforcements(unittest.TestCase):
         boss.current_hp = 0.0
         director.after_step()
         self.assertEqual(director.boss_phase, 2)
-        self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"), "转阶段时点应增援一对胚芽")
+        # 官方微时序: 转阶段进入首动连招 [动一次 -> (插入) -> 第二动 -> (插入) -> 召唤], 待召唤标记在连招结算或长夜出手时生成
+        self.assertTrue(director._pending_transition_sprouts)
+        director._spawn_transition_sprouts()
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"), "转阶段连招结算应增援一对胚芽")
         self.assertIsNotNone(sim.get_entity("狂兽的胚芽4"))
         self.assertEqual(director.sprout_waves_spawned, 1)
         # 原节拍第三拍 (+227.28) 已被重锚覆盖: 不生成

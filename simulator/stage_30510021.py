@@ -298,19 +298,28 @@ class Stage30510021Director:
         self.boss_phase = 1
         self._next_sprout_av: Optional[float] = None
         self.phase1_barrier_floor: Optional[float] = None
+        self._pending_transition_sprouts: bool = False
 
         from .events import ActionEndEvent, ActionExecuteEvent
         def _on_action_end(event: Any) -> None:
             if self.wave2_started:
                 self._manage_boss_phases()
+            # 官方微时序: 亚婆离二阶段行动序列 [动一次 (转阶段AOE) -> (插入) -> 第二动 (单点) -> (插入) -> 召唤]
+            # 当 Boss 二阶段行动结算完成, 且已待召唤, 执行召唤「吸引了更多【狂兽的胚芽】！」
+            if (
+                getattr(self, "_pending_transition_sprouts", False)
+                and getattr(event, "actor_name", "") == "堕神之血•亚婆离"
+                and self.boss_phase == 2
+            ):
+                self._spawn_transition_sprouts()
         self.sim.event_bus.subscribe(ActionEndEvent, _on_action_end)
 
         def _on_action_exec(event: Any) -> None:
-            if getattr(self, "_unspawned_transition_sprouts", None):
-                if getattr(event, "actor_name", "") in ("长夜", "堕神之血•亚婆离"):
-                    for sp in self._unspawned_transition_sprouts:
-                        sp.unspawned = False
-                    self._unspawned_transition_sprouts = None
+            # 官方微时序: 亚婆离二阶段行动序列 [动一次 (转阶段AOE) -> (插入) -> 第二动 (单点) -> (插入) -> 召唤]
+            # 召唤发生在第二段插队大招打完、长夜 (忆灵) 即将施放【迷梦，流失，如露】(Action #53) 索敌的刹那
+            if getattr(self, "_pending_transition_sprouts", False):
+                if getattr(event, "actor_name", "") == "长夜":
+                    self._spawn_transition_sprouts()
         self.sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec)
 
     def _alive(self, name: str) -> bool:
@@ -440,33 +449,37 @@ class Stage30510021Director:
             return
         av = float(getattr(self.sim, "current_av", 0.0))
         if transitioned:
-            # 转阶段增援 (两场日志实证): 一阶段血池打空的同一时点刷出一对
-            # 胚芽 (两场该对的 CurrentHP 首样本均为 0——生成即被同簇爆发击杀),
-            # 且增援节拍以转阶段时点重锚。该对计入增援批次上限。
+            # 转阶段增援重锚 (两场日志实证):
+            # 亚婆离二阶段进入首动连招 [动一次 (转阶段AOE) -> (插入) -> 第二动 (单点) -> (插入) -> 召唤],
+            # 增援节拍以转阶段时点重锚, 本对计入批次上限。
             self._transition_av = av
             self._next_sprout_av = av + SPROUT_INTERVAL_AV
-            self._spawn_transition_sprouts()
+            self.sprout_waves_spawned += 1
+            self._pending_transition_sprouts = True
             return
-        if getattr(self, "_unspawned_transition_sprouts", None) and av > (self._transition_av or 0.0) + 0.05:
-            for sp in self._unspawned_transition_sprouts:
-                sp.unspawned = False
-            self._unspawned_transition_sprouts = None
+
+        # 若时间已越过转阶段窗口且仍未消耗待召唤标记, 自动落地
+        if getattr(self, "_pending_transition_sprouts", False) and av > (self._transition_av or 0.0) + 0.05:
+            self._spawn_transition_sprouts()
+
+        if self.sprout_waves_spawned >= SPROUT_WAVE_COUNT:
+            return
+        if not self._alive("堕神之血•亚婆离"):
+            return
         if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.80:
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
             self._next_sprout_av += SPROUT_INTERVAL_AV
 
     def _spawn_transition_sprouts(self) -> None:
-        self.sprout_waves_spawned += 1
-        created = []
-        for _ in range(2):
-            self._sprout_seq += 1
-            sp = _sprout(f"狂兽的胚芽{self._sprout_seq}")
-            sp.action_callback = _make_minion_ai(self.sim)
-            sp.unspawned = True
-            self.sim.add_entity(sp, trigger_battle_start=False)
-            created.append(sp)
-        self._unspawned_transition_sprouts = created
+        """转阶段胚芽召唤 (官方真值: 亚婆离二阶段连招 [动一次 -> (插入) -> 第二动 -> (插入) -> 召唤])。
+
+        在 Boss 第二动结束或长夜忆灵出手时正式入场, 实体池不再保留 unspawned 隐身状态。
+        """
+        if not getattr(self, "_pending_transition_sprouts", False):
+            return
+        self._pending_transition_sprouts = False
+        self._spawn_sprouts(2)
 
 
 def build_stage_30510021(
