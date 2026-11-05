@@ -11,7 +11,7 @@ from typing import Any
 from ..base import LightConeHandler
 from ...actions import ActionContext, ActionKind
 from ...combat_port import BuffSpec
-from ...events import HPLostEvent, SpiritDespawnEvent
+from ...events import HPLostEvent, SpiritDespawnEvent, SpiritSummonedEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
@@ -26,22 +26,27 @@ class MakeFarewellsMoreBeautifulHandler(LightConeHandler):
         self.advance_triggered: bool = False
 
     def trigger_flower_buff(self) -> None:
-        """触发并挂载【冥花】状态（无视防御力）。"""
+        """触发并挂载【冥花】状态（无视防御力）。官方铭刻效果明确作用于装备者及其伴生忆灵。"""
         if not self.port:
             return
         def_shred_val = self.scale(self.DEF_IGNORE_VALUES)
-        self.port.upsert_status(BuffSpec(
-            key="LC_Farewells_FlowerBuff",
-            name="冥花",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, def_shred_val),),
-            duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
-            skip_current_clock=True,
-            category="buff",
-            description=f"《让告别，更美一些》无视防御 {def_shred_val*100:.1f}%"
-        ))
+        targets = [self.owner_id]
+        for ally in self.port.allies(self.owner_id):
+            if self.port.is_own_memosprite(self.owner_id, ally) and not self.port.is_countdown(ally):
+                targets.append(ally)
+        for tgt in targets:
+            self.port.upsert_status(BuffSpec(
+                key="LC_Farewells_FlowerBuff",
+                name="冥花",
+                source_id=self.owner_id,
+                target_id=tgt,
+                modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, def_shred_val),),
+                duration=2,
+                timing=DurationTiming.TARGET_TURN_END,
+                skip_current_clock=True,
+                category="buff",
+                description=f"《让告别，更美一些》无视防御 {def_shred_val*100:.1f}%"
+            ))
 
     def on_action_after(self, ctx: ActionContext) -> None:
         """在装备者自身回合内施放技能时激活【冥花】；施放终结技重置拉条触发次数。"""
@@ -60,6 +65,9 @@ class MakeFarewellsMoreBeautifulHandler(LightConeHandler):
             is_owner = (event.entity_name == self.owner_id)
             is_own_spirit = self.port.is_own_memosprite(self.owner_id, event.entity_name)
             if (is_owner or is_own_spirit) and event.amount > 0:
+                self.trigger_flower_buff()
+        elif isinstance(event, SpiritSummonedEvent):
+            if event.owner_name == self.owner_id and self.port.has_status(self.owner_id, "LC_Farewells_FlowerBuff"):
                 self.trigger_flower_buff()
         elif isinstance(event, SpiritDespawnEvent):
             if event.owner_name == self.owner_id and not self.advance_triggered:

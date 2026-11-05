@@ -33,7 +33,7 @@
 from typing import Optional, List, Any
 from ..base import KitHandler
 from ..registry import register_kit
-from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType
+from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, ActionScheduleCategory
 from ...combat_port import BuffSpec, CombatPort
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
@@ -41,6 +41,8 @@ from ...status import DurationTiming, Modifier, ModifierOp, StatType
 @register_kit("1409", "风堇", "hyacine", "fengjin")
 class FengjinKit(KitHandler):
     """风堇 (ID 1409, 风 / 记忆)."""
+
+    E1_INCLUDES_MEMOSPRITES: bool = True
 
     def __init__(self, owner_id: str, port: CombatPort, *, eidolon: int = 0, skill_levels: Optional[dict] = None):
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
@@ -57,6 +59,10 @@ class FengjinKit(KitHandler):
         self._ika_ever_summoned: bool = False
         # 本场战斗风堇与小伊卡的累计治疗量 (小伊卡忆灵技 1140901 的伤害基数)
         self.accumulated_healing: float = 0.0
+
+        # 基于 action_id 的 E1 治疗因果追踪
+        self._e1_pending_actions: dict[int, str] = {}
+        self._e1_seen_actions: set[int] = set()
 
     def apply_trace_passives(self, entity: Any) -> None:
         """行迹常驻被动属性注入与实机面板校准：
@@ -111,53 +117,98 @@ class FengjinKit(KitHandler):
         self._sync_storm_calm()
 
     def summon_yika(self) -> None:
-        """召唤忆灵小伊卡 (实体召唤, 不再是仅置标志的占位实现)。
-        遵循官方 Nanoka 4.6 数据：
-        - 天赋【疗愈世间的晨曦】(140904)：小伊卡初始生命上限 = 风堇生命上限的 50%；
-        - 忆灵天赋【牵起晴空的手】(1140903)：速度为 0, 不出现在行动序列上 (以 speed=0 实体实现)；
-        - 忆灵天赋【展翼，奔向日辉】(1140905)：被召唤时为风堇恢复 15 点能量,
-          本场战斗首次被召唤时额外恢复 30 点 (首次合计 45 点)。
-        """
+        """仅在实际从不在场变为在场时，结算召唤天赋回能。"""
+        if self.port is None:
+            return
+
+        spirit_name = "小伊卡"
+
+        # 已在场：只同步存活状态与套件引用，不重复结算召唤事实与回能。
+        if self.port.entity_exists(spirit_name):
+            self.yika_alive = True
+            spirit = self.port._get_entity(spirit_name)
+            if spirit:
+                self.ika_kit = getattr(spirit, "kit", None)
+            return
+
         first_summon = not self._ika_ever_summoned
-        self._ika_ever_summoned = True
+
+        spirit = self.port.summon_spirit(
+            self.owner_id,
+            spirit_name,
+            base_speed=0.0,
+            max_hp=self.port.max_hp(self.owner_id) * 0.50,
+            kit_class=IkaKit,
+            kit_args={"master_kit": self},
+        )
+
+        if spirit is None:
+            self.yika_alive = False
+            self.ika_kit = None
+            return
+
         self.yika_alive = True
+        self.ika_kit = getattr(spirit, "kit", None)
+        self._ika_ever_summoned = True
 
-        if first_summon and self.port:
-            self.port.publish_action(self.owner_id, "牵起晴空的手", ActionKind.TALENT, skill_id=1140903)
-            self.port.publish_action(self.owner_id, "展翼，奔向日辉", ActionKind.TALENT, skill_id=1140905)
-            self.port.publish_action(self.owner_id, "坠落，然后飞翔", ActionKind.TALENT, skill_id=1140906)
-
-        if self.port and not self.port.entity_exists("小伊卡"):
-            spirit = self.port.summon_spirit(
+        if first_summon:
+            self.port.publish_action(
                 self.owner_id,
-                "小伊卡",
-                base_speed=0.0,
-                max_hp=self.port.max_hp(self.owner_id) * 0.50,
-                kit_class=IkaKit,
-                kit_args={"master_kit": self}
+                "牵起晴空的手",
+                ActionKind.TALENT,
+                skill_id=1140903,
             )
-            self.ika_kit = getattr(spirit, "kit", None)
+            self.port.publish_action(
+                self.owner_id,
+                "展翼，奔向日辉",
+                ActionKind.TALENT,
+                skill_id=1140905,
+            )
+            self.port.publish_action(
+                self.owner_id,
+                "坠落，然后飞翔",
+                ActionKind.TALENT,
+                skill_id=1140906,
+            )
 
-        if self.port and hasattr(self.port, "gain_energy"):
-            base_e = 45.0 if first_summon else 15.0
-            err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-            actual_e = base_e * err
-            tag = "首次" if first_summon else ""
-            desc = f"忆灵天赋《展翼，奔向日辉》{tag}召唤回能 (基础 {base_e:.0f} × ERR {err*100:.1f}%)"
-            self.port.gain_energy(self.owner_id, actual_e, cause=desc, source_plugin="小伊卡天赋")
+        base_energy = 45.0 if first_summon else 15.0
+        err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
+
+        self.port.gain_energy(
+            self.owner_id,
+            base_energy * err,
+            cause=(
+                f"忆灵天赋《展翼，奔向日辉》"
+                f"{'首次' if first_summon else ''}召唤回能 "
+                f"(基础 {base_energy:.0f} × ERR {err * 100:.1f}%)"
+            ),
+            source_plugin="小伊卡天赋",
+        )
 
         if self.eidolon >= 6:
             for ally in self.port.allies(self.owner_id):
+                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                    continue
+
                 self.port.upsert_status(BuffSpec(
                     key=f"Fengjin_E6_ResPen_{ally}",
                     name="天空…应我的祈愿",
                     source_id=self.owner_id,
                     target_id=ally,
-                    modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, 0.20),),
+                    modifiers=(
+                        Modifier(
+                            StatType.RES_PEN,
+                            ModifierOp.ADD,
+                            0.20,
+                        ),
+                    ),
                     duration=None,
                     timing=DurationTiming.TARGET_TURN_END,
                     category="buff",
-                    description="小伊卡在场时，我方全体目标全属性抗性穿透提高 +20.0%"
+                    description=(
+                        "小伊卡在场时，我方全体目标"
+                        "全属性抗性穿透提高 +20.0%"
+                    ),
                 ))
 
     def on_healing_provided(self) -> None:
@@ -188,6 +239,8 @@ class FengjinKit(KitHandler):
         星魂 2【请来我的庭院坐坐】：我方目标生命值降低时，速度提高 30%，持续 2 回合。
         (忆灵天赋【牵起晴空的手】的治疗已移交 IkaKit 本体实现, 见文件末尾。)
         """
+        if actual_loss <= 0.0:
+            return
         if entity_id in self.port.allies(self.owner_id):
             if self.eidolon >= 2:
                 self.port.upsert_status(BuffSpec(
@@ -237,6 +290,56 @@ class FengjinKit(KitHandler):
                 priority=0
             )
         raise ValueError(f"未支持的动作类型: {kind}")
+
+    def _apply_sun_after_rain_to_memosprite(self, target_id: str, duration: int = 3) -> None:
+        """统一为忆灵施加【雨过天晴】生命上限 Buff，并通过 CombatPort 原子同步当前生命值。"""
+        if not self.port.entity_exists(target_id) or not self.port.is_memosprite(target_id):
+            return
+        if self.port.has_status(target_id, f"Fengjin_Ult_SunAfterRain_{target_id}"):
+            return
+
+        hp_boost = self.skill_param("ultra", 2, default=0.30)
+        if self.eidolon >= 1:
+            hp_boost += 0.50
+        flat_hp = self.skill_param("ultra", 3, default=600.0)
+
+        prev_max = self.port.max_hp(target_id)
+        self.port.upsert_status(BuffSpec(
+            key=f"Fengjin_Ult_SunAfterRain_{target_id}",
+            name="雨过天晴",
+            source_id=self.owner_id,
+            target_id=target_id,
+            modifiers=(
+                Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, hp_boost),
+                Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
+            ),
+            duration=duration,
+            timing=DurationTiming.CASTER_TURN_END,
+            skip_current_clock=False,
+            category="buff",
+            description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
+        ))
+
+    def on_action_before(self, ctx: ActionContext) -> None:
+        """动作声明期钩子：
+        施放终结技时展开【雨过天晴】场域基准，伴生忆灵依附场域实时生命基准，
+        确保光锥/遗器等动作前扣血与生命联动自然读取到实时场域生命。
+        """
+        if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE):
+            self.summon_yika()
+
+        if ctx.kind == ActionKind.ULTIMATE:
+            self._pre_ult_max_hp = self.port.max_hp(self.owner_id)
+            hp_boost = self.skill_param("ultra", 2, default=0.30)
+            if self.eidolon >= 1:
+                hp_boost += 0.50
+            flat_hp = self.skill_param("ultra", 3, default=600.0)
+
+            for ally in self.port.allies(self.owner_id):
+                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                    continue
+                if self.port.is_memosprite(ally):
+                    self._apply_sun_after_rain_to_memosprite(ally, duration=3)
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
@@ -295,8 +398,18 @@ class FengjinKit(KitHandler):
         self._fire_ika_scatter()
 
     def _fire_ika_scatter(self) -> None:
-        self.port.publish_action("小伊卡", IkaKit.SKILL_NAME, ActionKind.MEMOSPRITE_SKILL, skill_id=IkaKit.SKILL_ID)
-        self.ika_kit.cast_scatter()
+        def _cb():
+            self.ika_kit.cast_scatter()
+        self.port.schedule_extra_turn(
+            "小伊卡",
+            _cb,
+            name=IkaKit.SKILL_NAME,
+            category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+            action_kind=ActionKind.MEMOSPRITE_SKILL,
+            skill_id=IkaKit.SKILL_ID,
+            preempt_follow_up=False,
+            publish_execute_event=True,
+        )
 
     def _execute_basic(self, ctx: ActionContext) -> None:
         """普攻【当微风轻吻云沫】：等同生命上限 70% (Lv 10) 的风属性伤害。"""
@@ -327,12 +440,12 @@ class FengjinKit(KitHandler):
             oh += 0.25
         return base_heal * (1.0 + max(0.0, oh))
 
-    def _heal_team_with_ika(self, ally_pct: float, ally_flat: float, ika_pct: float, ika_flat: float) -> None:
+    def _heal_team_with_ika(self, ally_pct: float, ally_flat: float, ika_pct: float, ika_flat: float, base_hp: Optional[float] = None) -> None:
         """风堇技能的团队治疗: 其他我方目标与伴生忆灵适用不同的回复量 (官方技能描述分开列明)。
 
         两组回复量均以风堇生命上限为基准，通过 CombatPort.is_own_memosprite 判定从属关系，并乘算治疗量加成。
         """
-        max_hp = self.port.max_hp(self.owner_id)
+        max_hp = base_hp if base_hp is not None else self.port.max_hp(self.owner_id)
         for ally in self.port.allies(self.owner_id):
             if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                 continue
@@ -359,12 +472,13 @@ class FengjinKit(KitHandler):
     def _execute_ultimate(self, ctx: ActionContext) -> None:
         """终结技【飞入晨昏的我们】：召唤小伊卡，全体治疗 (10% HP + 200)，小伊卡回复 (12% HP + 240)，进入【雨过天晴】。"""
         self.summon_yika()
-        max_hp = self.port.max_hp(self.owner_id)
+        base_hp = getattr(self, "_pre_ult_max_hp", None) or self.port.max_hp(self.owner_id)
         self._heal_team_with_ika(
             ally_pct=self.skill_param("ultra", 0, default=0.10),
             ally_flat=self.skill_param("ultra", 1, default=200.0),
             ika_pct=self.skill_param("ultra", 5, default=0.12),
-            ika_flat=self.skill_param("ultra", 6, default=240.0)
+            ika_flat=self.skill_param("ultra", 6, default=240.0),
+            base_hp=base_hp
         )
 
         self.on_healing_provided()
@@ -393,7 +507,7 @@ class FengjinKit(KitHandler):
                 ),
                 duration=3,
                 timing=DurationTiming.CASTER_TURN_END,
-                skip_current_clock=True,
+                skip_current_clock=False,
                 category="buff",
                 description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
             ))
@@ -409,9 +523,79 @@ class FengjinKit(KitHandler):
         """
         return self.in_rain_state()
 
+    def _is_e1_attack_actor(self, actor: str) -> bool:
+        return (
+            self.port.entity_exists(actor)
+            and self.port.is_ally(actor)
+            and not self.port.is_countdown(actor)
+            and (
+                self.E1_INCLUDES_MEMOSPRITES
+                or not self.port.is_memosprite(actor)
+            )
+        )
+
+    def _handle_e1_action_event(self, event: Any) -> None:
+        from ...events import (
+            ActionExecuteEvent,
+            PrimaryDamageCompleteEvent,
+            ActionEndEvent,
+        )
+        from ._causal import actor_of, require_id
+
+        if isinstance(event, ActionExecuteEvent):
+            action_id = require_id(event, "action_id")
+            if action_id in self._e1_seen_actions:
+                return
+            self._e1_seen_actions.add(action_id)
+
+            if self.eidolon < 1 or not self._sun_after_rain_active():
+                return
+
+            actor = actor_of(event)
+            if (
+                self._is_e1_attack_actor(actor)
+                and self.port.is_attack_action(
+                    actor,
+                    event.action_kind,
+                    getattr(event, "action_type", ""),
+                )
+            ):
+                self._e1_pending_actions[action_id] = actor
+            return
+
+        if not isinstance(
+            event,
+            (PrimaryDamageCompleteEvent, ActionEndEvent),
+        ):
+            return
+
+        action_id = require_id(event, "action_id")
+
+        # 先移除再治疗，防止治疗事件重入重复触发。
+        actor = self._e1_pending_actions.pop(action_id, None)
+        if actor is None:
+            return
+
+        if (
+            self.eidolon < 1
+            or not self._sun_after_rain_active()
+            or not self._is_e1_attack_actor(actor)
+        ):
+            return
+
+        target_heal = actor if (self.port.entity_exists(actor) and self.port.current_hp(actor) > 0) else (self.port.get_master_name(actor) or actor)
+        if not self.port.entity_exists(target_heal) or self.port.current_hp(target_heal) <= 0:
+            return
+
+        raw_heal = 0.08 * self.port.max_hp(self.owner_id)
+        amount = self._apply_outgoing_healing(raw_heal, target_heal)
+
+        self.port.heal(self.owner_id, target_heal, amount)
+        self.on_healing_provided()
+
     def on_event(self, event: Any) -> None:
         # 累计治疗量统计: 风堇与伴生忆灵造成的治疗计入忆灵技的伤害基数
-        from ...events import HealAppliedEvent, ActionExecuteEvent
+        from ...events import HealAppliedEvent, SpiritSummonedEvent
         if isinstance(event, HealAppliedEvent) and (
             event.source_name == self.owner_id
             or self.port.is_own_memosprite(self.owner_id, event.source_name)
@@ -419,23 +603,24 @@ class FengjinKit(KitHandler):
             if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(event.target_name)):
                 self.accumulated_healing += float(event.amount)
         self._sync_storm_calm()
-        """星魂 1【呵护黑夜中的烛火】：处于【雨过天晴】时，队友攻击后立即回复等同于风堇 8% 生命上限的生命值。"""
-        if self.eidolon >= 1 and self._sun_after_rain_active():
-            if isinstance(event, ActionExecuteEvent):
-                actor_id = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
-                action_kind = getattr(event, "action_kind", None)
-                action_type = getattr(event, "action_type", "")
-                if (
-                    actor_id in self.port.allies(self.owner_id)
-                    and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_id))
-                    and self.port.is_attack_action(actor_id, action_kind, action_type)
-                ):
-                    raw_heal = 0.08 * self.port.max_hp(self.owner_id)
-                    self.port.heal(self.owner_id, actor_id, self._apply_outgoing_healing(raw_heal, actor_id))
-                    self.on_healing_provided()
+
+        if isinstance(event, SpiritSummonedEvent):
+            target_id = getattr(event, "spirit_name", "")
+            if (
+                self.port.entity_exists(target_id)
+                and self.port.is_ally(target_id)
+                and self.port.is_memosprite(target_id)
+            ):
+                if self._sun_after_rain_active():
+                    ult_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Fengjin_Ult_SunAfterRain_")), None)
+                    if ult_buff:
+                        self._apply_sun_after_rain_to_memosprite(target_id, duration=ult_buff.duration)
+
+        self._handle_e1_action_event(event)
 
     def use_technique(self) -> None:
         """秘技【天气正好，万物可爱！】：进场回复 30% HP + 600，生命上限提高 20%，持续 2 回合。"""
+        self._sync_storm_calm()
         max_hp = self.port.max_hp(self.owner_id)
         raw_heal = max_hp * 0.30 + 600.0
         for ally in self.port.allies(self.owner_id):
@@ -450,10 +635,11 @@ class FengjinKit(KitHandler):
                 modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
+                skip_current_clock=False,
                 category="buff",
                 description="全队生命上限提高 +20.0%"
             ))
+
 
 
 class IkaKit(KitHandler):
@@ -472,7 +658,7 @@ class IkaKit(KitHandler):
 
     SKILL_NAME = "乌云乌云快走开！"
     SKILL_ID = 1140901
-    DMG_RATIO_OF_HEALING = 0.20     # 1140901 参数 #1 (Lv6 官方满级倍率 20%)
+    DMG_RATIO_OF_HEALING = 0.20     # 1140901 官方解包参数 #1 (Lv6 满级倍率 20%)
     HEALING_RETAIN_RATIO = 0.50     # 施放后清空 50%, 保留 50%
     SELF_COST_RATIO = 0.04          # 1140903 参数 #1
     TALENT_HEAL_PCT = 0.020         # 1140903 参数 #2 (Lv6 官方满级倍率 2.0%, 以风堇生命上限为基准)
@@ -512,13 +698,22 @@ class IkaKit(KitHandler):
         for s in ika_statuses:
             if s.id.endswith("_IkaAura") and s.name in direct_names:
                 self.port.remove_status(self.owner_id, s.id)
+        direct_robin_keys = {
+            "Robin_Fever_DefIgnore",
+            "Robin_Fever_DmgBoost",
+            "Robin_E2_ResPen",
+            "Robin_Tech_WeAreTheMelody",
+        }
+        for key in direct_robin_keys:
+            self.port.remove_status(self.owner_id, f"{key}_IkaAura")
+
         ika_statuses = list(self.port.statuses(self.owner_id))
         ika_status_ids = {s.id for s in ika_statuses}
         ika_status_names = {s.name for s in ika_statuses}
         for s in self.port.statuses(master.owner_id, category="buff"):
             if StatusTag.CHARACTER_ONLY in getattr(s, "tags", ()):
                 continue
-            if s.id.startswith("Robin_Talent_TonalChord_") or s.id == "Robin_Tech_WeAreTheMelody":
+            if s.id in direct_robin_keys or s.id.startswith("Robin_Talent_TonalChord_"):
                 continue
             mods = tuple(m for m in s.modifiers if m.stat in allowed_stats)
             if not mods:
@@ -540,50 +735,73 @@ class IkaKit(KitHandler):
 
     def cast_scatter(self) -> None:
         """施放忆灵技【乌云乌云快走开！】：以累计治疗量 20% 为基础值的敌方全体风属性伤害。"""
+        if getattr(self, "_casting_scatter", False):
+            return
+
         master = self.master_kit
         if master is None or not self.port.entity_exists(self.owner_id):
             return
-        # 行动后/额外回合前先结算【牵起晴空的手】挂起治疗
-        self._resolve_talent_heal()
-        self._sync_master_field_auras()
-        accumulated = master.accumulated_healing
-        base_value = accumulated * self.DMG_RATIO_OF_HEALING
-        master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
-        if base_value <= 0:
-            return
-        my_max_hp = self.port.max_hp(self.owner_id)
-        if my_max_hp <= 0:
-            return
-        # 基础伤害为固定数值 (累计治疗量 x 20%)：以自身生命上限为缩放基准反推等效倍率
-        eq_mult = base_value / my_max_hp
-        for enemy in self.port.enemies(self.owner_id):
-            self.port.attack(
-                self.owner_id,
-                enemy,
-                element="Wind",
-                atk_multiplier=eq_mult,
-                toughness_damage=30.0,
-                damage_type=DamageType.SERVANT,
-                scaling_stat="hp"
+
+        self._casting_scatter = True
+        try:
+            if hasattr(self.port, "resolve_effects"):
+                self.port.resolve_effects()
+            if not self.port.entity_exists(self.owner_id):
+                return
+            # 行动后/额外回合前先结算【牵起晴空的手】挂起治疗
+            self._resolve_talent_heal()
+            if hasattr(self.port, "resolve_effects"):
+                self.port.resolve_effects()
+            if not self.port.entity_exists(self.owner_id):
+                return
+            self._sync_master_field_auras()
+            if hasattr(self.port, "resolve_effects"):
+                self.port.resolve_effects()
+            if not self.port.entity_exists(self.owner_id):
+                return
+            my_max_hp = float(self.port.max_hp(self.owner_id))
+            if my_max_hp <= 0.0:
+                return
+            accumulated = float(master.accumulated_healing)
+            base_value = accumulated * self.DMG_RATIO_OF_HEALING
+            master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
+            if base_value > 0.0:
+                eq_mult = base_value / my_max_hp
+                enemies = tuple(self.port.enemies(self.owner_id))
+                for enemy in enemies:
+                    if not self.port.entity_exists(enemy):
+                        continue
+                    self.port.attack(
+                        self.owner_id,
+                        enemy,
+                        element="Wind",
+                        atk_multiplier=eq_mult,
+                        toughness_damage=30.0,
+                        damage_type=DamageType.SERVANT,
+                        scaling_stat="hp"
+                    )
+                if hasattr(self.port, "resolve_effects"):
+                    self.port.resolve_effects()
+                if hasattr(self.port, "_get_entity"):
+                    master_ent = self.port._get_entity(master.owner_id)
+                    lc = getattr(master_ent, "light_cone", None) if master_ent else None
+                    if lc is not None and hasattr(lc, "_flush_discharge"):
+                        lc._flush_discharge()
+            # 1140901 sp_base = 5: 小伊卡施放忆灵技为风堇恢复 5 点基础能量 (受 ERR 放大)
+            err = self.port.stat(master.owner_id, StatType.ERR) or 1.0
+            self.port.gain_energy(
+                master.owner_id,
+                5.0 * err,
+                cause=f"忆灵技《乌云乌云快走开！》施放回能 (基础 5.0 × ERR {err*100:.1f}%)",
+                source_plugin="小伊卡忆灵技"
             )
-        if hasattr(self.port, "resolve_effects"):
-            self.port.resolve_effects()
-        if hasattr(self.port, "_get_entity"):
-            master_ent = self.port._get_entity(master.owner_id)
-            lc = getattr(master_ent, "light_cone", None) if master_ent else None
-            if lc is not None and hasattr(lc, "_flush_discharge"):
-                lc._flush_discharge()
-        # 1140901 sp_base = 5: 小伊卡施放忆灵技为风堇恢复 5 点基础能量 (受 ERR 放大)
-        err = self.port.stat(master.owner_id, StatType.ERR) or 1.0
-        self.port.gain_energy(
-            master.owner_id,
-            5.0 * err,
-            cause=f"忆灵技《乌云乌云快走开！》施放回能 (基础 5.0 × ERR {err*100:.1f}%)",
-            source_plugin="小伊卡忆灵技"
-        )
+        finally:
+            self._casting_scatter = False
 
     def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
         """记录生命降低的我方目标，待回合开始/行动后由天赋【牵起晴空的手】结算治疗。"""
+        if actual_loss <= 0.0:
+            return
         if entity_id == self.owner_id or cause == "yika_talent_consume_hp":
             return
         if hasattr(self.port, "is_countdown") and self.port.is_countdown(entity_id):
@@ -594,23 +812,23 @@ class IkaKit(KitHandler):
             self._pending_heal_targets.append(entity_id)
 
     def on_event(self, event: Any) -> None:
-        from ...events import TurnBeginEvent, TurnEndEvent, HPLostEvent
+        from ...events import TurnBeginEvent, TurnEndEvent, HPLostEvent, ActionEndEvent
         if isinstance(event, HPLostEvent) and event.entity_name == self.owner_id and event.hp_left <= 0:
             self._on_despawned()
             return
-        if isinstance(event, (TurnBeginEvent, TurnEndEvent)):
+        if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:
         targets = [
             t for t in self._pending_heal_targets
-            if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(t))
+            if self.port.entity_exists(t) and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(t))
         ]
         self._pending_heal_targets = []
         master = self.master_kit
         if not targets or master is None:
             return
-        # 队列中的每个目标各结算一次 (各自消耗小伊卡 4% 生命上限);
+        # 队列中的每个掉血目标各结算一次 (各自消耗小伊卡 4% 生命上限);
         # 小伊卡生命耗尽消失后, 剩余目标不再结算
         for target in targets:
             if not self.port.entity_exists(self.owner_id) or not self.port.entity_exists(target):
@@ -620,16 +838,18 @@ class IkaKit(KitHandler):
             self.port.lose_hp(self.owner_id, cost, cause="yika_talent_consume_hp")
             raw_heal = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
             self.port.heal(self.owner_id, target, master._apply_outgoing_healing(raw_heal, target))
-            if master.in_rain_state():
-                for ally in self.port.allies(self.owner_id):
-                    if ally != target and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(ally)):
-                        self.port.heal(self.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
-            master.on_healing_provided()
             # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失
             if cost >= hp_before - 1e-9:
                 self.port.despawn_spirit(self.owner_id, reason="天赋消耗生命耗尽")
                 self._on_despawned()
                 break
+        # 【雨过天晴】期间该治疗额外为我方全体目标回复同等数值 (每次天赋结算整队额外生效一次)
+        if master.in_rain_state() and self.port.entity_exists(self.owner_id):
+            raw_heal = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
+            for ally in self.port.allies(self.owner_id):
+                if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(ally)):
+                    self.port.heal(self.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
+        master.on_healing_provided()
 
     def _on_despawned(self) -> None:
         """小伊卡消失的收尾：同步主人状态并触发【坠落，然后飞翔】行动提前 30%。"""

@@ -77,8 +77,9 @@ class BloodDevourMechanicPlugin:
             self._apply_stage_status(sim.port, e.name)
 
     def on_turn_begin(self, active_entity: Any, sim: Any) -> None:
-        if not active_entity.is_enemy:
-            sim.port.lose_hp(active_entity.name, self.bleed_damage, cause="stage_mechanic_bleed_turn_begin")
+        if active_entity.is_enemy or getattr(active_entity, "is_countdown", False):
+            return
+        sim.port.lose_hp(active_entity.name, self.bleed_damage, cause="stage_mechanic_bleed_turn_begin")
 
     def on_entity_summoned(self, entity: Any, sim: Any) -> None:
         self._apply_stage_status(sim.port, entity.name)

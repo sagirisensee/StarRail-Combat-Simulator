@@ -178,7 +178,10 @@ class TestStageDirectorReinforcements(unittest.TestCase):
         boss.current_hp = 0.0
         director.after_step()
         self.assertEqual(director.boss_phase, 2)
-        self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"), "转阶段时点应增援一对胚芽")
+        # 官方微时序: 转阶段进入首动连招 [动一次 -> (插入) -> 第二动 -> (插入) -> 召唤], 待召唤标记在连招结算或长夜出手时生成
+        self.assertTrue(director._pending_transition_sprouts)
+        director._spawn_transition_sprouts()
+        self.assertIsNotNone(sim.get_entity("狂兽的胚芽3"), "转阶段连招结算应增援一对胚芽")
         self.assertIsNotNone(sim.get_entity("狂兽的胚芽4"))
         self.assertEqual(director.sprout_waves_spawned, 1)
         # 原节拍第三拍 (+227.28) 已被重锚覆盖: 不生成
@@ -224,7 +227,7 @@ class TestStageBossPhases(unittest.TestCase):
         sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_BARRIER_DELAY_AV + 1.0
         director.after_step()
         self.assertEqual(director.boss_phase, 1)
-        self.assertEqual(boss.current_hp, BOSS_PHASE1_FLOOR)
+        self.assertEqual(boss.current_hp, director.phase1_barrier_floor)
         self.assertTrue(boss.barrier_guarded)
         # 屏障释放 (AV 越过脚本时点) 后一阶段可打空 -> 转入二阶段并回满, 压制解除
         sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_FLOOR_RELEASE_AV + 1.0
@@ -271,6 +274,9 @@ class TestStageBossActionCadence(unittest.TestCase):
             sim.step()
             director.after_step()
             if boss_avs:
+                while getattr(sim, "current_turn_entity", None) is boss:
+                    sim.step()
+                    director.after_step()
                 break
         self.assertGreaterEqual(len(boss_avs), 1, "二阶段亚婆离应开始行动")
         self.assertAlmostEqual(boss_avs[0], wave2_av + 200.0, delta=1.0, msg="二阶段首动应在转阶段时点")

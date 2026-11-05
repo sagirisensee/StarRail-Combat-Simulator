@@ -24,6 +24,8 @@ class MemoryNeverFadesHandler(LightConeHandler):
         if ctx.kind == ActionKind.SKILL:
             dmg_val = self.scale(self.DMG_BOOST_VALUES)
             for ally in self.port.allies(self.owner_id):
+                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                    continue
                 self.port.upsert_status(BuffSpec(
                     key="LC_MemoryNeverFades_DmgBuff",
                     name=f"收取 (记忆永不落幕S{self.superimposition}全队增伤{dmg_val*100:.0f}%)",
@@ -32,5 +34,5 @@ class MemoryNeverFadesHandler(LightConeHandler):
                     modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, dmg_val),),
                     duration=3,
                     timing=DurationTiming.CASTER_TURN_END,
-                    skip_current_clock=True
+                    skip_current_clock=True,
                 ))

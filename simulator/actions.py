@@ -1,7 +1,7 @@
 """星穹铁道战斗动作抽象与请求模型 (Action Definitions & Context)."""
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Union
 
 
 class ActionKind(Enum):
@@ -179,7 +179,7 @@ class ActionRequest:
 
 @dataclass(frozen=True)
 class ActionContext:
-    action_id: str
+    action_id: Any
     actor_id: str
     kind: ActionKind
     target_ids: Tuple[str, ...]         # 目标 ID 元组 (已校验)

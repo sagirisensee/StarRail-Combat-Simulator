@@ -196,8 +196,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         # 3. 验证长夜快照
         msnap = sim.query_status("长夜")
         self.assertEqual(msnap["name"], "长夜")
-        self.assertEqual(int(msnap["max_hp"]), 4313)
-        self.assertEqual(int(msnap["current_hp"]), 3122)
+        self.assertAlmostEqual(msnap["max_hp"], 4313, delta=1.0)
+        self.assertAlmostEqual(msnap["current_hp"], 3122, delta=1.0)
         self.assertEqual(msnap["speed"], 160.0)
         self.assertEqual(msnap["crit_rate"], 1.036)
         self.assertAlmostEqual(msnap["crit_dmg"], 6.641, delta=0.01)
@@ -265,7 +265,8 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertTrue(port.is_ally("风堇"))
         self.assertFalse(port.is_ally(enemies[0].name))
 
-        # 2. 验证 StatusTag 语义过滤 (天亮了雨落了具有 MEMOSPRITE_ONLY 标签)
+        # 2. 验证 StatusTag 语义过滤 (长夜月战技期间行迹【天亮了，雨落了】具有 MEMOSPRITE_ONLY 标签)
+        sim.get_entity("长夜月").kit.apply_skill_shared_crit_dmg()
         spirit_statuses = sim.status_mgr.get_statuses("长夜")
         rain_buff = next((s for s in spirit_statuses if "天亮了，雨落了" in s.name), None)
         self.assertIsNotNone(rain_buff)

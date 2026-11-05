@@ -148,7 +148,9 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertEqual(round(snap["current_speed"]), 208)
         self.assertAlmostEqual(snap["current_crit_rate"], 1.05, places=2)
         self.assertAlmostEqual(snap["current_crit_dmg"], 2.426, places=3)
-        self.assertAlmostEqual(snap["outgoing_healing"], 0.615, places=3)
+        # 0.625: 2026-11-05 按官方日志实测修正面板速度 (201.53, 原导出估算 201.144) 后,
+        # 暴风停歇速度加成取 8 点 (208.13) -> 0.545 + 0.08; chen 实机面板治疗加成 62.5% 实证
+        self.assertAlmostEqual(snap["outgoing_healing"], 0.625, places=3)
         self.assertAlmostEqual(snap["effect_res"], 0.917, places=3)
 
     def test_tibao_trace_pebble_ally_hit_energy(self):
@@ -254,7 +256,7 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         sim.execute_current_turn(action_override=ActionKind.SKILL, actor=robin)
 
         expected_hp = {
-            "长夜月": 8626,
+            "长夜月": 8627,
             "缇宝": 9565,
             "知更鸟•晴歌": 7237,
             "风堇": 6014,

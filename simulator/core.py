@@ -13,7 +13,8 @@ from .entity import Entity
 from .combat_port import CombatPort, BuffSpec, SimulatorCombatPort
 from .inspector import BattleInspector
 from .events import (
-    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent, 
+    EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent,
+    PrimaryDamageCompleteEvent, ActionEndEvent, 
     ToughnessRecoverEvent, TechniqueExecuteEvent
 )
 from .effects import (
@@ -246,6 +247,14 @@ class TurnSimulator:
     def current_turn_entity(self) -> Optional[Entity]:
         return self._current_turn_entity
 
+    @property
+    def current_turn_id(self) -> int:
+        return self._turn_id
+
+    @property
+    def current_action_id(self) -> int:
+        return self._action_seq
+
     # --- 行动就绪队列 (Ready Queue - 基于纯拉条机制) ---
     def notify_entity_ready(self, entity_name: str) -> None:
         """当实体通过拉条使剩余距离降至 0 时触发:
@@ -376,7 +385,8 @@ class TurnSimulator:
                 cycle=self.current_cycle,
                 actor_id=active_entity.name,
                 actor_name=active_entity.name,
-                speed=round(active_entity.speed, 1)
+                speed=round(active_entity.speed, 1),
+                turn_id=self._turn_id
             ))
             self.run_stage_turn_begin(active_entity)
             self.resolver.resolve_all()
@@ -411,6 +421,12 @@ class TurnSimulator:
         """
         for plugin in getattr(self, "stage_plugins", []):
             plugin.on_turn_begin(active_entity, self)
+        # 关卡机制导致我方扣血后，立即驱动小伊卡天赋治疗结算（对齐实机“回合开始时”即时回血与产气）
+        ika = self.get_entity("小伊卡")
+        if ika is not None and getattr(ika, "kit", None) is not None:
+            if hasattr(ika.kit, "_resolve_talent_heal"):
+                ika.kit._resolve_talent_heal()
+        self.resolver.resolve_all()
 
     def _execute_action(
         self,
@@ -473,11 +489,12 @@ class TurnSimulator:
                         action_type=actual_action,
                         description=f"施放【{defn.name}】",
                         action_kind=actual_kind,
-                        skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind)
+                        skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind),
+                        action_id=self._action_seq
                     ))
 
                 ctx = ActionContext(
-                    action_id=f"{active_entity.name}_{self.current_av:.1f}_{self._action_seq}",
+                    action_id=self._action_seq,
                     actor_id=active_entity.name,
                     kind=actual_kind,
                     target_ids=target_ids if target_ids is not None else (),
@@ -486,11 +503,15 @@ class TurnSimulator:
                     owner_turn_id=owner_turn_id,
                     owner_turn_actor_id=owner_turn_actor,
                 )
+                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_before"):
+                    active_entity.kit.on_action_before(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_before(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
                     rh.on_action_before(ctx)
                 active_entity.kit.execute(ctx)
+                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_after"):
+                    active_entity.kit.on_action_after(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_after(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
@@ -535,6 +556,27 @@ class TurnSimulator:
                         self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
             self.resolver.resolve_all()
+            if should_publish:
+                self.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=active_entity.name,
+                    actor_name=active_entity.name,
+                    action_type=actual_action,
+                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0,
+                    action_id=self._action_seq
+                ))
+                self.event_bus.publish(ActionEndEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=active_entity.name,
+                    actor_name=active_entity.name,
+                    action_type=actual_action,
+                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0,
+                    action_id=self._action_seq
+                ))
 
     def execute_extra_turn(
         self,
@@ -587,7 +629,8 @@ class TurnSimulator:
             av=round(self.current_av, 2),
             cycle=self.current_cycle,
             actor_id=active_entity.name,
-            actor_name=active_entity.name
+            actor_name=active_entity.name,
+            turn_id=self._turn_id
         ))
         active_entity.reset_distance()
         if active_entity.distance_remaining <= 0.0:
@@ -747,11 +790,12 @@ class TurnSimulator:
                     action_type=f"Ultimate ({defn.name})",
                     description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！",
                     action_kind=ActionKind.ULTIMATE,
-                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE)
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE),
+                    action_id=self._action_seq
                 ))
 
             ctx = ActionContext(
-                action_id=f"{ent.name}_ult_{self.current_av:.1f}_{self._action_seq}",
+                action_id=self._action_seq,
                 actor_id=ent.name,
                 kind=ActionKind.ULTIMATE,
                 target_ids=target_ids if target_ids is not None else (),
@@ -760,16 +804,41 @@ class TurnSimulator:
                 owner_turn_id=owner_turn_id,
                 owner_turn_actor_id=owner_turn_actor,
             )
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_before"):
+                ent.kit.on_action_before(ctx)
             if getattr(ent, "light_cone", None) is not None:
                 ent.light_cone.on_action_before(ctx)
             for rh in getattr(ent, "relic_handlers", []):
                 rh.on_action_before(ctx)
             ent.kit.execute(ctx)
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_after"):
+                ent.kit.on_action_after(ctx)
             if getattr(ent, "light_cone", None) is not None:
                 ent.light_cone.on_action_after(ctx)
             for rh in getattr(ent, "relic_handlers", []):
                 rh.on_action_after(ctx)
             self.resolver.resolve_all()
+            if should_publish:
+                self.event_bus.publish(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=ent.name,
+                    actor_name=ent.name,
+                    action_type=f"Ultimate ({defn.name})",
+                    action_kind=ActionKind.ULTIMATE,
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE),
+                    action_id=self._action_seq
+                ))
+                self.event_bus.publish(ActionEndEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=ent.name,
+                    actor_name=ent.name,
+                    action_type=f"Ultimate ({defn.name})",
+                    action_kind=ActionKind.ULTIMATE,
+                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE),
+                    action_id=self._action_seq
+                ))
         return True
 
     def request_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:

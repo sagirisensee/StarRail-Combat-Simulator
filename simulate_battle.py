@@ -867,6 +867,12 @@ def run_simulation(
                 break
             continue
 
+        # 全自动非交互式动作 (如伴生忆灵自动攻击、开局自动拉条动作): 自动执行，不拦截玩家决策窗口
+        if sim.is_current_turn_auto():
+            sim.execute_current_turn()
+            turn_count += 1
+            continue
+
         # 我方角色到达终点：展示完整战场仪表盘与所有可触发决策
         while True:
             alive_enemies = [e for e in sim.entities if e.is_enemy and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))]
@@ -883,12 +889,21 @@ def run_simulation(
             skill_name = defn_skill.name if defn_skill else "战技"
             skill_target = TARGET_MODE_NAMES.get(getattr(defn_skill, "target_mode", None), "敌方单体")
 
+            is_memosprite_actor = getattr(actor, "is_memosprite", False)
+
             print(f"\n🎮 【当前决策窗口】 轮到【{actor.name}】行动 (距终点: 0.0 AV │ 战技点: {sim.sp.current_sp}/{sim.sp.max_sp}):")
             print("─" * 78)
             print("【本回合行动决策】:")
-            print(f"  [1] 普攻: 《{basic_name}》 (回复 1 SP │ 目标: {basic_target})")
-            skill_sp_desc = f"消耗 {sp_cost} SP" if can_use_skill else f"⚠️ 战技点不足 (需 {sp_cost} 点)"
-            print(f"  [2] 战技: 《{skill_name}》 ({skill_sp_desc} │ 目标: {skill_target})")
+            if is_memosprite_actor:
+                memo_defn = defn_skill or defn_basic
+                memo_name = memo_defn.name if memo_defn else "忆灵技能"
+                memo_tag = getattr(memo_defn, "tag", "忆灵技能")
+                memo_target = TARGET_MODE_NAMES.get(getattr(memo_defn, "target_mode", None), "敌方全体")
+                print(f"  [1] 施放: 《{memo_name}》 ({memo_tag} │ 不消耗 SP │ 目标: {memo_target})")
+            else:
+                print(f"  [1] 普攻: 《{basic_name}》 (回复 1 SP │ 目标: {basic_target})")
+                skill_sp_desc = f"消耗 {sp_cost} SP" if can_use_skill else f"⚠️ 战技点不足 (需 {sp_cost} 点)"
+                print(f"  [2] 战技: 《{skill_name}》 ({skill_sp_desc} │ 目标: {skill_target})")
 
             if ready_ults:
                 print("\n🔥【队伍就绪终结技 (可随时抢断插队)】:")
@@ -922,9 +937,15 @@ def run_simulation(
 
             if cmd == "1":
                 target_ids = ()
-                if defn_basic and hasattr(defn_basic, "target_mode") and defn_basic.target_mode == TargetMode.SINGLE_ENEMY:
-                    target_ids = prompt_enemy_target(sim, actor, action_name=basic_name)
-                sim.execute_current_turn(action_override=ActionKind.BASIC, target_ids=target_ids)
+                if is_memosprite_actor:
+                    memo_defn = defn_skill or defn_basic
+                    if memo_defn and hasattr(memo_defn, "target_mode") and memo_defn.target_mode == TargetMode.SINGLE_ENEMY:
+                        target_ids = prompt_enemy_target(sim, actor, action_name=memo_defn.name)
+                    sim.execute_current_turn(action_override=ActionKind.SKILL, target_ids=target_ids)
+                else:
+                    if defn_basic and hasattr(defn_basic, "target_mode") and defn_basic.target_mode == TargetMode.SINGLE_ENEMY:
+                        target_ids = prompt_enemy_target(sim, actor, action_name=basic_name)
+                    sim.execute_current_turn(action_override=ActionKind.BASIC, target_ids=target_ids)
                 turn_count += 1
                 break
             elif cmd == "2":

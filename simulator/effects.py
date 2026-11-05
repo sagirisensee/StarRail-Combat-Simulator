@@ -77,6 +77,7 @@ class ApplyDamageEffect(EffectRequest):
     ignore_weakness: bool = False
     damage_tag: str = "direct"
     damage_type: Optional[DamageType] = None  # 权威伤害分类；为 None 时由 damage_tag 经 DamageType.from_tag 收编
+    action_id: int = 0
 
 
 class EffectResolver:
@@ -300,6 +301,12 @@ class EffectResolver:
                 and not getattr(target, "is_infinite_hp", False)
             )
             resolved_damage_type = getattr(effect, "damage_type", None) or DamageType.from_tag(getattr(effect, "damage_tag", "direct"))
+            eff_action_id = getattr(effect, "action_id", 0) or getattr(self.simulator, "current_action_id", 0)
+            if hasattr(self.simulator, "effect_counter"):
+                self.simulator.effect_counter += 1
+            else:
+                self.simulator.effect_counter = 1
+            eff_id = self.simulator.effect_counter
             bus.publish(DamageAppliedEvent(
                 av=round(av, 2),
                 cycle=cycle,
@@ -311,7 +318,9 @@ class EffectResolver:
                 target_hp_left=hp_left,
                 damage_tag=resolved_damage_type.value,
                 damage_type=resolved_damage_type,
-                target_killed=target_killed
+                target_killed=target_killed,
+                action_id=eff_action_id,
+                effect_id=eff_id
             ))
             if scheduler is not None:
                 # 介入点 2 (after_hit): 命中后提交命中触发的动作波次 (如银狼 E2 追加回合、千刃等)
