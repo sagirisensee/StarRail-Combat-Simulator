@@ -3,7 +3,7 @@ from typing import Any
 from ..base import RelicSetHandler
 from ...combat_port import BuffSpec
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
-from ...events import ActionExecuteEvent, SpiritSummonedEvent
+from ...events import ActionExecuteEvent
 from ...actions import ActionKind
 
 
@@ -77,29 +77,12 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
     def on_event(self, event: Any) -> None:
         if self.pieces < 4 or not self.port:
             return
+        from ...events import SpiritSummonedEvent
         if isinstance(event, ActionExecuteEvent):
             actor = event.actor_name or getattr(event, "actor_id", "")
             action_kind = getattr(event, "action_kind", None)
             if actor == self.owner_id and action_kind in (ActionKind.BASIC, ActionKind.SKILL):
                 self._trigger_4pc_buff()
         elif isinstance(event, SpiritSummonedEvent):
-            sp_name = getattr(event, "spirit_name", "")
-            if (
-                not self.port.entity_exists(sp_name)
-                or not self.port.is_ally(sp_name)
-                or not self.port.is_memosprite(sp_name)
-            ):
-                return
-            owner_dmg_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith(f"{self.BUFF_DMG_KEY}_")), None)
-            if owner_dmg_buff and not self.port.has_status(sp_name, f"{self.BUFF_DMG_KEY}_{sp_name}"):
-                self.port.upsert_status(BuffSpec(
-                    key=f"{self.BUFF_DMG_KEY}_{sp_name}",
-                    name="再创天地的救世主 (增伤+15%)",
-                    source_id=self.owner_id,
-                    target_id=sp_name,
-                    modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.15),),
-                    duration=None,
-                    timing=DurationTiming.TARGET_TURN_END,
-                    category="buff",
-                    description="全队造成伤害提高 +15.0%"
-                ))
+            if self.port.has_status(self.owner_id, f"{self.BUFF_HP_KEY}_{self.owner_id}"):
+                self._trigger_4pc_buff()

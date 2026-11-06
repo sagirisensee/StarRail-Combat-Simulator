@@ -422,7 +422,7 @@ class SimulatorCombatPort:
         elif stat in (StatType.DEF, StatType.DEF_PERCENT, StatType.DEF_BASE):
             return getattr(ent, "base_white_def", 0.0) or getattr(ent, "base_def", 0.0)
         elif stat == StatType.MAX_HP_PERCENT:
-            return getattr(ent, "base_white_hp", 0.0) or getattr(ent, "max_hp", 0.0)
+            return getattr(ent, "base_white_hp", 0.0) or getattr(ent, "base_max_hp", getattr(ent, "max_hp", 0.0))
         elif stat == StatType.SPEED:
             return getattr(ent, "base_white_speed", 0.0) or getattr(ent, "base_speed", 0.0)
         elif stat == StatType.DMG_BOOST:
@@ -449,7 +449,7 @@ class SimulatorCombatPort:
         elif stat in (StatType.DEF, StatType.DEF_PERCENT, StatType.DEF_BASE):
             return float(getattr(ent, "base_def", 0.0))
         elif stat == StatType.MAX_HP_PERCENT:
-            return float(getattr(ent, "max_hp", 0.0))
+            return float(getattr(ent, "base_max_hp", getattr(ent, "max_hp", 0.0)))
         return 0.0
 
     def stat(
@@ -475,7 +475,7 @@ class SimulatorCombatPort:
         elif stat in (StatType.DEF, StatType.DEF_PERCENT, StatType.DEF_BASE):
             base_val = getattr(ent, "base_def", 0.0)
         elif stat == StatType.MAX_HP_PERCENT:
-            base_val = getattr(ent, "max_hp", 0.0)
+            base_val = getattr(ent, "base_max_hp", getattr(ent, "max_hp", 0.0))
         elif stat == StatType.ERR:
             base_val = getattr(ent, "base_err", 1.0)
         elif stat == StatType.BREAK_EFFECT:
@@ -913,7 +913,7 @@ class SimulatorCombatPort:
     def max_hp(self, entity_id: str) -> float:
         ent = self._get_entity(entity_id)
         if ent:
-            base_max_hp = getattr(ent, "max_hp", 0.0)
+            base_max_hp = getattr(ent, "base_max_hp", getattr(ent, "max_hp", 0.0))
             if hasattr(self.sim, "status_mgr") and base_max_hp > 0 and base_max_hp != float("inf"):
                 white_hp = getattr(ent, "base_white_hp", 0.0) or base_max_hp
                 return self.sim.status_mgr.calculate_stat(ent.name, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp)
@@ -1059,11 +1059,6 @@ class SimulatorCombatPort:
         # --- Phase 4: ACTION_GATE ---
         ctx.phase = SpawnPhase.ACTION_GATE
         ctx.ready = True
-        # 恢复退场时保留的外部回合 Buff
-        if hasattr(self.sim, "status_mgr") and name in getattr(self, "_preserved_memosprite_statuses", {}):
-            for s in self._preserved_memosprite_statuses.pop(name, []):
-                s.target = spirit
-                self.sim.status_mgr.add_status(s)
         return spirit
 
     def despawn_spirit(self, name: str, reason: str = "") -> None:
@@ -1074,16 +1069,6 @@ class SimulatorCombatPort:
                 self._spawn_barriers[name].cancelled = True
                 del self._spawn_barriers[name]
             if hasattr(self.sim, "status_mgr"):
-                all_statuses = self.sim.status_mgr.get_statuses(name)
-                preserved = [
-                    s for s in all_statuses
-                    if getattr(getattr(s, "source", None), "name", str(getattr(s, "source", ""))) != name
-                    and s.duration is not None and s.duration > 0
-                ]
-                if preserved:
-                    if not hasattr(self, "_preserved_memosprite_statuses"):
-                        self._preserved_memosprite_statuses = {}
-                    self._preserved_memosprite_statuses[name] = preserved
                 self.sim.status_mgr.remove_all_for_target(name)
             self.sim.entities.remove(ent)
             if self.sim._current_turn_entity == ent:

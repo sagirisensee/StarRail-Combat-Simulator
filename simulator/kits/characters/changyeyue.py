@@ -52,6 +52,7 @@ class ChangyeyueKit(KitHandler):
         self._spirit_declared_skills: dict[int, int] = {}
         self._spirit_completed_actions: set[int] = set()
         self._spirit_execution_depth: int = 0
+        self._spirit_deaths: int = 0
 
     def apply_trace_passives(self, entity: Any) -> None:
         """战前静态基线校准：注入长夜月角色白字与面板基线，消除数据库模块中的角色 ID 硬编码。"""
@@ -371,33 +372,34 @@ class ChangyeyueKit(KitHandler):
 
 
 
-            # 若主人身上仍持有未过期的进战秘技，伴生忆灵自然继承
-            robin_tech = next((s for s in self.port.statuses(self.owner_id) if s.id == "Robin_Tech_WeAreTheMelody"), None)
-            if robin_tech and not self.port.has_status(self.spirit_name, "Robin_Tech_WeAreTheMelody"):
-                self.port.upsert_status(BuffSpec(
-                    key="Robin_Tech_WeAreTheMelody",
-                    name="我们自成旋律",
-                    source_id=robin_tech.source.name if hasattr(robin_tech, "source") else self.owner_id,
-                    target_id=self.spirit_name,
-                    modifiers=tuple(robin_tech.modifiers),
-                    duration=robin_tech.duration,
-                    timing=robin_tech.timing,
-                    category="buff",
-                    description="全队增伤 +30.0%"
-                ))
-            fengjin_tech = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Fengjin_Tech_WeatherIsFine_")), None)
-            if fengjin_tech and not self.port.has_status(self.spirit_name, f"Fengjin_Tech_WeatherIsFine_{self.spirit_name}"):
-                self.port.upsert_status(BuffSpec(
-                    key=f"Fengjin_Tech_WeatherIsFine_{self.spirit_name}",
-                    name="天气正好，万物可爱！",
-                    source_id=fengjin_tech.source.name if hasattr(fengjin_tech, "source") else self.owner_id,
-                    target_id=self.spirit_name,
-                    modifiers=tuple(fengjin_tech.modifiers),
-                    duration=fengjin_tech.duration,
-                    timing=fengjin_tech.timing,
-                    category="buff",
-                    description="全队生命上限提高 +20.0%"
-                ))
+            # 若初次进战召唤（尚未自爆离场），且主人身上持有未过期的进战秘技，伴生忆灵自然继承
+            if self._spirit_deaths == 0:
+                robin_tech = next((s for s in self.port.statuses(self.owner_id) if s.id == "Robin_Tech_WeAreTheMelody"), None)
+                if robin_tech and not self.port.has_status(self.spirit_name, "Robin_Tech_WeAreTheMelody"):
+                    self.port.upsert_status(BuffSpec(
+                        key="Robin_Tech_WeAreTheMelody",
+                        name="我们自成旋律",
+                        source_id=robin_tech.source.name if hasattr(robin_tech, "source") else self.owner_id,
+                        target_id=self.spirit_name,
+                        modifiers=tuple(robin_tech.modifiers),
+                        duration=robin_tech.duration,
+                        timing=robin_tech.timing,
+                        category="buff",
+                        description="全队增伤 +30.0%"
+                    ))
+                fengjin_tech = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Fengjin_Tech_WeatherIsFine_")), None)
+                if fengjin_tech and not self.port.has_status(self.spirit_name, f"Fengjin_Tech_WeatherIsFine_{self.spirit_name}"):
+                    self.port.upsert_status(BuffSpec(
+                        key=f"Fengjin_Tech_WeatherIsFine_{self.spirit_name}",
+                        name="天气正好，万物可爱！",
+                        source_id=fengjin_tech.source.name if hasattr(fengjin_tech, "source") else self.owner_id,
+                        target_id=self.spirit_name,
+                        modifiers=tuple(fengjin_tech.modifiers),
+                        duration=fengjin_tech.duration,
+                        timing=fengjin_tech.timing,
+                        category="buff",
+                        description="全队生命上限提高 +20.0%"
+                    ))
 
             # 统一由长夜月权威同步 A6 与战技分享（Robin 结界与 E2 由其自身监听召唤事件补发）
             self._sync_memosprite_crit_buffs(self.spirit_name)
@@ -713,6 +715,7 @@ class ChangyeyueKit(KitHandler):
             self.spirit_alive = False
             self.spirit_hp = 0.0
             self.threshold_issued = False
+            self._spirit_deaths += 1
 
             self.port.remove_status(
                 self.owner_id,
@@ -757,6 +760,14 @@ class ChangyeyueKit(KitHandler):
         if is_owner or is_own_spirit:
             if is_own_spirit:
                 self.spirit_hp = self.port.current_hp(entity_id)
+            if cause == "attack_damage" and self.port and hasattr(self.port, "sim"):
+                sim = self.port.sim
+                act_seq = getattr(sim, "_action_seq", 0)
+                in_channel = getattr(sim, "_in_channel_pulse", False)
+                hit_key = ("channel_pulse", entity_id) if in_channel else (act_seq, entity_id)
+                if hit_key == getattr(self, "_last_attack_hp_loss_key", None):
+                    return
+                self._last_attack_hp_loss_key = hit_key
 
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Talent_CritDmg",
@@ -1110,7 +1121,7 @@ class ChangyeyueKit(KitHandler):
 
             # 官方 141303 机制时序：进入【至暗之谜】(敌方易伤+30%, 长夜月与长夜增伤+60%), 随后使忆灵「长夜」对敌方全体造成 200% 生命上限冰伤
             self.darkness = True
-            self.charges = 2 + (2 if self.eidolon >= 2 else 0)
+            self.charges += 2 + (2 if self.eidolon >= 2 else 0)
 
             for e in self.port.enemies(self.owner_id):
                 self.port.upsert_status(BuffSpec(

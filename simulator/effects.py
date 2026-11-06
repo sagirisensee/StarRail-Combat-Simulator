@@ -87,6 +87,7 @@ class EffectResolver:
         self.queue: List[EffectRequest] = []
         self._step_count = 0
         self._resolving = False
+        self._hit_energy_action_recipients = set()
 
     def enqueue(self, effect: EffectRequest):
         """将效果放入待结算队列。"""
@@ -122,7 +123,7 @@ class EffectResolver:
                 effect.target.extra_immediate_action = True
             effect.target.advance_action(effect.percent)
             after = effect.target.distance_remaining
-            if after <= 0.0:
+            if after <= 0.0 and self.simulator.current_turn_entity != effect.target:
                 if hasattr(self.simulator, "notify_entity_ready"):
                     self.simulator.notify_entity_ready(effect.target.name)
             bus.publish(ActionAdvanceEvent(
@@ -200,7 +201,12 @@ class EffectResolver:
 
         elif isinstance(effect, ReduceToughnessEffect):
             target = effect.target
-            if hasattr(target, "max_toughness") and target.max_toughness > 0 and not getattr(target, "is_broken", False):
+            if (
+                hasattr(target, "max_toughness")
+                and target.max_toughness > 0
+                and not getattr(target, "is_broken", False)
+                and not getattr(target, "toughness_locked", False)
+            ):
                 weaknesses = getattr(target, "weaknesses", [])
                 if effect.ignore_weakness or (effect.element in weaknesses):
                     cut = min(target.current_toughness, effect.amount)
@@ -224,7 +230,7 @@ class EffectResolver:
                             percent=0.25
                         ))
 
-                        base_break = 3767.55
+                        base_break = 3767.5533
                         elem_mult = 1.0  # 雷/冰为 1.0, 物理/火为 2.0
                         if effect.element in ["Physical", "Fire"]:
                             elem_mult = 2.0
@@ -233,7 +239,22 @@ class EffectResolver:
                         elif effect.element in ["Quantum", "Imaginary"]:
                             elem_mult = 0.5
 
-                        break_dmg = base_break * elem_mult * (1.0 + effect.break_effect)
+                        from .status import StatType
+                        tough_mult = 0.5 + (getattr(target, "max_toughness", 0.0) / 40.0)
+                        sm = getattr(self.simulator, "status_mgr", None)
+                        atk_lvl = getattr(effect.attacker, "level", 80)
+                        tgt_lvl = getattr(target, "level", 100)
+                        def_shred = sm.calculate_stat(target.name, 0.0, StatType.DEF_SHRED) if sm else 0.0
+                        def_ignore = sm.calculate_stat(effect.attacker.name, 0.0, StatType.DEF_SHRED) if sm else 0.0
+                        def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred - def_ignore) + (atk_lvl + 20.0))
+                        base_res = getattr(target, "damage_res", {}).get(effect.element, 0.0) if isinstance(getattr(target, "damage_res", None), dict) else 0.0
+                        res_pen = sm.calculate_stat(effect.attacker.name, 0.0, StatType.RES_PEN) if sm else 0.0
+                        res_mult = 1.0 - (base_res - res_pen)
+                        vuln = sm.calculate_stat(target.name, 0.0, StatType.VULNERABILITY) if sm else 0.0
+                        vuln_mult = 1.0 + vuln
+                        dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
+
+                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + effect.break_effect) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr)
                         if hasattr(target, "current_hp"):
                             target.current_hp = max(0.0, target.current_hp - break_dmg)
 
@@ -327,16 +348,22 @@ class EffectResolver:
                 scheduler.commit_reserved_wave()
 
             # 4. 敌方直接攻击命中我方角色或忆灵时触发标准受击回能 (忆灵受击回能归其主人, 严格受目标 ERR 放大)
+            # 官方规范: 单动作多段攻击 (同一 action_seq 内多段 Hit) 仅算 1 次受击回能; 多动 (不同 action_seq) 各自算 1 次受击回能
             if (
                 getattr(effect.request.attacker, "is_enemy", False)
                 and not getattr(target, "is_enemy", False)
                 and not getattr(target, "is_countdown", False)
                 and resolved_damage_type == DamageType.DIRECT
             ):
-                hit_base = getattr(effect.request.attacker, "hit_energy", 0.0) or getattr(effect.request, "hit_energy", 0.0) or 5.0
+                action_seq = getattr(self.simulator, "_action_seq", 0)
                 energy_recipient = getattr(target, "master_name", None) if getattr(target, "is_memosprite", False) else target.name
-                if energy_recipient and hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
-                    self.simulator.port.gain_hit_energy(energy_recipient, hit_base)
+                hit_key = (action_seq, target.name)
+                if energy_recipient and (action_seq == 0 or hit_key not in self._hit_energy_action_recipients):
+                    if action_seq > 0:
+                        self._hit_energy_action_recipients.add(hit_key)
+                    hit_base = getattr(effect.request.attacker, "hit_energy", 0.0) or getattr(effect.request, "hit_energy", 0.0) or 5.0
+                    if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
+                        self.simulator.port.gain_hit_energy(energy_recipient, hit_base)
 
             # 4.5 击杀回能与击败事件: 击败敌方目标时, 击杀者恢复 10 点能量 (受 ERR 放大); 忆灵击杀归其主人
             if (

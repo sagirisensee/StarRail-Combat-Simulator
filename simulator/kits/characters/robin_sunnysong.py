@@ -117,7 +117,7 @@ class SunnyMusiciansKit(KitHandler):
                 self.master_kit.FEVER_DEF_IGNORE_BUFF,
                 self.master_kit.FEVER_DMG_BUFF,
                 self.master_kit.E2_RES_PEN_BUFF,
-                "Robin_Tech_Melody",
+                "Robin_Tech_WeAreTheMelody",
             ) or s.id.startswith("Robin_Talent_TonalChord_"):
                 continue
             mods = tuple(
@@ -908,9 +908,12 @@ class RobinSunnySongKit(KitHandler):
             ):
                 return
 
-            # 先登记主伤阶段，再获得气氛，避免本次获气氛
-            # 同步提升本次攻击自己的 Fever 场域。
-            self._robin_open_actions[action_id] = actor
+            # 仅在终结技主伤阶段登记因果屏障，避免大招本体攻击获气氛同步提升本次大招自己的 Fever 场域；
+            # 非终结技动作 (如追加攻击、忆灵技) 清理残留屏障并实时同步结界。
+            if kind == ActionKind.ULTIMATE:
+                self._robin_open_actions[action_id] = actor
+            else:
+                self._robin_open_actions.clear()
 
             extra = 0
             if self._is_special_guest_actor(actor):

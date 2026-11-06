@@ -113,11 +113,7 @@ class DamageCalculator:
         # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
         scaling = getattr(req, "scaling_stat", "atk")
         if scaling == "hp":
-            hp_val = getattr(req.attacker, "max_hp", 0.0)
-            if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                white_hp = getattr(req.attacker, "base_white_hp", 0.0) or hp_val
-                hp_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, hp_val, StatType.MAX_HP_PERCENT, white_base=white_hp)
-            base_stat = hp_val
+            base_stat = getattr(req.attacker, "max_hp", 0.0)
         elif scaling == "def":
             def_val = getattr(req.attacker, "base_def", 0.0)
             if hasattr(req.attacker, "simulator") and req.attacker.simulator:

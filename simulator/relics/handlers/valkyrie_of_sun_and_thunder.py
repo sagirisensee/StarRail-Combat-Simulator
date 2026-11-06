@@ -2,7 +2,6 @@
 from ..base import RelicSetHandler
 from ...combat_port import BuffSpec
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
-from ...events import SpiritSummonedEvent
 
 
 class ValkyrieOfSunAndThunderHandler(RelicSetHandler):
@@ -12,7 +11,7 @@ class ValkyrieOfSunAndThunderHandler(RelicSetHandler):
             装备者持有【甘霖】时，速度提高 6%，我方全体暴击伤害提高 15%，该效果无法叠加。
     """
 
-    def on_battle_start(self) -> None:
+    def _apply_4pc_buffs(self) -> None:
         if self.pieces < 4 or not self.port:
             return
 
@@ -31,6 +30,8 @@ class ValkyrieOfSunAndThunderHandler(RelicSetHandler):
 
         # 2. 全体友方（含装备者自身与忆灵）获得套装增益【烈阳惊雷的女武神】：暴击伤害提高 15%
         for ally in self.port.allies(self.owner_id):
+            if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
+                continue
             self.port.upsert_status(BuffSpec(
                 key=f"Relic_Valkyrie_CritDmg_{ally}",
                 name="烈阳惊雷的女武神",
@@ -43,21 +44,13 @@ class ValkyrieOfSunAndThunderHandler(RelicSetHandler):
                 description="全队暴击伤害 +15.0%"
             ))
 
-    def on_event(self, event) -> None:
+    def on_battle_start(self) -> None:
+        self._apply_4pc_buffs()
+
+    def on_event(self, event: object) -> None:
         if self.pieces < 4 or not self.port:
             return
-        if isinstance(event, SpiritSummonedEvent):
-            sp_name = event.spirit_name
-            if self.port.entity_exists(sp_name):
-                self.port.upsert_status(BuffSpec(
-                    key=f"Relic_Valkyrie_CritDmg_{sp_name}",
-                    name="烈阳惊雷的女武神",
-                    source_id=self.owner_id,
-                    target_id=sp_name,
-                    modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
-                    duration=None,
-                    timing=DurationTiming.TARGET_TURN_END,
-                    category="buff",
-                    description="全队暴击伤害 +15.0%"
-                ))
-
+        from ...events import SpiritSummonedEvent, HealAppliedEvent
+        if isinstance(event, (SpiritSummonedEvent, HealAppliedEvent)):
+            if self.port.has_status(self.owner_id, f"Relic_Valkyrie_GentleRain_{self.owner_id}"):
+                self._apply_4pc_buffs()

@@ -145,18 +145,24 @@ def _boss() -> Entity:
     # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
     ent.is_infinite_hp = True
     return ent
-    ent.level = 100
-    ent.damage_res = dict(BOSS_RES)
-    ent.hit_energy = 12.0
-    # 实体本身以无限生命承载: 两段血池的切换与屏障地板由导演以生命值
-    # 记账方式管理 (见 Stage30510021Director._manage_boss_phases),
-    # 实体不真正死亡/离场, 战斗由 AV 预算结束 (与日志一致)
-    ent.is_infinite_hp = True
-    return ent
+
+
+def _resolve_sub_action_hooks(sim: TurnSimulator, actor_name: Optional[str] = None) -> None:
+    """敌方多段独立子动作之间的结算钩子: 排空效果队列并结算小伊卡天赋急救与灯塔众愿。"""
+    sim.resolver.resolve_all()
+    if actor_name in ("千星戍卫A", "千星戍卫B", "千星戍卫C", "月夜天马"):
+        lh = sim.get_entity("「灯塔」")
+        if lh is not None and getattr(lh, "kit", None) is not None and getattr(lh, "current_hp", 0.0) > 0:
+            from simulator.kits.enemies.events import EnemyActionCompleted
+            lh.kit.on_event(EnemyActionCompleted(action_id=f"{actor_name}_{sim.current_av}_sub", actor_id=actor_name))
+    ika = sim.get_entity("小伊卡")
+    if ika is not None and getattr(ika, "kit", None) is not None and hasattr(ika.kit, "_resolve_talent_heal"):
+        ika.kit._resolve_talent_heal()
+        sim.resolver.resolve_all()
 
 
 def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1_dr=None):
-    """小怪与精英怪索敌模组: 遵循星铁官方基础嘲讽值 (Aggro) 权重进行概率抽样选择合法目标。"""
+    """小怪与精英怪索敌模组: 支持外部确定性目标提供器或遵循星铁官方基础嘲讽值 (Aggro) 权重选择合法目标。"""
     from .damage import DamageRequest
     from .effects import ApplyDamageEffect
     from .status import StatType
@@ -173,6 +179,37 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
         "ERUDITION": 75.0,
     }
 
+    def _select_target(entity, allies, sub_idx: int = 0):
+        target_provider = getattr(sim, "target_provider", None)
+        if target_provider is not None:
+            try:
+                tgt = target_provider(entity, allies, sub_idx=sub_idx)
+            except TypeError:
+                tgt = target_provider(entity, allies)
+            if tgt is not None:
+                return tgt
+
+        if hasattr(sim, "enemy_target_oracle") and sim.enemy_target_oracle:
+            now_av = float(getattr(sim, "current_av", 0.0))
+            for av_key, tgt_name in sim.enemy_target_oracle.items():
+                if abs(now_av - av_key) < 1.0:
+                    tgt = next((a for a in allies if a.name == tgt_name), None)
+                    if tgt is not None:
+                        return tgt
+
+        weights = []
+        for a in allies:
+            path_key = str(getattr(a, "path", "")).upper()
+            base_ag = _BASE_AGGRO_BY_PATH.get(path_key, 100.0)
+            eff_ag = sim.status_mgr.calculate_stat(a.name, base_ag, StatType.AGGRO)
+            weights.append(max(0.1, eff_ag))
+
+        rng = getattr(sim, "rng", None)
+        if rng is not None and hasattr(rng, "choices"):
+            return rng.choices(allies, weights=weights, k=1)[0]
+        import random
+        return random.choices(allies, weights=weights, k=1)[0]
+
     def _ai(entity, resolver, action) -> None:
         allies = [
             e for e in sim.entities
@@ -181,32 +218,62 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
         if not allies:
             return
 
-        target = None
-        if hasattr(sim, "enemy_target_oracle") and sim.enemy_target_oracle:
-            now_av = float(getattr(sim, "current_av", 0.0))
-            for av_key, tgt_name in sim.enemy_target_oracle.items():
-                if abs(now_av - av_key) < 1.0:
-                    target = next((a for a in allies if a.name == tgt_name), None)
-                    if target:
-                        break
+        if entity.name.startswith("千星戍卫"):
+            entity._guard_turns = getattr(entity, "_guard_turns", 0) + 1
+            primary = _select_target(entity, allies, sub_idx=0)
+            mult = 1.0 if entity._guard_turns == 1 else 1.2
+            req = DamageRequest(attacker=entity, target=primary, skill_multiplier=mult)
+            resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+            if entity._guard_turns % 2 == 0:
+                _resolve_sub_action_hooks(sim, entity.name)
+                sim._action_seq += 1
+                allies2 = [
+                    e for e in sim.entities
+                    if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False)
+                ]
+                if allies2:
+                    primary2 = _select_target(entity, allies2, sub_idx=1)
+                    for _ in range(2):
+                        req2 = DamageRequest(attacker=entity, target=primary2, skill_multiplier=0.8)
+                        resolver.enqueue(ApplyDamageEffect(request=req2, toughness_reduction=0.0, element="Physical"))
+            return
 
-        if target is None:
-            # 动态计算每个合法目标的实际仇恨权重
-            weights = []
-            for a in allies:
-                path_key = str(getattr(a, "path", "")).upper()
-                base_ag = _BASE_AGGRO_BY_PATH.get(path_key, 100.0)
-                eff_ag = sim.status_mgr.calculate_stat(a.name, base_ag, StatType.AGGRO)
-                weights.append(max(0.1, eff_ag))
-
-            # 优先使用模拟器确定性 RNG 或标准稳定抽样，消除模块全局随机污染
-            rng = getattr(sim, "rng", None)
-            if rng is not None and hasattr(rng, "choices"):
-                target = rng.choices(allies, weights=weights, k=1)[0]
+        if entity.name == "月夜天马":
+            entity._pegasus_turns = getattr(entity, "_pegasus_turns", 0) + 1
+            t_mod = entity._pegasus_turns % 3
+            if t_mod == 1:
+                primary = _select_target(entity, allies, sub_idx=0)
+                mult = 1.0 if entity._pegasus_turns == 1 else 1.2
+                req = DamageRequest(attacker=entity, target=primary, skill_multiplier=mult)
+                resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+            elif t_mod == 2:
+                entity.hit_energy = 6.67
+                bounce_provider = getattr(sim, "bounce_target_provider", None)
+                if bounce_provider is not None:
+                    b_targets = bounce_provider(entity, allies, 6)
+                else:
+                    b_targets = [allies[i % len(allies)] for i in range(6)]
+                for tgt in b_targets:
+                    req = DamageRequest(attacker=entity, target=tgt, skill_multiplier=1.2)
+                    resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
             else:
-                import random
-                target = random.choices(allies, weights=weights, k=1)[0]
+                entity.hit_energy = 5.0
+                primary = _select_target(entity, allies, sub_idx=0)
+                req = DamageRequest(attacker=entity, target=primary, skill_multiplier=1.2)
+                resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                _resolve_sub_action_hooks(sim, entity.name)
+                sim._action_seq += 1
+                entity.hit_energy = 10.0
+                allies2 = [
+                    e for e in sim.entities
+                    if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False)
+                ]
+                for tgt in allies2:
+                    req2 = DamageRequest(attacker=entity, target=tgt, skill_multiplier=1.4)
+                    resolver.enqueue(ApplyDamageEffect(request=req2, toughness_reduction=0.0, element="Physical"))
+            return
 
+        target = _select_target(entity, allies, sub_idx=0)
         mult = 1.2 if getattr(entity, "is_boss", False) else 1.0
         req = DamageRequest(attacker=entity, target=target, skill_multiplier=mult)
         resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
@@ -316,12 +383,22 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
 
         elif subaction == "CHANNEL_PULSE":
             # 8 次小 AOE 脉冲 tick (0.1 系数) + 1 次终结 AOE (0.8 系数)
-            for _ in range(8):
+            setattr(sim, "_in_channel_pulse", True)
+            try:
+                for _ in range(8):
+                    if hasattr(sim, "_action_seq"):
+                        sim._action_seq += 1
+                    for target in allies:
+                        _hit(target, 0.1)
+                    resolver.resolve_all()
+                if hasattr(sim, "_action_seq"):
+                    sim._action_seq += 1
                 for target in allies:
-                    _hit(target, 0.1)
-            for target in allies:
-                if not getattr(target, "is_memosprite", False):
-                    _hit(target, 0.8)
+                    if not getattr(target, "is_memosprite", False):
+                        _hit(target, 0.8)
+                resolver.resolve_all()
+            finally:
+                setattr(sim, "_in_channel_pulse", False)
 
         state["subaction_idx"] += 1
 
@@ -421,12 +498,14 @@ class Stage30510021Director:
                 if boss.current_hp > 0:
                     from .damage import DamageRequest
                     from .effects import ApplyDamageEffect
-                    for ally in self.sim.entities:
-                        if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
-                            for _ in range(2):
+                    for _ in range(2):
+                        if hasattr(self.sim, "_action_seq"):
+                            self.sim._action_seq += 1
+                        for ally in self.sim.entities:
+                            if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
                                 req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
                                 self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
-                    self.sim.resolver.resolve_all()
+                        self.sim.resolver.resolve_all()
                     # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (两场官方日志实测恒定为 Boss 最大生命的 35%)
                     break_penalty = getattr(boss, "max_hp", BOSS_HP) * 0.35
                     boss.current_hp = max(0.0, boss.current_hp - break_penalty)
@@ -533,6 +612,15 @@ def build_stage_30510021(
     guard_c = _guard("千星戍卫C", initial_distance=999999.0)
     for g in (guard_a, guard_b, guard_c):
         g.unspawned = True
+    # 官方进战机制 (MazeNormal XX06「攻击」, show_stance_list=[30,0,0]):
+    # 编队首位角色攻击敌人进入战斗后，削弱初始在场敌方目标 10.0 点 (原始 30 点) 对应弱点属性韧性。
+    if team:
+        raw_elem = getattr(team[0], "element", None)
+        entry_elem = str(raw_elem).capitalize() if raw_elem else None
+        if entry_elem:
+            for e in (lighthouse, pegasus):
+                if entry_elem in e.weaknesses:
+                    e.current_toughness = max(0.0, e.current_toughness - 10.0)
     enemies = [pegasus, lighthouse, guard_a, guard_b, guard_c]
 
     # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。
@@ -560,73 +648,148 @@ def build_stage_30510021(
         449.74: "长夜月",
     }
 
-    # 第一波「灯塔」(8033020) 官方机制还原:
-    # - 开局 0.00 AV 首回合施放【正道战线】召唤 千星戍卫A/B/C，并进入【除恶】状态获得 9 层【众愿】；
-    # - 每层【众愿】赋予第一波全体敌人 5% 伤害减免【鼓舞】；
-    # - 第一波敌方每次施放攻击增加 1 层【众愿】；我方每次攻击命中「灯塔」后移除 1 层【众愿】。
-    w1_state = {"initialized": False, "eradicating": False, "wishes": 0, "lh_hit_in_window": False}
+    # 第一波「灯塔」(8033020) 官方机制通过 LighthouseBossKit 驱动:
+    # - 开局 0.00 AV 首回合施放【正道战线】召唤 千星戍卫A/B/C，并进入【除恶】状态获得 12 层【众愿】；
+    # - 每层【众愿】赋予第一波全体敌人 5% 伤害减免【鼓舞】(12 层对应 60% 免伤)；
+    # - 第一波敌方每次施放攻击增加 1 层【众愿】(上限 12 层)；我方每次攻击命中「灯塔」后移除 1 层【众愿】。
+    # - 千星戍卫全部阵亡后，「灯塔」再次行动时重新施放【正道战线】复活戍卫并重置众愿。
+    from simulator.kits.enemies.lighthouse import LighthouseBossKit
+    from simulator.kits.enemies.events import EnemyActionCompleted, FriendlyHitResolved
+
+    class StageLighthouseCombatPort:
+        handles_damage_reduction = True
+
+        def is_alive(self, entity_id: str) -> bool:
+            ent = sim.get_entity(entity_id)
+            return ent is not None and getattr(ent, "current_hp", 0.0) > 0
+
+        def on_wish_stacks_changed(self, wish_stacks: int, in_chue: bool) -> None:
+            _sync_w1_dr()
+
+        def summon_lighthouse_guards(self, *, owner_id: str, generation: int, count: int):
+            for g, dist in ((guard_a, 0.0), (guard_b, 2000.0), (guard_c, 6000.0)):
+                was_dead_or_unspawned = getattr(g, "unspawned", False) or g.current_hp <= 0
+                g.unspawned = False
+                if g.current_hp <= 0:
+                    g.current_hp = GUARD_HP
+                    g.current_toughness = g.max_toughness
+                    g.is_broken = False
+                    g._guard_turns = 0
+                    if hasattr(sim, "status_mgr"):
+                        for st in list(sim.status_mgr.get_statuses(g.name)):
+                            sim.status_mgr.remove_status(g.name, st.id)
+                if generation == 1 or was_dead_or_unspawned:
+                    g.distance_remaining = dist
+                    g._guard_turns = 0
+            _sync_w1_dr()
+            return ("千星戍卫A", "千星戍卫B", "千星戍卫C")
+
+        def execute_lighthouse_regular_action(self, *, owner_id: str, action_id: str):
+            from .damage import DamageRequest
+            from .effects import ApplyDamageEffect
+            lighthouse.hit_energy = 15.0
+            for _ in range(5):
+                allies = [
+                    e for e in sim.entities
+                    if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+                ]
+                for tgt in allies:
+                    req = DamageRequest(attacker=lighthouse, target=tgt, skill_multiplier=1.35)
+                    sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                sim.resolver.resolve_all()
+            _resolve_sub_action_hooks(sim)
+            sim._action_seq += 1
+            allies2 = [
+                e for e in sim.entities
+                if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+            ]
+            if allies2:
+                bounce_provider = getattr(sim, "bounce_target_provider", None)
+                if bounce_provider is not None:
+                    try:
+                        sub2_targets = bounce_provider(lighthouse, allies2, 0, sub_idx=1)
+                    except TypeError:
+                        sub2_targets = allies2[:1]
+                else:
+                    sub2_targets = allies2[:1]
+                for tgt in sub2_targets:
+                    req2 = DamageRequest(attacker=lighthouse, target=tgt, skill_multiplier=1.20)
+                    sim.resolver.enqueue(ApplyDamageEffect(request=req2, toughness_reduction=0.0, element="Physical"))
+                sim.resolver.resolve_all()
+                _resolve_sub_action_hooks(sim)
+
+    lh_port = StageLighthouseCombatPort()
+    lighthouse_kit = LighthouseBossKit(owner_id="「灯塔」", port=lh_port, ally_ids=("月夜天马",))
+    lighthouse.kit = lighthouse_kit
 
     def _sync_w1_dr() -> None:
-        dr = 0.05 * w1_state["wishes"] if w1_state["eradicating"] else 0.0
+        dr = lighthouse_kit.damage_reduction
+        t_locked = lighthouse_kit.toughness_locked
         for e in sim.entities:
             if e.is_enemy and e.name in WAVE1_NAMES:
                 e.damage_reduction = dr
+                e.toughness_locked = t_locked
 
-    minion_ai = _make_minion_ai(sim, w1_state=w1_state, sync_w1_dr=_sync_w1_dr)
-
-    def _lighthouse_ai(entity, resolver, action) -> None:
-        if not w1_state["initialized"]:
-            w1_state["initialized"] = True
-            for g, dist in ((guard_a, 0.0), (guard_b, 2000.0), (guard_c, 6000.0)):
-                g.unspawned = False
-                if g.current_hp > 0:
-                    g.distance_remaining = dist
-            w1_state["eradicating"] = True
-            w1_state["wishes"] = 12
-            _sync_w1_dr()
-            # 官方机制：灯塔开局 0 AV 施放【正道战线】后受机制惩罚，推到 20000 米以外
-            entity.custom_reset_distance = 20000.0
-        else:
-            minion_ai(entity, resolver, action)
-
-    lighthouse.action_callback = _lighthouse_ai
+    minion_ai = _make_minion_ai(sim, w1_state=None, sync_w1_dr=_sync_w1_dr)
     for e in (pegasus, guard_a, guard_b, guard_c):
         e.action_callback = minion_ai
 
-    from .events import BattleEvent, TurnBeginEvent
+    from .events import BattleEvent, TurnBeginEvent, TurnEndEvent, ActionEndEvent
 
     director = Stage30510021Director(sim)
     killed_sprouts = set()
-    # 进战秘技持续时间由各套件自然定义，无需额外硬编码干涉
+    pending_sprout_backlash = []
+    peeled_action_seqs = set()
+    pending_peel = []
+
+    def _flush_pending_peel() -> None:
+        while pending_peel:
+            act_seq, attacker_name, av = pending_peel.pop(0)
+            lighthouse_kit.on_event(
+                FriendlyHitResolved(
+                    action_id=f"{attacker_name}_{av}_{act_seq}",
+                    hit_id="hit",
+                    source_id=attacker_name,
+                    target_id="「灯塔」",
+                )
+            )
+            _sync_w1_dr()
 
     def _on_battle_ev(e: BattleEvent) -> None:
-        if isinstance(e, ActionExecuteEvent):
-            if w1_state["lh_hit_in_window"]:
-                w1_state["lh_hit_in_window"] = False
-                if w1_state["wishes"] > 0:
-                    w1_state["wishes"] -= 1
-                    if w1_state["wishes"] == 0:
-                        w1_state["eradicating"] = False
-                    _sync_w1_dr()
+        if isinstance(e, (ActionExecuteEvent, TurnBeginEvent, TurnEndEvent)):
+            _flush_pending_peel()
+            if isinstance(e, ActionExecuteEvent) and e.actor_name in ("千星戍卫A", "千星戍卫B", "千星戍卫C", "月夜天马"):
+                lighthouse_kit.on_event(EnemyActionCompleted(action_id=f"{e.actor_name}_{e.av}", actor_id=e.actor_name))
+                _sync_w1_dr()
         elif isinstance(e, DamageAppliedEvent):
             if (
-                w1_state["eradicating"]
+                lighthouse_kit.in_chue
                 and e.target_name == "「灯塔」"
                 and e.damage_type not in (DamageType.ADDITIONAL, DamageType.TRUE, DamageType.DOT)
             ):
                 attacker = sim.get_entity(e.attacker_name)
                 if attacker and not attacker.is_enemy:
-                    w1_state["lh_hit_in_window"] = True
+                    act_seq = getattr(sim, "_action_seq", 0)
+                    if act_seq not in peeled_action_seqs:
+                        peeled_action_seqs.add(act_seq)
+                        pending_peel.append((act_seq, e.attacker_name, e.av))
             elif e.target_name.startswith("狂兽的胚芽"):
                 tgt = sim.get_entity(e.target_name)
                 if tgt is not None and tgt.current_hp <= 0 and e.target_name not in killed_sprouts:
                     killed_sprouts.add(e.target_name)
-                    boss = sim.get_entity("堕神之血•亚婆离")
-                    if boss is not None and director.boss_phase == 1 and getattr(director, "_barrier_release_pulsed", False):
-                        # 官方机制：狂兽的胚芽死亡时自爆反噬亚婆离，扣除约 1% 二阶段生命上限 (127,791.17 点)
+                    if director.boss_phase == 1 and getattr(director, "_barrier_release_pulsed", False):
+                        pending_sprout_backlash.append(e.target_name)
+        elif isinstance(e, ActionEndEvent):
+            if pending_sprout_backlash:
+                boss = sim.get_entity("堕神之血•亚婆离")
+                if boss is not None and director.boss_phase == 1 and getattr(director, "_barrier_release_pulsed", False):
+                    # 官方机制：狂兽的胚芽死亡时自爆反噬亚婆离，扣除约 1% 二阶段生命上限 (127,791.17 点)
+                    for _ in pending_sprout_backlash:
                         boss.current_hp = max(0.0, boss.current_hp - 127791.17)
                         if boss.current_hp <= 0:
                             director._manage_boss_phases()
+                            break
+                pending_sprout_backlash.clear()
 
     sim.event_bus.subscribe(BattleEvent, _on_battle_ev)
     return sim, director

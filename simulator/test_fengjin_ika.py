@@ -120,12 +120,13 @@ class TestRainBuffWhiteBase(unittest.TestCase):
 
         self.assertAlmostEqual(sim.port.max_hp("长夜月") - before_cyy, 0.80 * 2589 + 600, delta=3.0)
         self.assertAlmostEqual(sim.port.max_hp("风堇") - before_fj, 0.80 * 2250 + 600, delta=3.0)
-        # 忆灵小伊卡: 百分比基数是主人的白字生命
+        # 忆灵小伊卡: 百分比基数是主人的白字生命，实时生命上限与 port.max_hp 一致且包含雨过天晴加成 (+80%*2250 + 600 = 2400)
         ika = sim.get_entity("小伊卡")
         self.assertIsNotNone(ika)
         self.assertAlmostEqual(ika.base_white_hp, 2250.0, delta=0.1)
+        self.assertAlmostEqual(sim.port.max_hp("小伊卡"), ika.max_hp, delta=0.1)
         self.assertAlmostEqual(
-            sim.port.max_hp("小伊卡") - ika.max_hp, 0.80 * 2250 + 600, delta=3.0)
+            ika.max_hp - ika.base_max_hp, 0.80 * 2250 + 600, delta=3.0)
 
 
 if __name__ == "__main__":

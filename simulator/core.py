@@ -157,7 +157,7 @@ class TurnSimulator:
             # 4. 战斗开局根据全队秘技与进场光环对满血角色生命值进行上限初始化对齐 (满血进场)
             for e in list(self.entities):
                 if not e.is_enemy:
-                    base_m = getattr(e, "max_hp", 0.0)
+                    base_m = getattr(e, "base_max_hp", getattr(e, "max_hp", 0.0))
                     if base_m > 0 and e.current_hp >= base_m:
                         max_hp_val = self.port.max_hp(e.name)
                         if max_hp_val and max_hp_val > 0 and max_hp_val != float("inf"):
@@ -421,9 +421,12 @@ class TurnSimulator:
         """
         for plugin in getattr(self, "stage_plugins", []):
             plugin.on_turn_begin(active_entity, self)
-        # 关卡机制导致我方扣血后，立即驱动小伊卡天赋治疗结算（对齐实机“回合开始时”即时回血与产气）
+        self.resolver.resolve_all()
+        for ent in list(self.entities):
+            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_turn_begin_after_stage"):
+                ent.kit.on_turn_begin_after_stage(active_entity)
         ika = self.get_entity("小伊卡")
-        if ika is not None and getattr(ika, "kit", None) is not None:
+        if ika is not None and getattr(ika, "kit", None) is not None and not hasattr(ika.kit, "on_turn_begin_after_stage"):
             if hasattr(ika.kit, "_resolve_talent_heal"):
                 ika.kit._resolve_talent_heal()
         self.resolver.resolve_all()
@@ -457,7 +460,9 @@ class TurnSimulator:
         with self.scheduler.action_frame():
             self._action_seq += 1
             intent = active_entity.get_next_action_intent()
-            if getattr(active_entity, "kit", None) is not None:
+            from simulator.kits.enemies.base import EnemyKit, EnemyActionContext
+            is_char_kit = getattr(active_entity, "kit", None) is not None and not isinstance(active_entity.kit, EnemyKit)
+            if is_char_kit:
                 if action_override is not None:
                     req_kind = action_override
                 elif getattr(active_entity, "is_memosprite", False):
@@ -548,13 +553,22 @@ class TurnSimulator:
                 if active_entity.action_callback:
                     active_entity.action_callback(active_entity, self.resolver, actual_action)
                 elif active_entity.is_enemy:
-                    allies = [e for e in self.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]
-                    if allies:
-                        import random
-                        target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))
-                        req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
-                        self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                    if getattr(active_entity, "kit", None) is not None and isinstance(active_entity.kit, EnemyKit):
+                        ctx = EnemyActionContext(action_id=f"{active_entity.name}_{self.current_av:.1f}_{self._action_seq}", actor_id=active_entity.name)
+                        res = active_entity.kit.execute_turn(ctx)
+                        self._pending_turn_reset_distance = res.reset_distance
+                    else:
+                        allies = [e for e in self.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]
+                        if allies:
+                            import random
+                            target = max(allies, key=lambda a: self.status_mgr.calculate_stat(a.name, 100.0, StatType.AGGRO) + random.uniform(0, 30))
+                            req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
+                            self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
+            self.resolver.resolve_all()
+            for ent in list(self.entities):
+                if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_end"):
+                    ent.kit.on_action_end(active_entity)
             self.resolver.resolve_all()
             if should_publish:
                 self.event_bus.publish(PrimaryDamageCompleteEvent(
@@ -563,8 +577,8 @@ class TurnSimulator:
                     actor_id=active_entity.name,
                     actor_name=active_entity.name,
                     action_type=actual_action,
-                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
-                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0,
+                    action_kind=actual_kind if is_char_kit else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if is_char_kit else 0,
                     action_id=self._action_seq
                 ))
                 self.event_bus.publish(ActionEndEvent(
@@ -573,8 +587,8 @@ class TurnSimulator:
                     actor_id=active_entity.name,
                     actor_name=active_entity.name,
                     action_type=actual_action,
-                    action_kind=actual_kind if getattr(active_entity, "kit", None) is not None else None,
-                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if getattr(active_entity, "kit", None) is not None else 0,
+                    action_kind=actual_kind if is_char_kit else None,
+                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if is_char_kit else 0,
                     action_id=self._action_seq
                 ))
 
@@ -632,7 +646,9 @@ class TurnSimulator:
             actor_name=active_entity.name,
             turn_id=self._turn_id
         ))
-        active_entity.reset_distance()
+        reset_dist = getattr(self, "_pending_turn_reset_distance", None) or 10000.0
+        self._pending_turn_reset_distance = None
+        active_entity.reset_distance(reset_dist)
         if active_entity.distance_remaining <= 0.0:
             self.notify_entity_ready(active_entity.name)
         self._current_turn_entity = None
@@ -817,6 +833,10 @@ class TurnSimulator:
                 ent.light_cone.on_action_after(ctx)
             for rh in getattr(ent, "relic_handlers", []):
                 rh.on_action_after(ctx)
+            self.resolver.resolve_all()
+            for e_ent in list(self.entities):
+                if getattr(e_ent, "kit", None) is not None and hasattr(e_ent.kit, "on_action_end"):
+                    e_ent.kit.on_action_end(ent)
             self.resolver.resolve_all()
             if should_publish:
                 self.event_bus.publish(PrimaryDamageCompleteEvent(

@@ -256,6 +256,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         sim.execute_current_turn(action_override=ActionKind.SKILL, actor=robin)
 
         expected_hp = {
+            # 8627: 2026-11-05 面板 HP 按官方日志最低样本修正为 8108.8041 (原导出估算 8108.1);
+            # 官方日志中两次治疗恰好顶到 8627 (idx192/233) 亦实证此动态值
             "长夜月": 8627,
             "缇宝": 9565,
             "知更鸟•晴歌": 7237,

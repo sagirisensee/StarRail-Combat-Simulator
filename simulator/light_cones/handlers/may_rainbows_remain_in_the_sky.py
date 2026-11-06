@@ -9,12 +9,6 @@
    250% / 312% / 375% / 437% / 500% 的附加伤害 (属性与忆灵相同)，随后蓄池清零；
 4. 装备者的忆灵施放忆灵技时，使敌方全体受到的伤害提高
    18.0% / 22.5% / 27.0% / 31.5% / 36.0%，持续 2 回合。
-
-实现说明 (对照官方真值日志 battle_20261025_131019 的修正)：
-- 蓄池与释放此前完全未实现，日志中风堇名下 23 次 Additional 命中 (84.7 万)
-  全部缺失；现按上述官方文本实现：蓄池在装备者行动后累积，忆灵攻击行动
-  结束后 (下一行动开始前) 对其命中过的每个目标释放 1 次。
-- 易伤的触发点此前误挂在装备者行动上，现按官方文本改为忆灵施放忆灵技时。
 """
 from typing import Any, List
 from ..base import LightConeHandler
@@ -45,7 +39,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.BASIC):
             drain_ratio = self.scale(self.DRAIN_VALUES)
             for ally in self.port.allies(self.owner_id):
-                if ally.endswith("•倒计时") or (hasattr(self.port, "is_countdown") and self.port.is_countdown(ally)):
+                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                     continue
                 cur_hp = self.port.current_hp(ally)
                 drain_amt = max(1.0, cur_hp * drain_ratio)
@@ -127,7 +121,8 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 break
 
         # 长夜月 E1【睡吧，长夜有所梦】：当敌方数量 >=4 时我方忆灵伤害乘区 1.20x
-        for e in getattr(self.port, "sim", None).entities if hasattr(self.port, "sim") else ():
+        sim = getattr(self.port, "sim", None)
+        for e in getattr(sim, "entities", ()) if sim is not None else ():
             if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
                 fn = getattr(e.kit, "_memosprite_damage_mult", None)
                 if callable(fn):
@@ -135,7 +130,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
 
         eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
         for target in targets:
-            if self.port.entity_exists(target):
+            if self.port.entity_exists(target) or (sim is not None and sim.get_entity(target) is not None):
                 self.port.attack(
                     self.owner_id,
                     target,
@@ -157,8 +152,8 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
 from ...tracer import ActionCausalTracer as _Tracer
 
 _Tracer.register_cause_plugin(
-"LC_MayRainbows_HP_Drain",
-"光锥",
-"《愿虹光永驻天空》 (风堇 S1)",
-"战技施放消耗全队 1.0% 当前生命值，并施加敌方 18.0% 虹光群体易伤",
+    "LC_MayRainbows_HP_Drain",
+    "光锥",
+    "《愿虹光永驻天空》 (风堇 S1)",
+    "战技施放消耗全队 1.0% 当前生命值，并施加敌方 18.0% 虹光群体易伤",
 )

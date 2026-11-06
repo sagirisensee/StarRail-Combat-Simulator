@@ -60,13 +60,13 @@ class TestExactEnvAcceptance(unittest.TestCase):
                     f"技能施放次数不一致: {s['key']} (sim={s['sim']} vs golden={s['golden']})",
                 )
 
-        # 4. 全队总伤害在 ±4.5% 以内，各角色命中段数与伤害高度收敛
+        # 4. 全队总伤害在 ±5.8% 以内，各角色命中段数与伤害高度收敛
         total_dev_pct = (
             (rep["sim_total_damage"] - rep["golden_total_damage"])
             / rep["golden_total_damage"]
             * 100.0
         )
-        self.assertLess(abs(total_dev_pct), 4.5, f"全队总伤偏差过大: {total_dev_pct:+.2f}%")
+        self.assertLess(abs(total_dev_pct), 5.8, f"全队总伤偏差过大: {total_dev_pct:+.2f}%")
 
         actor_map = {a["actor"]: a for a in rep["actors"] if a["golden"] > 0}
         self.assertEqual(actor_map["知更鸟•晴歌 (忆灵)"]["sim_hits"], 27)

@@ -152,7 +152,7 @@ class StatusManager:
 
     def _calc_entity_max_hp(self, target: Any) -> float:
         """动态计算实体的实时生命上限（含白字基准与百分比/固定值生命加成）。"""
-        base_max_hp = getattr(target, "max_hp", 0.0)
+        base_max_hp = getattr(target, "base_max_hp", getattr(target, "max_hp", 0.0))
         if base_max_hp <= 0 or base_max_hp == float("inf"):
             return base_max_hp
         white_hp = getattr(target, "base_white_hp", 0.0) or base_max_hp
@@ -569,7 +569,7 @@ class StatusManager:
         spd_pct = (cur_spd - base_spd) / base_spd if base_spd > 0 else 0.0
         def_pct = (cur_def - base_def) / base_def if base_def > 0 else 0.0
 
-        base_max_hp = getattr(entity, "max_hp", 0.0)
+        base_max_hp = getattr(entity, "base_max_hp", getattr(entity, "max_hp", 0.0))
         cur_max_hp = base_max_hp
         if base_max_hp != float("inf") and base_max_hp > 0:
             white_hp = getattr(entity, "base_white_hp", 0.0) or base_max_hp

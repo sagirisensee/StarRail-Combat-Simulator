@@ -64,7 +64,7 @@ class TestTibaoZone(unittest.TestCase):
         from simulator.kits.characters.tibao import TibaoKit
 
         tibao = Entity(name="缇宝", base_speed=120.0, max_hp=10000.0, current_hp=10000.0, base_atk=1000.0)
-        ally = Entity(name="队友", base_speed=130.0, max_hp=8000.0, current_hp=8000.0, base_atk=1000.0)
+        ally = Entity(name="队友", base_speed=130.0, max_hp=8000.0, current_hp=8000.0, base_atk=1000.0, base_crit_rate=0.0)
         boss = Entity(name="首领", base_speed=100.0, max_hp=5000000.0, current_hp=5000000.0, is_enemy=True, barrier_guarded=True)
         boss.damage_reduction = 0.70
         minion = Entity(name="胚芽", base_speed=100.0, max_hp=1000000.0, current_hp=1000000.0, is_enemy=True, barrier_guarded=False)

@@ -175,13 +175,13 @@ def parse_golden_jsonl(path: str) -> BattleSequence:
                     damage=float(data.get("damage", 0.0)),
                 ))
             elif ev == "OnBattleEnd":
-                seq.total_damage = float(data.get("total_damage", 0.0))
                 seq.final_av = float(data.get("action_value", 0.0))
 
-    if not seq.total_damage:
-        seq.total_damage = sum(t.total_damage for t in seq.turns)
     if not seq.final_av and seq.turns:
         seq.final_av = seq.turns[-1].av
+    if seq.final_av:
+        seq.turns = [t for t in seq.turns if t.av <= seq.final_av]
+    seq.total_damage = sum(t.total_damage for t in seq.turns)
     seq.enemy_names = enemy_names
     return seq
 
@@ -195,7 +195,7 @@ class SequenceRecorder:
     """
 
     def __init__(self, sim: Any):
-        from .events import TurnBeginEvent, ActionExecuteEvent, DamageAppliedEvent
+        from .events import TurnBeginEvent, ActionExecuteEvent, DamageAppliedEvent, WeaknessBreakEvent
 
         self.sim = sim
         self.seq = BattleSequence(source="simulator")
@@ -255,18 +255,32 @@ class SequenceRecorder:
             config_id=(getattr(e, "skill_config_id", 0) or None),
         ))
 
+    def _is_enemy_actor(self, name: str) -> bool:
+        ent = self._lookup_entity(name)
+        return bool(ent is not None and getattr(ent, "is_enemy", False))
+
     def _on_damage(self, e: Any) -> None:
+        if self._is_enemy_actor(e.attacker_name):
+            return
         if self.current is None:
             self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
-        ent = self._lookup_entity(e.attacker_name)
-        if ent is not None and getattr(ent, "is_enemy", False):
-            return
         dtype = getattr(e, "damage_type", None)
         dtype_value = getattr(dtype, "value", "Direct")
         self.current.damages.append(DamageHit(
             attacker=self._damage_actor(e.attacker_name, dtype_value),
             damage_type=dtype_value,
             damage=float(e.damage),
+        ))
+
+    def _on_break(self, e: Any) -> None:
+        if self._is_enemy_actor(e.breaker_name):
+            return
+        if self.current is None:
+            self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+        self.current.damages.append(DamageHit(
+            attacker=self._skill_actor(e.breaker_name),
+            damage_type="Break",
+            damage=float(e.break_damage),
         ))
 
     def finish(self) -> BattleSequence:
@@ -676,6 +690,7 @@ def build_default_sim(av_budget: float):
 
 
 def build_stage_sim(
+    team_members: Optional[Sequence[str]] = None,
     log_path: Optional[str] = None,
     technique_users: Optional[Sequence[str]] = None,
 ):
@@ -683,15 +698,44 @@ def build_stage_sim(
     from .db.character_db import CharacterDB
     from .stage_30510021 import build_stage_30510021
 
+    standard_team = ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]
+    if team_members is None:
+        if log_path is not None:
+            detected_uids = set()
+            try:
+                with open(log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        d = json.loads(line)
+                        ev = d.get("event")
+                        data = d.get("data", {})
+                        if ev == "OnUseSkill":
+                            uid = data.get("avatar", {}).get("uid")
+                            if uid:
+                                detected_uids.add(uid)
+                        elif ev == "OnDamage":
+                            uid = data.get("attacker", {}).get("uid")
+                            if uid:
+                                detected_uids.add(uid)
+            except Exception:
+                pass
+            uid_map = {1413: "长夜月", 1409: "风堇", 1403: "缇宝", 1309: "知更鸟•晴歌", 1512: "知更鸟•晴歌"}
+            detected_names = {uid_map[u] for u in detected_uids if u in uid_map}
+            if detected_names:
+                team_members = [n for n in standard_team if n in detected_names]
+        if not team_members:
+            team_members = standard_team
+
     if technique_users is None:
         if log_path is not None and "20261025" in str(log_path):
             technique_users = ["长夜月", "知更鸟•晴歌"]
         else:
-            # 无论是 20261026 还是 20261101 及最新实战基准: 全员 4 人开启秘技进战
-            technique_users = ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]
+            technique_users = [n for n in standard_team if n in team_members]
 
     db = CharacterDB().load("data/character_db_export.json")
-    team = [db.to_combat_entity(n) for n in ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]]
+    team = [db.to_combat_entity(n) for n in team_members]
     return build_stage_30510021(team, technique_users=technique_users)
 
 
@@ -1017,7 +1061,99 @@ def extract_timeline(path: str) -> List[TimelineItem]:
     return items
 
 
-def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem], av_budget: float) -> TrajectoryResult:
+def extract_enemy_target_plan(path: str) -> List[Dict[str, Any]]:
+    """从官方日志提取确定性敌方行动目标序列 (供轨迹对账 TraceTargetProvider 使用)。"""
+    with open(path, "r", encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+
+    uid_to_name = {1409: "风堇", 1413: "长夜月", 1403: "缇宝", 1512: "知更鸟•晴歌"}
+    plan = []
+    cur_turn = None
+    last_hp: Dict[int, float] = {}
+    for e in events:
+        ev = e.get("event")
+        data = e.get("data", {})
+        if ev == "OnTurnBegin":
+            owner = data.get("turn_owner")
+            if isinstance(owner, dict) and owner.get("team") == "Enemy":
+                cur_turn = {
+                    "av": float(data.get("action_value", 0.0)),
+                    "enemy_uid": owner.get("uid"),
+                    "targets": [],
+                    "sub_targets": [],
+                    "sub_hp_targets": [],
+                    "closed": False,
+                }
+                plan.append(cur_turn)
+            else:
+                cur_turn = None
+        elif cur_turn is not None and not cur_turn["closed"] and ev == "OnUseSkill":
+            avatar = data.get("avatar") or {}
+            if avatar.get("team") == "Player":
+                cur_turn["closed"] = True
+        elif ev == "OnStatChange":
+            ent = data.get("entity", {})
+            prop = data.get("property", {})
+            ptype = prop.get("type")
+            val = float(prop.get("value", 0.0) or 0.0)
+            uid = ent.get("uid")
+            if ent.get("team") == "Player" and ptype == "CurrentHP":
+                prev_hp = last_hp.get(uid, val)
+                if val > 400.0:
+                    last_hp[uid] = val
+                if (
+                    cur_turn is not None
+                    and not cur_turn["closed"]
+                    and val > 400.0
+                    and val < prev_hp - 100.0
+                ):
+                    pname = uid_to_name.get(uid)
+                    if pname:
+                        if not cur_turn["sub_hp_targets"]:
+                            cur_turn["sub_hp_targets"].append([])
+                        cur_turn["sub_hp_targets"][-1].append(pname)
+            elif (
+                cur_turn is not None
+                and not cur_turn["closed"]
+                and ent.get("team") == "Enemy"
+                and uid == cur_turn["enemy_uid"]
+                and ptype == "CurrentSP"
+                and val == 0.0
+            ):
+                cur_turn["sub_targets"].append([])
+                cur_turn["sub_hp_targets"].append([])
+            elif (
+                cur_turn is not None
+                and not cur_turn["closed"]
+                and ent.get("team") == "Player"
+                and ptype == "CurrentSP"
+            ):
+                pname = uid_to_name.get(uid)
+                if pname and 0 < val <= 30.0:
+                    cur_turn["targets"].append(pname)
+                    if not cur_turn["sub_targets"]:
+                        cur_turn["sub_targets"].append([])
+                    if pname not in cur_turn["sub_targets"][-1] or cur_turn["enemy_uid"] == 100009:
+                        cur_turn["sub_targets"][-1].append(pname)
+    for p in plan:
+        if not p["targets"] and p["sub_hp_targets"]:
+            for sub in p["sub_hp_targets"]:
+                for t in sub:
+                    if t not in p["targets"]:
+                        p["targets"].append(t)
+        for i in range(len(p["sub_targets"])):
+            if not p["sub_targets"][i] and i < len(p["sub_hp_targets"]):
+                p["sub_targets"][i] = list(dict.fromkeys(p["sub_hp_targets"][i]))
+    return plan
+
+
+def run_trajectory_replay(
+    sim: Any,
+    director: Any,
+    timeline: List[TimelineItem],
+    av_budget: float,
+    log_path: Optional[str] = None,
+) -> TrajectoryResult:
     """轨迹回放 v2: 全施放轨迹按官方 AV 钉死, 缺口补足逐项记账。
 
     - 本体回合行动: 预览下一行动者 (只读复刻调度器选择规则), 若其排期施放
@@ -1033,6 +1169,66 @@ def run_trajectory_replay(sim: Any, director: Any, timeline: List[TimelineItem],
     from .events import ActionExecuteEvent
 
     result = TrajectoryResult(replay=None)
+    if log_path is not None:
+        target_plan = extract_enemy_target_plan(log_path)
+
+        def _attacker_matches_uid(attacker: Any, uid: Any) -> bool:
+            name = getattr(attacker, "name", "") or ""
+            if name == "「灯塔」":
+                return uid in (100011, 100015)
+            if name == "月夜天马":
+                return uid in (100009, 100013)
+            if name.startswith("千星戍卫"):
+                return uid not in (100009, 100011, 100013, 100015)
+            return True
+
+        def _find_turn(now_av: float, attacker: Any = None) -> Optional[Dict[str, Any]]:
+            for p in target_plan:
+                if abs(p["av"] - now_av) < 1.0 and (p["targets"] or p["sub_targets"]):
+                    if attacker is not None and not _attacker_matches_uid(attacker, p.get("enemy_uid")):
+                        continue
+                    return p
+            return None
+
+        def _trace_target_provider(attacker: Any, candidates: List[Any], sub_idx: int = 0) -> Any:
+            now_av = float(getattr(sim, "current_av", 0.0))
+            best_turn = _find_turn(now_av, attacker)
+            if best_turn:
+                subs = best_turn.get("sub_targets") or []
+                tlist = subs[sub_idx] if sub_idx < len(subs) and subs[sub_idx] else best_turn.get("targets", [])
+                if tlist:
+                    tname = tlist[0]
+                    matched = next((c for c in candidates if c.name == tname), None)
+                    if matched:
+                        return matched
+            return None
+
+        def _trace_bounce_provider(attacker: Any, candidates: List[Any], count: int = 10, sub_idx: int = 0) -> List[Any]:
+            now_av = float(getattr(sim, "current_av", 0.0))
+            best_turn = _find_turn(now_av, attacker)
+            if best_turn:
+                subs = best_turn.get("sub_targets") or []
+                tlist = subs[sub_idx] if sub_idx < len(subs) and subs[sub_idx] else best_turn.get("targets", [])
+                if count <= 0:
+                    c_map = {c.name: c for c in candidates}
+                    return [c_map[t] for t in dict.fromkeys(tlist) if t in c_map]
+                if tlist:
+                    res = []
+                    c_map = {c.name: c for c in candidates}
+                    for tname in tlist:
+                        if tname in c_map:
+                            res.append(c_map[tname])
+                        if len(res) >= count:
+                            break
+                    while len(res) < count and res:
+                        res.append(res[-1])
+                    return res
+            if count <= 0:
+                return list(candidates[:1])
+            return [candidates[i % len(candidates)] for i in range(count)]
+
+        sim.target_provider = _trace_target_provider
+        sim.bounce_target_provider = _trace_bounce_provider
     turn_items = [i for i in timeline if i.kind in ("basic", "skill")]
     ult_queue = deque([(idx, i) for idx, i in enumerate(timeline) if i.kind == "ult"])
     spirit_queues = {}

@@ -477,10 +477,9 @@ class TibaoKit(KitHandler):
         if dtype == DamageType.ADDITIONAL:
             return
 
-        window.direct_hits += 1
-
         if target not in window.direct_targets:
             window.direct_targets.add(target)
+            window.direct_hits += 1
 
             # 行迹【岔路旁的小石子？】：仅限我方其他目标 (队友及忆灵) 攻击命中时回能，缇宝自身攻击不触发
             if attacker != self.owner_id:

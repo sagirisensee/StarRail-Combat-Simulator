@@ -5,7 +5,7 @@
 - 提供基于 `StatusManager` 的实时属性只读计算属性（`speed`, `atk`, `defense`, `crit_rate`, `crit_dmg`, `err`, `remaining_av`）；
 - 提供纯跑道距离推拉计算（`advance_action`, `delay_action`, `reset_distance`）。
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, InitVar
 from typing import Callable, List, Optional, Any, TYPE_CHECKING
 from .status import StatType
 
@@ -21,7 +21,8 @@ class Entity:
     base_atk: float = 1000.0
     base_crit_rate: float = 0.05          # 基础 5% 暴击
     base_crit_dmg: float = 0.50           # 基础 50% 暴伤
-    max_hp: float = 10000.0
+    # 兼容构造参数位置与签名：max_hp 作为 InitVar 支持位置/关键字传参，实际写入 base_max_hp
+    max_hp: InitVar[Optional[float]] = None
     current_hp: float = 10000.0
     base_white_hp: float = 0.0            # 基础白字生命 (角色白字+光锥白字，用于百分比生命加成)
     base_white_speed: float = 0.0         # 基础白字速度 (角色基础白字速度，用于百分比速度加成)
@@ -74,6 +75,20 @@ class Entity:
     simulator: Optional[Any] = None
     # 动作回调：(actor: Entity, resolver: EffectResolver, action_type: str)
     action_callback: Optional[Callable[["Entity", "EffectResolver", str], None]] = None
+
+    # 底层静态面板白板生命 (放在字段末尾避免破坏现有位置参数签名)
+    base_max_hp: float = 10000.0
+    _in_max_hp_calc: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def __post_init__(self, max_hp: Optional[float]) -> None:
+        if max_hp is not None:
+            self.base_max_hp = float(max_hp)
+
+    def clamp_hp(self) -> None:
+        """上限下降（Buff 移除或过期）后，把当前生命压回上限以内。"""
+        cap = self.max_hp
+        if self.current_hp > cap:
+            self.current_hp = cap
 
     @property
     def speed(self) -> float:
@@ -137,7 +152,7 @@ class Entity:
     def delay_action(self, percent: float) -> None:
         self.distance_remaining += 10000.0 * percent
 
-    def reset_distance(self) -> None:
+    def reset_distance(self, base_distance: float = 10000.0) -> None:
         if getattr(self, "extra_immediate_action", False):
             self.distance_remaining = 0.0
             self.extra_immediate_action = False
@@ -145,7 +160,7 @@ class Entity:
             self.distance_remaining = float(self.custom_reset_distance)
             self.custom_reset_distance = None
         else:
-            self.distance_remaining = 10000.0
+            self.distance_remaining = base_distance
 
     def get_next_action_intent(self) -> str:
         if not self.policy:
@@ -154,3 +169,35 @@ class Entity:
 
     def advance_policy(self) -> None:
         self.policy_index += 1
+
+
+def _get_max_hp(self: Entity) -> float:
+    """实时生命上限：从状态管理器动态采样生命上限修正（含白字基准与百分比/固定值生命加成）。"""
+    if getattr(self, "_in_max_hp_calc", False):
+        return self.base_max_hp
+    if self.base_max_hp == float("inf") or self.base_max_hp <= 0:
+        return self.base_max_hp
+    if not (self.simulator and hasattr(self.simulator, "status_mgr")):
+        return self.base_max_hp
+
+    self._in_max_hp_calc = True
+    try:
+        white_hp = getattr(self, "base_white_hp", 0.0) or self.base_max_hp
+        val = self.simulator.status_mgr.calculate_stat(
+            self.name,
+            self.base_max_hp,
+            StatType.MAX_HP_PERCENT,
+            white_base=white_hp,
+        )
+        return max(1.0, val)
+    finally:
+        self._in_max_hp_calc = False
+
+
+def _set_max_hp(self: Entity, value: float) -> None:
+    """setter 只写入白板基础生命上限，不固化局内 Buff。"""
+    self.base_max_hp = float(value)
+
+
+# 在 @dataclass 之后挂载 property，确保构造函数签名与 InitVar 完美协同
+Entity.max_hp = property(_get_max_hp, _set_max_hp, doc=_get_max_hp.__doc__)  # type: ignore[assignment]
