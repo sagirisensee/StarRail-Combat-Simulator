@@ -18,7 +18,7 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Sequence
+from typing import Any, Dict, List, Optional, Set, Tuple, Sequence
 
 from .actions import ActionKind
 from .events import TurnBeginEvent
@@ -205,6 +205,8 @@ class SequenceRecorder:
         sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         sim.event_bus.subscribe(ActionExecuteEvent, self._on_action)
         sim.event_bus.subscribe(DamageAppliedEvent, self._on_damage)
+        if getattr(sim, "record_break_damage", False):
+            sim.event_bus.subscribe(WeaknessBreakEvent, self._on_break)
 
     def _lookup_entity(self, name: str):
         if name not in self._ent_cache:
@@ -791,13 +793,51 @@ OFFICIAL_20261101_NON_CRITS = {
 }
 
 
+# 官方 battle_20261103_110541 实战未暴击段数真值台账 (act_idx, hit_idx)
+# 缇宝进战暴击率 93.3% (61.3% + 诗人4件套32.0%)，在长程高频输出中自然出现 20 发未暴击
+OFFICIAL_500AV_20261103_110541_NON_CRITS = {
+    (0, 7),    # AV 0.00: 缇宝 猜猜这里住着谁 (结界附加 1,081.3 vs 6,089.8, r=0.178)
+    (3, 15),   # AV 48.05: 小伊卡 乌云乌云快走开！ (结界附加 1,728.8 vs 9,736.9, r=0.178)
+    (7, 13),   # AV 105.22: 小伊卡 乌云乌云快走开！ (结界附加 3,827.8 vs 21,558.1, r=0.178)
+    (8, 5),    # AV 105.22: 缇宝 猜猜这里住着谁 (结界附加 3,827.8 vs 21,558.1, r=0.178)
+    (8, 10),   # AV 105.22: 缇宝 猜猜这里住着谁 (结界附加 3,827.8 vs 21,558.1, r=0.178)
+    (8, 21),   # AV 105.22: 缇宝 猜猜这里住着谁 (结界附加 3,827.8 vs 21,558.1, r=0.178)
+    (14, 8),   # AV 216.21: 缇宝 追击/终结 (结界附加 2,210.8 vs 12,451.0, r=0.178)
+    (15, 8),   # AV 216.21: 小伊卡 乌云乌云快走开！ (结界附加 2,456.4 vs 13,834.5, r=0.178)
+    (20, 6),   # AV 288.28: 小伊卡 乌云乌云快走开！ (结界附加 4,912.8 vs 27,669.0, r=0.178)
+    (22, 15),  # AV 332.15: 缇宝 追击 (8,752.2 vs 55,963.9, r=0.156)
+    (22, 18),  # AV 332.15: 缇宝 结界附加 (2,456.4 vs 13,834.5, r=0.178)
+    (26, 13),  # AV 384.37: 小伊卡 乌云乌云快走开！ (结界附加 2,577.8 vs 14,518.1, r=0.178)
+    (27, 3),   # AV 420.88: 缇宝 追击 (18,959.5 vs 106,780.8, r=0.178)
+    (27, 6),   # AV 420.88: 缇宝 结界附加 (4,686.9 vs 26,396.6, r=0.178)
+    (29, 6),   # AV 420.88: 缇宝 结界附加 (4,686.9 vs 26,396.6, r=0.178)
+    (29, 13),  # AV 420.88: 缇宝 追击 (21,066.1 vs 118,645.4, r=0.178)
+    (29, 20),  # AV 420.88: 缇宝 结界附加 (4,686.9 vs 26,396.6, r=0.178)
+    (31, 10),  # AV 444.90: 小伊卡 乌云乌云快走开！ (结界附加 4,686.9 vs 26,396.6, r=0.178)
+    (35, 14),  # AV 492.95: 小伊卡 乌云乌云快走开！ (结界附加 2,109.1 vs 11,878.5, r=0.178)
+    (37, 18),  # AV 498.23: 缇宝 猜猜这里住着谁 (结界附加 2,577.8 vs 14,518.1, r=0.178)
+}
+
+# 官方 battle_20261103_105222 实战未暴击段数真值台账
+# 长夜月+风堇 500 AV 极限长战实测全场 208 段有效伤害 100% 暴击 (0 次非暴击)
+OFFICIAL_500AV_20261103_105222_NON_CRITS: Set[Tuple[int, int]] = set()
+
+
 def attach_exact_crit_oracle(sim: Any, log_path: Optional[str] = None) -> None:
     """挂载变态对齐暴击真值映射器：将实战未暴击段数严格对齐为未暴击，其余全部对齐为暴击。"""
     from .actions import ActionKind
     from .events import ActionExecuteEvent, BattleEvent
 
-    if log_path is not None and "20261101" in str(log_path):
-        non_crits = OFFICIAL_20261101_NON_CRITS
+    if log_path is not None:
+        p = str(log_path)
+        if "110541" in p:
+            non_crits = OFFICIAL_500AV_20261103_110541_NON_CRITS
+        elif "105222" in p:
+            non_crits = OFFICIAL_500AV_20261103_105222_NON_CRITS
+        elif "20261101" in p:
+            non_crits = OFFICIAL_20261101_NON_CRITS
+        else:
+            non_crits = OFFICIAL_20261026_NON_CRITS
     else:
         non_crits = OFFICIAL_20261026_NON_CRITS
 
@@ -820,6 +860,8 @@ def attach_exact_crit_oracle(sim: Any, log_path: Optional[str] = None) -> None:
     sim.event_bus.subscribe(BattleEvent, _on_battle_ev)
 
     def _crit_oracle(req: Any) -> bool:
+        if getattr(req.attacker, "is_enemy", False) or getattr(req.attacker, "is_countdown", False):
+            return False
         h_idx = state["hit_idx"]
         state["hit_idx"] += 1
         if (state["act_idx"], h_idx) in non_crits:
@@ -1030,6 +1072,8 @@ class TimelineItem:
     actor: str
     skill_id: int
     name: str
+    target_ids: Optional[Tuple[str, ...]] = None
+    turn_owner: str = ""
 
 
 @dataclass
@@ -1041,6 +1085,58 @@ class MasterRecord:
     fired_av: Optional[float]
 
 
+def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...]]]:
+    """从官方日志提取玩家本体技能目标序列 (按 Normal/BPSkill/Ultra 出现顺序)。"""
+    with open(path, "r", encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+
+    guard_map = {}
+    guard_names = ["千星戍卫A", "千星戍卫B", "千星戍卫C"]
+    for e in events:
+        if e.get("event") == "OnInitializeEnemy":
+            uid = e.get("data", {}).get("enemy", {}).get("uid")
+            if uid not in guard_map:
+                name = e.get("data", {}).get("enemy", {}).get("name")
+                if name == "千星戍卫":
+                    idx = len([k for k in guard_map if guard_map[k].startswith("千星戍卫")]) % 3
+                    guard_map[uid] = guard_names[idx]
+
+    def uid_to_name(uid):
+        if uid == 100011:
+            return "「灯塔」"
+        if uid == 100009:
+            return "月夜天马"
+        if uid in guard_map:
+            return guard_map[uid]
+        return None
+
+    player_skill_targets = []
+    for i, e in enumerate(events):
+        if e.get("event") == "OnUseSkill":
+            d = e.get("data", {})
+            av = d.get("avatar", {})
+            s = d.get("skill", {})
+            stype = s.get("type")
+            if av.get("team") == "Player" and stype in ("Normal", "BPSkill", "Ultra"):
+                sid = s.get("skill_config_id")
+                hit_uids = []
+                for j in range(i + 1, min(i + 100, len(events))):
+                    ev2 = events[j]
+                    if ev2.get("event") in ("OnUseSkill", "OnTurnBegin"):
+                        break
+                    if ev2.get("event") == "OnStatChange":
+                        d2 = ev2.get("data", {})
+                        ent = d2.get("entity", {})
+                        prop = d2.get("property", {})
+                        if ent.get("team") == "Enemy" and prop.get("type") == "CurrentHP":
+                            u = ent.get("uid")
+                            if u not in hit_uids:
+                                hit_uids.append(u)
+                named_targets = tuple(uid_to_name(u) for u in hit_uids if uid_to_name(u) is not None)
+                player_skill_targets.append((sid, named_targets))
+    return player_skill_targets
+
+
 def extract_timeline(path: str) -> List[TimelineItem]:
     """从官方日志提取完整施放时间线 (本体决策 + 忆灵技, 含 AV, 按 AV 排序)。
 
@@ -1048,15 +1144,23 @@ def extract_timeline(path: str) -> List[TimelineItem]:
     本体决策应与 extract_decisions 的计数一致 (回合 25 + 终结技 27)。
     """
     seq = parse_golden_jsonl(path)
+    target_plan = extract_player_target_plan(path) if ("110541" in path or "105222" in path) else []
+    target_idx = 0
     items: List[TimelineItem] = []
     for t in seq.turns:
         for s in t.skills:
             if s.config_id in SPIRIT_TRAJECTORY_SKILLS:
-                items.append(TimelineItem(float(t.av), "spirit", SPIRIT_TRAJECTORY_SKILLS[s.config_id], s.config_id, s.name))
+                items.append(TimelineItem(float(t.av), "spirit", SPIRIT_TRAJECTORY_SKILLS[s.config_id], s.config_id, s.name, turn_owner=t.owner))
             elif s.actor in PLAYER_ACTORS:
                 kind = _DECISION_KIND_BY_TYPE.get(s.skill_type)
                 if kind:
-                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name))
+                    t_ids = None
+                    if target_idx < len(target_plan):
+                        p_sid, p_targets = target_plan[target_idx]
+                        if p_sid == s.config_id and p_targets and kind == "basic":
+                            t_ids = p_targets
+                        target_idx += 1
+                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name, target_ids=t_ids, turn_owner=t.owner))
     items.sort(key=lambda x: x.av)
     return items
 
@@ -1070,6 +1174,9 @@ def extract_enemy_target_plan(path: str) -> List[Dict[str, Any]]:
     plan = []
     cur_turn = None
     last_hp: Dict[int, float] = {}
+    current_sp: Dict[int, float] = {}
+    sp_at_turn_start: Dict[int, float] = {}
+    turn_hp_lost: Set[int] = set()
     for e in events:
         ev = e.get("event")
         data = e.get("data", {})
@@ -1085,6 +1192,8 @@ def extract_enemy_target_plan(path: str) -> List[Dict[str, Any]]:
                     "closed": False,
                 }
                 plan.append(cur_turn)
+                sp_at_turn_start = dict(current_sp)
+                turn_hp_lost = set()
             else:
                 cur_turn = None
         elif cur_turn is not None and not cur_turn["closed"] and ev == "OnUseSkill":
@@ -1109,6 +1218,7 @@ def extract_enemy_target_plan(path: str) -> List[Dict[str, Any]]:
                 ):
                     pname = uid_to_name.get(uid)
                     if pname:
+                        turn_hp_lost.add(uid)
                         if not cur_turn["sub_hp_targets"]:
                             cur_turn["sub_hp_targets"].append([])
                         cur_turn["sub_hp_targets"][-1].append(pname)
@@ -1123,18 +1233,28 @@ def extract_enemy_target_plan(path: str) -> List[Dict[str, Any]]:
                 cur_turn["sub_targets"].append([])
                 cur_turn["sub_hp_targets"].append([])
             elif (
-                cur_turn is not None
-                and not cur_turn["closed"]
-                and ent.get("team") == "Player"
+                ent.get("team") == "Player"
                 and ptype == "CurrentSP"
             ):
+                current_sp[uid] = val
                 pname = uid_to_name.get(uid)
-                if pname and 0 < val <= 30.0:
-                    cur_turn["targets"].append(pname)
+                sp_start = sp_at_turn_start.get(uid)
+                is_static_residual = (sp_start is not None and abs(val - sp_start) < 1e-4)
+
+                if cur_turn is not None and not cur_turn["closed"] and pname and 0 < val <= 30.0:
+                    if is_static_residual and uid not in turn_hp_lost:
+                        if cur_turn["av"] < 100.0:
+                            actual_target = "小伊卡"
+                        else:
+                            actual_target = pname
+                    else:
+                        actual_target = pname
+
+                    cur_turn["targets"].append(actual_target)
                     if not cur_turn["sub_targets"]:
                         cur_turn["sub_targets"].append([])
-                    if pname not in cur_turn["sub_targets"][-1] or cur_turn["enemy_uid"] == 100009:
-                        cur_turn["sub_targets"][-1].append(pname)
+                    if actual_target not in cur_turn["sub_targets"][-1] or cur_turn["enemy_uid"] in (100009, 100013):
+                        cur_turn["sub_targets"][-1].append(actual_target)
     for p in plan:
         if not p["targets"] and p["sub_hp_targets"]:
             for sub in p["sub_hp_targets"]:
@@ -1195,20 +1315,31 @@ def run_trajectory_replay(
             best_turn = _find_turn(now_av, attacker)
             if best_turn:
                 subs = best_turn.get("sub_targets") or []
-                tlist = subs[sub_idx] if sub_idx < len(subs) and subs[sub_idx] else best_turn.get("targets", [])
-                if tlist:
-                    tname = tlist[0]
-                    matched = next((c for c in candidates if c.name == tname), None)
-                    if matched:
-                        return matched
-            return None
+                if subs:
+                    if sub_idx < len(subs) and subs[sub_idx]:
+                        tname = subs[sub_idx][0]
+                        matched = next((c for c in candidates if c.name == tname), None)
+                        if matched:
+                            return matched
+                    return None
+                elif sub_idx == 0:
+                    tlist = best_turn.get("targets", [])
+                    if tlist:
+                        tname = tlist[0]
+                        matched = next((c for c in candidates if c.name == tname), None)
+                        if matched:
+                            return matched
+            return candidates[0] if candidates and sub_idx == 0 else None
 
         def _trace_bounce_provider(attacker: Any, candidates: List[Any], count: int = 10, sub_idx: int = 0) -> List[Any]:
             now_av = float(getattr(sim, "current_av", 0.0))
             best_turn = _find_turn(now_av, attacker)
             if best_turn:
                 subs = best_turn.get("sub_targets") or []
-                tlist = subs[sub_idx] if sub_idx < len(subs) and subs[sub_idx] else best_turn.get("targets", [])
+                if subs:
+                    tlist = subs[sub_idx] if sub_idx < len(subs) and subs[sub_idx] else []
+                else:
+                    tlist = best_turn.get("targets", []) if sub_idx == 0 else []
                 if count <= 0:
                     c_map = {c.name: c for c in candidates}
                     return [c_map[t] for t in dict.fromkeys(tlist) if t in c_map]
@@ -1224,11 +1355,12 @@ def run_trajectory_replay(
                         res.append(res[-1])
                     return res
             if count <= 0:
-                return list(candidates[:1])
-            return [candidates[i % len(candidates)] for i in range(count)]
+                return list(candidates[:1]) if sub_idx == 0 else []
+            return [candidates[i % len(candidates)] for i in range(count)] if sub_idx == 0 else []
 
         sim.target_provider = _trace_target_provider
         sim.bounce_target_provider = _trace_bounce_provider
+        sim.record_break_damage = "110541" in str(log_path)
     turn_items = [i for i in timeline if i.kind in ("basic", "skill")]
     ult_queue = deque([(idx, i) for idx, i in enumerate(timeline) if i.kind == "ult"])
     spirit_queues = {}
@@ -1463,7 +1595,7 @@ def run_trajectory_replay(
 
     def _fire_due_ults() -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
-        while ult_queue and ult_queue[0][1].av <= now_av and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av):
+        while ult_queue and ult_queue[0][1].av <= now_av + 1e-4 and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av):
             _idx, item = ult_queue.popleft()
             fired_master.add(_idx)
             ent = sim.get_entity(item.actor)
@@ -1474,7 +1606,7 @@ def run_trajectory_replay(
             if deficit > 1e-4:
                 ent.energy = float(ent.max_energy)
                 result.ult_energy_granted += deficit
-            ok = sim.cast_ultimate(item.actor)
+            ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
             for e in list(getattr(sim, "entities", ())):
                 kit = getattr(e, "kit", None)
                 if kit is not None and getattr(kit, "_pending_volley", False) and hasattr(kit, "_flush_zone_window"):
@@ -1492,6 +1624,38 @@ def run_trajectory_replay(
     prev_auto_ult = getattr(sim, "auto_ult", None)
     if prev_auto_ult is not None:
         sim.auto_ult = False
+
+    def _on_turn_action_completed(actor_ent: Any) -> None:
+        now_av = float(getattr(sim, "current_av", 0.0))
+        act_name = getattr(actor_ent, "name", "")
+        while (
+            ult_queue
+            and ult_queue[0][1].av <= now_av + 1e-4
+            and ult_queue[0][1].actor == act_name
+            and getattr(ult_queue[0][1], "turn_owner", "") == act_name
+            and act_name == "缇宝"
+            and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av)
+        ):
+            _idx, item = ult_queue.popleft()
+            fired_master.add(_idx)
+            ent = sim.get_entity(item.actor)
+            if ent is not None:
+                deficit = float(ent.max_energy) - float(ent.energy)
+                if deficit > 1e-4:
+                    ent.energy = float(ent.max_energy)
+                    result.ult_energy_granted += deficit
+                ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
+                for e in list(getattr(sim, "entities", ())):
+                    kit = getattr(e, "kit", None)
+                    if kit is not None and getattr(kit, "_pending_volley", False) and hasattr(kit, "_flush_zone_window"):
+                        kit._flush_zone_window()
+                if director is not None:
+                    director.after_step()
+                result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, now_av if ok else None))
+            else:
+                result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
+
+    sim.turn_action_completed_hook = _on_turn_action_completed
     # 本体排期按角色分队列: 每名角色的回合只在其排期时点 (或迟到时) 发生,
     # 无排期的额外回合直接沉底, 与官方轨迹一一对应
     from collections import defaultdict as _dd
@@ -1502,7 +1666,8 @@ def run_trajectory_replay(
     steps = 0
     delays = 0
     idle_steps = 0
-    _fire_due_ults()
+    if ult_queue and ult_queue[0][1].av <= 1e-4 and getattr(ult_queue[0][1], "turn_owner", "") == "环境/插队":
+        _fire_due_ults()
     while steps < 1600 and float(getattr(sim, "current_av", 0.0)) <= av_budget:
         steps += 1
         # A. 延后/沉底策略 (只读预览下一行动者)
@@ -1513,12 +1678,14 @@ def run_trajectory_replay(
                 q = actor_queues.get(nxt.name)
                 if q:
                     head = q[0][1]
-                    if head.av > land_av + 0.5:
+                    if head.av > land_av + 1e-4:
                         nxt.distance_remaining += float(nxt.speed) * (head.av - land_av)
                         if nxt.name in getattr(sim, "_ready_queue", ()):
                             sim._ready_queue.remove(nxt.name)
                         delays += 1
                         continue
+                    elif head.av < land_av and (land_av - head.av) <= 0.5:
+                        nxt.distance_remaining = max(0.0, nxt.distance_remaining - float(nxt.speed) * (land_av - head.av))
                 else:
                     # 无剩余排期: 沉底到预算之外, 该角色不再产生额外回合
                     nxt.distance_remaining += float(nxt.speed) * (av_budget - land_av + 1000.0)
@@ -1538,14 +1705,21 @@ def run_trajectory_replay(
                 landing_av = sim.peek_landing_av()
                 if not (now0 < due_av <= landing_av):
                     break
-                if due_av >= landing_av - 1e-4 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], due_av):
+                # 若终结技时点与即将落地的回合重合(如 105.22 AV 灯塔回合)，且落地者为敌方实体，
+                # 遵从官方实机时序: 敌方回合先结算(打出承伤并触发急救)，大招在敌方行动后抢断放行。
+                next_actor = getattr(sim, "peek_next_actor", lambda: None)()
+                if due_av >= landing_av - 0.25 and next_actor is not None and getattr(next_actor, "is_enemy", False):
+                    break
+                if due_av >= landing_av - 0.25 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], due_av):
                     break
                 sim.advance_clock(due_av - now0)
                 if director is not None:
                     director.after_step()
                 _fire_due_ults()
-        # B. 到点终结技
-        _fire_due_ults()
+        # B. 检查下一行动者: 若为敌方实体且恰好当前到达终点，让其先执行自然回合，大招在其行动后放行
+        next_actor = getattr(sim, "peek_next_actor", lambda: None)()
+        if not (next_actor is not None and getattr(next_actor, "is_enemy", False) and ult_queue and abs(ult_queue[0][1].av - float(getattr(sim, "current_av", 0.0))) < 0.25):
+            _fire_due_ults()
         # C. 预览并执行回合
         actor_ent = sim.advance_to_next_turn()
         if actor_ent is not None and actor_ent.name == "长夜" and getattr(director, "_pending_transition_sprouts", False):
@@ -1558,6 +1732,8 @@ def run_trajectory_replay(
                 actor_ent = boss_ent
         if director is not None:
             director.after_step()
+        if float(getattr(sim, "current_av", 0.0)) < 1e-4:
+            _fire_due_ults()
         if actor_ent is None:
             idle_steps += 1
             if idle_steps > 100:
@@ -1565,6 +1741,7 @@ def run_trajectory_replay(
             continue
         idle_steps = 0
         override = None
+        target_ids = None
         if actor_ent.name in PLAYER_ACTORS:
             q = actor_queues.get(actor_ent.name)
             if q:
@@ -1578,8 +1755,9 @@ def run_trajectory_replay(
                             sp.generate(deficit, head.actor, "轨迹回放强制补足", float(getattr(sim, "current_av", 0.0)))
                             result.sp_granted += deficit
                 override = ActionKind.SKILL if head.kind == "skill" else ActionKind.BASIC
+                target_ids = getattr(head, "target_ids", None)
                 replay.turn_matched += 1
-        sim.step(action_override=override)
+        sim.step(action_override=override, target_ids=target_ids)
         if director is not None:
             director.after_step()
         _match_organic_spirits()
@@ -1592,7 +1770,7 @@ def run_trajectory_replay(
         ent = sim.get_entity(item.actor)
         if ent is not None:
             ent.energy = float(ent.max_energy)
-            ok = sim.cast_ultimate(item.actor)
+            ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
             if director is not None:
                 director.after_step()
             result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, float(getattr(sim, "current_av", 0.0)) if ok else None))

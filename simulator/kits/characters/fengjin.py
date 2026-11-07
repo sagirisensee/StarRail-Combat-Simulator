@@ -116,6 +116,23 @@ class FengjinKit(KitHandler):
         """
         self._sync_storm_calm()
 
+    def _ika_base_max_hp(self) -> float:
+        """计算小伊卡的基础生命上限 (风堇常驻生命上限的 50%，排除秘技与雨过天晴等临时状态以免叠加翻倍)。"""
+        if not self.port:
+            return 2782.0
+        owner_hp = self.port.max_hp(self.owner_id)
+        white_hp = float(self.port.white_stat(self.owner_id, StatType.MAX_HP_PERCENT) or 2250.0)
+        temp_hp = 0.0
+        for s in self.port.statuses(self.owner_id, category="buff"):
+            if s.id.startswith("Fengjin_Ult_SunAfterRain_") or s.id.startswith("Fengjin_Tech_WeatherIsFine_"):
+                for m in s.modifiers:
+                    if m.stat == StatType.MAX_HP_PERCENT:
+                        if m.op == ModifierOp.PERCENT:
+                            temp_hp += m.value * white_hp
+                        elif m.op == ModifierOp.ADD:
+                            temp_hp += m.value
+        return max(1.0, (owner_hp - temp_hp) * 0.50)
+
     def summon_yika(self) -> None:
         """仅在实际从不在场变为在场时，结算召唤天赋回能。"""
         if self.port is None:

@@ -219,25 +219,30 @@ class TibaoKit(KitHandler):
             scaling_stat="hp"
         )
 
-        try:
-            p_idx = enemies.index(primary_target)
-            adjacent_targets = []
-            if p_idx > 0:
-                adjacent_targets.append(enemies[p_idx - 1])
-            if p_idx < len(enemies) - 1:
-                adjacent_targets.append(enemies[p_idx + 1])
-            for adj in adjacent_targets:
-                self.port.attack(
-                    self.owner_id,
-                    adj,
-                    element="Quantum",
-                    atk_multiplier=adj_mult,
-                    toughness_damage=5.0,
-                    damage_type=DamageType.BASIC,
-                    scaling_stat="hp"
-                )
-        except ValueError:
-            pass
+        enemy_names = set(enemies)
+        if ctx.target_ids and len(ctx.target_ids) > 1:
+            adjacent_targets = [t for t in ctx.target_ids[1:] if t in enemy_names]
+        else:
+            try:
+                p_idx = enemies.index(primary_target)
+                adjacent_targets = []
+                if p_idx > 0:
+                    adjacent_targets.append(enemies[p_idx - 1])
+                if p_idx < len(enemies) - 1:
+                    adjacent_targets.append(enemies[p_idx + 1])
+            except ValueError:
+                adjacent_targets = []
+
+        for adj in adjacent_targets:
+            self.port.attack(
+                self.owner_id,
+                adj,
+                element="Quantum",
+                atk_multiplier=adj_mult,
+                toughness_damage=5.0,
+                damage_type=DamageType.BASIC,
+                scaling_stat="hp"
+            )
 
         err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
         self.port.gain_energy(self.owner_id, 20.0 * err)
@@ -624,7 +629,7 @@ class TibaoKit(KitHandler):
                 e,
                 element="Quantum",
                 atk_multiplier=fu_mult,
-                toughness_damage=10.0,
+                toughness_damage=5.0,
                 damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="hp",
                 extra_dmg_boost=e6_boost

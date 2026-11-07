@@ -703,6 +703,11 @@ class TurnSimulator:
         # 当前动作结算完毕后，按实机调度规则排空所有已入队的追加攻击 / 即时追加回合 / 预约动作队列 / 旅姬追加回合
         self.scheduler.drain()
 
+        hook = getattr(self, "turn_action_completed_hook", None)
+        if hook is not None:
+            hook(active_entity)
+            self.scheduler.drain()
+
         if self.auto_ult and not self.scheduler.continuous_action_hold:
             self.check_and_cast_ultimates()
 

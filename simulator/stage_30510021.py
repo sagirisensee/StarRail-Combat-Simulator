@@ -211,9 +211,10 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
         return random.choices(allies, weights=weights, k=1)[0]
 
     def _ai(entity, resolver, action) -> None:
+        inc_memo = getattr(sim, "target_provider", None) is None
         allies = [
             e for e in sim.entities
-            if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False)
+            if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False) and (inc_memo or not getattr(e, "is_memosprite", False))
         ]
         if not allies:
             return
@@ -229,7 +230,7 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
                 sim._action_seq += 1
                 allies2 = [
                     e for e in sim.entities
-                    if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False)
+                    if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False) and (inc_memo or not getattr(e, "is_memosprite", False))
                 ]
                 if allies2:
                     primary2 = _select_target(entity, allies2, sub_idx=1)
@@ -266,7 +267,7 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
                 entity.hit_energy = 10.0
                 allies2 = [
                     e for e in sim.entities
-                    if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False)
+                    if not e.is_enemy and getattr(e, "current_hp", 0.0) > 0 and not getattr(e, "is_countdown", False) and (inc_memo or not getattr(e, "is_memosprite", False))
                 ]
                 for tgt in allies2:
                     req2 = DamageRequest(attacker=entity, target=tgt, skill_multiplier=1.4)
@@ -332,9 +333,10 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
             req = DamageRequest(attacker=entity, target=target, skill_multiplier=multiplier)
             resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
+        inc_memo = getattr(sim, "target_provider", None) is None
         allies = [
             e for e in sim.entities
-            if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+            if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False) and (inc_memo or not getattr(e, "is_memosprite", False))
         ]
         if not allies:
             return
@@ -688,20 +690,25 @@ def build_stage_30510021(
             from .damage import DamageRequest
             from .effects import ApplyDamageEffect
             lighthouse.hit_energy = 15.0
-            for _ in range(5):
+            hits = 5
+            inc_memo = getattr(sim, "target_provider", None) is None
+            for _ in range(hits):
                 allies = [
                     e for e in sim.entities
-                    if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+                    if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False) and (inc_memo or not getattr(e, "is_memosprite", False))
                 ]
                 for tgt in allies:
                     req = DamageRequest(attacker=lighthouse, target=tgt, skill_multiplier=1.35)
                     sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
                 sim.resolver.resolve_all()
-            _resolve_sub_action_hooks(sim)
+                if not inc_memo:
+                    _resolve_sub_action_hooks(sim)
+            if inc_memo:
+                _resolve_sub_action_hooks(sim)
             sim._action_seq += 1
             allies2 = [
                 e for e in sim.entities
-                if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+                if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False) and (inc_memo or not getattr(e, "is_memosprite", False))
             ]
             if allies2:
                 bounce_provider = getattr(sim, "bounce_target_provider", None)
@@ -758,6 +765,11 @@ def build_stage_30510021(
     def _on_battle_ev(e: BattleEvent) -> None:
         if isinstance(e, (ActionExecuteEvent, TurnBeginEvent, TurnEndEvent)):
             _flush_pending_peel()
+            if isinstance(e, TurnBeginEvent) and e.actor_name == "「灯塔」" and lighthouse_kit.generation == 0:
+                for g, dist in ((guard_a, 0.0), (guard_b, 2000.0), (guard_c, 6000.0)):
+                    g.unspawned = False
+                    g.distance_remaining = dist
+                    g._guard_turns = 0
             if isinstance(e, ActionExecuteEvent) and e.actor_name in ("千星戍卫A", "千星戍卫B", "千星戍卫C", "月夜天马"):
                 lighthouse_kit.on_event(EnemyActionCompleted(action_id=f"{e.actor_name}_{e.av}", actor_id=e.actor_name))
                 _sync_w1_dr()

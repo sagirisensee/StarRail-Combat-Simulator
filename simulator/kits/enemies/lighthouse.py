@@ -65,7 +65,7 @@ class LighthouseBossKit(EnemyKit):
 
     @property
     def toughness_locked(self) -> bool:
-        return self._toughness_locked and self._wish_stacks > 0
+        return self._wish_stacks > 0
 
     @property
     def damage_reduction(self) -> float:
@@ -114,7 +114,7 @@ class LighthouseBossKit(EnemyKit):
         return EnemyActionResult(reset_distance=self.NORMAL_ACTION_DISTANCE)
 
     def on_event(self, event: Any) -> None:
-        if not self._active or not self._in_chue or not self.port.is_alive(self.owner_id):
+        if not self._active or not self.port.is_alive(self.owner_id):
             return
 
         if isinstance(event, EnemyActionCompleted):

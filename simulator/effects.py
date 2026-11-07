@@ -240,8 +240,20 @@ class EffectResolver:
                             elem_mult = 0.5
 
                         from .status import StatType
-                        tough_mult = 0.5 + (getattr(target, "max_toughness", 0.0) / 40.0)
+                        be = getattr(effect.attacker, "base_break_effect", 0.0)
+                        if getattr(effect.attacker, "is_memosprite", False) and hasattr(effect.attacker, "master_name"):
+                            m_ent = self.simulator.get_entity(effect.attacker.master_name) if hasattr(self, "simulator") else None
+                            if m_ent is not None:
+                                be = max(be, getattr(m_ent, "base_break_effect", 0.0))
                         sm = getattr(self.simulator, "status_mgr", None)
+                        if sm:
+                            be = sm.calculate_stat(effect.attacker.name, be, StatType.BREAK_EFFECT)
+                            if getattr(effect.attacker, "is_memosprite", False) and hasattr(effect.attacker, "master_name"):
+                                be = max(be, sm.calculate_stat(effect.attacker.master_name, be, StatType.BREAK_EFFECT))
+                        if effect.break_effect > 0.0:
+                            be = max(be, effect.break_effect)
+
+                        tough_mult = 0.5 + (getattr(target, "max_toughness", 0.0) / 40.0)
                         atk_lvl = getattr(effect.attacker, "level", 80)
                         tgt_lvl = getattr(target, "level", 100)
                         def_shred = sm.calculate_stat(target.name, 0.0, StatType.DEF_SHRED) if sm else 0.0
@@ -254,7 +266,7 @@ class EffectResolver:
                         vuln_mult = 1.0 + vuln
                         dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
 
-                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + effect.break_effect) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr)
+                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr)
                         if hasattr(target, "current_hp"):
                             target.current_hp = max(0.0, target.current_hp - break_dmg)
 
@@ -277,7 +289,8 @@ class EffectResolver:
                 # 介入点 1 (before_hit): 命中前先提交攻击开始阶段预约的动作波次
                 scheduler.commit_reserved_wave()
             target = effect.request.target
-            effect.request.target_is_broken = getattr(target, "is_broken", False)
+            if getattr(effect.request, "target_is_broken", None) is None:
+                effect.request.target_is_broken = getattr(target, "is_broken", False)
 
             # 1. 伤害纯计算
             breakdown = DamageCalculator.calculate(effect.request)
