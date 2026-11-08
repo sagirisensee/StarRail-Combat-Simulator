@@ -839,7 +839,7 @@ class IkaKit(KitHandler):
     def _resolve_talent_heal(self) -> None:
         targets = [
             t for t in self._pending_heal_targets
-            if not (hasattr(self.port, "is_countdown") and self.port.is_countdown(t))
+            if self.port.entity_exists(t) and not (hasattr(self.port, "is_countdown") and self.port.is_countdown(t))
         ]
         self._pending_heal_targets = []
         master = self.master_kit
@@ -848,19 +848,13 @@ class IkaKit(KitHandler):
         # 队列中的每个掉血目标各结算一次 (各自消耗小伊卡 4% 生命上限);
         # 小伊卡生命耗尽消失后, 剩余目标不再结算
         for target in targets:
-            actual_target = target
-            if not self.port.entity_exists(target) or self.port.current_hp(target) <= 0:
-                if self.port.is_memosprite(target):
-                    m_name = self.port.get_master_name(target)
-                    if m_name and self.port.entity_exists(m_name) and self.port.current_hp(m_name) > 0:
-                        actual_target = m_name
-            if not self.port.entity_exists(self.owner_id) or not self.port.entity_exists(actual_target):
+            if not self.port.entity_exists(self.owner_id) or not self.port.entity_exists(target):
                 continue
             hp_before = self.port.current_hp(self.owner_id)
             cost = self.port.max_hp(self.owner_id) * self.SELF_COST_RATIO
             self.port.lose_hp(self.owner_id, cost, cause="yika_talent_consume_hp")
             raw_heal = self.port.max_hp(master.owner_id) * self.TALENT_HEAL_PCT + self.TALENT_HEAL_FLAT
-            self.port.heal(self.owner_id, actual_target, master._apply_outgoing_healing(raw_heal, actual_target))
+            self.port.heal(self.owner_id, target, master._apply_outgoing_healing(raw_heal, target))
             # lose_hp 将生命下限钳制为 1：消耗量不小于消耗前生命时，小伊卡按官方规则消失
             if cost >= hp_before - 1e-9:
                 self.port.despawn_spirit(self.owner_id, reason="天赋消耗生命耗尽")

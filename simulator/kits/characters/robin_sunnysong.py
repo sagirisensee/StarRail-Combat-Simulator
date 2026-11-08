@@ -54,8 +54,7 @@ from ...actions import (
 from ...combat_port import BuffSpec, CombatPort
 from ...events import (
     ActionExecuteEvent, PrimaryDamageCompleteEvent, ActionEndEvent,
-    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent,
-    SpiritSummonedEvent, SpiritDespawnEvent
+    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent, SpiritSummonedEvent
 )
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
@@ -422,30 +421,6 @@ class RobinSunnySongKit(KitHandler):
         lines.append("   " + "─" * 78)
         return ("全队各角色 · 偏离和弦 Buff 状态矩阵 (Tonal Chord Matrix)", lines)
 
-    def _begin_vibe_action_barrier(
-        self,
-        action_id: int,
-        actor: str,
-        kind: ActionKind,
-    ) -> None:
-        """主伤阶段登记因果屏障，避免攻击本体在主伤完成前获得自身动作产生的结界/暴伤增益。"""
-        if kind == ActionKind.ULTIMATE:
-            self._robin_open_actions.setdefault(action_id, actor)
-        elif (
-            self.in_fever
-            and action_id > 0
-            and self._is_special_guest_actor(actor)
-        ):
-            self._robin_open_actions.setdefault(action_id, (actor, self.vibes))
-
-    def _finish_vibe_action_barrier(self, action_id: int) -> None:
-        """释放当前动作自己的屏障，提交依赖该值的状态。"""
-        entry = self._robin_open_actions.pop(action_id, None)
-        if isinstance(entry, tuple):
-            actor, pre_vibes = entry
-            self.apply_tonal_chord_to_ally(actor, vibes_override=self.vibes)
-        self._commit_vibe_dependents()
-
     def _commit_vibe_dependents(self) -> None:
         """气氛已变化；提交依赖该值的场域、登台与速度。"""
         if self._robin_open_actions:
@@ -521,14 +496,9 @@ class RobinSunnySongKit(KitHandler):
             )
 
         if trigger_ally_id is not None:
-            held_pre_vibe = None
-            for entry in self._robin_open_actions.values():
-                if isinstance(entry, tuple) and entry[0] == trigger_ally_id:
-                    held_pre_vibe = entry[1]
-                    break
             self.apply_tonal_chord_to_ally(
                 trigger_ally_id,
-                vibes_override=self.vibes if held_pre_vibe is None else held_pre_vibe,
+                vibes_override=self.vibes,
             )
 
         self._commit_vibe_dependents()
@@ -949,7 +919,12 @@ class RobinSunnySongKit(KitHandler):
             ):
                 return
 
-            self._begin_vibe_action_barrier(action_id, actor, kind)
+            # 仅在终结技主伤阶段登记因果屏障，避免大招本体攻击获气氛同步提升本次大招自己的 Fever 场域；
+            # 非终结技动作 (如追加攻击、忆灵技) 清理残留屏障并实时同步结界。
+            if kind == ActionKind.ULTIMATE:
+                self._robin_open_actions[action_id] = actor
+            else:
+                self._robin_open_actions.clear()
 
             extra = 0
             if self._is_special_guest_actor(actor):
@@ -977,11 +952,8 @@ class RobinSunnySongKit(KitHandler):
             (PrimaryDamageCompleteEvent, ActionEndEvent),
         ):
             action_id = require_id(event, "action_id")
-            self._finish_vibe_action_barrier(action_id)
-            return
-
-        if isinstance(event, SpiritDespawnEvent):
-            self._heal_provider_keys.clear()
+            self._robin_open_actions.pop(action_id, None)
+            self._commit_vibe_dependents()
             return
 
         if isinstance(event, SpiritSummonedEvent):
