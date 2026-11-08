@@ -125,41 +125,61 @@ class ChangyeyueKit(KitHandler):
         self.gain_yizhi(1)
 
     def _trigger_trace_a2_on_skill(self, caster_id: str) -> None:
-        """行迹【天黑黑，月寂寂】(point06)：施放技能时消耗自身当前 5% 生命值，使双方暴伤提高 15% (持续 2 回合)。"""
-        if caster_id == self.spirit_name:
-            if self.spirit_hp <= 0:
-                self.spirit_hp = self.spirit_max_hp
-            hp_loss = self.spirit_hp * 0.05
-            cause = "memosprite_skill_cost"
-        else:
-            hp_loss = 0.05 * self.port.current_hp(self.owner_id)
-            cause = "evernight_a2_cost"
+        """A2：按实体当前生命扣除 5%，然后施加双方暴伤增益。"""
+        if not self.port or not self.port.entity_exists(caster_id):
+            return
 
-        self.port.lose_hp(caster_id, hp_loss, cause=cause)
-        self.port.upsert_status(BuffSpec(
-            key="Changyeyue_A2_Skill_CritDmg",
-            name="天黑黑，月寂寂 (施法暴伤+15%)",
-            source_id=self.owner_id,
-            target_id=self.owner_id,
-            modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
-            duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
-            skip_current_clock=(caster_id == self.owner_id),
-            category="buff",
-            description="暴击伤害提高 +15.0%"
-        ))
-        if self.spirit_alive and self.port.entity_exists(self.spirit_name):
+        current_hp = max(
+            0.0,
+            float(self.port.current_hp(caster_id)),
+        )
+        is_spirit = caster_id == self.spirit_name
+
+        # 缓存只镜像实体状态，绝不用于补满实体或推算技能费用。
+        if is_spirit:
+            self.spirit_hp = current_hp
+
+        if current_hp > 0.0:
+            self.port.lose_hp(
+                caster_id,
+                current_hp * 0.05,
+                cause=(
+                    "memosprite_skill_cost"
+                    if is_spirit
+                    else "evernight_a2_cost"
+                ),
+            )
+
+        recipients = [
+            (self.owner_id, "Changyeyue_A2_Skill_CritDmg"),
+        ]
+        if (
+            self.spirit_alive
+            and self.port.entity_exists(self.spirit_name)
+        ):
+            recipients.append((
+                self.spirit_name,
+                "Changyeyue_A2_Skill_CritDmg_Spirit",
+            ))
+
+        for target_id, key in recipients:
             self.port.upsert_status(BuffSpec(
-                key="Changyeyue_A2_Skill_CritDmg_Spirit",
+                key=key,
                 name="天黑黑，月寂寂 (施法暴伤+15%)",
                 source_id=self.owner_id,
-                target_id=self.spirit_name,
-                modifiers=(Modifier(StatType.CRIT_DMG, ModifierOp.ADD, 0.15),),
+                target_id=target_id,
+                modifiers=(
+                    Modifier(
+                        StatType.CRIT_DMG,
+                        ModifierOp.ADD,
+                        0.15,
+                    ),
+                ),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=(caster_id == self.spirit_name),
+                skip_current_clock=(caster_id == target_id),
                 category="buff",
-                description="暴击伤害提高 +15.0%"
+                description="暴击伤害提高 +15.0%",
             ))
 
     def on_event(self, event: Any) -> None:

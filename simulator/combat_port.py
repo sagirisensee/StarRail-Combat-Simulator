@@ -225,6 +225,8 @@ class SimulatorCombatPort:
         self._spawn_generations: Dict[str, int] = {}
         self._spawn_barriers: Dict[str, SpawnContext] = {}
         self._preserved_memosprite_statuses: Dict[str, List[Any]] = {}
+        self._known_masters: Dict[str, str] = {}
+        self._known_memosprites: set = set()
 
     def is_action_ready(self, entity_id: str) -> bool:
         """检查实体是否已完成入场屏障稳定化并具备行动资格。"""
@@ -261,7 +263,12 @@ class SimulatorCombatPort:
 
     def is_memosprite(self, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
-        return bool(ent and getattr(ent, "is_memosprite", False))
+        if ent:
+            res = bool(getattr(ent, "is_memosprite", False))
+            if res:
+                self._known_memosprites.add(entity_id)
+            return res
+        return entity_id in getattr(self, "_known_memosprites", set())
 
     def is_ally(self, actor_id: str) -> bool:
         ent = self._get_entity(actor_id)
@@ -272,11 +279,21 @@ class SimulatorCombatPort:
 
     def get_master_name(self, entity_id: str) -> Optional[str]:
         ent = self._get_entity(entity_id)
-        return getattr(ent, "master_name", None) if ent else None
+        if ent and getattr(ent, "master_name", None):
+            self._known_masters[entity_id] = ent.master_name
+            return ent.master_name
+        return getattr(self, "_known_masters", {}).get(entity_id)
 
     def is_own_memosprite(self, master_id: str, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
-        return bool(ent and getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None) == master_id)
+        if ent:
+            res = bool(getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None) == master_id)
+            if res:
+                self._known_memosprites.add(entity_id)
+                self._known_masters[entity_id] = master_id
+            return res
+        return (entity_id in getattr(self, "_known_memosprites", set()) and
+                getattr(self, "_known_masters", {}).get(entity_id) == master_id)
 
     def is_countdown(self, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)

@@ -55,8 +55,8 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
             if self.port.is_countdown(ally):
                 continue
             self.port.upsert_status(BuffSpec(
-                key=f"{self.BUFF_DMG_KEY}_{ally}",
-                name="再创天地的救世主 (增伤+15%)",
+                key=f"{self.BUFF_DMG_KEY}_{self.owner_id}_{ally}",
+                name=f"再创天地的救世主 (增伤+15% [{self.owner_id}])",
                 source_id=self.owner_id,
                 target_id=ally,
                 modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.15),),
