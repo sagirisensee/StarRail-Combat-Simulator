@@ -1183,18 +1183,13 @@ class ChangyeyueKit(KitHandler):
             full_spirit_sync = was_spirit_alive or self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
             spirit_cd = self._spirit_crit_dmg(include_skill_shared=full_spirit_sync) or 0.0
             if full_spirit_sync:
-                spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
-                for s in self.port.statuses(self.owner_id):
-                    if s.id == f"Robin_Talent_TonalChord_{self.owner_id}" and s.name not in spirit_names:
-                        for m in s.modifiers:
+                robin_chord = next((s for s in self.port.statuses(self.owner_id) if "TonalChord" in s.id), None)
+                if robin_chord:
+                    spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
+                    if robin_chord.name not in spirit_names:
+                        for m in robin_chord.modifiers:
                             if m.stat == StatType.CRIT_DMG:
                                 spirit_cd += m.value
-                if not was_spirit_alive:
-                    for s in self.port.statuses(self.owner_id):
-                        if s.id == "Changyeyue_Talent_CritDmg":
-                            for m in s.modifiers:
-                                if m.stat == StatType.CRIT_DMG:
-                                    spirit_cd -= m.value
             ult_hp_ratio = self._spirit_hp_scale_ratio()
             ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
             for e in self.port.enemies(self.owner_id):

@@ -1090,25 +1090,32 @@ def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...]]]:
     with open(path, "r", encoding="utf-8") as f:
         events = [json.loads(line) for line in f if line.strip()]
 
-    guard_map = {}
+    uid_map = {
+        100011: "「灯塔」",
+        100015: "「灯塔」",
+        100009: "月夜天马",
+        100013: "月夜天马",
+    }
     guard_names = ["千星戍卫A", "千星戍卫B", "千星戍卫C"]
+    guard_cnt = 0
+    sprout_cnt = 0
     for e in events:
         if e.get("event") == "OnInitializeEnemy":
-            uid = e.get("data", {}).get("enemy", {}).get("uid")
-            if uid not in guard_map:
-                name = e.get("data", {}).get("enemy", {}).get("name")
+            en = e.get("data", {}).get("enemy", {})
+            uid = en.get("uid")
+            if uid not in uid_map:
+                name = en.get("name")
                 if name == "千星戍卫":
-                    idx = len([k for k in guard_map if guard_map[k].startswith("千星戍卫")]) % 3
-                    guard_map[uid] = guard_names[idx]
+                    uid_map[uid] = guard_names[guard_cnt % 3]
+                    guard_cnt += 1
+                elif name == "堕神之血•亚婆离":
+                    uid_map[uid] = "堕神之血•亚婆离"
+                elif name == "狂兽的胚芽":
+                    sprout_cnt += 1
+                    uid_map[uid] = f"狂兽的胚芽{sprout_cnt}"
 
     def uid_to_name(uid):
-        if uid == 100011:
-            return "「灯塔」"
-        if uid == 100009:
-            return "月夜天马"
-        if uid in guard_map:
-            return guard_map[uid]
-        return None
+        return uid_map.get(uid)
 
     player_skill_targets = []
     for i, e in enumerate(events):
@@ -1144,7 +1151,7 @@ def extract_timeline(path: str) -> List[TimelineItem]:
     本体决策应与 extract_decisions 的计数一致 (回合 25 + 终结技 27)。
     """
     seq = parse_golden_jsonl(path)
-    target_plan = extract_player_target_plan(path) if ("110541" in path or "105222" in path) else []
+    target_plan = extract_player_target_plan(path)
     target_idx = 0
     items: List[TimelineItem] = []
     for t in seq.turns:

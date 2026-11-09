@@ -447,14 +447,14 @@ class RobinSunnySongKit(KitHandler):
         if amount <= 0:
             return
 
-        # 机制实体不能作为气氛提供者或偏离和弦承受者。
+        # 机制实体不能作为偏离和弦承受者
         if trigger_ally_id is not None:
             if (
                 not self.port.entity_exists(trigger_ally_id)
                 or not self.port.is_ally(trigger_ally_id)
                 or self.port.is_countdown(trigger_ally_id)
             ):
-                return
+                trigger_ally_id = None
 
         old_vibes = self.vibes
         self.vibes = min(self.max_vibes, old_vibes + int(amount))
@@ -944,7 +944,12 @@ class RobinSunnySongKit(KitHandler):
                     self.eidolon_param(2, 1, default=2.0)
                 )
 
-            self.gain_vibes(1 + extra, trigger_ally_id=actor)
+            trigger_id = actor
+            if kind == ActionKind.ULTIMATE and actor == "长夜月":
+                trigger_id = "长夜"
+                if not self.port.entity_exists("长夜"):
+                    self._pending_chord_for_changye = (self.vibes + 1 + extra)
+            self.gain_vibes(1 + extra, trigger_ally_id=trigger_id)
             return
 
         if isinstance(
@@ -965,6 +970,11 @@ class RobinSunnySongKit(KitHandler):
                 or self.port.is_countdown(target)
             ):
                 return
+
+            if target == "长夜" and getattr(self, "_pending_chord_for_changye", None):
+                v_pending = self._pending_chord_for_changye
+                self._pending_chord_for_changye = None
+                self.apply_tonal_chord_to_ally("长夜", vibes_override=v_pending)
 
             if self.eidolon >= 2:
                 value = self.eidolon_param(2, 2, default=0.18)

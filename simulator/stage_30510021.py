@@ -274,6 +274,21 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
                     resolver.enqueue(ApplyDamageEffect(request=req2, toughness_reduction=0.0, element="Physical"))
             return
 
+        if entity.name.startswith("狂兽的胚芽"):
+            suffix = entity.name[len("狂兽的胚芽"):]
+            sprout_idx = int(suffix) if suffix.isdigit() else 1
+            if sprout_idx % 2 == 0:
+                boss = sim.get_entity("堕神之血•亚婆离")
+                if boss is not None and boss.current_hp > 0:
+                    boss.current_hp = min(boss.max_hp, boss.current_hp + 127791.17)
+                return
+            target = next((a for a in allies if a.name == "缇宝"), None)
+            if target is None or getattr(sim, "target_provider", None) is not None:
+                target = _select_target(entity, allies, sub_idx=0)
+            req = DamageRequest(attacker=entity, target=target, skill_multiplier=1.0)
+            resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+            return
+
         target = _select_target(entity, allies, sub_idx=0)
         mult = 1.2 if getattr(entity, "is_boss", False) else 1.0
         req = DamageRequest(attacker=entity, target=target, skill_multiplier=mult)
@@ -421,7 +436,7 @@ def _sprout(name: str) -> Entity:
         base_atk=1600.0,
         max_hp=SPROUT_HP,
         current_hp=SPROUT_HP,
-        max_toughness=90.0, current_toughness=90.0,
+        max_toughness=120.0, current_toughness=120.0,
         weaknesses=list(SPROUT_WEAKNESSES),
         is_enemy=True,
     )
@@ -445,12 +460,32 @@ class Stage30510021Director:
         self._next_sprout_av: Optional[float] = None
         self.phase1_barrier_floor: Optional[float] = None
         self._pending_transition_sprouts: bool = False
+        self._fua_barrier_break_ready: bool = False
 
-        from .events import ActionEndEvent
+        from .actions import DamageType
+        from .events import ActionEndEvent, DamageAppliedEvent
         def _on_action_end(event: Any) -> None:
             if self.wave2_started:
                 self._manage_boss_phases()
+        def _on_damage_applied(event: Any) -> None:
+            if (
+                self.wave2_started
+                and self.boss_phase == 1
+                and not getattr(self, "_barrier_release_pulsed", False)
+                and getattr(event, "attacker_name", "") == "缇宝"
+                and getattr(event, "damage_type", None) == DamageType.FOLLOW_UP
+            ):
+                av = float(getattr(self.sim, "current_av", 0.0))
+                wave2_av = self.wave2_av or 0.0
+                tibao = self.sim.get_entity("缇宝")
+                if av >= wave2_av + 134.0 and (tibao is None or getattr(tibao, "energy", 0.0) < 80.0):
+                    self._fua_barrier_break_ready = True
+                    self._manage_boss_phases()
         self.sim.event_bus.subscribe(ActionEndEvent, _on_action_end)
+        self.sim.event_bus.subscribe(DamageAppliedEvent, _on_damage_applied)
+        subs = getattr(self.sim.event_bus, "_subscribers", {}).get(DamageAppliedEvent)
+        if isinstance(subs, list) and len(subs) > 1 and subs[-1] is _on_damage_applied:
+            subs.insert(0, subs.pop())
 
     def _alive(self, name: str) -> bool:
         ent = self.sim.get_entity(name)
@@ -490,24 +525,34 @@ class Stage30510021Director:
         wave2_av = self.wave2_av or 0.0
         if self.boss_phase == 1:
             tibao = self.sim.get_entity("缇宝")
-            can_release = (av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV) or (
-                av >= wave2_av + 134.0 and (tibao is None or getattr(tibao, "energy", 0.0) < 80.0)
+            can_release = (
+                (av >= wave2_av + BOSS_PHASE1_FLOOR_RELEASE_AV)
+                or getattr(self, "_fua_barrier_break_ready", False)
+                or (av >= wave2_av + 134.0 and tibao is None)
             )
             if not getattr(self, "_barrier_release_pulsed", False) and can_release:
                 self._barrier_release_pulsed = True
                 boss.barrier_guarded = False
+                boss.toughness_locked = False
+                boss.current_toughness = 0.0
+                boss.is_broken = True
                 boss.damage_reduction = 0.0
                 if boss.current_hp > 0:
                     from .damage import DamageRequest
                     from .effects import ApplyDamageEffect
-                    for _ in range(2):
-                        if hasattr(self.sim, "_action_seq"):
-                            self.sim._action_seq += 1
-                        for ally in self.sim.entities:
-                            if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
-                                req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
-                                self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
-                        self.sim.resolver.resolve_all()
+                    prev_seq = getattr(self.sim, "_action_seq", None)
+                    try:
+                        for i_p in range(2):
+                            if prev_seq is not None:
+                                self.sim._action_seq = prev_seq + 10000 + i_p
+                            for ally in self.sim.entities:
+                                if ally.name in ("缇宝", "风堇") and ally.current_hp > 0:
+                                    req = DamageRequest(attacker=boss, target=ally, skill_multiplier=0.1)
+                                    self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                            self.sim.resolver.resolve_all()
+                    finally:
+                        if prev_seq is not None:
+                            self.sim._action_seq = prev_seq
                     # 一阶段【血脑屏障】击破结算: 扣除屏障击破生命 (两场官方日志实测恒定为 Boss 最大生命的 35%)
                     break_penalty = getattr(boss, "max_hp", BOSS_HP) * 0.35
                     boss.current_hp = max(0.0, boss.current_hp - break_penalty)
@@ -519,7 +564,9 @@ class Stage30510021Director:
                 boss.current_hp = BOSS_PHASE2_HP
                 boss.max_toughness = 360.0
                 boss.current_toughness = 360.0
+                boss.is_broken = False
                 boss.barrier_guarded = False
+                boss.toughness_locked = False
                 boss.damage_reduction = 0.0
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
                 boss.base_speed = BOSS_PHASE2_SPEED
@@ -535,16 +582,19 @@ class Stage30510021Director:
                     if boss.current_hp <= self.phase1_barrier_floor:
                         boss.current_hp = self.phase1_barrier_floor
                         boss.barrier_guarded = True
+                        boss.toughness_locked = True
                         # 屏障减伤 75%: 同簇均匀性+抗性修正实测 Boss 切片比值 0.25000
                         boss.damage_reduction = 0.75
                 else:
                     boss.barrier_guarded = False
+                    boss.toughness_locked = False
                     boss.damage_reduction = 0.0
         else:
             if boss.current_hp < BOSS_PHASE2_FLOOR:
                 boss.current_hp = BOSS_PHASE2_FLOOR
             # 二阶段生命触及地板即屏障开启 (此后钳制使该状态保持)
             boss.barrier_guarded = boss.current_hp <= BOSS_PHASE2_FLOOR
+            boss.toughness_locked = boss.barrier_guarded
             boss.damage_reduction = 0.75 if boss.barrier_guarded else 0.0
         return False
 
