@@ -48,6 +48,10 @@ class ChangyeyueKit(KitHandler):
         self.threshold_issued: bool = False
         self.bursting: bool = False
         self.technique_active: bool = False
+        # 战技暴伤分享是否已由真实战技施放激活过 (秘技的同名效果不算):
+        # 官方 96 动 #08 实测——开局秘技分享不进入终结技快照, #25 战技
+        # 分享则计入, 两者必须区分 (见终结技分支的快照口径)。
+        self._skill_share_from_skill: bool = False
         self._spirit_candle_triggered_by_event: bool = False
         self._spirit_declared_skills: dict[int, int] = {}
         self._spirit_completed_actions: set[int] = set()
@@ -1145,6 +1149,7 @@ class ChangyeyueKit(KitHandler):
                 self.summon_spirit()
 
             self.apply_skill_shared_crit_dmg()
+            self._skill_share_from_skill = True
 
             direct_yizhi = 2 + (12 if self.darkness else 0)
             self.gain_yizhi(direct_yizhi)
@@ -1200,8 +1205,31 @@ class ChangyeyueKit(KitHandler):
                     description="全属性伤害提高 +60.0%"
                 ))
 
-            full_spirit_sync = was_spirit_alive or self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
+            # 终结技暴伤快照口径 (官方 96 动逐动实测):
+            # - 长夜在场施放: 全量计入其当前暴伤 (分享/和弦/A6 均计, #281.4 场);
+            # - 长夜刚退场、由本终结技重新召回: 战技分享若已由真实战技激活且
+            #   标记未过期则计入 (#25: 分享计入), 但长夜自身的和弦快照不计入
+            #   本次快照 (#25 实测); 开局秘技的同名分享不算激活 (#08 实测:
+            #   秘技分享不进入终结技快照)。
+            is_special_guest = self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
+            skill_share_active = (
+                not was_spirit_alive
+                and not is_special_guest
+                and self._skill_share_from_skill
+                and self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg")
+            )
+            full_spirit_sync = (
+                was_spirit_alive
+                or skill_share_active
+                or is_special_guest
+            )
             spirit_cd = self._spirit_crit_dmg(include_skill_shared=full_spirit_sync) or 0.0
+            if skill_share_active:
+                for s in self.port.statuses(self.spirit_name):
+                    if "TonalChord" in s.id:
+                        for m in s.modifiers:
+                            if m.stat == StatType.CRIT_DMG:
+                                spirit_cd -= m.value
             if full_spirit_sync:
                 robin_chord = next((s for s in self.port.statuses(self.owner_id) if "TonalChord" in s.id), None)
                 if robin_chord:
