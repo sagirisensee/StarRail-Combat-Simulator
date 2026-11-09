@@ -46,6 +46,8 @@
 from typing import Any, List, Optional, Sequence
 
 from .core import Entity, TurnSimulator
+from .events import EnemySpawnedEvent
+from .status import StatusTag
 
 GUARD_HP = 459777.8        # 千星戍卫 8032040 (日志 OnInitializeEnemy 实测 459777.75)
 BOSS_HP = 6389558.5        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
@@ -482,6 +484,16 @@ class Stage30510021Director:
                     self._fua_barrier_break_ready = True
                     self._manage_boss_phases()
         self.sim.event_bus.subscribe(ActionEndEvent, _on_action_end)
+        def _on_enemy_spawned(event: Any) -> None:
+            if not isinstance(event, EnemySpawnedEvent):
+                return
+            target_name = event.enemy_name
+            sm = self.sim.status_mgr
+            if event.is_transition:
+                for s in list(sm.get_statuses(target_name)):
+                    if (getattr(s, "category", "") in ("debuff", "control") or StatusTag.TARGET_DEBUFF in s.tags) and StatusTag.FIELD_AURA not in s.tags:
+                        sm.remove_status(target_name, s.id)
+        self.sim.event_bus.subscribe(EnemySpawnedEvent, _on_enemy_spawned)
         self.sim.event_bus.subscribe(DamageAppliedEvent, _on_damage_applied)
         subs = getattr(self.sim.event_bus, "_subscribers", {}).get(DamageAppliedEvent)
         if isinstance(subs, list) and len(subs) > 1 and subs[-1] is _on_damage_applied:
@@ -501,6 +513,7 @@ class Stage30510021Director:
             sp = _sprout(f"狂兽的胚芽{self._sprout_seq}")
             sp.action_callback = _make_minion_ai(self.sim)
             self.sim.add_entity(sp, trigger_battle_start=False)
+            self.sim.event_bus.publish(EnemySpawnedEvent(enemy_name=sp.name, is_wave_start=False, is_transition=False))
 
     def _spawn_transition_sprouts(self) -> None:
         """二阶段转阶段首动连招结算后，增援一对胚芽。"""
@@ -573,7 +586,7 @@ class Stage30510021Director:
                 boss.distance_remaining = 0.0
                 self._pending_transition_sprouts = True
                 self._next_sprout_av = av + SPROUT_INTERVAL_AV
-                # remove_status
+                self.sim.event_bus.publish(EnemySpawnedEvent(enemy_name=boss.name, is_wave_start=False, is_transition=True))
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
                 if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:

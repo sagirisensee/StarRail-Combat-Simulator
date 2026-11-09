@@ -76,10 +76,19 @@ class Modifier:
 
 class StatusTag:
     """状态元数据语义标签（用于通用过滤与属性转化隔离，杜绝硬编码状态ID）。"""
-    EXCLUDE_FROM_STAT_TRANSFERS = "exclude_from_stat_transfers"  # 排除属性二次转化/分享 (防自循环)
+    # 1. 广域分发与继承分类 (Propagation & Inheritance)
+    AURA_SHARED = "aura_shared"                                  # 全队共享光环 (我方全员与召唤物始终共享)
+    FIELD_AURA = "field_aura"                                    # 场地/结界/领域光环类状态 (新入场/转阶段目标自动加载与存续)
+    TARGET_DEBUFF = "target_debuff"                              # 目标主动施加类负面 (新入场严禁加载，转阶段全量清空)
+
+    # 2. 时钟生命周期分类 (Timing & Duration Management)
+    AURA_STATIC = "aura_static"                                  # 场地静态光环 (生命周期跟随施法者结界或实体在场，承载者自身跑条绝不衰减回合)
+    PERSONAL_DURATION = "personal_duration"                      # 目标个体回合时钟管理 (随承载者自己行动独立消耗剩余回合数)
+
+    # 3. 适用范围与转化约束 (Scope & Calculation Guardrails)
     MEMOSPRITE_ONLY = "memosprite_only"                          # 伴生忆灵专享
     CHARACTER_ONLY = "character_only"                            # 仅角色本体专享 (不继承/不投影至伴生忆灵)
-    AURA_SHARED = "aura_shared"                                  # 全队共享光环
+    EXCLUDE_FROM_STAT_TRANSFERS = "exclude_from_stat_transfers"  # 排除属性二次转化/分享 (防自循环)
     CANNOT_ADVANCE_OTHER_ALLIES = "cannot_advance_other_allies"  # 无法使其他友方目标获得行动提前效果 (如【特邀嘉宾】)
     SUPPRESS_STATUS_APPLY_EVENT = "suppress_status_apply_event"  # 派生同步类状态: 应用时不广播 StatusApplyEvent (防事件自循环触发同步)
 

@@ -54,7 +54,8 @@ from ...actions import (
 from ...combat_port import BuffSpec, CombatPort
 from ...events import (
     ActionExecuteEvent, PrimaryDamageCompleteEvent, ActionEndEvent,
-    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent, SpiritSummonedEvent
+    DamageAppliedEvent, HealAppliedEvent, ShieldAppliedEvent, TurnBeginEvent, SpiritSummonedEvent,
+    EnemySpawnedEvent
 )
 from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
@@ -581,13 +582,13 @@ class RobinSunnySongKit(KitHandler):
         self._check_musician_stage_progression()
 
     def _update_musician_aura(self) -> None:
-        """更新忆灵在场时的敌方全体易伤光环 (1151203 扑翅雀跃的和声：11.2% / 16.8% / 22.4%)。"""
+        """更新忆灵在场时的敌方全体易伤光环 (1151203 扑翅雀跃的和声：8.0% / 12.0% / 16.0%)。"""
         if not self.musicians_alive or self.member_count <= 0:
             return
 
-        v1 = self.skill_param("1151203", 2, default=0.112)
-        v2 = self.skill_param("1151203", 3, default=0.168)
-        v3 = self.skill_param("1151203", 4, default=0.224)
+        v1 = self.skill_param("1151203", 2, default=0.08)
+        v2 = self.skill_param("1151203", 3, default=0.12)
+        v3 = self.skill_param("1151203", 4, default=0.16)
         vul_map = {1: v1, 2: v2, 3: v3}
         vul_pct = vul_map.get(min(self.member_count, 3), v1)
 
@@ -601,6 +602,7 @@ class RobinSunnySongKit(KitHandler):
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="debuff",
+                tags=(StatusTag.FIELD_AURA, StatusTag.AURA_STATIC),
                 description=f"晴空乐手在场，敌方受到的伤害提高 +{vul_pct * 100:.1f}% (当前乐手: {self.member_count} 人)"
             ))
 
@@ -959,6 +961,10 @@ class RobinSunnySongKit(KitHandler):
             action_id = require_id(event, "action_id")
             self._robin_open_actions.pop(action_id, None)
             self._commit_vibe_dependents()
+            return
+
+        if isinstance(event, EnemySpawnedEvent):
+            self._update_musician_aura()
             return
 
         if isinstance(event, SpiritSummonedEvent):

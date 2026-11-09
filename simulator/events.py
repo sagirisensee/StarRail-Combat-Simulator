@@ -212,6 +212,16 @@ class SpiritDespawnEvent(BattleEvent):
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class EnemySpawnedEvent(BattleEvent):
+    """敌方目标入场事实事件 (波次开始、增援刷新或首领转阶段新形态就绪)。"""
+    enemy_name: str = ""
+    is_wave_start: bool = False
+    is_transition: bool = False
+    av: float = 0.0
+    cycle: int = 0
+
+
 class EventBus:
     """全局战斗事件总线，负责事件发布与按继承树广播监听。"""
     def __init__(self):

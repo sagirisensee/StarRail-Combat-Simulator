@@ -201,7 +201,10 @@ class ChangyeyueKit(KitHandler):
         """监听全局动作执行事件，统一驱动行迹【烛火起，烛火熄】以及【白昼悄然离去】忆灵同步与过期清理。"""
         if not self.port:
             return
-        from ...events import SpiritSummonedEvent, StatusExpireEvent
+        from ...events import SpiritSummonedEvent, StatusExpireEvent, EnemySpawnedEvent
+        if isinstance(event, EnemySpawnedEvent):
+            self._sync_darkness_vuln()
+            return
         if isinstance(event, ActionExecuteEvent):
             actor_name = getattr(event, "actor_name", "") or getattr(event, "actor_id", "")
             action_kind = getattr(event, "action_kind", None)
@@ -485,6 +488,7 @@ class ChangyeyueKit(KitHandler):
                 duration=None,
                 timing=DurationTiming.TARGET_TURN_END,
                 category="debuff",
+                tags=(StatusTag.FIELD_AURA, StatusTag.AURA_STATIC),
                 description="受到伤害提高 +30.0%"
             ))
 
@@ -1168,6 +1172,7 @@ class ChangyeyueKit(KitHandler):
                     duration=None,
                     timing=DurationTiming.TARGET_TURN_END,
                     category="debuff",
+                    tags=(StatusTag.FIELD_AURA, StatusTag.AURA_STATIC),
                     description="受到伤害提高 +30.0%"
                 ))
 

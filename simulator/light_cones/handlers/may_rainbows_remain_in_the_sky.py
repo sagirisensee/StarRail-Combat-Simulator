@@ -14,7 +14,7 @@ from typing import Any, List
 from ..base import LightConeHandler
 from ...actions import ActionContext, ActionKind, DamageType
 from ...combat_port import BuffSpec
-from ...status import DurationTiming, Modifier, ModifierOp, StatType
+from ...status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 
 
 class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
@@ -84,7 +84,8 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 modifiers=(Modifier(StatType.DMG_VULNERABILITY, ModifierOp.ADD, vuln_val),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True
+                skip_current_clock=True,
+                tags=(StatusTag.TARGET_DEBUFF, StatusTag.PERSONAL_DURATION)
             ))
 
     def _flush_discharge(self) -> None:

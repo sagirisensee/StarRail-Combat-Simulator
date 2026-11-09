@@ -283,6 +283,7 @@ class TibaoKit(KitHandler):
                 timing=DurationTiming.TARGET_TURN_END,
                 skip_current_clock=True,
                 category="debuff",
+                tags=(StatusTag.FIELD_AURA, StatusTag.AURA_STATIC),
                 description=f"受到伤害提高 +{zone_vuln * 100:.1f}%"
             ))
 
@@ -665,6 +666,7 @@ class TibaoKit(KitHandler):
                         timing=DurationTiming.TARGET_TURN_END,
                         skip_current_clock=True,
                         category="debuff",
+                        tags=(StatusTag.FIELD_AURA, StatusTag.AURA_STATIC),
                         description=f"受到伤害提高 +{zone_vuln * 100:.1f}%"
                     ))
 
@@ -705,11 +707,12 @@ class TibaoKit(KitHandler):
         from ...events import (
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
             SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
-            TurnBeginEvent, TurnEndEvent, ActionEndEvent, PrimaryDamageCompleteEvent
+            TurnBeginEvent, TurnEndEvent, ActionEndEvent, PrimaryDamageCompleteEvent,
+            EnemySpawnedEvent
         )
         if isinstance(event, TurnBeginEvent):
             self._turn_started = True
-        if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent)):
+        if isinstance(event, (ActionExecuteEvent, SpiritSummonedEvent, SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent, TurnBeginEvent, EnemySpawnedEvent)):
             self._sync_glass_ball_hp()
 
         if isinstance(event, SpiritSummonedEvent):
