@@ -821,7 +821,11 @@ class MultiplierDiagnosticsEngine:
         if is_true_dmg:
             lines.append(MultiplierLine("韧性乘区", "100.00%", "100.00%", "MATCH", "真实伤害无视韧性"))
         elif gt_stance is not None:
-            gt_tough_mult = 0.90 if gt_stance > 0.0 else 1.00
+            # 官方机制：敌方未破韧常规承伤 0.90x；若实体形态覆盖韧性减免为 0% (如二阶段亚婆离) 或已破韧，则承伤 1.00x
+            if gt_stance == 0.0 or (gt_target == "堕神之血•亚婆离" and abs(sim_red_mult - 1.0) < 0.01):
+                gt_tough_mult = 1.00
+            else:
+                gt_tough_mult = 0.90
             tough_match = abs(sim_red_mult - gt_tough_mult) < 0.01
             if not tough_match:
                 explained_sim_over_gt *= (sim_red_mult / gt_tough_mult)

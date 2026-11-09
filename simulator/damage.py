@@ -203,11 +203,13 @@ class DamageCalculator:
         # 6. 易伤区
         vuln_mult = 1.0 + vuln
 
-        # 7. 韧性减伤区 (敌方未破韧固定 0.9，破韧 1.0; 我方角色无韧性减伤条固定 1.0)
-        if not is_target_enemy:
+        # 7. 韧性减伤区 (敌方未破韧按目标实体的 toughness_dmg_reduction 减免，标准规则为 0.10 对应 0.90x 承伤;
+        # 破韧固定 1.0x; 我方角色无韧性减免条固定 1.0x; 特殊关卡首领若形态配置为 0.0 则承伤 1.00x)
+        if not is_target_enemy or req.target_is_broken:
             reduction_mult = 1.0
         else:
-            reduction_mult = 1.0 if req.target_is_broken else 0.9
+            tough_red = getattr(req.target, "toughness_dmg_reduction", 0.10)
+            reduction_mult = max(0.0, 1.0 - float(tough_red))
 
         # 屏障转化与关卡独立减伤乘区: 目标屏障护体时, 附加伤害按 25% 结算;
         # 目标携带关卡独立减伤/易损属性 (damage_reduction) 时统一在此乘区结算,

@@ -65,6 +65,8 @@ class Entity:
     # 屏障护体 (如【血脑屏障】展开期间): 受到的真实伤害归零、附加伤害按
     # 25% 结算, 直接伤害不受影响; 由关卡/机制侧按状态切换
     barrier_guarded: bool = False
+    # 敌方未击破弱点时的常规韧性减免率 (标准星铁规则为 0.10，承伤 0.90x; 特殊形态首领可配置为 0.0 即 1.00x)
+    toughness_dmg_reduction: float = 0.10
     # 是否为关卡头目/首领级实体 (用于自动战斗首领优先规则)
     is_boss: bool = False
     master_name: Optional[str] = None

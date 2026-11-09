@@ -134,7 +134,7 @@ def _boss() -> Entity:
         base_atk=1600.0,
         max_hp=BOSS_HP,
         current_hp=BOSS_HP,
-        max_toughness=360.0, current_toughness=360.0,
+        max_toughness=1080.0, current_toughness=1080.0,
         weaknesses=list(BOSS_WEAKNESSES),
         is_enemy=True,
         is_boss=True,
@@ -575,12 +575,14 @@ class Stage30510021Director:
                 self._just_transitioned = True
                 boss.max_hp = BOSS_PHASE2_HP
                 boss.current_hp = BOSS_PHASE2_HP
-                boss.max_toughness = 360.0
-                boss.current_toughness = 360.0
+                boss.max_toughness = 1080.0
+                boss.current_toughness = 1080.0
                 boss.is_broken = False
                 boss.barrier_guarded = False
                 boss.toughness_locked = False
                 boss.damage_reduction = 0.0
+                # 二阶段首领形态实测覆盖常规 10% 韧性减免为 0% (承伤乘区 1.00x)
+                boss.toughness_dmg_reduction = 0.0
                 # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
