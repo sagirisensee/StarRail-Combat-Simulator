@@ -44,7 +44,7 @@ class ChangyeyueKit(KitHandler):
         self.darkness: bool = False
         self.charges: int = 0
         self.spirit_alive: bool = False
-        self.spirit_hp: float = 0.0
+        self._spirit_hp: float = 0.0
         self.threshold_issued: bool = False
         self.bursting: bool = False
         self.technique_active: bool = False
@@ -61,6 +61,21 @@ class ChangyeyueKit(KitHandler):
             entity.base_white_atk = 1072.0
         if getattr(entity, "base_white_def", 0.0) <= 0.0:
             entity.base_white_def = 979.0
+
+    @property
+    def spirit_hp(self) -> float:
+        """伴生忆灵「长夜」当前生命值 (在场时实时同步实体生命)。"""
+        if self.port and self.port.entity_exists(self.spirit_name):
+            return self.port.current_hp(self.spirit_name)
+        return getattr(self, "_spirit_hp", 0.0)
+
+    @spirit_hp.setter
+    def spirit_hp(self, val: float) -> None:
+        self._spirit_hp = float(val)
+        if self.port and self.port.entity_exists(self.spirit_name):
+            ent = self.port._get_entity(self.spirit_name) if hasattr(self.port, "_get_entity") else None
+            if ent:
+                ent.current_hp = float(val)
 
     @property
     def spirit_max_hp(self) -> float:

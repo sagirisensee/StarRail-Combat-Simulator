@@ -573,7 +573,7 @@ class Stage30510021Director:
                 boss.distance_remaining = 0.0
                 self._pending_transition_sprouts = True
                 self._next_sprout_av = av + SPROUT_INTERVAL_AV
-                self.sim.status_mgr.remove_status(boss.name, "LC_RainbowSky_Vuln")
+                # remove_status
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
                 if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:

@@ -3,7 +3,7 @@ from typing import Any
 from ..base import RelicSetHandler
 from ...combat_port import BuffSpec
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
-from ...events import ActionExecuteEvent
+from ...events import SpiritSummonedEvent
 from ...actions import ActionKind
 
 
@@ -29,8 +29,14 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
                 return True
         return False
 
-    def _trigger_4pc_buff(self) -> None:
-        if not self._has_own_memosprite():
+    def is_active(self) -> bool:
+        if not self.port:
+            return False
+        return self.port.has_status(self.owner_id, f"{self.BUFF_HP_KEY}_{self.owner_id}")
+
+    def _apply_buffs(self) -> None:
+        """生效救世主4件套：自身与忆灵生命上限提高24%，我方全体增伤15%。"""
+        if not self.port:
             return
         # 1. 自身与自身忆灵生命上限提高 24%
         memos = [
@@ -50,7 +56,7 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
                 description="施放普攻或战技且忆灵在场，生命上限提高 +24.0%"
             ))
 
-        # 2. 我方全体造成的伤害提高 15%
+        # 2. 我方全体造成的伤害提高 15% (光环式增伤)
         for ally in self.port.allies(self.owner_id):
             if self.port.is_countdown(ally):
                 continue
@@ -66,23 +72,55 @@ class CreatorOfNewWorldHandler(RelicSetHandler):
                 description="全队造成伤害提高 +15.0%"
             ))
 
+    def _clear_buffs(self) -> None:
+        """清除本装备者提供的救世主效果。"""
+        if not self.port:
+            return
+        self.port.remove_status(self.owner_id, f"{self.BUFF_HP_KEY}_{self.owner_id}")
+        for ally in self.port.allies(self.owner_id):
+            self.port.remove_status(ally, f"{self.BUFF_HP_KEY}_{ally}")
+            self.port.remove_status(ally, f"{self.BUFF_DMG_KEY}_{self.owner_id}_{ally}")
+
     def on_action_after(self, ctx: Any) -> None:
+        """装备者施放普攻或战技后判定：若忆灵在场则获得/续期光环，若不在场则失效。"""
         if self.pieces < 4 or not self.port:
             return
         actor = getattr(ctx, "actor_id", "")
         kind = getattr(ctx, "kind", None)
         if actor == self.owner_id and kind in (ActionKind.BASIC, ActionKind.SKILL):
-            self._trigger_4pc_buff()
+            if self._has_own_memosprite():
+                self._apply_buffs()
+            else:
+                self._clear_buffs()
 
     def on_event(self, event: Any) -> None:
         if self.pieces < 4 or not self.port:
             return
-        from ...events import SpiritSummonedEvent
-        if isinstance(event, ActionExecuteEvent):
-            actor = event.actor_name or getattr(event, "actor_id", "")
-            action_kind = getattr(event, "action_kind", None)
-            if actor == self.owner_id and action_kind in (ActionKind.BASIC, ActionKind.SKILL):
-                self._trigger_4pc_buff()
-        elif isinstance(event, SpiritSummonedEvent):
-            if self.port.has_status(self.owner_id, f"{self.BUFF_HP_KEY}_{self.owner_id}"):
-                self._trigger_4pc_buff()
+        if isinstance(event, SpiritSummonedEvent):
+            target = getattr(event, "spirit_name", "")
+            # 若本装备者的救世主光环处于激活状态，新召唤上来的忆灵作为我方目标也能吃到救世主
+            if self.is_active() and target and self.port.entity_exists(target):
+                if not self.port.is_countdown(target):
+                    self.port.upsert_status(BuffSpec(
+                        key=f"{self.BUFF_DMG_KEY}_{self.owner_id}_{target}",
+                        name=f"再创天地的救世主 (增伤+15% [{self.owner_id}])",
+                        source_id=self.owner_id,
+                        target_id=target,
+                        modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, 0.15),),
+                        duration=None,
+                        timing=DurationTiming.TARGET_TURN_END,
+                        category="buff",
+                        description="全队造成伤害提高 +15.0%"
+                    ))
+                    if self.port.is_own_memosprite(self.owner_id, target):
+                        self.port.upsert_status(BuffSpec(
+                            key=f"{self.BUFF_HP_KEY}_{target}",
+                            name="再创天地的救世主 (生命+24%)",
+                            source_id=self.owner_id,
+                            target_id=target,
+                            modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.24),),
+                            duration=None,
+                            timing=DurationTiming.TARGET_TURN_END,
+                            category="buff",
+                            description="施放普攻或战技且忆灵在场，生命上限提高 +24.0%"
+                        ))
