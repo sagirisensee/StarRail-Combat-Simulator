@@ -121,13 +121,6 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 spirit_crit_dmg = float(self.port.stat(ally, StatType.CRIT_DMG))
                 break
 
-        # 长夜月 E1【睡吧，长夜有所梦】：当敌方数量 >=4 时我方忆灵伤害乘区 1.20x
-        sim = getattr(self.port, "sim", None)
-        for e in getattr(sim, "entities", ()) if sim is not None else ():
-            if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
-                fn = getattr(e.kit, "_memosprite_damage_mult", None)
-                if callable(fn):
-                    spirit_dmg_mult *= float(fn())
 
         eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
         for target in targets:

@@ -784,8 +784,7 @@ class IkaKit(KitHandler):
             master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
             if base_value > 0.0:
                 eq_mult = base_value / my_max_hp
-                enemies = tuple(self.port.enemies(self.owner_id))
-                for enemy in enemies:
+                for enemy in list(self.port.enemies(self.owner_id)):
                     if not self.port.entity_exists(enemy):
                         continue
                     self.port.attack(
@@ -797,8 +796,8 @@ class IkaKit(KitHandler):
                         damage_type=DamageType.SERVANT,
                         scaling_stat="hp"
                     )
-                if hasattr(self.port, "resolve_effects"):
-                    self.port.resolve_effects()
+                    if hasattr(self.port, "resolve_effects"):
+                        self.port.resolve_effects()
                 if hasattr(self.port, "_get_entity"):
                     master_ent = self.port._get_entity(master.owner_id)
                     lc = getattr(master_ent, "light_cone", None) if master_ent else None
@@ -834,6 +833,10 @@ class IkaKit(KitHandler):
             self._on_despawned()
             return
         if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
+            # 若风堇在当前同一施法簇内即将施放终结技开启雨过天晴，急救治疗延迟至雨过天晴展开后入池
+            if isinstance(event, ActionEndEvent) and getattr(event, "actor_id", "") == getattr(self.master_kit, "owner_id", ""):
+                if not self.master_kit.in_rain_state() and getattr(self.port, "can_cast_ultimate", lambda _: False)(self.master_kit.owner_id):
+                    return
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:

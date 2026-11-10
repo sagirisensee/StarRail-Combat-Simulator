@@ -1226,6 +1226,10 @@ class ChangyeyueKit(KitHandler):
             )
             spirit_cd = self._spirit_crit_dmg(include_skill_shared=full_spirit_sync) or 0.0
             if full_spirit_sync:
+                # 战技分享为施法快照值；终结技触发长夜月 A2 产生的 +15% 暴伤不应再次通过战技 24% 传递给长夜
+                if was_spirit_alive and self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
+                    a2_repeat_share = 0.15 * float(self.skill_param("skill", 0, default=0.24))
+                    spirit_cd -= a2_repeat_share
                 robin_chord = next((s for s in self.port.statuses(self.owner_id) if "TonalChord" in s.id), None)
                 if robin_chord:
                     spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
