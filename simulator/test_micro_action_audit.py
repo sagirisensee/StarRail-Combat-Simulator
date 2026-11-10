@@ -392,6 +392,38 @@ class TestMicroActionAudit(unittest.TestCase):
             "前 11 动存在偏差超过 0.4% 的动作:\n" + "\n".join(opening_over),
         )
 
+    def test_07_wave2_phase2_sub_1_percent_micro_actions(self):
+        """二阶段核心爆发动次门禁：已验证的 12 个核心动作严格进入 <= 1.0% 甚至 <= 0.2% 物理闭环。"""
+        checks = [
+            (47, 20000.0, 0.008, "Action #47 长夜月大招一阶段斩杀收尾"),
+            (48, 3500.0, 0.008, "Action #48 知更鸟二阶段开局大招追击"),
+            (50, 2000.0, 0.005, "Action #50 缇宝大招"),
+            (51, 100.0, 0.001, "Action #51 风堇大招展开雨过天晴"),
+            (54, 1000.0, 0.008, "Action #54 晴空乐手四重奏"),
+            (55, 1000.0, 0.008, "Action #55 晴空乐手四重奏"),
+            (59, 1500.0, 0.005, "Action #59 长夜月大招"),
+            (61, 50.0, 0.001, "Action #61 知更鸟大招追击"),
+            (62, 300.0, 0.003, "Action #62 缇宝大招"),
+            (74, 6000.0, 0.005, "Action #74 长夜月大招清空第5批胚芽"),
+            (80, 2000.0, 0.008, "Action #80 小伊卡忆灵技"),
+            (95, 300.0, 0.003, "Action #95 小伊卡收尾忆灵技"),
+        ]
+        over_threshold = []
+        for act_no, max_delta, max_err_ratio, desc in checks:
+            idx = act_no - 1
+            g_dmg = sum(h["damage"] for h in self.gt[idx]["hits"])
+            s_dmg = sum(h["damage"] for h in self.sim_casts[idx]["hits"])
+            err = abs(s_dmg - g_dmg) / g_dmg if g_dmg > 0 else 0.0
+            if err > max_err_ratio or abs(s_dmg - g_dmg) > max_delta:
+                over_threshold.append(
+                    f"{desc} [GT={g_dmg:,.1f}, SIM={s_dmg:,.1f}, err={err:.4%} (限额 {max_err_ratio:.2%}, delta={abs(s_dmg-g_dmg):.1f}/{max_delta:.1f})]"
+                )
+        self.assertEqual(
+            len(over_threshold),
+            0,
+            "以下二阶段核心动作超出严格微观门禁:\n" + "\n".join(over_threshold),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
