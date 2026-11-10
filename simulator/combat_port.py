@@ -930,6 +930,15 @@ class SimulatorCombatPort:
     def max_hp(self, entity_id: str) -> float:
         ent = self._get_entity(entity_id)
         if ent:
+            if getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None):
+                master = self._get_entity(ent.master_name)
+                if master and getattr(master, "kit", None):
+                    spirit_fn = getattr(master.kit, "spirit_max_hp", None)
+                    if spirit_fn is not None:
+                        val = float(spirit_fn)
+                        if val > 0:
+                            ent.max_hp = val
+                            return val
             base_max_hp = getattr(ent, "base_max_hp", getattr(ent, "max_hp", 0.0))
             if hasattr(self.sim, "status_mgr") and base_max_hp > 0 and base_max_hp != float("inf"):
                 white_hp = getattr(ent, "base_white_hp", 0.0) or base_max_hp

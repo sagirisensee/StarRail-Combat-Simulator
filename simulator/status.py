@@ -291,15 +291,17 @@ class StatusManager:
         if not closure:
             return []
 
-        # 快照将要删除的实例
+        # 快照将要删除的实例与删除前的生命上限/当前生命
         removed_instances = [self._by_uid[u] for u in closure if u in self._by_uid]
         seen_targets = set()
         affected_targets = []
+        old_hp_map = {}
         for st in removed_instances:
             tgt = getattr(st, "target", None)
             if tgt is not None and id(tgt) not in seen_targets:
                 seen_targets.add(id(tgt))
                 affected_targets.append(tgt)
+                old_hp_map[id(tgt)] = (self._calc_entity_max_hp(tgt), getattr(tgt, "current_hp", 0.0))
 
         # 原子摘除：同时清理主表、key 索引与双向拓扑
         for u in closure:
@@ -320,9 +322,22 @@ class StatusManager:
                 self.statuses[t_name] = [s for s in self.statuses[t_name] if getattr(s, "uid", None) != u]
 
         # 统一结算所有受影响实体的动态生命上限约束
+        port = getattr(self.simulator, "port", None) if self.simulator else None
         for tgt in affected_targets:
+            old_max, old_hp = old_hp_map.get(id(tgt), (0.0, 0.0))
             new_max = self._calc_entity_max_hp(tgt)
-            if 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
+            is_valid_ally = (
+                not getattr(tgt, "is_enemy", False)
+                and not getattr(tgt, "is_memosprite", False)
+                and not getattr(tgt, "is_countdown", False)
+                and (self.simulator and self.simulator.get_entity(getattr(tgt, "name", "")) is not None)
+            )
+            if reason == "EXPIRED" and is_valid_ally and 0 < new_max < old_max and old_hp > 1.0:
+                scaled_hp = old_hp * (new_max / old_max)
+                loss = old_hp - scaled_hp
+                if loss > 1e-4 and port is not None:
+                    port.lose_hp(tgt.name, loss, cause="max_hp_buff_expire")
+            elif 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
                 tgt.current_hp = new_max
 
         # 发布到期/删除事实事件

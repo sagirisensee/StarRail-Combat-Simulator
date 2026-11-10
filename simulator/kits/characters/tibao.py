@@ -200,11 +200,16 @@ class TibaoKit(KitHandler):
         enemies = self.port.enemies(self.owner_id)
         if not enemies:
             return
-        primary_target = (
-            ctx.target_ids[0]
-            if ctx.target_ids
-            else (enemies[1] if len(enemies) >= 3 else enemies[0])
-        )
+        if ctx.target_ids:
+            primary_target = ctx.target_ids[0]
+        else:
+            bosses = [e for e in enemies if self.port.is_boss(e)]
+            if bosses:
+                primary_target = bosses[0]
+            elif len(enemies) >= 3:
+                primary_target = enemies[1]
+            else:
+                primary_target = enemies[0]
 
         main_mult = self.skill_param("basic", 0, default=0.42)
         adj_mult = self.skill_param("basic", 1, default=0.21)
@@ -222,6 +227,8 @@ class TibaoKit(KitHandler):
         enemy_names = set(enemies)
         if ctx.target_ids and len(ctx.target_ids) > 1:
             adjacent_targets = [t for t in ctx.target_ids[1:] if t in enemy_names]
+        elif self.port.is_boss(primary_target) and len(enemies) <= 3:
+            adjacent_targets = [t for t in enemies if t != primary_target]
         else:
             try:
                 p_idx = enemies.index(primary_target)
