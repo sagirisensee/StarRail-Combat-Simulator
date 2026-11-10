@@ -797,7 +797,7 @@ class ChangyeyueKit(KitHandler):
         """生命降低统一响应：受到敌方攻击伤害、持续伤害/负面状态扣血、技能自耗或环境机制扣血时，暴伤提高 60% 并获得 2 点【忆质】(E2为 2+2=4 点)。
         注：光锥《让告别，更美一些》通过监听标准 HPLostEvent 自动响应，本角色套件无需感知任何具体光锥！
         """
-        if actual_loss <= 0.0:
+        if actual_loss <= 0.0 or cause.startswith("max_hp"):
             return
         is_owner = (entity_id == self.owner_id)
         is_own_spirit = self.port.is_own_memosprite(self.owner_id, entity_id)
