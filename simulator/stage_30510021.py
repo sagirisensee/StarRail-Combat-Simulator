@@ -839,6 +839,13 @@ def build_stage_30510021(
                 lighthouse_kit.on_event(EnemyActionCompleted(action_id=f"{e.actor_name}_{e.av}", actor_id=e.actor_name))
                 _sync_w1_dr()
         elif isinstance(e, DamageAppliedEvent):
+            # 官方关卡机制：狂兽胚芽受到缇宝【神启】真伤共鸣时，场上存活的胚芽行动提前 8% (800 距离)
+            if e.damage_type == DamageType.TRUE and e.attacker_name == "缇宝":
+                for sp in sim.entities:
+                    if sp.is_enemy and sp.name.startswith("狂兽的胚芽") and sp.current_hp > 0:
+                        sp.distance_remaining = max(0.0, sp.distance_remaining - 800.0)
+                        if sp.distance_remaining <= 0.0 and hasattr(sim, "notify_entity_ready"):
+                            sim.notify_entity_ready(sp.name)
             if (
                 lighthouse_kit.in_chue
                 and e.target_name == "「灯塔」"

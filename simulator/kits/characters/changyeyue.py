@@ -124,12 +124,12 @@ class ChangyeyueKit(KitHandler):
                     for m in s.modifiers:
                         if m.stat == StatType.CRIT_DMG:
                             cd += m.value
-        both_keys = (
+        both_keys = [
             "Changyeyue_E2_CritDmg",
-            "Changyeyue_Talent_CritDmg",
-            "Changyeyue_A2_Skill_CritDmg",
             f"Relic_Valkyrie_CritDmg_{self.owner_id}",
-        )
+        ]
+        if not include_skill_shared:
+            both_keys.extend(["Changyeyue_Talent_CritDmg", "Changyeyue_A2_Skill_CritDmg"])
         spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
         for s in self.port.statuses(self.owner_id):
             if s.id in both_keys and s.name not in spirit_names:
@@ -277,6 +277,7 @@ class ChangyeyueKit(KitHandler):
 
     def on_battle_start(self) -> None:
         """进战：生效被动行迹、由天赋【今夜与我同行】召唤伴生忆灵「长夜」，并触发【与夜，形影，不离】立即行动。"""
+        self._skill_share_from_skill = False
         # E2【听，沉眠中的呓语】：长夜月和忆灵「长夜」暴击伤害提高 40%
         if self.eidolon >= 2:
             self.port.upsert_status(BuffSpec(
@@ -1224,12 +1225,6 @@ class ChangyeyueKit(KitHandler):
                 or is_special_guest
             )
             spirit_cd = self._spirit_crit_dmg(include_skill_shared=full_spirit_sync) or 0.0
-            if skill_share_active:
-                for s in self.port.statuses(self.spirit_name):
-                    if "TonalChord" in s.id:
-                        for m in s.modifiers:
-                            if m.stat == StatType.CRIT_DMG:
-                                spirit_cd -= m.value
             if full_spirit_sync:
                 robin_chord = next((s for s in self.port.statuses(self.owner_id) if "TonalChord" in s.id), None)
                 if robin_chord:

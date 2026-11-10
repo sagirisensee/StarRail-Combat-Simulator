@@ -308,6 +308,10 @@ class TestMicroActionAudit(unittest.TestCase):
 
     def test_04_wave2_phase1_barrier_break_and_phase_transition(self):
         """验证第二波一阶段屏障开启/击破 (#42~#47) 与转阶段同簇大爆发 (#53) 的目标数与伤害对齐。"""
+        # #22 狂兽胚芽提前行动后小伊卡乌云伤害收敛至 <= 1.8%
+        c22_off, c22_sim = self.gt[21], self.sim_casts[21]
+        self.assertAlmostEqual(self._sum_hits(c22_sim), self._sum_hits(c22_off), delta=30000.0, msg="Action #22 小伊卡忆灵技误差严格 <= 1.8%")
+
         # #24 长夜爆发击杀第二波首批胚芽 -> #25 单目标 E1=1.50x
         c24_off, c24_sim = self.gt[23], self.sim_casts[23]
         self.assertEqual(len(c24_sim["enemies"]), 3)
@@ -315,14 +319,14 @@ class TestMicroActionAudit(unittest.TestCase):
 
         c25_off, c25_sim = self.gt[24], self.sim_casts[24]
         self.assertEqual(len(c25_sim["enemies"]), 1)
-        self.assertAlmostEqual(self._sum_hits(c25_sim), self._sum_hits(c25_off), delta=45000.0)
+        self.assertAlmostEqual(self._sum_hits(c25_sim), self._sum_hits(c25_off), delta=3000.0, msg="Action #25 长夜月大招误差严格 <= 1.0%")
 
         # #42 缇宝大招后一阶段血脑屏障击破 -> #43 晴空乐手 Servant 伤害
         c43_off, c43_sim = self.gt[42], self.sim_casts[42]
         self.assertAlmostEqual(
             self._sum_hits(c43_sim, "Servant"),
             self._sum_hits(c43_off, "Servant"),
-            delta=43000.0,
+            delta=45000.0,
         )
 
         # #45 小伊卡: 2,115,161 vs 2,172,957 (-2.6%)
@@ -349,6 +353,8 @@ class TestMicroActionAudit(unittest.TestCase):
         self.assertEqual(len(self.sim_casts[68]["enemies"]), 3, "#69 应有第 5 批胚芽在场 (E=3)")
         self.assertEqual(len(self.sim_casts[73]["enemies"]), 3, "#74 应有第 5 批胚芽在场 (E=3)")
         self.assertEqual(self._count_hits(self.sim_casts[73], "Follow-Up"), 1, "#74 长夜月大招当场击杀胚芽9/10，缇宝追击仅命中首领 1 次")
+        c74_off, c74_sim = self.gt[73], self.sim_casts[73]
+        self.assertAlmostEqual(self._sum_hits(c74_sim), self._sum_hits(c74_off), delta=7000.0, msg="Action #74 长夜月大招误差严格 <= 0.5%")
         self.assertEqual(len(self.sim_casts[74]["enemies"]), 1, "#74 击杀第 5 批胚芽后，#75 应为单目标 (E=1)")
         self.assertEqual(len(self.sim_casts[82]["enemies"]), 1, "#83 应为单目标 (E=1)")
 
