@@ -833,10 +833,6 @@ class IkaKit(KitHandler):
             self._on_despawned()
             return
         if isinstance(event, (TurnBeginEvent, TurnEndEvent, ActionEndEvent)):
-            # 若风堇在当前同一施法簇内即将施放终结技开启雨过天晴，急救治疗延迟至雨过天晴展开后入池
-            if isinstance(event, ActionEndEvent) and getattr(event, "actor_id", "") == getattr(self.master_kit, "owner_id", ""):
-                if not self.master_kit.in_rain_state() and getattr(self.port, "can_cast_ultimate", lambda _: False)(self.master_kit.owner_id):
-                    return
             self._resolve_talent_heal()
 
     def _resolve_talent_heal(self) -> None:

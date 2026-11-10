@@ -124,7 +124,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
 
         eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
         for target in targets:
-            if self.port.entity_exists(target) or (sim is not None and sim.get_entity(target) is not None):
+            if self.port.entity_exists(target):
                 self.port.attack(
                     self.owner_id,
                     target,
