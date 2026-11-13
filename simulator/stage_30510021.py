@@ -592,20 +592,23 @@ class Stage30510021Director:
                 self._pending_transition_sprouts = True
                 self._next_sprout_av = av + SPROUT_INTERVAL_AV
                 self.sim.event_bus.publish(EnemySpawnedEvent(enemy_name=boss.name, is_wave_start=False, is_transition=True))
-                cyy = self.sim.get_entity("长夜月")
-                if cyy is not None and cyy.current_hp > 0:
-                    from .damage import DamageRequest
-                    from .effects import ApplyDamageEffect
-                    prev_seq = getattr(self.sim, "_action_seq", None)
-                    try:
-                        if prev_seq is not None:
-                            self.sim._action_seq = prev_seq + 20000
-                        req = DamageRequest(attacker=boss, target=cyy, skill_multiplier=0.1)
+                # 官方日志 06:28:11.701~06:28:12.560 实证: 亚婆离转阶段对在场 4 名角色 (1409/1403/1413/1512)
+                # 施放 9 段转阶段 AoE (8 段前摇 0.07x + 1 段终结重击 0.84x), 同技能 seq 内长夜月受击触发 +4 忆质。
+                from .damage import DamageRequest
+                from .effects import ApplyDamageEffect
+                self.sim._action_seq = getattr(self.sim, "_action_seq", 0) + 1
+                char_allies = [
+                    e for e in self.sim.entities
+                    if not e.is_enemy
+                    and e.current_hp > 0
+                    and not getattr(e, "is_countdown", False)
+                    and not getattr(e, "is_memosprite", False)
+                ]
+                for mult in (*([0.07] * 8), 0.84):
+                    for ally in char_allies:
+                        req = DamageRequest(attacker=boss, target=ally, skill_multiplier=mult)
                         self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
-                        self.sim.resolver.resolve_all()
-                    finally:
-                        if prev_seq is not None:
-                            self.sim._action_seq = prev_seq
+                self.sim.resolver.resolve_all()
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
                 if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:
