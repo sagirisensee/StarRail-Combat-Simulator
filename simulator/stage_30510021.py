@@ -338,7 +338,7 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
     PHASE2_ST_TARGETS = {
         1: "缇宝",
         2: "风堇",
-        3: "风堇",
+        3: "长夜月",
         4: "知更鸟•晴歌",
         5: "缇宝",
         6: "风堇",
@@ -516,12 +516,15 @@ class Stage30510021Director:
             self.sim.event_bus.publish(EnemySpawnedEvent(enemy_name=sp.name, is_wave_start=False, is_transition=False))
 
     def _spawn_transition_sprouts(self) -> None:
-        """二阶段转阶段首动连招结算后，增援一对胚芽。"""
+        """二阶段转阶段首动连招结算后，增援一对胚芽并重锚 132 速增援倒计时。"""
         if not getattr(self, "_pending_transition_sprouts", False):
             return
         self._pending_transition_sprouts = False
         self._spawn_sprouts(2)
         self._next_sprout_av = float(getattr(self.sim, "current_av", 0.0)) + SPROUT_INTERVAL_AV
+        sp_cd = self.sim.get_entity("增援倒计时")
+        if sp_cd is not None:
+            sp_cd.distance_remaining = 10000.0
 
     def _manage_boss_phases(self) -> bool:
         """亚婆离两段血池与【血脑屏障】地板 (日志 CurrentHP 全序实测, 见模块头注)。
@@ -589,6 +592,20 @@ class Stage30510021Director:
                 self._pending_transition_sprouts = True
                 self._next_sprout_av = av + SPROUT_INTERVAL_AV
                 self.sim.event_bus.publish(EnemySpawnedEvent(enemy_name=boss.name, is_wave_start=False, is_transition=True))
+                cyy = self.sim.get_entity("长夜月")
+                if cyy is not None and cyy.current_hp > 0:
+                    from .damage import DamageRequest
+                    from .effects import ApplyDamageEffect
+                    prev_seq = getattr(self.sim, "_action_seq", None)
+                    try:
+                        if prev_seq is not None:
+                            self.sim._action_seq = prev_seq + 20000
+                        req = DamageRequest(attacker=boss, target=cyy, skill_multiplier=0.1)
+                        self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
+                        self.sim.resolver.resolve_all()
+                    finally:
+                        if prev_seq is not None:
+                            self.sim._action_seq = prev_seq
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
                 if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:
@@ -613,6 +630,30 @@ class Stage30510021Director:
             boss.damage_reduction = 0.75 if boss.barrier_guarded else 0.0
         return False
 
+    def _ensure_sprout_countdown(self) -> None:
+        """注册 132 速阶段增援倒计时实体，严格按 75.76 AV 节拍准点增援。"""
+        if self.sim.get_entity("增援倒计时") is not None:
+            return
+        cd = Entity(
+            name="增援倒计时",
+            base_speed=132.0,
+            max_hp=1.0,
+            current_hp=1.0,
+            is_countdown=True,
+        )
+
+        def _on_sprout_tick(ent, resolver, action) -> None:
+            if self.sprout_waves_spawned >= SPROUT_WAVE_COUNT:
+                return
+            if not self._alive("堕神之血•亚婆离"):
+                return
+            self.sprout_waves_spawned += 1
+            self._spawn_sprouts(2)
+            self._next_sprout_av = float(getattr(self.sim, "current_av", 0.0)) + SPROUT_INTERVAL_AV
+
+        cd.action_callback = _on_sprout_tick
+        self.sim.add_entity(cd, trigger_battle_start=False)
+
     def after_step(self) -> None:
         if not self.wave2_started:
             if not any(self._alive(n) for n in WAVE1_NAMES):
@@ -623,6 +664,7 @@ class Stage30510021Director:
                 self.sim.add_entity(boss, trigger_battle_start=False)
                 self._spawn_sprouts(2)
                 self._next_sprout_av = self.wave2_av + SPROUT_INTERVAL_AV
+                self._ensure_sprout_countdown()
             return
         transitioned = self._manage_boss_phases() or getattr(self, "_just_transitioned", False)
         self._just_transitioned = False
@@ -639,20 +681,26 @@ class Stage30510021Director:
             self._next_sprout_av = av + SPROUT_INTERVAL_AV
             self.sprout_waves_spawned += 1
             self._pending_transition_sprouts = True
+            sp_cd = self.sim.get_entity("增援倒计时")
+            if sp_cd is not None:
+                sp_cd.distance_remaining = 10000.0
             return
 
         # 若时间已越过转阶段窗口且仍未消耗待召唤标记, 自动落地
         if getattr(self, "_pending_transition_sprouts", False) and av > (self._transition_av or 0.0) + 0.05:
             self._spawn_transition_sprouts()
 
-        if self.sprout_waves_spawned >= SPROUT_WAVE_COUNT:
-            return
-        if not self._alive("堕神之血•亚婆离"):
+        # 兼容直接设置 sim.current_av 后调用 after_step() 的单测路径 (若当前回合正是增援倒计时则交由 _on_sprout_tick 结算)
+        cur_ent = getattr(self.sim, "current_turn_entity", None)
+        if cur_ent is not None and getattr(cur_ent, "name", "") == "增援倒计时":
             return
         if self._next_sprout_av is not None and av >= self._next_sprout_av - 0.80:
             self.sprout_waves_spawned += 1
             self._spawn_sprouts(2)
             self._next_sprout_av += SPROUT_INTERVAL_AV
+            sp_cd = self.sim.get_entity("增援倒计时")
+            if sp_cd is not None:
+                sp_cd.distance_remaining = 10000.0
 
 
 

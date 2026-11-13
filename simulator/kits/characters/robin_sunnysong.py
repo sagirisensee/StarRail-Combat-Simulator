@@ -832,16 +832,6 @@ class RobinSunnySongKit(KitHandler):
 
         if isinstance(event, TurnBeginEvent):
             actor = actor_of(event)
-            # 战斗开始后召唤的忆灵在召唤者回合内立即行动，不属于独立的自然角色回合，不重置全队治疗获气氛值门禁
-            if (
-                getattr(event, "av", 0) > 0
-                and self.port.entity_exists(actor)
-                and self.port.is_ally(actor)
-                and self.port.is_memosprite(actor)
-                and actor != self.MUSICIAN_NAME
-            ):
-                return
-
             turn_id = require_id(event, "turn_id")
             if turn_id == self._causal_turn_id:
                 return
@@ -1174,8 +1164,8 @@ class RobinSunnySongKit(KitHandler):
             target_id=target_id,
             modifiers=(),
             duration=2,
-            timing=DurationTiming.TARGET_TURN_START,
-            skip_current_clock=True,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=False,
             category="buff",
             tags=(StatusTag.CANNOT_ADVANCE_OTHER_ALLIES,),
             description=f"持有【特邀嘉宾】的角色及其召唤物攻击时额外使知更鸟•晴歌获得 {guest_vibes} 点气氛值，且无法使其他友方目标获得行动提前效果"

@@ -425,7 +425,7 @@ class TurnSimulator:
         for ent in list(self.entities):
             if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_turn_begin_after_stage"):
                 ent.kit.on_turn_begin_after_stage(active_entity)
-        if not getattr(active_entity, "is_memosprite", False) and not getattr(active_entity, "is_countdown", False):
+        if not getattr(active_entity, "is_countdown", False):
             ika = self.get_entity("小伊卡")
             if ika is not None and getattr(ika, "kit", None) is not None and not hasattr(ika.kit, "on_turn_begin_after_stage"):
                 if hasattr(ika.kit, "_resolve_talent_heal"):

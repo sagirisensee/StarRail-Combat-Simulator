@@ -1074,6 +1074,7 @@ class TimelineItem:
     name: str
     target_ids: Optional[Tuple[str, ...]] = None
     turn_owner: str = ""
+    turn_seq: int = 0
 
 
 @dataclass
@@ -1154,10 +1155,10 @@ def extract_timeline(path: str) -> List[TimelineItem]:
     target_plan = extract_player_target_plan(path)
     target_idx = 0
     items: List[TimelineItem] = []
-    for t in seq.turns:
+    for turn_seq, t in enumerate(seq.turns):
         for s in t.skills:
             if s.config_id in SPIRIT_TRAJECTORY_SKILLS:
-                items.append(TimelineItem(float(t.av), "spirit", SPIRIT_TRAJECTORY_SKILLS[s.config_id], s.config_id, s.name, turn_owner=t.owner))
+                items.append(TimelineItem(float(t.av), "spirit", SPIRIT_TRAJECTORY_SKILLS[s.config_id], s.config_id, s.name, turn_owner=t.owner, turn_seq=turn_seq))
             elif s.actor in PLAYER_ACTORS:
                 kind = _DECISION_KIND_BY_TYPE.get(s.skill_type)
                 if kind:
@@ -1167,7 +1168,7 @@ def extract_timeline(path: str) -> List[TimelineItem]:
                         if p_sid == s.config_id and p_targets and kind == "basic":
                             t_ids = p_targets
                         target_idx += 1
-                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name, target_ids=t_ids, turn_owner=t.owner))
+                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name, target_ids=t_ids, turn_owner=t.owner, turn_seq=turn_seq))
     items.sort(key=lambda x: x.av)
     return items
 
@@ -1586,6 +1587,27 @@ def run_trajectory_replay(
     def _ult_blocked(u_idx: int, u_item: Any, now_av: float) -> bool:
         if now_av > u_item.av + 15.0:
             return False
+        cur_turn = getattr(sim, "current_turn_entity", None)
+        u_owner = getattr(u_item, "turn_owner", "")
+        if (
+            cur_turn is not None
+            and getattr(cur_turn, "is_enemy", False)
+            and u_owner in PLAYER_ACTORS
+            and abs(now_av - u_item.av) <= 0.5
+        ):
+            return True
+        u_turn_seq = getattr(u_item, "turn_seq", 0)
+        if (
+            u_owner in PLAYER_ACTORS
+            and abs(now_av - u_item.av) <= 0.5
+            and (cur_turn is None or getattr(cur_turn, "name", "") != u_owner)
+            and any(
+                t_idx not in fired_master
+                and getattr(timeline[t_idx], "turn_seq", -1) == u_turn_seq
+                for t_idx in turn_indices
+            )
+        ):
+            return True
         for t_idx in turn_indices:
             if t_idx >= u_idx:
                 break
@@ -1739,7 +1761,12 @@ def run_trajectory_replay(
                 actor_ent = boss_ent
         if director is not None:
             director.after_step()
-        if float(getattr(sim, "current_av", 0.0)) < 1e-4:
+        if float(getattr(sim, "current_av", 0.0)) < 1e-4 or (
+            actor_ent is not None
+            and not getattr(actor_ent, "is_enemy", False)
+            and ult_queue
+            and getattr(ult_queue[0][1], "turn_owner", "") == actor_ent.name
+        ):
             _fire_due_ults()
         if actor_ent is None:
             idle_steps += 1

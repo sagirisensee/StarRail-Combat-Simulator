@@ -1152,8 +1152,9 @@ class ChangyeyueKit(KitHandler):
             self.apply_skill_shared_crit_dmg()
             self._skill_share_from_skill = True
 
-            direct_yizhi = 2 + (12 if self.darkness else 0)
-            self.gain_yizhi(direct_yizhi)
+            self.gain_yizhi(2)
+            if self.darkness:
+                self.gain_yizhi(12)
 
             self.port.gain_energy(self.owner_id, 30.0)
             self._check_threshold()

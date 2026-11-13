@@ -331,7 +331,7 @@ class FengjinKit(KitHandler):
                 Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
             ),
             duration=duration,
-            timing=DurationTiming.CASTER_TURN_END,
+            timing=DurationTiming.CASTER_TURN_START,
             skip_current_clock=False,
             category="buff",
             description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
@@ -523,7 +523,7 @@ class FengjinKit(KitHandler):
                     Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, flat_hp),
                 ),
                 duration=3,
-                timing=DurationTiming.CASTER_TURN_END,
+                timing=DurationTiming.CASTER_TURN_START,
                 skip_current_clock=False,
                 category="buff",
                 description=f"生命上限提高 +{hp_boost * 100:.1f}% + {flat_hp:.0f}"
