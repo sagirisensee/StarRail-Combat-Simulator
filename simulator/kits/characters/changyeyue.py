@@ -83,13 +83,15 @@ class ChangyeyueKit(KitHandler):
 
     @property
     def spirit_max_hp(self) -> float:
-        """忆灵「长夜」生命上限 (严格按天赋 141304 等于长夜月实时生命上限的 50%)。"""
+        """忆灵「长夜」实时生命上限（优先读取忆灵自身 StatusManager 聚合结果，未在场时回退主人基础生命 50%）。"""
         if self.port:
-            owner_cur_max = self.port.max_hp(self.owner_id)
-            if owner_cur_max > 0:
-                return self._spirit_hp_scale_ratio() * owner_cur_max
-        owner_base = self.port.base_stat(self.owner_id, StatType.MAX_HP_PERCENT) or 8108.1 if self.port else 8108.1
-        return self._spirit_hp_scale_ratio() * owner_base
+            if self.port.entity_exists(self.spirit_name):
+                cur = self.port.max_hp(self.spirit_name)
+                if cur > 0:
+                    return cur
+            owner_base = self.port.base_stat(self.owner_id, StatType.MAX_HP_PERCENT) or 8108.1
+            return self._spirit_hp_scale_ratio() * owner_base
+        return self._spirit_hp_scale_ratio() * 8108.1
 
     def _spirit_crit_dmg(self, include_skill_shared: bool = True) -> Optional[float]:
         """忆灵「长夜」当前的暴击伤害 (供忆灵技伤害结算覆盖)。
@@ -205,7 +207,12 @@ class ChangyeyueKit(KitHandler):
         """监听全局动作执行事件，统一驱动行迹【烛火起，烛火熄】以及【白昼悄然离去】忆灵同步与过期清理。"""
         if not self.port:
             return
-        from ...events import SpiritSummonedEvent, StatusExpireEvent, EnemySpawnedEvent
+        from ...events import SpiritSummonedEvent, StatusExpireEvent, EnemySpawnedEvent, TurnBeginEvent
+        if isinstance(event, TurnBeginEvent):
+            if getattr(event, "entity_name", "") == self.owner_id and self.darkness and self.charges <= 0:
+                self.darkness = False
+                self.clear_darkness_buffs()
+            return
         if isinstance(event, EnemySpawnedEvent):
             self._sync_darkness_vuln()
             return
@@ -430,19 +437,6 @@ class ChangyeyueKit(KitHandler):
                         category="buff",
                         description="全队增伤 +30.0%"
                     ))
-                fengjin_tech = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Fengjin_Tech_WeatherIsFine_")), None)
-                if fengjin_tech and not self.port.has_status(self.spirit_name, f"Fengjin_Tech_WeatherIsFine_{self.spirit_name}"):
-                    self.port.upsert_status(BuffSpec(
-                        key=f"Fengjin_Tech_WeatherIsFine_{self.spirit_name}",
-                        name="天气正好，万物可爱！",
-                        source_id=fengjin_tech.source.name if hasattr(fengjin_tech, "source") else self.owner_id,
-                        target_id=self.spirit_name,
-                        modifiers=tuple(fengjin_tech.modifiers),
-                        duration=fengjin_tech.duration,
-                        timing=fengjin_tech.timing,
-                        category="buff",
-                        description="全队生命上限提高 +20.0%"
-                    ))
 
             # 统一由长夜月权威同步 A6 与战技分享（Robin 结界与 E2 由其自身监听召唤事件补发）
             self._sync_memosprite_crit_buffs(self.spirit_name)
@@ -553,12 +547,12 @@ class ChangyeyueKit(KitHandler):
             )
 
             splits = (
-                (0.10, 1.5),
-                (0.10, 1.5),
-                (0.10, 1.5),
-                (0.10, 1.5),
-                (0.10, 1.5),
-                (0.50, 2.5),
+                (0.10, 4.5),
+                (0.10, 4.5),
+                (0.10, 4.5),
+                (0.10, 4.5),
+                (0.10, 4.5),
+                (0.50, 7.5),
             )
             for ratio, toughness in splits:
                 if target not in self.port.enemies(self.owner_id):
@@ -718,30 +712,33 @@ class ChangyeyueKit(KitHandler):
             )
 
             ordered = [e for e in enemies if e != primary] + [primary]
+            resolver = getattr(getattr(self.port, "sim", None), "resolver", None)
+            if resolver is not None and hasattr(resolver, "begin_aoe"):
+                resolver.begin_aoe()
+            try:
+                for enemy in ordered:
+                    if enemy not in self.port.enemies(self.owner_id):
+                        continue
 
-            for enemy in ordered:
-                if enemy not in self.port.enemies(self.owner_id):
-                    continue
-
-                is_primary = enemy == primary
-                self.port.attack(
-                    self.spirit_name,
-                    enemy,
-                    element="Ice",
-                    atk_multiplier=spent_memory * (
-                        primary_factor if is_primary else secondary_factor
-                    ),
-                    toughness_damage=90.0 if is_primary else 60.0,
-                    damage_type=DamageType.SERVANT,
-                    scaling_stat="hp",
-                )
-                self.port.resolve_effects()
+                    is_primary = enemy == primary
+                    self.port.attack(
+                        self.spirit_name,
+                        enemy,
+                        element="Ice",
+                        atk_multiplier=spent_memory * (
+                            primary_factor if is_primary else secondary_factor
+                        ),
+                        toughness_damage=90.0 if is_primary else 60.0,
+                        damage_type=DamageType.SERVANT,
+                        scaling_stat="hp",
+                    )
+                    self.port.resolve_effects()
+            finally:
+                if resolver is not None and hasattr(resolver, "end_aoe"):
+                    resolver.end_aoe()
 
             if self.darkness and self.charges > 0:
                 self.charges -= 1
-                if self.charges == 0:
-                    self.darkness = False
-                    self.clear_darkness_buffs()
 
             if self.port.entity_exists(self.spirit_name):
                 hp = self.port.current_hp(self.spirit_name)
@@ -772,6 +769,9 @@ class ChangyeyueKit(KitHandler):
                 )
 
             speed_bonus = 0.10 + 0.01 * min(40, spent_memory)
+            if self.port.has_status(self.owner_id, "Changyeyue_Spirit_Depart_Speed"):
+                speed_bonus = max(speed_bonus, getattr(self, "_last_depart_speed_bonus", 0.0))
+            self._last_depart_speed_bonus = speed_bonus
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Spirit_Depart_Speed",
                 name="与你，再见，无期",
@@ -1110,7 +1110,7 @@ class ChangyeyueKit(KitHandler):
         elif kind == ActionKind.SKILL:
             # 官方同一战技按长夜在场状态分两个配置 ID: 不在场 (召唤版) = 141302,
             # 在场 (回血版) = 141309 (日志实证: 终结技召唤后的同簇战技记为 141309)。
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(sp=1), name="白昼悄然离去", skill_id=141309 if self.spirit_alive else 141302)
+            return AbilityDefinition(kind=kind, target_mode=TargetMode.SELF, cost=ResourceCost(sp=0), name="白昼悄然离去", skill_id=141309 if self.spirit_alive else 141302)
         elif kind == ActionKind.ULTIMATE:
             return AbilityDefinition(kind=kind, target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(energy=240.0), name="晚安，全世界无眠")
         elif kind == ActionKind.TECHNIQUE:
@@ -1128,7 +1128,7 @@ class ChangyeyueKit(KitHandler):
                 target_id,
                 element="Ice",
                 atk_multiplier=0.70,
-                toughness_damage=10.0,
+                toughness_damage=30.0,
                 damage_type=DamageType.BASIC,
                 scaling_stat="hp"
             )
@@ -1215,9 +1215,7 @@ class ChangyeyueKit(KitHandler):
             #   秘技分享不进入终结技快照)。
             is_special_guest = self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
             skill_share_active = (
-                not was_spirit_alive
-                and not is_special_guest
-                and self._skill_share_from_skill
+                self._skill_share_from_skill
                 and self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg")
             )
             full_spirit_sync = (
@@ -1225,7 +1223,9 @@ class ChangyeyueKit(KitHandler):
                 or skill_share_active
                 or is_special_guest
             )
-            spirit_cd = self._spirit_crit_dmg(include_skill_shared=full_spirit_sync) or 0.0
+            spirit_cd = self._spirit_crit_dmg(
+                include_skill_shared=bool(was_spirit_alive or skill_share_active)
+            ) or 0.0
             if full_spirit_sync:
                 # 战技分享为施法快照值；终结技触发长夜月 A2 产生的 +15% 暴伤不应再次通过战技 24% 传递给长夜
                 if was_spirit_alive and self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
@@ -1238,7 +1238,9 @@ class ChangyeyueKit(KitHandler):
                         for m in robin_chord.modifiers:
                             if m.stat == StatType.CRIT_DMG:
                                 spirit_cd += m.value
-            ult_hp_ratio = self._spirit_hp_scale_ratio()
+            spirit_hp = self.spirit_max_hp
+            owner_hp = self.port.max_hp(self.owner_id)
+            ult_hp_ratio = (spirit_hp / owner_hp) if owner_hp > 0 else self._spirit_hp_scale_ratio()
             ult_mult = self.skill_param("ultra", 0, default=2.00) * self._memosprite_damage_mult()
             for e in self.port.enemies(self.owner_id):
                 self.port.attack(
@@ -1246,7 +1248,7 @@ class ChangyeyueKit(KitHandler):
                     e,
                     element="Ice",
                     atk_multiplier=ult_mult * ult_hp_ratio,
-                    toughness_damage=20.0,
+                    toughness_damage=90.0,
                     damage_type=DamageType.ULTIMATE,
                     scaling_stat="hp",
                     fixed_crit_dmg=spirit_cd

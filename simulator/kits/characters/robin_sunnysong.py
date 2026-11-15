@@ -119,6 +119,7 @@ class SunnyMusiciansKit(KitHandler):
                 self.master_kit.FEVER_DMG_BUFF,
                 self.master_kit.E2_RES_PEN_BUFF,
                 "Robin_Tech_WeAreTheMelody",
+                "LC_MemoryNeverFades_DmgBuff",
             ) or s.id.startswith("Robin_Talent_TonalChord_"):
                 continue
             mods = tuple(
@@ -291,6 +292,17 @@ class RobinSunnySongKit(KitHandler):
     @property
     def musician_speed(self) -> float:
         robin_spd = self.port.stat(self.owner_id, StatType.SPEED) if self.port else 95.0
+        if self.port:
+            base_white = float(self.port.white_stat(self.owner_id, StatType.SPEED) or 0.0)
+            for st in self.port.statuses(self.owner_id):
+                if getattr(st, "category", "") == "debuff":
+                    for mod in getattr(st, "modifiers", ()):
+                        if mod.stat == StatType.SPEED:
+                            stacks = getattr(st, "stacks", 1)
+                            if mod.op == ModifierOp.PERCENT:
+                                robin_spd -= base_white * mod.value * stacks
+                            elif mod.op == ModifierOp.ADD:
+                                robin_spd -= mod.value * stacks
         spd_inherit = self.skill_param("talent", 1, default=1.80)
         base_m_spd = robin_spd * spd_inherit
         if self.eidolon >= 4 and self.in_fever:
@@ -561,7 +573,8 @@ class RobinSunnySongKit(KitHandler):
             hp_inherit = self.skill_param("talent", 0, default=0.70)
             musician_ent.base_white_hp = getattr(musician_ent, "base_white_hp", 0.0) * hp_inherit
             # 未进入 Fever 期间，乐手处于准备登台阶段，不先行插入常规行动
-            self.port.set_distance(self.MUSICIAN_NAME, 999999.0)
+            if not self.in_fever:
+                self.port.set_distance(self.MUSICIAN_NAME, 999999.0)
 
             # 行迹【重构谐乐】：晴空乐手暴击率提高 50%
             self.port.upsert_status(BuffSpec(
@@ -911,9 +924,9 @@ class RobinSunnySongKit(KitHandler):
             ):
                 return
 
-            # 仅在终结技主伤阶段登记因果屏障，避免大招本体攻击获气氛同步提升本次大招自己的 Fever 场域；
-            # 非终结技动作 (如追加攻击、忆灵技) 清理残留屏障并实时同步结界。
-            if kind == ActionKind.ULTIMATE:
+            # 仅在终结技与忆灵技主伤阶段登记因果屏障，避免攻击获气氛同步提升本次攻击自己的 Fever 场域；
+            # 其他非终结技/忆灵技动作清理残留屏障并实时同步结界。
+            if kind in (ActionKind.ULTIMATE, ActionKind.MEMOSPRITE_SKILL):
                 self._robin_open_actions[action_id] = actor
             else:
                 self._robin_open_actions.clear()
@@ -1099,7 +1112,7 @@ class RobinSunnySongKit(KitHandler):
             target_id,
             element="Wind",
             atk_multiplier=mult,
-            toughness_damage=10.0,
+            toughness_damage=30.0,
             damage_type=DamageType.BASIC,
             scaling_stat="hp"
         )
@@ -1133,9 +1146,17 @@ class RobinSunnySongKit(KitHandler):
         if ctx.target_ids:
             target_id = ctx.target_ids[0]
         else:
-            # 默认选择除自身外的首位非忆灵我方角色（零角色名硬编码）
+            # 默认选择除自身外的首位非忆灵我方角色（若外部挂载了 target_provider 则优先尊重）
             allies = [a for a in self.port.allies(self.owner_id) if a != self.owner_id and not self.port.is_memosprite(a)]
-            if allies:
+            sim = getattr(self.port, "sim", None)
+            tp = getattr(sim, "target_provider", None) if sim is not None else None
+            if tp is not None and allies:
+                owner_ent = sim.get_entity(self.owner_id)
+                cand_ents = [sim.get_entity(a) for a in allies if sim.get_entity(a) is not None]
+                chosen = tp(owner_ent, cand_ents, 0) if owner_ent is not None and cand_ents else None
+                if chosen is not None and getattr(chosen, "name", None) in allies:
+                    target_id = chosen.name
+            if not target_id and allies:
                 target_id = allies[0]
 
         if not target_id:
@@ -1164,7 +1185,7 @@ class RobinSunnySongKit(KitHandler):
             target_id=target_id,
             modifiers=(),
             duration=2,
-            timing=DurationTiming.TARGET_TURN_END,
+            timing=DurationTiming.TARGET_TURN_START,
             skip_current_clock=False,
             category="buff",
             tags=(StatusTag.CANNOT_ADVANCE_OTHER_ALLIES,),

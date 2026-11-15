@@ -84,7 +84,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 modifiers=(Modifier(StatType.DMG_VULNERABILITY, ModifierOp.ADD, vuln_val),),
                 duration=2,
                 timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=True,
+                skip_current_clock=False,
                 tags=(StatusTag.TARGET_DEBUFF, StatusTag.PERSONAL_DURATION)
             ))
 
@@ -121,8 +121,15 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 spirit_crit_dmg = float(self.port.stat(ally, StatType.CRIT_DMG))
                 break
 
+        memosprite_mult = 1.0
+        for ally in self.port.allies(self.owner_id):
+            ent = self.port._get_entity(ally) if hasattr(self.port, "_get_entity") else None
+            kit = getattr(ent, "kit", None) if ent is not None else None
+            fn = getattr(kit, "_memosprite_damage_mult", None) if kit is not None else None
+            if callable(fn):
+                memosprite_mult *= float(fn())
 
-        eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult
+        eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult * memosprite_mult
         for target in targets:
             if self.port.entity_exists(target):
                 self.port.attack(

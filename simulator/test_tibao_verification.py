@@ -11,6 +11,18 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.db = CharacterDB().load("data/character_db_export.json")
         self.team_members = ["长夜月", "缇宝", "知更鸟•晴歌", "风堇"]
         self.entities = [self.db.to_combat_entity(n) for n in self.team_members]
+        if self.db.get("缇宝_旧") is not None:
+            old_tb = self.db.to_combat_entity("缇宝_旧")
+            for ent in self.entities:
+                if ent.name == "缇宝":
+                    ent.base_max_hp = old_tb.base_max_hp
+                    ent.base_atk = old_tb.base_atk
+                    ent.base_def = old_tb.base_def
+                    ent.base_speed = old_tb.base_speed
+                    ent.base_crit_rate = old_tb.base_crit_rate
+                    ent.base_crit_dmg = old_tb.base_crit_dmg
+                    ent.current_hp = ent.max_hp
+                    break
         for ent in self.entities:
             if ent.max_energy > 0 and ent.energy == 0.0:
                 ent.energy = ent.max_energy * 0.5

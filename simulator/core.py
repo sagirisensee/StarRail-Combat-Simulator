@@ -523,7 +523,7 @@ class TurnSimulator:
                 for rh in getattr(active_entity, "relic_handlers", []):
                     rh.on_action_after(ctx)
             else:
-                if not active_entity.is_enemy:
+                if not active_entity.is_enemy and not getattr(active_entity, "is_countdown", False):
                     is_skill = (action_override == ActionKind.SKILL) if action_override is not None else (intent == "E")
                     if is_skill:
                         if self.sp.can_consume(1):
@@ -647,7 +647,8 @@ class TurnSimulator:
             actor_name=active_entity.name,
             turn_id=self._turn_id
         ))
-        reset_dist = getattr(self, "_pending_turn_reset_distance", None) or 10000.0
+        _pending_dist = getattr(self, "_pending_turn_reset_distance", None)
+        reset_dist = 10000.0 if _pending_dist is None else _pending_dist
         self._pending_turn_reset_distance = None
         active_entity.reset_distance(reset_dist)
         if active_entity.distance_remaining <= 0.0:

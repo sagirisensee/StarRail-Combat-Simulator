@@ -33,8 +33,8 @@ class MemoryNeverFadesHandler(LightConeHandler):
                     target_id=ally,
                     modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, dmg_val),),
                     duration=3,
-                    timing=DurationTiming.CASTER_TURN_END,
-                    skip_current_clock=True,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    skip_current_clock=(ally == self.owner_id),
                 ))
 
     def on_event(self, event: Any) -> None:

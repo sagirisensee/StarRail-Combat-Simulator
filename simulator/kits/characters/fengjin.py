@@ -63,6 +63,7 @@ class FengjinKit(KitHandler):
         # 基于 action_id 的 E1 治疗因果追踪
         self._e1_pending_actions: dict[int, str] = {}
         self._e1_seen_actions: set[int] = set()
+        self._tech_weather_is_fine_used: bool = False
 
     def apply_trace_passives(self, entity: Any) -> None:
         """行迹常驻被动属性注入与实机面板校准：
@@ -92,22 +93,27 @@ class FengjinKit(KitHandler):
         if spd > 200.0:
             extra_spd = min(200, int(math.floor(spd - 200.0 + 1e-4)))
             heal_bonus = extra_spd * 0.01
-            self.port.upsert_status(BuffSpec(
-                key="Fengjin_Trace_StormCalm",
-                name="暴风停歇",
-                source_id=self.owner_id,
-                target_id=self.owner_id,
-                modifiers=(
-                    Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),
-                    Modifier(StatType.OUTGOING_HEALING, ModifierOp.ADD, heal_bonus),
-                ),
-                duration=None,
-                timing=DurationTiming.TARGET_TURN_END,
-                category="buff",
-                description=f"生命上限提高 +20.0%，治疗量提高 +{heal_bonus * 100:.1f}%"
-            ))
+            for tid in ([self.owner_id, "小伊卡"] if self.port.entity_exists("小伊卡") else [self.owner_id]):
+                self.port.upsert_status(BuffSpec(
+                    key="Fengjin_Trace_StormCalm" if tid == self.owner_id else "Fengjin_Trace_StormCalm_Ika",
+                    name="暴风停歇",
+                    source_id=self.owner_id,
+                    target_id=tid,
+                    modifiers=(
+                        Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),
+                        Modifier(StatType.OUTGOING_HEALING, ModifierOp.ADD, heal_bonus),
+                    ),
+                    duration=None,
+                    timing=DurationTiming.TARGET_TURN_END,
+                    category="buff",
+                    description=f"生命上限提高 +20.0%，治疗量提高 +{heal_bonus * 100:.1f}%"
+                ))
             if hasattr(self.port, "tracer") and self.port.tracer:
                 self.port.tracer.record_plugin("行迹", "《暴风停歇》 (风堇)", f"速度 > 200 动态增益，提供 {heal_bonus * 100 + 54.5:.1f}% 综合治疗量加成")
+        else:
+            self.port.remove_status(self.owner_id, "Fengjin_Trace_StormCalm")
+            if self.port.entity_exists("小伊卡"):
+                self.port.remove_status("小伊卡", "Fengjin_Trace_StormCalm_Ika")
 
     def on_battle_start(self) -> None:
         """进战初始化：
@@ -124,7 +130,7 @@ class FengjinKit(KitHandler):
         white_hp = float(self.port.white_stat(self.owner_id, StatType.MAX_HP_PERCENT) or 2250.0)
         temp_hp = 0.0
         for s in self.port.statuses(self.owner_id, category="buff"):
-            if s.id.startswith("Fengjin_Ult_SunAfterRain_") or s.id.startswith("Fengjin_Tech_WeatherIsFine_"):
+            if s.id.startswith(("Fengjin_Ult_SunAfterRain_", "Fengjin_Tech_WeatherIsFine_", "Fengjin_Trace_StormCalm")):
                 for m in s.modifiers:
                     if m.stat == StatType.MAX_HP_PERCENT:
                         if m.op == ModifierOp.PERCENT:
@@ -154,9 +160,10 @@ class FengjinKit(KitHandler):
             self.owner_id,
             spirit_name,
             base_speed=0.0,
-            max_hp=self.port.max_hp(self.owner_id) * 0.50,
+            max_hp=self._ika_base_max_hp(),
             kit_class=IkaKit,
             kit_args={"master_kit": self},
+            white_hp_ratio=0.5,
         )
 
         if spirit is None:
@@ -167,6 +174,7 @@ class FengjinKit(KitHandler):
         self.yika_alive = True
         self.ika_kit = getattr(spirit, "kit", None)
         self._ika_ever_summoned = True
+        self._sync_storm_calm()
 
         if first_summon:
             self.port.publish_action(
@@ -342,21 +350,9 @@ class FengjinKit(KitHandler):
         施放终结技时展开【雨过天晴】场域基准，伴生忆灵依附场域实时生命基准，
         确保光锥/遗器等动作前扣血与生命联动自然读取到实时场域生命。
         """
-        if ctx.kind in (ActionKind.SKILL, ActionKind.ULTIMATE):
-            self.summon_yika()
-
         if ctx.kind == ActionKind.ULTIMATE:
+            self.summon_yika()
             self._pre_ult_max_hp = self.port.max_hp(self.owner_id)
-            hp_boost = self.skill_param("ultra", 2, default=0.30)
-            if self.eidolon >= 1:
-                hp_boost += 0.50
-            flat_hp = self.skill_param("ultra", 3, default=600.0)
-
-            for ally in self.port.allies(self.owner_id):
-                if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
-                    continue
-                if self.port.is_memosprite(ally):
-                    self._apply_sun_after_rain_to_memosprite(ally, duration=3)
 
     def execute(self, ctx: ActionContext) -> None:
         if ctx.kind == ActionKind.BASIC:
@@ -394,10 +390,8 @@ class FengjinKit(KitHandler):
             same_cluster_after_regular = (now - self._last_regular_cast_av) <= 0.5
             if same_cluster_after_regular and not getattr(self, "_last_regular_fired_scatter", False):
                 self._rain_budget = 2
-                self._rain_open_cluster_pending = False
             else:
                 self._rain_budget = 3
-                self._rain_open_cluster_pending = not same_cluster_after_regular
             self._rain_opened_av = now
             self._fire_ika_scatter()
             return
@@ -405,11 +399,6 @@ class FengjinKit(KitHandler):
         self._last_regular_fired_scatter = False
         if not self.in_rain_state() or self._rain_budget <= 0:
             return
-        if self._rain_open_cluster_pending and now <= self._rain_opened_av + 0.5:
-            self._rain_open_cluster_pending = False
-            self._rain_budget -= 1
-            return
-        self._rain_open_cluster_pending = False
         self._rain_budget -= 1
         self._last_regular_fired_scatter = True
         self._fire_ika_scatter()
@@ -440,7 +429,7 @@ class FengjinKit(KitHandler):
             target_id,
             element="Wind",
             atk_multiplier=mult,
-            toughness_damage=10.0,
+            toughness_damage=30.0,
             damage_type=DamageType.BASIC,
             scaling_stat="hp"
         )
@@ -599,15 +588,30 @@ class FengjinKit(KitHandler):
         ):
             return
 
-        master = self.port.get_master_name(actor) if (self.port and self.port.is_memosprite(actor)) else None
-        target_heal = actor if (self.port.entity_exists(actor) and self.port.current_hp(actor) > 0) else (master or actor)
-        if not self.port.entity_exists(target_heal) or self.port.current_hp(target_heal) <= 0:
+        raw_heal = 0.08 * self.port.max_hp(self.owner_id)
+        if not self.port.entity_exists(actor) or self.port.current_hp(actor) <= 0:
+            # 忆灵在自身攻击过程中自毁离场时（如长夜施放「迷梦，流失，如露」），
+            # E1 治疗不回退给主人；若为忆灵攻击，仍按其自身受疗计入累计治疗量。
+            if self.port.is_memosprite(actor):
+                from ...events import HealAppliedEvent
+                amount = self._apply_outgoing_healing(raw_heal, actor)
+                sim = getattr(self.port, "sim", None)
+                if sim is not None and getattr(sim, "event_bus", None) is not None:
+                    sim.event_bus.publish(HealAppliedEvent(
+                        av=self.port.battle_av(),
+                        cycle=getattr(sim, "current_cycle", 0),
+                        source_name=self.owner_id,
+                        target_name=actor,
+                        amount=amount,
+                    ))
+                else:
+                    self.accumulated_healing += amount
+                self.on_healing_provided()
             return
 
-        raw_heal = 0.08 * self.port.max_hp(self.owner_id)
-        amount = self._apply_outgoing_healing(raw_heal, target_heal)
+        amount = self._apply_outgoing_healing(raw_heal, actor)
 
-        self.port.heal(self.owner_id, target_heal, amount)
+        self.port.heal(self.owner_id, actor, amount)
         self.on_healing_provided()
 
     def on_event(self, event: Any) -> None:
@@ -632,30 +636,40 @@ class FengjinKit(KitHandler):
                     ult_buff = next((s for s in self.port.statuses(self.owner_id) if s.id.startswith("Fengjin_Ult_SunAfterRain_")), None)
                     if ult_buff:
                         self._apply_sun_after_rain_to_memosprite(target_id, duration=ult_buff.duration)
+                if (
+                    getattr(self, "_tech_weather_is_fine_used", False)
+                    and getattr(event, "av", 1.0) == 0.0
+                    and not self.port.has_status(target_id, f"Fengjin_Tech_WeatherIsFine_{target_id}")
+                ):
+                    self._apply_weather_is_fine_to_target(target_id)
 
         self._handle_e1_action_event(event)
+
+    def _apply_weather_is_fine_to_target(self, target_id: str) -> None:
+        max_hp = self.port.max_hp(self.owner_id)
+        raw_heal = max_hp * 0.30 + 600.0
+        self.port.heal(self.owner_id, target_id, self._apply_outgoing_healing(raw_heal, target_id))
+        self.port.upsert_status(BuffSpec(
+            key=f"Fengjin_Tech_WeatherIsFine_{target_id}",
+            name="天气正好，万物可爱！",
+            source_id=self.owner_id,
+            target_id=target_id,
+            modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),),
+            duration=2,
+            timing=DurationTiming.TARGET_TURN_END,
+            skip_current_clock=False,
+            category="buff",
+            description="全队生命上限提高 +20.0%"
+        ))
 
     def use_technique(self) -> None:
         """秘技【天气正好，万物可爱！】：进场回复 30% HP + 600，生命上限提高 20%，持续 2 回合。"""
         self._sync_storm_calm()
-        max_hp = self.port.max_hp(self.owner_id)
-        raw_heal = max_hp * 0.30 + 600.0
+        self._tech_weather_is_fine_used = True
         for ally in self.port.allies(self.owner_id):
             if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                 continue
-            self.port.heal(self.owner_id, ally, self._apply_outgoing_healing(raw_heal, ally))
-            self.port.upsert_status(BuffSpec(
-                key=f"Fengjin_Tech_WeatherIsFine_{ally}",
-                name="天气正好，万物可爱！",
-                source_id=self.owner_id,
-                target_id=ally,
-                modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.PERCENT, 0.20),),
-                duration=2,
-                timing=DurationTiming.TARGET_TURN_END,
-                skip_current_clock=False,
-                category="buff",
-                description="全队生命上限提高 +20.0%"
-            ))
+            self._apply_weather_is_fine_to_target(ally)
 
 
 

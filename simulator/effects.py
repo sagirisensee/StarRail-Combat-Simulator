@@ -87,7 +87,26 @@ class EffectResolver:
         self.queue: List[EffectRequest] = []
         self._step_count = 0
         self._resolving = False
+        self._aoe_depth = 0
         self._hit_energy_action_recipients = set()
+        self._post_resolve_callbacks: List[Any] = []
+
+    def begin_aoe(self) -> None:
+        self._aoe_depth += 1
+
+    def end_aoe(self) -> None:
+        self._aoe_depth = max(0, self._aoe_depth - 1)
+        if self._aoe_depth == 0 and not self._resolving:
+            self._drain_post_resolve()
+
+    def _drain_post_resolve(self) -> None:
+        while self._post_resolve_callbacks:
+            cb = self._post_resolve_callbacks.pop(0)
+            cb()
+
+    def defer_post_resolve(self, fn: Any) -> None:
+        """在当前效果队列排空后执行的回调（如群攻全部命中后的亡语反噬）。"""
+        self._post_resolve_callbacks.append(fn)
 
     def enqueue(self, effect: EffectRequest):
         """将效果放入待结算队列。"""
@@ -107,6 +126,9 @@ class EffectResolver:
                 self._resolve_one(effect)
         finally:
             self._resolving = False
+
+        if self._aoe_depth == 0:
+            self._drain_post_resolve()
 
         scheduler = getattr(self.simulator, "scheduler", None)
         if scheduler is not None and scheduler.can_auto_drain() and scheduler.has_pending():
@@ -253,7 +275,7 @@ class EffectResolver:
                         if effect.break_effect > 0.0:
                             be = max(be, effect.break_effect)
 
-                        tough_mult = 0.5 + (getattr(target, "max_toughness", 0.0) / 40.0)
+                        tough_mult = 0.5 + (getattr(target, "max_toughness", 0.0) / 120.0)
                         atk_lvl = getattr(effect.attacker, "level", 80)
                         tgt_lvl = getattr(target, "level", 100)
                         def_shred = sm.calculate_stat(target.name, 0.0, StatType.DEF_SHRED) if sm else 0.0
@@ -266,7 +288,15 @@ class EffectResolver:
                         vuln_mult = 1.0 + vuln
                         dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
 
-                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr)
+                        memosprite_mult = 1.0
+                        if getattr(effect.attacker, "is_memosprite", False) and hasattr(self, "simulator") and self.simulator:
+                            for ally_ent in self.simulator.entities:
+                                if not getattr(ally_ent, "is_enemy", False) and getattr(ally_ent, "current_hp", 0.0) > 0:
+                                    ally_kit = getattr(ally_ent, "kit", None)
+                                    if ally_kit is not None and hasattr(ally_kit, "_memosprite_damage_mult"):
+                                        memosprite_mult *= float(ally_kit._memosprite_damage_mult())
+
+                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr) * memosprite_mult
                         if hasattr(target, "current_hp"):
                             target.current_hp = max(0.0, target.current_hp - break_dmg)
 

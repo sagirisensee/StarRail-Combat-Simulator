@@ -247,11 +247,12 @@ class StatusManager:
         # 4. 同步动态生命上限差值
         if old_max > 0 and old_max != float("inf"):
             new_max = self._calc_entity_max_hp(target)
+            cap = target.effective_hp_cap(new_max) if hasattr(target, "effective_hp_cap") else new_max
             hp_delta = new_max - old_max
             if hp_delta > 0 and getattr(target, "current_hp", 0.0) > 0:
-                target.current_hp = min(new_max, target.current_hp + hp_delta)
-            elif hp_delta < 0 and getattr(target, "current_hp", 0.0) > new_max:
-                target.current_hp = new_max
+                target.current_hp = min(cap, target.current_hp + hp_delta)
+            elif hp_delta < 0 and getattr(target, "current_hp", 0.0) > cap:
+                target.current_hp = cap
 
             if abs(hp_delta) > 1e-4 and StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (status.tags or ()) and self.simulator and hasattr(self.simulator, "event_bus"):
                 from .events import StatusApplyEvent
@@ -334,9 +335,7 @@ class StatusManager:
             )
             if reason == "EXPIRED" and is_valid_ally and 0 < new_max < old_max and old_hp > 1.0:
                 scaled_hp = old_hp * (new_max / old_max)
-                loss = old_hp - scaled_hp
-                if loss > 1e-4 and port is not None:
-                    port.lose_hp(tgt.name, loss, cause="max_hp_buff_expire")
+                tgt.current_hp = max(1.0, min(new_max, scaled_hp))
             elif 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
                 tgt.current_hp = new_max
 

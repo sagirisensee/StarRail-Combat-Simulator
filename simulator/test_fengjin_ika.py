@@ -74,11 +74,10 @@ class TestIkaScatterWindowBudget(unittest.TestCase):
             ))
             sim.resolver.resolve_all()
 
-        # 终结技开窗: 必触发一次
-        cast(ActionKind.ULTIMATE, 0.0)
-        self.assertEqual(len(scatters), 1)
-        # 同簇 (ΔAV<=0.5) 紧随的常规施放: 实机该施放先于终结技落地, 不触发
-        cast(ActionKind.SKILL, 0.2)
+        # 同簇 (ΔAV<=0.5) 常规施放在前、终结技在后: 仅触发 1 次, 后续剩 2 回合预算
+        cast(ActionKind.SKILL, 0.0)
+        self.assertEqual(len(scatters), 0)
+        cast(ActionKind.ULTIMATE, 0.2)
         self.assertEqual(len(scatters), 1)
         # 窗口内第 2、3 回合: 触发
         cast(ActionKind.SKILL, 46.0)
@@ -87,7 +86,7 @@ class TestIkaScatterWindowBudget(unittest.TestCase):
         # 第 4 回合: 窗口已闭, 不触发 (旧实现在此仍触发)
         cast(ActionKind.SKILL, 138.0)
         self.assertEqual(len(scatters), 3)
-        # 再次终结技刷新窗口: 必触发, 且后续回合恢复触发
+        # 再次终结技刷新窗口: 必触发, 且同簇紧随常规施放也会触发并消耗 1 次预算
         cast(ActionKind.ULTIMATE, 200.0)
         self.assertEqual(len(scatters), 4)
         cast(ActionKind.SKILL, 246.0)
@@ -120,13 +119,13 @@ class TestRainBuffWhiteBase(unittest.TestCase):
 
         self.assertAlmostEqual(sim.port.max_hp("长夜月") - before_cyy, 0.80 * 2589 + 600, delta=3.0)
         self.assertAlmostEqual(sim.port.max_hp("风堇") - before_fj, 0.80 * 2250 + 600, delta=3.0)
-        # 忆灵小伊卡: 百分比基数是主人的白字生命，实时生命上限与 port.max_hp 一致且包含雨过天晴加成 (+80%*2250 + 600 = 2400)
+        # 忆灵小伊卡: 百分比基数是主人的白字生命，实时生命上限包含秘技 (+20%*2250) 与雨过天晴 (+80%*2250 + 600)
         ika = sim.get_entity("小伊卡")
         self.assertIsNotNone(ika)
         self.assertAlmostEqual(ika.base_white_hp, 2250.0, delta=0.1)
         self.assertAlmostEqual(sim.port.max_hp("小伊卡"), ika.max_hp, delta=0.1)
         self.assertAlmostEqual(
-            ika.max_hp - ika.base_max_hp, 0.80 * 2250 + 600, delta=3.0)
+            ika.max_hp - ika.base_max_hp, (0.20 + 0.80) * 2250 + 600, delta=3.0)
 
 
 if __name__ == "__main__":

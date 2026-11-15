@@ -362,6 +362,74 @@
     },
     {
       "avatar_id": 1512,
+      "name": "知更鸟•晴歌_爱如此刻永恒",
+      "element": "Wind",
+      "path": 8,
+      "level": 80,
+      "eidolon": "E0",
+      "light_cone": {
+        "item_id": 23052,
+        "name": "爱如此刻永恒",
+        "superimposition": "S1",
+        "level": 80
+      },
+      "relic_count": 6,
+      "relic_sets": [
+        "永恒之地翁法罗斯 (ID 323)",
+        "再创天地的救世主 (ID 127)"
+      ],
+      "stats_summary": {
+        "生命值 (HP)": 6756,
+        "攻击力 (ATK)": 1856,
+        "防御力 (DEF)": 966,
+        "速度 (SPD)": 183,
+        "速度面板显示": "183 (白字 95 + 绿字 +88)",
+        "速度实战精算": 183.332,
+        "暴击率 (CR)": "41.3%",
+        "暴击伤害 (CD)": "72.6%",
+        "击破特攻 (BE)": "5.1%",
+        "能量恢复效率 (ERR)": "119.4%",
+        "效果命中 (EHR)": "0.0%",
+        "效果抵抗 (RES)": "0.0%",
+        "属性伤害加成 (DMG%)": "0.0%"
+      },
+      "breakdowns": {
+        "hp": {
+          "base_white": 2473.0,
+          "flat_bonus": 4283.152,
+          "percent_bonus": "173.19%",
+          "final_value": 6756.152
+        },
+        "atk": {
+          "base_white": 1077.0,
+          "flat_bonus": 779.51,
+          "percent_bonus": "72.30%",
+          "final_value": 1856.51
+        },
+        "def": {
+          "base_white": 948.0,
+          "flat_bonus": 18.13,
+          "percent_bonus": "1.81%",
+          "final_value": 966.13
+        },
+        "spd": {
+          "base_white": 95.0,
+          "flat_bonus": 88.332,
+          "percent_bonus": "0.00%",
+          "final_value": 183.332
+        }
+      },
+      "relic_details": [
+        {"slot": 1, "set_name": "再创天地的救世主", "sub_affixes": []},
+        {"slot": 2, "set_name": "再创天地的救世主", "sub_affixes": []},
+        {"slot": 3, "set_name": "再创天地的救世主", "sub_affixes": []},
+        {"slot": 4, "set_name": "再创天地的救世主", "sub_affixes": []},
+        {"slot": 5, "set_name": "永恒之地翁法罗斯", "sub_affixes": []},
+        {"slot": 6, "set_name": "永恒之地翁法罗斯", "sub_affixes": []}
+      ]
+    },
+    {
+      "avatar_id": 1512,
       "name": "知更鸟•晴歌",
       "element": "Wind",
       "path": 8,
@@ -4507,7 +4575,7 @@
     },
     {
       "avatar_id": 1403,
-      "name": "缇宝",
+      "name": "缇宝_旧",
       "element": "Quantum",
       "path": 4,
       "level": 80,
@@ -4562,6 +4630,130 @@
           "flat_bonus": -5.68,
           "percent_bonus": "0.00%",
           "final_value": 90.32
+        }
+      },
+      "substat_roll_stats": {
+        "total_rolls": 53,
+        "low_rolls": 9,
+        "mid_rolls": 30,
+        "high_rolls": 14,
+        "overall_quality_pct": 54.7
+      },
+      "relic_details": [
+        {
+          "slot": 5,
+          "slot_name": "部件 5",
+          "set_name": "谧宁拾骨地",
+          "main_affix": "生命值 +43.2%",
+          "sub_affixes": [
+            {
+              "name": "防御力",
+              "key": "flat_def",
+              "value": 19.052,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "暴击率",
+              "key": "crit_rate",
+              "value": 0.0648,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 2,
+              "is_pct": true
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.2462,
+              "count": 4,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 2,
+              "is_pct": true
+            },
+            {
+              "name": "效果抵抗",
+              "key": "unknown",
+              "value": 0.038,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 6,
+          "slot_name": "部件 6",
+          "set_name": "谧宁拾骨地",
+          "main_affix": "能量恢复效率 +19.4%",
+          "sub_affixes": []
+        }
+      ]
+    },
+    {
+      "avatar_id": 1403,
+      "name": "缇宝",
+      "element": "Quantum",
+      "path": 4,
+      "level": 80,
+      "eidolon": "E6",
+      "light_cone": {
+        "item_id": 23038,
+        "name": "如果时间是一朵花",
+        "superimposition": "S5",
+        "level": 80
+      },
+      "relic_count": 6,
+      "relic_sets": [
+        "谧宁拾骨地 (ID 319)",
+        "沉醉于狂欢的诗人 (ID 124)"
+      ],
+      "stats_summary": {
+        "生命值 (HP)": 6547,
+        "攻击力 (ATK)": 1483,
+        "防御力 (DEF)": 1215,
+        "速度 (SPD)": 92,
+        "速度面板显示": "92 (白字 96 + 绿字 -4)",
+        "速度实战精算": 92.92,
+        "暴击率 (CR)": "67.8%",
+        "暴击伤害 (CD)": "319.0%",
+        "击破特攻 (BE)": "0.0%",
+        "能量恢复效率 (ERR)": "119.4%",
+        "效果命中 (EHR)": "0.0%",
+        "效果抵抗 (RES)": "0.0%",
+        "属性伤害加成 (DMG%)": "10.0%"
+      },
+      "breakdowns": {
+        "hp": {
+          "base_white": 2317.0,
+          "flat_bonus": 4229.0,
+          "percent_bonus": "182.52%",
+          "final_value": 6546.94774
+        },
+        "atk": {
+          "base_white": 1053.0,
+          "flat_bonus": 430.0,
+          "percent_bonus": "40.84%",
+          "final_value": 1483.0
+        },
+        "def": {
+          "base_white": 1124.0,
+          "flat_bonus": 90.0,
+          "percent_bonus": "8.01%",
+          "final_value": 1214.986811
+        },
+        "spd": {
+          "base_white": 96.0,
+          "flat_bonus": -3.08,
+          "percent_bonus": "0.00%",
+          "final_value": 92.92
         }
       },
       "substat_roll_stats": {
@@ -4771,44 +4963,44 @@
           "main_affix": "生命值 +43.2%",
           "sub_affixes": [
             {
-              "name": "防御力",
-              "key": "flat_def",
-              "value": 19.052,
-              "count": 1,
-              "low_rolls": 0,
-              "mid_rolls": 1,
-              "high_rolls": 0,
-              "is_pct": false
-            },
-            {
               "name": "暴击率",
               "key": "crit_rate",
-              "value": 0.0648,
-              "count": 2,
+              "value": 0.1296,
+              "count": 4,
               "low_rolls": 0,
               "mid_rolls": 0,
-              "high_rolls": 2,
+              "high_rolls": 4,
               "is_pct": true
             },
             {
               "name": "暴击伤害",
               "key": "crit_dmg",
-              "value": 0.2462,
-              "count": 4,
+              "value": 0.1944,
+              "count": 3,
               "low_rolls": 0,
-              "mid_rolls": 2,
-              "high_rolls": 2,
+              "mid_rolls": 0,
+              "high_rolls": 3,
               "is_pct": true
             },
             {
-              "name": "效果抵抗",
-              "key": "unknown",
-              "value": 0.038,
+              "name": "速度",
+              "key": "spd",
+              "value": 2.6,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 0,
               "high_rolls": 1,
-              "is_pct": true
+              "is_pct": false
+            },
+            {
+              "name": "生命值",
+              "key": "flat_hp",
+              "value": 41.8439,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": false
             }
           ]
         },

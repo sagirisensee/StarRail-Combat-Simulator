@@ -100,7 +100,7 @@ def _guard(name: str, initial_distance: float = 10000.0) -> Entity:
 _ELEMENTS = ("Physical", "Fire", "Ice", "Thunder", "Wind", "Quantum", "Imaginary")
 
 
-def _mech(name: str, hp: float, speed: float, weaknesses: List[str], max_toughness: float = 160.0) -> Entity:
+def _mech(name: str, hp: float, speed: float, weaknesses: List[str], max_toughness: float = 480.0) -> Entity:
     """第一波大型敌人 (月夜天马/「灯塔」): 属性据 Nanoka 关卡数据。"""
     ent = Entity(
         name=name,
@@ -731,14 +731,14 @@ def build_stage_30510021(
     for g in (guard_a, guard_b, guard_c):
         g.unspawned = True
     # 官方进战机制 (MazeNormal XX06「攻击」, show_stance_list=[30,0,0]):
-    # 编队首位角色攻击敌人进入战斗后，削弱初始在场敌方目标 10.0 点 (原始 30 点) 对应弱点属性韧性。
+    # 编队首位角色攻击敌人进入战斗后，削弱初始在场敌方目标 30.0 点 (10 UI) 对应弱点属性韧性。
     if team:
         raw_elem = getattr(team[0], "element", None)
         entry_elem = str(raw_elem).capitalize() if raw_elem else None
         if entry_elem:
             for e in (lighthouse, pegasus):
                 if entry_elem in e.weaknesses:
-                    e.current_toughness = max(0.0, e.current_toughness - 10.0)
+                    e.current_toughness = max(0.0, e.current_toughness - 30.0)
     enemies = [pegasus, lighthouse, guard_a, guard_b, guard_c]
 
     # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。

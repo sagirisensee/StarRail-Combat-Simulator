@@ -210,7 +210,8 @@ class CombatPort(Protocol):
         kit_args: Optional[dict] = None,
         *,
         is_memosprite: bool = True,
-        is_countdown: bool = False
+        is_countdown: bool = False,
+        white_hp_ratio: float = 1.0
     ) -> Any: ...
     def despawn_spirit(self, name: str, reason: str = "") -> None: ...
 
@@ -672,7 +673,8 @@ class SimulatorCombatPort:
         tgt = self._get_entity(target_id)
         if tgt and hasattr(tgt, "current_hp"):
             cur_max = self.max_hp(target_id) or tgt.max_hp
-            tgt.current_hp = min(cur_max, tgt.current_hp + amount)
+            cap = tgt.effective_hp_cap(cur_max) if hasattr(tgt, "effective_hp_cap") else cur_max
+            tgt.current_hp = min(cap, tgt.current_hp + amount)
             self.sim.event_bus.publish(HealAppliedEvent(
                 av=getattr(self.sim, "current_av", 0.0),
                 cycle=getattr(self.sim, "current_cycle", 0),
@@ -930,15 +932,6 @@ class SimulatorCombatPort:
     def max_hp(self, entity_id: str) -> float:
         ent = self._get_entity(entity_id)
         if ent:
-            if getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None):
-                master = self._get_entity(ent.master_name)
-                if master and getattr(master, "kit", None):
-                    spirit_fn = getattr(master.kit, "spirit_max_hp", None)
-                    if spirit_fn is not None:
-                        val = float(spirit_fn)
-                        if val > 0:
-                            ent.max_hp = val
-                            return val
             base_max_hp = getattr(ent, "base_max_hp", getattr(ent, "max_hp", 0.0))
             if hasattr(self.sim, "status_mgr") and base_max_hp > 0 and base_max_hp != float("inf"):
                 white_hp = getattr(ent, "base_white_hp", 0.0) or base_max_hp
@@ -1018,7 +1011,8 @@ class SimulatorCombatPort:
         kit_args: Optional[dict] = None,
         *,
         is_memosprite: bool = True,
-        is_countdown: bool = False
+        is_countdown: bool = False,
+        white_hp_ratio: float = 1.0
     ) -> Any:
         from .entity import Entity
         existing = self.sim.get_entity(name)
@@ -1049,7 +1043,7 @@ class SimulatorCombatPort:
             # 忆灵的百分比生命加成按主人白字生命结算 (官方样本实证: 长夜在
             # 【雨过天晴】下的 +2,072 = 80% x 长夜月白字 2,590)。不设此值时
             # 属性聚合会以忆灵的继承生命全额为白字回退, 百分比增益被成倍放大。
-            base_white_hp=getattr(owner, "base_white_hp", 0.0) if owner else 0.0,
+            base_white_hp=(getattr(owner, "base_white_hp", 0.0) * white_hp_ratio) if owner else 0.0,
             base_crit_rate=owner.base_crit_rate if owner else 0.05,
             base_crit_dmg=owner.base_crit_dmg if owner else 0.50,
             is_enemy=False,

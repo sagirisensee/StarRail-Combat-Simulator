@@ -90,7 +90,7 @@ def connect():
 @sio.event
 def disconnect():
     global current_fp
-    print("\n🔴 与 Veritas 服务端断开连接")
+    print("\n🔴 与 Veritas 服务端断开连接，等待重新连接...")
     if current_fp:
         current_fp.close()
         current_fp = None
@@ -171,18 +171,27 @@ def on_battle_end(data):
 
 
 def main():
-    try:
-        sio.connect(VERITAS_URL, wait_timeout=5)
-        print("💡 录制器已进入待命状态。请进入星铁开启任意战斗（末日、混沌、历战余响等）...")
-        print("👉 按 Ctrl+C 可随时停止录制。\n")
-        sio.wait()
-    except KeyboardInterrupt:
-        print("\n🛑 用户手动停止录制。")
-    except Exception as e:
-        print(f"\n❌ 连接异常: {e}")
-    finally:
-        if current_fp:
-            current_fp.close()
+    print("📡 正在等待连接 Veritas 游戏服务端 (127.0.0.1:1305)...")
+    first_wait = True
+    while True:
+        try:
+            if not sio.connected:
+                sio.connect(VERITAS_URL, wait_timeout=3)
+                print("💡 录制器已进入待命状态。请进入星铁开启任意战斗（末日、混沌、历战余响等）...")
+                print("👉 按 Ctrl+C 可随时停止录制。\n")
+                first_wait = True
+            sio.wait()
+        except KeyboardInterrupt:
+            print("\n🛑 用户手动停止录制。")
+            break
+        except Exception as e:
+            if first_wait:
+                print("⏳ 未检测到游戏或 Veritas 服务端，正在后台持续重试等待游戏启动...")
+                first_wait = False
+            time.sleep(2)
+        finally:
+            if current_fp:
+                current_fp.close()
 
 
 if __name__ == "__main__":

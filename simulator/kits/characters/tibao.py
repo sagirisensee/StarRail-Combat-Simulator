@@ -146,7 +146,7 @@ class TibaoKit(KitHandler):
                 target_id=ally,
                 modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, res_pen),),
                 duration=turns,
-                timing=DurationTiming.TARGET_TURN_END,
+                timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True,
                 category="buff",
                 description=f"全属性抗性穿透 +{res_pen * 100:.1f}%"
@@ -219,7 +219,7 @@ class TibaoKit(KitHandler):
             primary_target,
             element="Quantum",
             atk_multiplier=main_mult,
-            toughness_damage=10.0,
+            toughness_damage=30.0,
             damage_type=DamageType.BASIC,
             scaling_stat="hp"
         )
@@ -246,7 +246,7 @@ class TibaoKit(KitHandler):
                 adj,
                 element="Quantum",
                 atk_multiplier=adj_mult,
-                toughness_damage=5.0,
+                toughness_damage=15.0,
                 damage_type=DamageType.BASIC,
                 scaling_stat="hp"
             )
@@ -302,7 +302,7 @@ class TibaoKit(KitHandler):
                 e,
                 element="Quantum",
                 atk_multiplier=ult_mult,
-                toughness_damage=20.0,
+                toughness_damage=60.0,
                 damage_type=DamageType.ULTIMATE,
                 scaling_stat="hp"
             )
@@ -333,7 +333,7 @@ class TibaoKit(KitHandler):
                 target_id=a,
                 modifiers=(Modifier(StatType.RES_PEN, ModifierOp.ADD, res_pen),),
                 duration=3,
-                timing=DurationTiming.TARGET_TURN_END,
+                timing=DurationTiming.CASTER_TURN_END,
                 skip_current_clock=True,
                 category="buff",
                 description=f"全属性抗性穿透 +{res_pen * 100:.1f}%"
@@ -351,7 +351,7 @@ class TibaoKit(KitHandler):
                     target_id=a,
                     modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.18),),
                     duration=3,
-                    timing=DurationTiming.TARGET_TURN_END,
+                    timing=DurationTiming.CASTER_TURN_END,
                     skip_current_clock=True,
                     category="buff",
                     description="全队造成的伤害无视目标 18.0% 防御"
@@ -637,7 +637,7 @@ class TibaoKit(KitHandler):
                 e,
                 element="Quantum",
                 atk_multiplier=fu_mult,
-                toughness_damage=5.0,
+                toughness_damage=15.0,
                 damage_type=DamageType.FOLLOW_UP,
                 scaling_stat="hp",
                 extra_dmg_boost=e6_boost

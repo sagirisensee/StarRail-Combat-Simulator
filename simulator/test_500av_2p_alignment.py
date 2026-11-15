@@ -6,12 +6,17 @@ import subprocess
 import tempfile
 import unittest
 
+from simulator.db.character_db import CharacterDB
 from simulator.golden_diff import (
     attach_exact_crit_oracle,
     diff_sequences,
     extract_timeline,
     parse_golden_jsonl,
     run_trajectory_replay,
+)
+from simulator.plugins.non_crit_ledgers import (
+    OFFICIAL_500AV_20261103_105222_NON_CRITS,
+    OFFICIAL_500AV_20261103_110541_NON_CRITS,
 )
 from simulator.stage_30510021_2p import build_stage_30510021_2p
 
@@ -40,7 +45,7 @@ class Test500AV2PAlignment(unittest.TestCase):
         log_path = _resolve_500av_log("battle_20261103_105222.jsonl")
         g = parse_golden_jsonl(log_path)
         sim, director = build_stage_30510021_2p(log_path)
-        attach_exact_crit_oracle(sim, log_path=log_path)
+        attach_exact_crit_oracle(sim, log_path=log_path, non_crits=OFFICIAL_500AV_20261103_105222_NON_CRITS)
         traj = run_trajectory_replay(sim, director, extract_timeline(log_path), av_budget=g.final_av, log_path=log_path)
         rep = diff_sequences(g, traj.replay.sequence)
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
@@ -53,7 +58,18 @@ class Test500AV2PAlignment(unittest.TestCase):
         log_path = _resolve_500av_log("battle_20261103_110541.jsonl")
         g = parse_golden_jsonl(log_path)
         sim, director = build_stage_30510021_2p(log_path)
-        attach_exact_crit_oracle(sim, log_path=log_path)
+        # 2026-11-03 历史录像使用更换位面球前的旧版「缇宝_旧」面板
+        old_tribbie = CharacterDB().load(os.path.join(ROOT_DIR, "data", "character_db_export.json")).to_combat_entity("缇宝_旧")
+        for ent in sim.entities:
+            if ent.name == "缇宝":
+                ent.base_max_hp = old_tribbie.base_max_hp
+                ent.base_def = old_tribbie.base_def
+                ent.base_speed = old_tribbie.base_speed
+                ent.base_crit_rate = old_tribbie.base_crit_rate
+                ent.base_crit_dmg = old_tribbie.base_crit_dmg
+                ent.current_hp = ent.max_hp
+                break
+        attach_exact_crit_oracle(sim, log_path=log_path, non_crits=OFFICIAL_500AV_20261103_110541_NON_CRITS)
         traj = run_trajectory_replay(sim, director, extract_timeline(log_path), av_budget=g.final_av, log_path=log_path)
         rep = diff_sequences(g, traj.replay.sequence)
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]

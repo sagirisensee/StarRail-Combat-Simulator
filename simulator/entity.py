@@ -65,6 +65,8 @@ class Entity:
     # 屏障护体 (如【血脑屏障】展开期间): 受到的真实伤害归零、附加伤害按
     # 25% 结算, 直接伤害不受影响; 由关卡/机制侧按状态切换
     barrier_guarded: bool = False
+    # 噬命锁定比例 (上限 0.50): 仅限制 current_hp 上限, 不影响 max_hp 倍率
+    hp_lock_ratio: float = 0.0
     # 敌方未击破弱点时的常规韧性减免率 (标准星铁规则为 0.10，承伤 0.90x; 特殊形态首领可配置为 0.0 即 1.00x)
     toughness_dmg_reduction: float = 0.10
     # 是否为关卡头目/首领级实体 (用于自动战斗首领优先规则)
@@ -86,9 +88,15 @@ class Entity:
         if max_hp is not None:
             self.base_max_hp = float(max_hp)
 
+    def effective_hp_cap(self, max_hp_override: Optional[float] = None) -> float:
+        """返回计入【噬命】锁定后的当前生命值上限（不影响 MaxHP 倍率）。"""
+        m = self.max_hp if max_hp_override is None else max_hp_override
+        lock = max(0.0, min(0.50, float(getattr(self, "hp_lock_ratio", 0.0))))
+        return m * (1.0 - lock)
+
     def clamp_hp(self) -> None:
         """上限下降（Buff 移除或过期）后，把当前生命压回上限以内。"""
-        cap = self.max_hp
+        cap = self.effective_hp_cap()
         if self.current_hp > cap:
             self.current_hp = cap
 
