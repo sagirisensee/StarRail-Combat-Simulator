@@ -15,6 +15,7 @@ from .griffin import SunlitGriffinKit, AQUILA_MARK_KEY, AQUILA_MARK_NAME
 from .eagle import MeteorEagleKit
 from .apoli import ApoliBossKit
 from .sprout import BeastSproutKit
+from .sim_port import BaseEnemyCombatPortImpl
 
 __all__ = [
     "EnemyKit",
@@ -40,4 +41,5 @@ __all__ = [
     "MeteorEagleKit",
     "ApoliBossKit",
     "BeastSproutKit",
+    "BaseEnemyCombatPortImpl",
 ]

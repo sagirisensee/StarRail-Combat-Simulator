@@ -28,9 +28,11 @@ class MeteorEagleKit(EnemyKit):
         port: EagleCombatPort,
         *,
         windwalk_ready: bool = False,
+        windwalk_target: str | None = None,
     ) -> None:
         super().__init__(owner_id, port)
         self._windwalk_ready = windwalk_ready
+        self._windwalk_target = windwalk_target
         self._turn_count = 0
 
     @property
@@ -52,6 +54,16 @@ class MeteorEagleKit(EnemyKit):
             raise RuntimeError("Dead MeteorEagle cannot act")
 
         self._turn_count += 1
+        if self._windwalk_target:
+            target_name = self._windwalk_target
+            self._windwalk_target = None
+            sim = getattr(self.port, "sim", None)
+            target_ent = sim.get_entity(target_name) if sim is not None else None
+            target_kit = getattr(target_ent, "kit", None) if target_ent is not None else None
+            if target_kit is not None and hasattr(target_kit, "windwalk_ready"):
+                target_kit.windwalk_ready = True
+            return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+
         allies = self.port.get_living_allies()
         if allies:
             target = allies[0]

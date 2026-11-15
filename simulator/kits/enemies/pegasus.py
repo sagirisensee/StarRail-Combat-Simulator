@@ -32,9 +32,20 @@ class MoonlitPegasusKit(EnemyKit):
         self,
         owner_id: str,
         port: PegasusCombatPort,
+        *,
+        windwalk_ready: bool = False,
     ) -> None:
         super().__init__(owner_id, port)
         self._turn_count = 0
+        self._windwalk_ready = windwalk_ready
+
+    @property
+    def windwalk_ready(self) -> bool:
+        return self._windwalk_ready
+
+    @windwalk_ready.setter
+    def windwalk_ready(self, value: bool) -> None:
+        self._windwalk_ready = bool(value)
 
     @property
     def turn_count(self) -> int:
@@ -56,7 +67,7 @@ class MoonlitPegasusKit(EnemyKit):
 
         phase = (self._turn_count - 1) % 3
         if phase == 0:
-            # Turn 1: 单体攻击 + 附加【欧洛尼斯印记】
+            # Turn 1: 单体攻击
             target = self._select_primary_target(allies)
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
@@ -66,15 +77,8 @@ class MoonlitPegasusKit(EnemyKit):
                 hit_energy=5.0,
                 hits=1,
             )
-            self.port.apply_mark_status(
-                owner_id=self.owner_id,
-                target_id=target,
-                mark_key=ORONYX_MARK_KEY,
-                mark_name=ORONYX_MARK_NAME,
-                description="月夜天马附加的【欧洛尼斯印记】，施放终结技可解除，否则将在后续爆发结算额外伤害。",
-            )
         elif phase == 1:
-            # Turn 2: 3 段扩散攻击 (命中主目标及相邻忆灵)
+            # Turn 2: 3 段扩散攻击 (命中主目标及相邻目标) 并附加【欧洛尼斯印记】
             target = self._select_primary_target(allies)
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
@@ -85,8 +89,31 @@ class MoonlitPegasusKit(EnemyKit):
                 hits=3,
                 blast=True,
             )
+            idx = allies.index(target)
+            mark_targets = [target]
+            if idx - 1 >= 0:
+                mark_targets.append(allies[idx - 1])
+            if idx + 1 < len(allies):
+                mark_targets.append(allies[idx + 1])
+            for mt in mark_targets:
+                self.port.apply_mark_status(
+                    owner_id=self.owner_id,
+                    target_id=mt,
+                    mark_key=ORONYX_MARK_KEY,
+                    mark_name=ORONYX_MARK_NAME,
+                    description="月夜天马附加的【欧洛尼斯印记】，施放终结技可解除，否则将在后续爆发结算额外伤害。",
+                )
         else:
-            # Turn 3: 全体攻击 + 引爆【欧洛尼斯印记】
+            # Turn 3: 先单体攻击 (+5 回能)，再全体攻击 (+10 回能) + 引爆【欧洛尼斯印记】
+            target = self._select_primary_target(allies)
+            self.port.apply_enemy_attack(
+                owner_id=self.owner_id,
+                target_ids=(target,),
+                multiplier=1.0,
+                element="Quantum",
+                hit_energy=5.0,
+                hits=1,
+            )
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=allies,
@@ -104,6 +131,18 @@ class MoonlitPegasusKit(EnemyKit):
                         element="Quantum",
                     )
                     self.port.remove_mark_status(target_id=target_id, mark_key=ORONYX_MARK_KEY)
+                else:
+                    self.port.apply_mark_status(
+                        owner_id=self.owner_id,
+                        target_id=target_id,
+                        mark_key=ORONYX_MARK_KEY,
+                        mark_name=ORONYX_MARK_NAME,
+                        description="月夜天马附加的【欧洛尼斯印记】，施放终结技可解除，否则将在后续爆发结算额外伤害。",
+                    )
+
+        if self._windwalk_ready:
+            self._windwalk_ready = False
+            return EnemyActionResult(reset_distance=0.0)
 
         return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
 

@@ -436,15 +436,12 @@ class RobinSunnySongKit(KitHandler):
 
     def _commit_vibe_dependents(self) -> None:
         """气氛已变化；提交依赖该值的场域、登台与速度。"""
-        if self._robin_open_actions:
-            return
-
-        if self.musicians_alive and self.has_bessie:
+        if not self._robin_open_actions and self.musicians_alive and self.has_bessie:
             self._check_musician_stage_progression()
 
         if self.in_fever:
             self._sync_fever_buffs()
-            if self.port.entity_exists(self.MUSICIAN_NAME):
+            if not self._robin_open_actions and self.port.entity_exists(self.MUSICIAN_NAME):
                 self.port.set_base_speed(
                     self.MUSICIAN_NAME,
                     self.musician_speed,

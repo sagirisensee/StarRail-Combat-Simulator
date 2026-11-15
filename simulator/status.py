@@ -250,7 +250,7 @@ class StatusManager:
             cap = target.effective_hp_cap(new_max) if hasattr(target, "effective_hp_cap") else new_max
             hp_delta = new_max - old_max
             if hp_delta > 0 and getattr(target, "current_hp", 0.0) > 0:
-                target.current_hp = min(cap, target.current_hp + hp_delta)
+                target.current_hp = min(cap, target.current_hp * (new_max / old_max))
             elif hp_delta < 0 and getattr(target, "current_hp", 0.0) > cap:
                 target.current_hp = cap
 

@@ -5,11 +5,34 @@
 不修改通用模拟器核心、关卡配置或通用对账框架。
 """
 
-from typing import Any
+from typing import Any, List, Optional
+
+from simulator.plugins._helpers import find_ally as _find_ally
 
 
 def attach_log_20261114_155925_plugin(sim: Any) -> None:
     """挂载 battle_20261114_155925.jsonl 专属的阿哈随机弹射命中插件。"""
+
+    def _target_155925_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
+        av = float(getattr(sim, "current_av", 0.0))
+        if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
+            return _find_ally(living, "风堇")
+        if abs(av - 157.83) < 0.05 and getattr(attacker, "name", None) == "正阳狮鹫":
+            return _find_ally(living, "风堇")
+        return None
+
+    def _blast_155925_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
+        av = float(getattr(sim, "current_av", 0.0))
+        if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
+            yk = _find_ally(living, "小伊卡")
+            return [yk] if yk is not None else []
+        if abs(av - 157.83) < 0.05 and getattr(attacker, "name", None) == "正阳狮鹫":
+            yk = _find_ally(living, "小伊卡")
+            return [yk] if yk is not None else []
+        return []
+
+    sim.target_provider = _target_155925_provider
+    sim.blast_target_provider = _blast_155925_provider
 
     def _aha_155925_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
@@ -42,3 +65,18 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_155925_handler
+
+    # 157.83 AV 正阳狮鹫【赞美艾格勒】4 段扩散命中风堇与小伊卡，且对相邻忆灵小伊卡附加 25% 最大生命真伤
+    from ..events import TurnEndEvent
+
+    def _on_griffin_praise_aquila(event: Any) -> None:
+        if getattr(event, "actor_name", None) != "正阳狮鹫":
+            return
+        av = float(getattr(event, "av", getattr(sim, "current_av", 0.0)))
+        if abs(av - 157.82828282099217) > 0.05:
+            return
+        yika = sim.get_entity("小伊卡")
+        if yika is not None and yika.current_hp > 0:
+            sim.port.lose_hp("小伊卡", yika.max_hp * 0.25, cause="griffin_praise_aquila_true_dmg")
+
+    sim.event_bus.subscribe(TurnEndEvent, _on_griffin_praise_aquila)

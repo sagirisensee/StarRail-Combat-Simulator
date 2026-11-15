@@ -47,6 +47,7 @@ from typing import Any, List, Optional, Sequence
 
 from .core import Entity, TurnSimulator
 from .events import EnemySpawnedEvent
+from .stage_director import AnomalyWaveMode
 from .status import StatusTag
 
 GUARD_HP = 459777.8        # 千星戍卫 8032040 (日志 OnInitializeEnemy 实测 459777.75)
@@ -454,6 +455,7 @@ class Stage30510021Director:
     def __init__(self, sim: TurnSimulator):
         self.sim = sim
         self.sim._stage_director = self
+        self._wave_mode = AnomalyWaveMode(max_waves=2)
         self.wave2_started = False
         self.wave2_av: Optional[float] = None
         self.sprout_waves_spawned = 0
@@ -586,9 +588,10 @@ class Stage30510021Director:
                 boss.damage_reduction = 0.0
                 # 二阶段首领形态实测覆盖常规 10% 韧性减免为 0% (承伤乘区 1.00x)
                 boss.toughness_dmg_reduction = 0.0
-                # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点
+                # 二阶段起按 28.058 AV 节拍行动, 首动就在转阶段时点（转阶段首动不扣减自身负面状态回合）
                 boss.base_speed = BOSS_PHASE2_SPEED
                 boss.distance_remaining = 0.0
+                boss._skip_next_turn_end_tick = True
                 self._pending_transition_sprouts = True
                 self._next_sprout_av = av + SPROUT_INTERVAL_AV
                 self.sim.event_bus.publish(EnemySpawnedEvent(enemy_name=boss.name, is_wave_start=False, is_transition=True))
@@ -660,8 +663,9 @@ class Stage30510021Director:
     def after_step(self) -> None:
         if not self.wave2_started:
             if not any(self._alive(n) for n in WAVE1_NAMES):
+                self._wave_mode.advance_wave(self.sim)
                 self.wave2_started = True
-                self.wave2_av = float(getattr(self.sim, "current_av", 0.0))
+                self.wave2_av = self._wave_mode.wave2_av or float(getattr(self.sim, "current_av", 0.0))
                 boss = _boss()
                 boss.action_callback = _make_boss_ai(self.sim, self)
                 self.sim.add_entity(boss, trigger_battle_start=False)
@@ -711,6 +715,7 @@ class Stage30510021Director:
 def build_stage_30510021(
     team: List[Entity],
     technique_users: Optional[Sequence[str]] = None,
+    stage_mechanics: Optional[Sequence[str]] = None,
 ) -> tuple:
     """组装 30510021 场景: 返回 (sim, director)。team 为我方实体列表。"""
     from .actions import ActionKind, DamageType
@@ -741,14 +746,15 @@ def build_stage_30510021(
                     e.current_toughness = max(0.0, e.current_toughness - 30.0)
     enemies = [pegasus, lighthouse, guard_a, guard_b, guard_c]
 
-    # 关卡环境机制【血噬】: 我方实体回合开始时扣 500 点生命。
+    # 关卡环境机制 (异象仲裁模式支持可选词条，默认【血噬】)
     tech_list = list(technique_users) if technique_users is not None else None
+    mech_list = list(stage_mechanics) if stage_mechanics is not None else ["血噬"]
     sim = TurnSimulator(
         entities=list(team) + enemies,
         use_techniques=True,
         technique_users=tech_list,
         auto_ult=True,
-        stage_mechanics=["血噬"],
+        stage_mechanics=mech_list,
     )
     sim.enemy_target_oracle = {
         0.0: "长夜月",
@@ -817,10 +823,7 @@ def build_stage_30510021(
                     req = DamageRequest(attacker=lighthouse, target=tgt, skill_multiplier=1.35)
                     sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
                 sim.resolver.resolve_all()
-                if not inc_memo:
-                    _resolve_sub_action_hooks(sim)
-            if inc_memo:
-                _resolve_sub_action_hooks(sim)
+            _resolve_sub_action_hooks(sim)
             sim._action_seq += 1
             allies2 = [
                 e for e in sim.entities

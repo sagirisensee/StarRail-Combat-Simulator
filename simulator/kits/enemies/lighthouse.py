@@ -118,12 +118,12 @@ class LighthouseBossKit(EnemyKit):
             return
 
         if isinstance(event, EnemyActionCompleted):
-            if event.actor_id in self._guard_ids or event.actor_id in self._ally_ids:
+            if self._in_chue and (event.actor_id in self._guard_ids or event.actor_id in self._ally_ids):
                 self._set_wish_stacks(self._wish_stacks + 1)
             return
 
         if isinstance(event, FriendlyHitResolved):
-            if event.target_id == self.owner_id:
+            if self._in_chue and event.target_id == self.owner_id:
                 self._set_wish_stacks(self._wish_stacks - 1)
 
     def intercept_incoming_damage(self, target_id: str, raw_damage: float) -> float:

@@ -251,10 +251,14 @@ class SequenceRecorder:
     def _on_turn_begin(self, e: Any) -> None:
         self._open_turn(float(getattr(e, "av", 0.0)), e.actor_name)
 
+    def _ensure_turn(self, av: float, owner: str) -> TurnRecord:
+        if self.current is None or abs(av - self.current.av) > 0.02:
+            return self._open_turn(av, owner)
+        return self.current
+
     def _on_action(self, e: Any) -> None:
         self.raw_actions.append(e)
-        if self.current is None:
-            self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+        self._ensure_turn(float(getattr(e, "av", 0.0)), "环境/插队")
         actor_ent = self._lookup_entity(e.actor_name)
         if actor_ent is not None and getattr(actor_ent, "is_countdown", False):
             return  # 倒计时实体的结算是内部机制, 官方日志不记为技能施放
@@ -278,8 +282,7 @@ class SequenceRecorder:
     def _on_damage(self, e: Any) -> None:
         if self._is_enemy_actor(e.attacker_name):
             return
-        if self.current is None:
-            self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+        self._ensure_turn(float(getattr(e, "av", 0.0)), "环境/插队")
         dtype = getattr(e, "damage_type", None)
         dtype_value = getattr(dtype, "value", "Direct")
         self.current.damages.append(DamageHit(
@@ -291,8 +294,7 @@ class SequenceRecorder:
     def _on_break(self, e: Any) -> None:
         if self._is_enemy_actor(e.breaker_name):
             return
-        if self.current is None:
-            self._open_turn(float(getattr(e, "av", 0.0)), "环境/插队")
+        self._ensure_turn(float(getattr(e, "av", 0.0)), "环境/插队")
         self.current.damages.append(DamageHit(
             attacker=self._skill_actor(e.breaker_name),
             damage_type="Break",
@@ -1589,6 +1591,19 @@ def run_trajectory_replay(
             and abs(now_av - u_item.av) <= 0.5
         ):
             return True
+        if u_owner and u_owner not in _sim_player_actors(sim) and abs(now_av - u_item.av) <= 0.5:
+            if any(
+                e is not cur_turn
+                and getattr(e, "is_enemy", False)
+                and float(getattr(e, "current_hp", 0.0)) > 0.0
+                and getattr(e, "name", "").startswith(u_owner)
+                and float(getattr(e, "speed", 0.0)) > 0.0
+                and now_av + float(getattr(e, "distance_remaining", 0.0)) / float(e.speed) <= u_item.av + 1e-4
+                for e in getattr(sim, "entities", ())
+            ):
+                return True
+        if u_owner.startswith("UID_") and now_av < u_item.av - 1e-4:
+            return True
         u_turn_seq = getattr(u_item, "turn_seq", 0)
         if (
             u_owner in _sim_player_actors(sim)
@@ -1653,9 +1668,18 @@ def run_trajectory_replay(
         while (
             ult_queue
             and ult_queue[0][1].av <= now_av + 1e-4
-            and ult_queue[0][1].actor == act_name
-            and getattr(ult_queue[0][1], "turn_owner", "") == act_name
-            and act_name == "缇宝"
+            and (
+                (
+                    ult_queue[0][1].actor == act_name
+                    and getattr(ult_queue[0][1], "turn_owner", "") == act_name
+                    and act_name == "缇宝"
+                )
+                or (
+                    getattr(actor_ent, "is_enemy", False)
+                    and bool(getattr(ult_queue[0][1], "turn_owner", ""))
+                    and act_name.startswith(getattr(ult_queue[0][1], "turn_owner", ""))
+                )
+            )
             and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av)
         ):
             _idx, item = ult_queue.popleft()

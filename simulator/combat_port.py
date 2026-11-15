@@ -1038,6 +1038,8 @@ class SimulatorCombatPort:
             name=name,
             base_speed=base_speed,
             base_atk=0.0,
+            base_def=owner.base_def if owner else 600.0,
+            base_white_def=getattr(owner, "base_white_def", 0.0) if owner else 0.0,
             max_hp=max_hp,
             current_hp=max_hp,
             # 忆灵的百分比生命加成按主人白字生命结算 (官方样本实证: 长夜在

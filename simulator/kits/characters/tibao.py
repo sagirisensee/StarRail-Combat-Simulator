@@ -124,7 +124,8 @@ class TibaoKit(KitHandler):
                     target_id=ally,
                     modifiers=(Modifier(StatType.DEF_SHRED, ModifierOp.ADD, 0.18),),
                     duration=3,
-                    timing=DurationTiming.TARGET_TURN_END,
+                    timing=DurationTiming.CASTER_TURN_END,
+                    skip_current_clock=True,
                     category="buff",
                     description="结界期间无视目标 18.0% 防御力"
                 ))
@@ -715,7 +716,7 @@ class TibaoKit(KitHandler):
             ActionExecuteEvent, DamageAppliedEvent, SpiritSummonedEvent,
             SpiritDespawnEvent, StatusApplyEvent, StatusExpireEvent,
             TurnBeginEvent, TurnEndEvent, ActionEndEvent, PrimaryDamageCompleteEvent,
-            EnemySpawnedEvent
+            EnemySpawnedEvent, WeaknessBreakEvent
         )
         if isinstance(event, TurnBeginEvent):
             self._turn_started = True
@@ -767,6 +768,23 @@ class TibaoKit(KitHandler):
 
         elif isinstance(event, DamageAppliedEvent):
             self._on_zone_damage(event)
+
+        elif isinstance(event, WeaknessBreakEvent):
+            if self._zone_windows:
+                aid, window = next(reversed(self._zone_windows.items()))
+                if (
+                    aid != self._zone_settling_action
+                    and aid not in self._zone_finished_actions
+                    and self.port.is_ally(event.breaker_name)
+                    and not self.port.is_countdown(event.breaker_name)
+                    and not self.port.is_ally(event.target_name)
+                    and not self.port.is_barrier_guarded(event.target_name)
+                    and float(event.break_damage) > 0.0
+                ):
+                    window.zone_seen |= self.zone_active
+                    window.targets.add(event.target_name)
+                    window.damage_total += float(event.break_damage)
+                    window.true_base += float(event.break_damage)
 
         elif isinstance(event, PrimaryDamageCompleteEvent):
             from ._causal import require_id

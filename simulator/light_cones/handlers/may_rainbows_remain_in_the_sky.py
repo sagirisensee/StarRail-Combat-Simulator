@@ -31,6 +31,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         self._pool: float = 0.0
         self._spirit_action_open: bool = False
         self._spirit_hit_targets: List[str] = []
+        self._spirit_memosprite_mult: float = 1.0
 
     def on_action_before(self, ctx: ActionContext) -> None:
         """装备者施放普攻/战技/终结技时：全队各消耗当前生命值的固定比例，消耗量计入蓄池。"""
@@ -60,6 +61,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
             actor = event.actor_name or event.actor_id
             if self.port.is_own_memosprite(self.owner_id, actor):
                 self._spirit_action_open = True
+                self._spirit_memosprite_mult = self._calc_memosprite_mult()
                 if getattr(event, "action_kind", None) == ActionKind.MEMOSPRITE_SKILL:
                     self._apply_vulnerability()
         elif isinstance(event, DamageAppliedEvent):
@@ -87,6 +89,16 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 skip_current_clock=False,
                 tags=(StatusTag.TARGET_DEBUFF, StatusTag.PERSONAL_DURATION)
             ))
+
+    def _calc_memosprite_mult(self) -> float:
+        memosprite_mult = 1.0
+        for ally in self.port.allies(self.owner_id):
+            ent = self.port._get_entity(ally) if hasattr(self.port, "_get_entity") else None
+            kit = getattr(ent, "kit", None) if ent is not None else None
+            fn = getattr(kit, "_memosprite_damage_mult", None) if kit is not None else None
+            if callable(fn):
+                memosprite_mult *= float(fn())
+        return memosprite_mult
 
     def _flush_discharge(self) -> None:
         """结算蓄池：对忆灵上一个攻击行动命中过的每个目标造成 1 次附加伤害，随后清池。"""
@@ -121,13 +133,8 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 spirit_crit_dmg = float(self.port.stat(ally, StatType.CRIT_DMG))
                 break
 
-        memosprite_mult = 1.0
-        for ally in self.port.allies(self.owner_id):
-            ent = self.port._get_entity(ally) if hasattr(self.port, "_get_entity") else None
-            kit = getattr(ent, "kit", None) if ent is not None else None
-            fn = getattr(kit, "_memosprite_damage_mult", None) if kit is not None else None
-            if callable(fn):
-                memosprite_mult *= float(fn())
+        memosprite_mult = self._spirit_memosprite_mult
+        self._spirit_memosprite_mult = 1.0
 
         eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult * memosprite_mult
         for target in targets:

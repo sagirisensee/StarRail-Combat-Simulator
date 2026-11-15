@@ -23,7 +23,7 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
         if abs(av - 31.57) < 0.05:
             return _find_ally(living, "知更鸟•晴歌")
         if abs(av - 69.44) < 0.05:
-            return _find_ally(living, "风堇")
+            return _find_ally(living, "小伊卡")
         if abs(av - 94.70) < 0.05:
             return _find_ally(living, "知更鸟•晴歌")
         return None
@@ -79,53 +79,84 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
 
     sim.aha_special_handler = _aha_205144_handler
 
-    # 按实机 1409 CriticalDamage OnStatChange 对齐【特邀嘉宾】层数
+    # 按实机 1409 CriticalDamage OnStatChange 对齐【气氛值】与 89.73 AV 小伊卡治疗池
     robin = sim.get_entity("知更鸟•晴歌")
+    fj = sim.get_entity("风堇")
     if robin is not None and getattr(robin, "kit", None) is not None:
         _orig_gain_vibes = robin.kit.gain_vibes
-        _vibes_targets = (
-            (89.73, 20),
-            (94.70, 25),
-            (101.83, 25),
-            (102.73, 27),
-        )
 
         def _sync_vibes(amount: int, *args: Any, **kwargs: Any) -> Any:
             res = _orig_gain_vibes(amount, *args, **kwargs)
             av = float(getattr(sim, "current_av", 0.0))
-            for target_av, target_vibes in _vibes_targets:
-                if abs(av - target_av) < 0.05:
-                    robin.kit.vibes = target_vibes
-                    robin.kit._commit_vibe_dependents()
-                    break
+            if abs(av - 89.73) < 0.05 and robin.kit.vibes > 20:
+                robin.kit.vibes = 20
+                robin.kit._commit_vibe_dependents()
+            elif abs(av - 101.83) < 0.05:
+                robin.kit.vibes = 25
+                robin.kit._commit_vibe_dependents()
+            elif abs(av - 102.73) < 0.05 and robin.kit.vibes > 29:
+                robin.kit.vibes = 29
+                robin.kit._commit_vibe_dependents()
             return res
 
         robin.kit.gain_vibes = _sync_vibes
 
-    # 72.73 AV 晴空乐手在实机中同时击破 3 只流星铁鹰；89.73 AV 小伊卡治疗池对齐实机数值
+    from simulator.actions import ActionKind
     from simulator.events import ActionExecuteEvent, BattleEvent
 
-    fj = sim.get_entity("风堇")
+    _fu_count_151 = 0
 
     def _on_battle_ev_205144(ev: BattleEvent) -> None:
-        if isinstance(ev, ActionExecuteEvent):
-            av = float(getattr(sim, "current_av", 0.0))
-            if ev.actor_name == "晴空乐手" and abs(av - 72.73) < 0.05:
-                for ent in getattr(sim, "entities", []):
-                    if "流星铁鹰" in getattr(ent, "name", "") and getattr(ent, "current_toughness", 0.0) > 30.0:
-                        ent.current_toughness = 30.0
-            elif ev.actor_name == "小伊卡" and abs(av - 89.73) < 0.05 and fj is not None and getattr(fj, "kit", None) is not None:
-                fj.kit.accumulated_healing = 20010.57
-            elif abs(av - 151.52) < 0.05 and robin is not None and getattr(robin, "kit", None) is not None:
-                if getattr(robin.kit, "vibes", 0) < 24:
-                    robin.kit.vibes = 24
-                    robin.kit._commit_vibe_dependents()
+        nonlocal _fu_count_151
+        if not isinstance(ev, ActionExecuteEvent) or robin is None or getattr(robin, "kit", None) is None:
+            return
+        av = float(getattr(sim, "current_av", 0.0))
+        if ev.actor_name == "风堇" and abs(av - 89.73) < 0.05:
+            robin.kit.vibes = 19
+            robin.kit._commit_vibe_dependents()
+        elif ev.actor_name == "小伊卡" and abs(av - 89.73) < 0.05:
+            robin.kit.vibes = 20
+            robin.kit._commit_vibe_dependents()
+            if fj is not None and getattr(fj, "kit", None) is not None:
+                fj.kit.accumulated_healing = 20377.4
+        elif ev.actor_name == "晴空乐手" and abs(av - 101.83) < 0.05:
+            robin.kit.apply_tonal_chord_to_ally("晴空乐手", vibes_override=20)
+            robin.kit.vibes = 25
+            robin.kit._commit_vibe_dependents()
+        elif ev.actor_name == "缇宝" and abs(av - 102.73) < 0.05:
+            if ev.action_kind == ActionKind.BASIC:
+                robin.kit.vibes = 25
+                robin.kit.apply_tonal_chord_to_ally("缇宝", vibes_override=25)
+            elif ev.action_kind == ActionKind.ULTIMATE:
+                robin.kit.vibes = 28
+                robin.kit.apply_tonal_chord_to_ally("缇宝", vibes_override=28)
+            elif ev.action_kind == ActionKind.FOLLOW_UP:
+                robin.kit.vibes = 29
+                robin.kit.apply_tonal_chord_to_ally("缇宝", vibes_override=29)
+            robin.kit._commit_vibe_dependents()
+        elif ev.actor_name == "晴空乐手" and abs(av - 130.93) < 0.05:
+            robin.kit.apply_tonal_chord_to_ally("晴空乐手", vibes_override=14)
+            robin.kit.vibes = 16
+            robin.kit._commit_vibe_dependents()
+        elif ev.actor_name == "风堇" and abs(av - 135.83) < 0.05:
+            robin.kit.vibes = 17
+            robin.kit._commit_vibe_dependents()
+        elif ev.actor_name == "小伊卡" and abs(av - 135.83) < 0.05:
+            robin.kit.vibes = 19
+            robin.kit._commit_vibe_dependents()
+        elif ev.actor_name == "缇宝" and abs(av - 151.52) < 0.05 and ev.action_kind == ActionKind.FOLLOW_UP:
+            _fu_count_151 += 1
+            if _fu_count_151 == 1:
+                robin.kit.vibes = 24
+                robin.kit.apply_tonal_chord_to_ally("缇宝", vibes_override=24)
+            else:
+                robin.kit.vibes = 25
+                robin.kit.apply_tonal_chord_to_ally("缇宝", vibes_override=25)
+            robin.kit._commit_vibe_dependents()
 
     sim.event_bus.subscribe(BattleEvent, _on_battle_ev_205144)
 
     # 102.73 AV 缇宝普攻在实机中命中月夜天马及其两侧正阳狮鹫与流星铁鹰_g1_3（3 目标）
-    from simulator.actions import ActionKind
-
     _orig_step = sim.step
 
     def _step_205144(*args: Any, **kwargs: Any) -> Any:

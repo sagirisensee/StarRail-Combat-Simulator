@@ -197,6 +197,10 @@ class TurnSimulator:
             self.resolver.resolve_all()
 
     def add_entity(self, entity: Entity, trigger_battle_start: bool = True):
+        if getattr(entity, "_spawn_seq", None) is None:
+            seq = getattr(self, "_next_spawn_seq", 0) + 1
+            self._next_spawn_seq = seq
+            entity._spawn_seq = seq
         entity.simulator = self
         self.entities.append(entity)
         if getattr(entity, "kit", None) is not None:
@@ -628,7 +632,10 @@ class TurnSimulator:
 
     def _end_current_turn(self, active_entity: Entity) -> None:
         """执行自然回合收尾：结算回合末状态时钟、韧性恢复、发布 TurnEndEvent 并重置跑道距离。"""
-        self.status_mgr.tick_on_turn_end(active_entity)
+        if getattr(active_entity, "_skip_next_turn_end_tick", False):
+            active_entity._skip_next_turn_end_tick = False
+        else:
+            self.status_mgr.tick_on_turn_end(active_entity)
 
         if active_entity.is_broken:
             active_entity.is_broken = False

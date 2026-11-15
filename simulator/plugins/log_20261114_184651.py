@@ -28,7 +28,7 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
         if abs(av - 114.90) < 0.05:
             return _find_ally(living, "长夜月")
         if abs(av - 157.83) < 0.05:
-            return _find_ally(living, "长夜月" if hit_idx % 2 == 0 else "风堇")
+            return _find_ally(living, "小伊卡")
         if abs(av - 220.96) < 0.05:
             return _find_ally(living, "长夜月")
         return None
@@ -38,6 +38,14 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
         # 31.57 AV 正阳狮鹫扩散在实机中仅命中长夜月
         if abs(av - 31.57) < 0.05:
             return []
+        # 157.83 AV 正阳狮鹫点名小伊卡，扩散命中长夜月与风堇
+        if abs(av - 157.83) < 0.05:
+            res: List[Any] = []
+            for name in ("长夜月", "风堇"):
+                ent = _find_ally(living, name)
+                if ent is not None:
+                    res.append(ent)
+            return res
         # 220.96 AV 正阳狮鹫扩散命中长夜月与风堇
         if abs(av - 220.96) < 0.05:
             fj = _find_ally(living, "风堇")

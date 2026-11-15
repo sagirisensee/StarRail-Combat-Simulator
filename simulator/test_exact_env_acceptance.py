@@ -104,7 +104,7 @@ class TestExactEnvAcceptance(unittest.TestCase):
         self.assertLess(abs(actor_map["缇宝"]["deviation_pct"]), 4.0)
         self.assertLess(abs(actor_map["长夜月"]["deviation_pct"]), 4.5)
         self.assertAlmostEqual(actor_map["缇宝"]["sim_hits"], 396, delta=2)
-        self.assertEqual(actor_map["长夜月 (忆灵)"]["sim_hits"], 42)
+        self.assertEqual(actor_map["长夜月 (忆灵)"]["sim_hits"], actor_map["长夜月 (忆灵)"]["golden_hits"])
 
 
 if __name__ == "__main__":

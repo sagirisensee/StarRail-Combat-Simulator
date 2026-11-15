@@ -69,9 +69,19 @@ class TestStage30126122Alignment(unittest.TestCase):
             self.assertEqual(rec["fixed_laugh_points"], 20)
             self.assertEqual(rec["consumed_laugh_points"], 0)
 
-        # 3. 伤害量级对齐确认 (总伤偏差 < 0.2%)
+        # 3. 伤害量级对齐确认 (总伤偏差 < 0.2%，且逐回合偏差 < 0.2%)
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"30126122 总伤偏差过大: {err:.2%}")
+        gt_turns = [t for t in g.turns if t.total_damage > 0]
+        sim_turns = [t for t in traj.replay.sequence.turns if t.total_damage > 0]
+        self.assertEqual(len(gt_turns), len(sim_turns))
+        for gt_t, sim_t in zip(gt_turns, sim_turns):
+            turn_err = abs(sim_t.total_damage - gt_t.total_damage) / gt_t.total_damage
+            self.assertLess(
+                turn_err,
+                0.002,
+                f"155925 av={gt_t.av:.2f} 单动偏差过大: sim={sim_t.total_damage:.2f} gt={gt_t.total_damage:.2f} ({turn_err:+.3%})",
+            )
 
     def test_20261114_184651_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_184651.jsonl")
@@ -104,6 +114,28 @@ class TestStage30126122Alignment(unittest.TestCase):
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"184651 总伤偏差过大: {err:.2%}")
 
+        gt_by_av = {}
+        for t in g.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                gt_by_av[av] = gt_by_av.get(av, 0.0) + amt
+        sim_by_av = {}
+        for t in traj.replay.sequence.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                sim_by_av[av] = sim_by_av.get(av, 0.0) + amt
+        self.assertEqual(set(sim_by_av.keys()), set(gt_by_av.keys()))
+        for av, gt_dmg in sorted(gt_by_av.items()):
+            sim_dmg = sim_by_av[av]
+            turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
+            self.assertLess(
+                turn_err,
+                0.002,
+                f"184651 AV={av:.2f} 单动伤害偏差过大: {turn_err:.3%} (GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+            )
+
     def test_20261114_184845_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_184845.jsonl")
         g = parse_golden_jsonl(log_path)
@@ -132,6 +164,27 @@ class TestStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"184845 总伤偏差过大: {err:.2%}")
+        gt_by_av = {}
+        for t in g.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                gt_by_av[av] = gt_by_av.get(av, 0.0) + amt
+        sim_by_av = {}
+        for t in traj.replay.sequence.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                sim_by_av[av] = sim_by_av.get(av, 0.0) + amt
+        self.assertEqual(set(sim_by_av.keys()), set(gt_by_av.keys()))
+        for av, gt_dmg in sorted(gt_by_av.items()):
+            sim_dmg = sim_by_av[av]
+            turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
+            self.assertLess(
+                turn_err,
+                0.002,
+                f"184845 AV={av:.2f} 单动伤害偏差过大: {turn_err:.3%} (GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+            )
 
     def test_20261114_204943_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_204943.jsonl")
@@ -163,6 +216,27 @@ class TestStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"204943 总伤偏差过大: {err:.2%}")
+
+        def _ally_turn_damages(turns):
+            by_av = {}
+            for t in turns:
+                amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+                if amt > 0:
+                    av = round(t.av, 2)
+                    by_av[av] = by_av.get(av, 0.0) + amt
+            return by_av
+
+        gt_by_av = _ally_turn_damages(g.turns)
+        sim_by_av = _ally_turn_damages(traj.replay.sequence.turns)
+        self.assertEqual(set(sim_by_av.keys()), set(gt_by_av.keys()))
+        for av, gt_dmg in sorted(gt_by_av.items()):
+            sim_dmg = sim_by_av[av]
+            turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
+            self.assertLess(
+                turn_err,
+                0.002,
+                f"204943 AV={av:.2f} 单动伤害偏差过大: {turn_err:.3%} (GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+            )
 
     def test_20261114_205144_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_205144.jsonl")
@@ -198,6 +272,28 @@ class TestStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"205144 总伤偏差过大: {err:.2%}")
+
+        gt_by_av = {}
+        for t in g.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                gt_by_av[av] = gt_by_av.get(av, 0.0) + amt
+        sim_by_av = {}
+        for t in traj.replay.sequence.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                sim_by_av[av] = sim_by_av.get(av, 0.0) + amt
+        self.assertEqual(set(sim_by_av.keys()), set(gt_by_av.keys()))
+        for av, gt_dmg in sorted(gt_by_av.items()):
+            sim_dmg = sim_by_av[av]
+            turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
+            self.assertLess(
+                turn_err,
+                0.002,
+                f"205144 AV={av:.2f} 单动伤害偏差过大: {turn_err:.3%} (GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+            )
 
     def test_20261114_220255_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_220255.jsonl")

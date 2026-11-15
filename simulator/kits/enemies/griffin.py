@@ -34,12 +34,23 @@ class SunlitGriffinKit(EnemyKit):
         self,
         owner_id: str,
         port: GriffinCombatPort,
+        *,
+        windwalk_ready: bool = False,
     ) -> None:
         super().__init__(owner_id, port)
         self._generation = 0
         self._turn_count = 0
         self._turns_since_summon = 0
         self._summon_ids: Tuple[str, ...] = ()
+        self._windwalk_ready = windwalk_ready
+
+    @property
+    def windwalk_ready(self) -> bool:
+        return self._windwalk_ready
+
+    @windwalk_ready.setter
+    def windwalk_ready(self, value: bool) -> None:
+        self._windwalk_ready = bool(value)
 
     @property
     def generation(self) -> int:
@@ -109,6 +120,9 @@ class SunlitGriffinKit(EnemyKit):
                     hits=1,
                 )
                 self._apply_aquila_marks(allies)
+            if self._windwalk_ready:
+                self._windwalk_ready = False
+                return EnemyActionResult(reset_distance=0.0)
             return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
 
         self._turns_since_summon += 1
@@ -116,7 +130,7 @@ class SunlitGriffinKit(EnemyKit):
             # 常规攻击节奏: 召唤后第 1 动单体攻击 (实机 94.70 AV 扣血 991.46) / 第 2 动 4 段单体扑击
             if self._turns_since_summon % 2 == 1:
                 target = allies[0]
-                self.port.apply_enemy_attack(
+                resolved = self.port.apply_enemy_attack(
                     owner_id=self.owner_id,
                     target_ids=(target,),
                     multiplier=1.10,
@@ -124,18 +138,26 @@ class SunlitGriffinKit(EnemyKit):
                     hit_energy=5.0,
                     hits=1,
                 )
-                self._apply_aquila_marks((target,))
+                if resolved:
+                    self._apply_aquila_marks(resolved)
             else:
                 target = allies[0]
-                self.port.apply_enemy_attack(
+                resolved = self.port.apply_enemy_attack(
                     owner_id=self.owner_id,
                     target_ids=(target,),
                     multiplier=0.365,
                     element="Physical",
                     hit_energy=5.0,
                     hits=4,
+                    blast=True,
+                    adjacent_multiplier_ratio=0.75,
                 )
-                self._apply_aquila_marks((target,))
+                if resolved:
+                    self._apply_aquila_marks(resolved)
+
+        if self._windwalk_ready:
+            self._windwalk_ready = False
+            return EnemyActionResult(reset_distance=0.0)
 
         return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
 
@@ -146,6 +168,9 @@ class SunlitGriffinKit(EnemyKit):
 
     def on_event(self, event: Any) -> None:
         if not self.port.is_alive(self.owner_id):
+            return
+        from ...events import EnemyDefeatedEvent
+        if not isinstance(event, EnemyDefeatedEvent):
             return
         # 监听实体阵亡事件: 若阵亡者为己方召唤的流星铁鹰，解除【艾格勒印记】
         defeated_id = (

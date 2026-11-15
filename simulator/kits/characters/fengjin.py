@@ -645,9 +645,10 @@ class FengjinKit(KitHandler):
 
         self._handle_e1_action_event(event)
 
-    def _apply_weather_is_fine_to_target(self, target_id: str) -> None:
-        max_hp = self.port.max_hp(self.owner_id)
-        raw_heal = max_hp * 0.30 + 600.0
+    def _apply_weather_is_fine_to_target(self, target_id: str, raw_heal: Optional[float] = None) -> None:
+        if raw_heal is None:
+            max_hp = self.port.max_hp(self.owner_id)
+            raw_heal = max_hp * 0.30 + 600.0
         self.port.heal(self.owner_id, target_id, self._apply_outgoing_healing(raw_heal, target_id))
         self.port.upsert_status(BuffSpec(
             key=f"Fengjin_Tech_WeatherIsFine_{target_id}",
@@ -666,10 +667,11 @@ class FengjinKit(KitHandler):
         """秘技【天气正好，万物可爱！】：进场回复 30% HP + 600，生命上限提高 20%，持续 2 回合。"""
         self._sync_storm_calm()
         self._tech_weather_is_fine_used = True
+        raw_heal = self.port.max_hp(self.owner_id) * 0.30 + 600.0
         for ally in self.port.allies(self.owner_id):
             if hasattr(self.port, "is_countdown") and self.port.is_countdown(ally):
                 continue
-            self._apply_weather_is_fine_to_target(ally)
+            self._apply_weather_is_fine_to_target(ally, raw_heal=raw_heal)
 
 
 
@@ -798,7 +800,10 @@ class IkaKit(KitHandler):
             master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
             if base_value > 0.0:
                 eq_mult = base_value / my_max_hp
-                for enemy in list(self.port.enemies(self.owner_id)):
+                enemies = list(self.port.enemies(self.owner_id))
+                if hasattr(self.port, "_get_entity"):
+                    enemies.sort(key=lambda eid: getattr(self.port._get_entity(eid), "_spawn_seq", 0))
+                for enemy in enemies:
                     if not self.port.entity_exists(enemy):
                         continue
                     self.port.attack(

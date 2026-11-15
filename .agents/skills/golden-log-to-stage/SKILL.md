@@ -57,7 +57,10 @@ Inspect `battle_logs/battle_<tag>.jsonl`:
 ### Step 4: Implement Log Plugin (`simulator/plugins/log_<tag>.py`)
 - Add `attach_log_<tag>_plugin(sim)` in `simulator/plugins/log_<tag>.py` for **all** log-specific RNG hit sequences:
   - `sim.aha_special_handler`: Aha / environmental random bounce damage & ally chip hits;
+    - **Distribute `apply_aha_ally_chip_hit` across actual distinct allies** (e.g. `风堇`, `知更鸟•晴歌`, `晴空乐手`) rather than dumping all hits onto one character. Dumping all chip hits onto one target causes `IkaKit._resolve_talent_heal()` to batch them into a single heal instead of healing each damaged ally, drifting `acc_heal` / `Servant` damage.
   - `sim.target_provider(attacker, living, hit_idx)` & `sim.blast_target_provider(attacker, primary, living)`: exact enemy single-target / bounce / blast targets observed in the log's `OnStatChange` (`CurrentHP`) drops (crucial for healers/tanks like Hyacine whose damage scales with ally healing pools).
+  - **Do not omit memosprites/summons in AoE or mark detonations**: Official logs (`OnStatChange`) only emit `CurrentHP` for character UIDs, not memosprites/summons (`小伊卡`, `晴空乐手`). When scripting enemy AoE or `trigger_oronyx_detonation`, still include living memosprites/summons per the enemy kit, and temporarily set `sim.target_provider = None` around explicit detonation calls so `target_provider` does not redirect them to a character.
+  - **Never call `sim.resolver.resolve_all()` inside a `TurnBeginEvent` plugin listener**: `attach_log_<tag>_plugin(sim)` is attached *before* `run_trajectory_replay(...)`, so plugin `TurnBeginEvent` listeners run *before* `ReplayRecorder._on_turn_begin`. Calling `resolve_all()` there emits `DamageAppliedEvent` before `ReplayRecorder` opens the new `TurnRecord`, bucketing enemy-turn DoTs into the *previous* turn. Only call `sim.resolver.enqueue(...)`; `core.py`'s `run_stage_turn_begin` calls `resolve_all()` immediately after `TurnBeginEvent` finishes publishing.
 - Add `OFFICIAL_<tag>_NON_CRITS` in `simulator/plugins/non_crit_ledgers.py` (or `set()` if 100% crit).
 
 ### Step 5: Create Alignment Test (`simulator/test_<stage_id>_alignment.py`) & Verify
@@ -72,8 +75,9 @@ Inspect `battle_logs/battle_<tag>.jsonl`:
    - `turn_matched == turn_total`, `ult_matched == ult_total`
    - `sp_granted == 0`, `memoria_granted == 0.0`, `presence_grants == 0`
    - `err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"] < 0.002` (`< 0.2%`)
+   - **Per-turn `< 0.2%` assertion**: Compare `g.turns` vs `traj.replay.sequence.turns` grouped by `round(t.av, 2)` for every player/ally turn (`< 0.002`), ensuring no hidden turn-level error cancellation.
 4. Run targeted pytest (avoid bare `pytest` so `scratch/` is not collected):
    ```powershell
    pytest simulator/test_<stage_id>_alignment.py simulator/test_stage_<stage_id>_enemies.py -q
    ```
-5. Also inspect per-turn and per-hit errors; report any remaining > 0.2% hits transparently without hardcoding workarounds.
+5. Also inspect per-turn and per-hit errors; report any remaining > 0.2% sub-type hits transparently without hardcoding workarounds.

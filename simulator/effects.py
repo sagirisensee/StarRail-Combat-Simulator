@@ -300,6 +300,12 @@ class EffectResolver:
                         if hasattr(target, "current_hp"):
                             target.current_hp = max(0.0, target.current_hp - break_dmg)
 
+                        if effect.element == "Quantum":
+                            self.enqueue(DelayActionEffect(
+                                source_name="量子纠缠推条",
+                                target=target,
+                                percent=0.20 * (1.0 + be)
+                            ))
                         bus.publish(WeaknessBreakEvent(
                             av=round(av, 2),
                             cycle=cycle,

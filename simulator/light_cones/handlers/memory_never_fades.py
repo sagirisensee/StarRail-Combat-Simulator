@@ -38,24 +38,6 @@ class MemoryNeverFadesHandler(LightConeHandler):
                 ))
 
     def on_event(self, event: Any) -> None:
-        """新召唤的己方忆灵若在【收取】持续期内入场，自动同步获得全队增伤状态并与装备者母状态联动到期。"""
-        if not self.port:
-            return
-        from ...events import SpiritSummonedEvent
-        if isinstance(event, SpiritSummonedEvent):
-            sp_name = event.spirit_name
-            if not self.port.is_ally(sp_name) or (hasattr(self.port, "is_countdown") and self.port.is_countdown(sp_name)):
-                return
-            if self.port.has_status(self.owner_id, "LC_MemoryNeverFades_DmgBuff"):
-                dmg_val = self.scale(self.DMG_BOOST_VALUES)
-                self.port.upsert_status(BuffSpec(
-                    key="LC_MemoryNeverFades_DmgBuff",
-                    name=f"收取 (记忆永不落幕S{self.superimposition}全队增伤{dmg_val*100:.0f}%)",
-                    source_id=self.owner_id,
-                    target_id=sp_name,
-                    modifiers=(Modifier(StatType.DMG_BOOST, ModifierOp.ADD, dmg_val),),
-                    duration=None,
-                    timing=DurationTiming.CASTER_TURN_END,
-                    parent_key="LC_MemoryNeverFades_DmgBuff",
-                    parent_target_name=self.owner_id,
-                ))
+        # 记忆永不落幕的【收取】是施放战技时对当前在场我方全体施加的一次性增益，
+        # 不会对后续新召唤入场的忆灵追授 (30510021 全场 17 次长夜动次 -0.05% 实证)。
+        return

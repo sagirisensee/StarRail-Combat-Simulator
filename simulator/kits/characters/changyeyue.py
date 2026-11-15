@@ -1207,37 +1207,16 @@ class ChangyeyueKit(KitHandler):
                     description="全属性伤害提高 +60.0%"
                 ))
 
-            # 终结技暴伤快照口径 (官方 96 动逐动实测):
-            # - 长夜在场施放: 全量计入其当前暴伤 (分享/和弦/A6 均计, #281.4 场);
-            # - 长夜刚退场、由本终结技重新召回: 战技分享若已由真实战技激活且
-            #   标记未过期则计入 (#25: 分享计入), 但长夜自身的和弦快照不计入
-            #   本次快照 (#25 实测); 开局秘技的同名分享不算激活 (#08 实测:
-            #   秘技分享不进入终结技快照)。
-            is_special_guest = self.port.has_status(self.owner_id, "Robin_Ult_SpecialGuest")
-            skill_share_active = (
-                self._skill_share_from_skill
-                and self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg")
-            )
-            full_spirit_sync = (
-                was_spirit_alive
-                or skill_share_active
-                or is_special_guest
-            )
-            spirit_cd = self._spirit_crit_dmg(
-                include_skill_shared=bool(was_spirit_alive or skill_share_active)
-            ) or 0.0
-            if full_spirit_sync:
-                # 战技分享为施法快照值；终结技触发长夜月 A2 产生的 +15% 暴伤不应再次通过战技 24% 传递给长夜
-                if was_spirit_alive and self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
-                    a2_repeat_share = 0.15 * float(self.skill_param("skill", 0, default=0.24))
-                    spirit_cd -= a2_repeat_share
-                robin_chord = next((s for s in self.port.statuses(self.owner_id) if "TonalChord" in s.id), None)
-                if robin_chord:
-                    spirit_names = {s.name for s in self.port.statuses(self.spirit_name)}
-                    if robin_chord.name not in spirit_names:
-                        for m in robin_chord.modifiers:
-                            if m.stat == StatType.CRIT_DMG:
-                                spirit_cd += m.value
+            # 终结技由忆灵「长夜」协同施放：使用召唤后「长夜」当下的实时暴伤与增伤面板
+            if self.port.entity_exists(self.spirit_name):
+                self._refresh_skill_shared_crit_dmg()
+                spirit_cd = float(self.port.stat(self.spirit_name, StatType.CRIT_DMG))
+                spirit_dmg = float(self.port.stat(self.spirit_name, StatType.DMG_BOOST))
+                owner_dmg = float(self.port.stat(self.owner_id, StatType.DMG_BOOST))
+                dmg_boost_delta = spirit_dmg - owner_dmg
+            else:
+                spirit_cd = float(self.port.stat(self.owner_id, StatType.CRIT_DMG))
+                dmg_boost_delta = 0.0
             spirit_hp = self.spirit_max_hp
             owner_hp = self.port.max_hp(self.owner_id)
             ult_hp_ratio = (spirit_hp / owner_hp) if owner_hp > 0 else self._spirit_hp_scale_ratio()
@@ -1251,7 +1230,8 @@ class ChangyeyueKit(KitHandler):
                     toughness_damage=90.0,
                     damage_type=DamageType.ULTIMATE,
                     scaling_stat="hp",
-                    fixed_crit_dmg=spirit_cd
+                    fixed_crit_dmg=spirit_cd,
+                    extra_dmg_boost=dmg_boost_delta,
                 )
 
             # 终结技基础回能 5 点 (官方数据源 141303 sp_base: 5；行迹【烛火起，烛火熄】回能 5 点与忆质由 on_event 统一结算)

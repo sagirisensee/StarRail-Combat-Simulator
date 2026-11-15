@@ -100,8 +100,9 @@ class TestEnemyKitsUnit(unittest.TestCase):
         port = Stage30126122CombatPort(sim)
         kit = MoonlitPegasusKit(owner_id=pegasus.name, port=port)
 
-        # Turn 1: 施加欧洛尼斯印记
+        # Turn 1: 常规单体攻击；Turn 2: 3 段扩散攻击并施加欧洛尼斯印记
         kit.execute_turn(EnemyActionContext(action_id="p1", actor_id=pegasus.name))
+        kit.execute_turn(EnemyActionContext(action_id="p2", actor_id=pegasus.name))
         self.assertTrue(port.has_mark_status(target_id=ally.name, mark_key=ORONYX_MARK_KEY))
 
         # 我方施放终结技 -> 清除印记

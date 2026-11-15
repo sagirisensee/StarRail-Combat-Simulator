@@ -30,6 +30,8 @@ def attach_log_20261114_184845_plugin(sim: Any) -> None:
         if aname == "月夜天马":
             if av == 75.76:
                 return _pick(candidates, "缇宝")
+            if av == 151.52:
+                return _pick(candidates, "风堇")
             if av == 227.27:
                 return _pick(candidates, "风堇")
         if aname == "流星铁鹰_g1_1":
@@ -43,8 +45,10 @@ def attach_log_20261114_184845_plugin(sim: Any) -> None:
             return _pick(candidates, "风堇")
         return None
 
-    def _enemy_windwalk_184845(eagle_name: str, generation: int, idx: int) -> bool:
-        return generation == 1 and idx == 2
+    def _enemy_windwalk_184845(eagle_name: str, generation: int, idx: int) -> Any:
+        if generation == 1 and idx == 2:
+            return "月夜天马"
+        return False
 
     def _aha_184845_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
@@ -76,6 +80,15 @@ def attach_log_20261114_184845_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit("缇宝")
             director.flush_ally_talent_heals()
 
+    def _blast_184845_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
+        av = float(getattr(sim, "current_av", 0.0))
+        if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
+            return [e for e in living if getattr(e, "name", None) in ("缇宝", "小伊卡")]
+        if abs(av - 157.83) < 0.05:
+            return []
+        return []
+
     sim.target_provider = _target_184845_provider
+    sim.blast_target_provider = _blast_184845_provider
     sim.enemy_windwalk_provider = _enemy_windwalk_184845
     sim.aha_special_handler = _aha_184845_handler
