@@ -91,6 +91,29 @@ class BaseEnemyCombatPort(Protocol):
         """对目标叠加【噬命】生命上限锁定比例（仅限制 current_hp 上限）。"""
         ...
 
+    def apply_corruption(
+        self,
+        *,
+        owner_id: str,
+        target_id: str,
+        delta_stacks: int = 1,
+    ) -> bool:
+        """为我方目标叠加【堕神衰腐】层数，若叠满 3 层则自动触发【幻身】(Phantom)。"""
+        ...
+
+    def set_phantom_state(
+        self,
+        target_id: str,
+        *,
+        active: bool,
+        proxy_name: str = "狂躁的铃音",
+        proxy_uid: int = 6025,
+        proxy_hp: float = 9002.091353935655,
+        tb_hp_add: Optional[float] = None,
+    ) -> None:
+        """设置目标的【幻身】(Phantom) 替身代理状态。"""
+        ...
+
 
 class PegasusCombatPort(BaseEnemyCombatPort, Protocol):
     """月夜天马专用端口协议。"""

@@ -320,6 +320,7 @@ class Stage30126122Director:
         wave2_factory: Optional[Callable[[TurnSimulator], List[Entity]]] = None,
     ) -> None:
         self.sim = sim
+        self.port = Stage30126122CombatPort(sim)
         self.stage_id = STAGE_ID
         self.max_cycles = MAX_CYCLES
         self.max_waves = MAX_WAVES

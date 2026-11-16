@@ -214,6 +214,11 @@ class CombatPort(Protocol):
         white_hp_ratio: float = 1.0
     ) -> Any: ...
     def despawn_spirit(self, name: str, reason: str = "") -> None: ...
+    def get_active_proxy(self, entity_id: str) -> Optional[str]: ...
+    def is_action_suppressed(self, entity_id: str) -> bool: ...
+    def set_action_suppressed(self, entity_id: str, suppressed: bool) -> None: ...
+    def register_proxy(self, original_id: str, proxy_id: str) -> None: ...
+    def remove_proxy(self, original_id: str) -> None: ...
 
 
 class SimulatorCombatPort:
@@ -228,6 +233,32 @@ class SimulatorCombatPort:
         self._preserved_memosprite_statuses: Dict[str, List[Any]] = {}
         self._known_masters: Dict[str, str] = {}
         self._known_memosprites: set = set()
+        self._proxies: Dict[str, str] = {}
+        self._proxy_reverse: Dict[str, str] = {}
+        self._suppressed_entities: Set[str] = set()
+
+    def get_active_proxy(self, entity_id: str) -> Optional[str]:
+        return self._proxies.get(entity_id)
+
+    def is_action_suppressed(self, entity_id: str) -> bool:
+        return entity_id in self._suppressed_entities or entity_id in self._proxies
+
+    def set_action_suppressed(self, entity_id: str, suppressed: bool) -> None:
+        if suppressed:
+            self._suppressed_entities.add(entity_id)
+        else:
+            self._suppressed_entities.discard(entity_id)
+
+    def register_proxy(self, original_id: str, proxy_id: str) -> None:
+        self._proxies[original_id] = proxy_id
+        self._proxy_reverse[proxy_id] = original_id
+        self._suppressed_entities.add(original_id)
+
+    def remove_proxy(self, original_id: str) -> None:
+        proxy_id = self._proxies.pop(original_id, None)
+        if proxy_id:
+            self._proxy_reverse.pop(proxy_id, None)
+        self._suppressed_entities.discard(original_id)
 
     def is_action_ready(self, entity_id: str) -> bool:
         """检查实体是否已完成入场屏障稳定化并具备行动资格。"""
@@ -347,6 +378,8 @@ class SimulatorCombatPort:
                 if master and getattr(master, "kit", None) and hasattr(master.kit, "spirit_alive"):
                     if not master.kit.spirit_alive:
                         continue
+            if getattr(e, "is_proxy", False):
+                continue
             if e.current_hp > 0 or getattr(e, "is_infinite_hp", False):
                 res.append(e.name)
         return tuple(res)
@@ -670,6 +703,8 @@ class SimulatorCombatPort:
         return actual
 
     def heal(self, source_id: str, target_id: str, amount: float) -> None:
+        if self.get_active_proxy(target_id):
+            return
         tgt = self._get_entity(target_id)
         if tgt and hasattr(tgt, "current_hp"):
             cur_max = self.max_hp(target_id) or tgt.max_hp
@@ -709,7 +744,9 @@ class SimulatorCombatPort:
         return ent.max_energy if ent else 120.0
 
     def current_hp(self, entity_id: str) -> float:
-        ent = self._get_entity(entity_id)
+        proxy_id = self.get_active_proxy(entity_id)
+        target = proxy_id if proxy_id else entity_id
+        ent = self._get_entity(target)
         return getattr(ent, "current_hp", 0.0) if ent else 0.0
 
     def hp_ratio(self, entity_id: str) -> float:
@@ -951,7 +988,9 @@ class SimulatorCombatPort:
         return new_hp - prev_hp
 
     def lose_hp(self, entity_id: str, amount: float, cause: str = "", *, absorb_by_shield: bool = False) -> None:
-        ent = self._get_entity(entity_id)
+        proxy_id = self.get_active_proxy(entity_id)
+        target = proxy_id if proxy_id else entity_id
+        ent = self._get_entity(target)
         if ent:
             if getattr(ent, "current_hp", 0.0) <= 0:
                 return

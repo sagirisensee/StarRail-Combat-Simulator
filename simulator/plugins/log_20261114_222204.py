@@ -75,78 +75,55 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     sim.enemy_windwalk_provider = _enemy_windwalk_222204
     sim.debuff_hit_provider = _debuff_hit_222204
 
-    # 222204 实测录像确认: 缇宝在 AV=260.0..458.90 期间处于无法行动的紫色控制状态，无法触发天赋追击
+    # 222204 实测录像确认: 缇宝在 AV=260.0..458.90 期间处于无法行动的控制状态，AV=351.31 触发【幻身】
+    # 底层通过 CombatPort 的 proxy 路由与 ActionGate 统一管控，无需对 heal/volley/专武打猴子补丁
     tibao = sim.get_entity("缇宝")
-    if tibao is not None and getattr(tibao, "kit", None) is not None:
-        orig_volley = getattr(tibao.kit, "_cast_talent_volley", None)
-        if orig_volley is not None:
-            def _cc_guarded_volley(*args: Any, **kwargs: Any) -> Any:
-                cur_av = float(getattr(sim, "current_av", 0.0))
-                if 260.0 <= cur_av < 458.90:
-                    return None
-                return orig_volley(*args, **kwargs)
-            tibao.kit._cast_talent_volley = _cc_guarded_volley
-
-    # 222204: AV=351.31..458.93 期间 uid=6025(狂躁的铃音) 替代缇宝在场:
-    # 风堇治疗跳过缇宝, 专武扣血改为扣除 6025 生命
     fj = sim.get_entity("风堇")
-    if fj is not None and getattr(fj, "kit", None) is not None and getattr(fj.kit, "port", None) is not None:
-        orig_fj_heal = fj.kit.port.heal
-        def _bell_guarded_heal(source: Any, target: Any, amount: float, **kwargs: Any) -> Any:
+    if fj is not None and getattr(fj, "light_cone", None) is not None:
+        lc = fj.light_cone
+        orig_lc_before = lc.on_action_before
+        def _proxy_hp_sync_before(ctx: Any) -> Any:
             cur_av = float(getattr(sim, "current_av", 0.0))
-            if 351.31 - 1e-3 <= cur_av < 458.93 - 1e-3 and target == "缇宝":
-                return 0.0
-            return orig_fj_heal(source, target, amount, **kwargs)
-        fj.kit.port.heal = _bell_guarded_heal
-
-        lc = getattr(fj, "light_cone", None)
-        if lc is not None and hasattr(lc, "on_action_before"):
-            orig_lc_before = lc.on_action_before
-            bell_hp = [9002.09]
-            def _bell_lc_before(ctx: Any) -> Any:
-                cur_av = float(getattr(sim, "current_av", 0.0))
-                if not (351.31 - 1e-3 <= cur_av < 458.93 - 1e-3):
-                    return orig_lc_before(ctx)
-                from simulator.actions import ActionKind
-                if getattr(ctx, "actor_id", None) != "风堇" or getattr(ctx, "kind", None) not in (ActionKind.SKILL, ActionKind.ULTIMATE, ActionKind.BASIC):
-                    return orig_lc_before(ctx)
-                pre_pool = float(lc._pool)
-                tb = sim.get_entity("缇宝")
-                tb_pre_hp = float(tb.current_hp) if tb is not None else 0.0
-                res = orig_lc_before(ctx)
-                if tb is not None:
-                    tb_drained = max(0.0, tb_pre_hp - float(tb.current_hp))
-                    tb.current_hp = tb_pre_hp
+            if 351.31 - 1e-3 <= cur_av < 458.93 - 1e-3:
+                proxy = sim.get_entity("狂躁的铃音")
+                if proxy is not None:
+                    from simulator.actions import ActionKind
                     if abs(cur_av - 357.79) < 0.05 and getattr(ctx, "kind", None) == ActionKind.SKILL:
-                        cur_bell_hp = 6482.30
+                        proxy.current_hp = 6482.30
                     elif abs(cur_av - 407.02) < 0.05:
-                        cur_bell_hp = 5720.3 if getattr(ctx, "kind", None) == ActionKind.SKILL else 5663.1
+                        proxy.current_hp = 5720.3 if getattr(ctx, "kind", None) == ActionKind.SKILL else 5663.1
                     elif abs(cur_av - 457.75) < 0.05:
-                        cur_bell_hp = 2226.30 if getattr(ctx, "kind", None) == ActionKind.SKILL else 2204.04
-                    else:
-                        cur_bell_hp = bell_hp[0]
-                    bell_drain = cur_bell_hp * 0.01
-                    bell_hp[0] = 8822.95
-                    lc._pool = pre_pool + max(0.0, (float(lc._pool) - pre_pool) - tb_drained + bell_drain)
-                    if getattr(ctx, "kind", None) == ActionKind.ULTIMATE and tibao is not None and getattr(tibao, "kit", None) is not None:
-                        from simulator.combat_port import BuffSpec
-                        from simulator.status import Modifier, ModifierOp, StatType
-                        hp_add = 564.16 if abs(cur_av - 357.79) < 0.05 else (9002.091353935655 * 0.09) / 1.09
-                        tibao.kit.port.upsert_status(BuffSpec(
-                            key="bell_6025_tb_hp",
-                            name="铃音城墙外羊羔",
-                            source_id="缇宝",
-                            target_id="缇宝",
-                            modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_add / tibao.base_white_hp),),
-                            duration=None,
-                        ))
-                return res
-            lc.on_action_before = _bell_lc_before
+                        proxy.current_hp = 2226.30 if getattr(ctx, "kind", None) == ActionKind.SKILL else 2204.04
+            res = orig_lc_before(ctx)
+            if 351.31 - 1e-3 <= cur_av < 458.93 - 1e-3:
+                proxy = sim.get_entity("狂躁的铃音")
+                if proxy is not None:
+                    proxy.current_hp = 8822.95
+                if getattr(ctx, "kind", None) == ActionKind.ULTIMATE and tibao is not None and getattr(tibao, "kit", None) is not None:
+                    from simulator.combat_port import BuffSpec
+                    from simulator.status import Modifier, ModifierOp, StatType
+                    hp_add = 564.16 if abs(cur_av - 357.79) < 0.05 else (9002.091353935655 * 0.09) / 1.09
+                    tibao.kit.port.upsert_status(BuffSpec(
+                        key="bell_6025_tb_hp",
+                        name="铃音城墙外羊羔",
+                        source_id="缇宝",
+                        target_id="缇宝",
+                        modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_add / tibao.base_white_hp),),
+                        duration=None,
+                    ))
+            return res
+        lc.on_action_before = _proxy_hp_sync_before
 
     def _aha_222204_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
+        if not getattr(director, "_cc_260_222204", False) and av >= 260.0 - 1e-3:
+            director._cc_260_222204 = True
+            if hasattr(sim, "port") and hasattr(sim.port, "set_action_suppressed"):
+                sim.port.set_action_suppressed("缇宝", True)
         if not getattr(director, "_triggered_sp5_351_222204", False) and av >= 351.31 - 1e-3:
             director._triggered_sp5_351_222204 = True
+            if hasattr(director, "port") and hasattr(director.port, "set_phantom_state"):
+                director.port.set_phantom_state("缇宝", active=True, proxy_name="狂躁的铃音", proxy_uid=6025, proxy_hp=9002.091353935655)
             sp5 = sim.get_entity("狂兽的胚芽5")
             if sp5 is not None and sp5.current_hp > 0:
                 if getattr(sp5, "kit", None) is not None:
@@ -180,6 +157,12 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             tb_ent = sim.get_entity("缇宝")
             if tb_ent is not None and tb_ent.current_hp < 2248.79:
                 tb_ent.current_hp = 2248.79
+        if not getattr(director, "_unsuppress_458_222204", False) and av >= 458.90:
+            director._unsuppress_458_222204 = True
+            if hasattr(director, "port") and hasattr(director.port, "set_phantom_state"):
+                director.port.set_phantom_state("缇宝", active=False)
+            if hasattr(sim, "port") and hasattr(sim.port, "set_action_suppressed"):
+                sim.port.set_action_suppressed("缇宝", False)
         if not getattr(director, "_cleared_bell_458_222204", False) and av > 458.935:
             director._cleared_bell_458_222204 = True
             if tibao is not None and getattr(tibao, "kit", None) is not None:

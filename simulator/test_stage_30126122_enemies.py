@@ -325,6 +325,39 @@ class TestStage30126122Timeline(unittest.TestCase):
             self.assertIn(exp, enemy_turns, f"Missing expected enemy turn {exp} in {enemy_turns}")
         self.assertEqual(griffin.kit.generation, 2)
 
+    def test_apoli_phantom_transformation_debuff_and_proxy_routing(self) -> None:
+        ally = _dummy_ally("测试角色", speed=100.0)
+        sim, director = build_stage_30126122([ally])
+        port = director.port
+
+        # 1. 激活【幻身】状态
+        port.set_phantom_state("测试角色", active=True, proxy_name="狂躁的铃音", proxy_hp=9000.0)
+
+        # 验证 Debuff 挂载
+        self.assertTrue(sim.port.has_status("测试角色", "Apoli_Phantom_Transformation"))
+        self.assertTrue(sim.port.is_action_suppressed("测试角色"))
+
+        # 验证生命与扣血透明路由到替身
+        self.assertEqual(sim.port.current_hp("测试角色"), 9000.0)
+        sim.port.lose_hp("测试角色", 100.0)
+        self.assertEqual(sim.port.current_hp("测试角色"), 8900.0)
+
+        # 验证治疗跳过
+        sim.port.heal("测试角色", "测试角色", 500.0)
+        self.assertEqual(sim.port.current_hp("测试角色"), 8900.0)
+
+        # 验证队友列表保留角色本体 (供全队光环/上限结算)，排除替身 (防多重结算)
+        allies = sim.port.allies("测试角色")
+        self.assertIn("测试角色", allies)
+        self.assertNotIn("狂躁的铃音", allies)
+
+        # 2. 解除【幻身】状态
+        port.set_phantom_state("测试角色", active=False)
+        self.assertFalse(sim.port.has_status("测试角色", "Apoli_Phantom_Transformation"))
+        self.assertFalse(sim.port.is_action_suppressed("测试角色"))
+        self.assertEqual(sim.port.current_hp("测试角色"), ally.max_hp)
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,14 +29,19 @@ class BaseEnemyCombatPortImpl:
         return ent is not None and getattr(ent, "current_hp", 0.0) > 0
 
     def get_living_allies(self, include_memosprites: bool = False) -> Tuple[str, ...]:
-        allies = [
-            e.name
-            for e in self.sim.entities
-            if not e.is_enemy
-            and getattr(e, "current_hp", 0.0) > 0
-            and not getattr(e, "is_countdown", False)
-            and (include_memosprites or not getattr(e, "is_memosprite", False))
-        ]
+        allies: List[str] = []
+        for e in self.sim.entities:
+            if e.is_enemy or getattr(e, "current_hp", 0.0) <= 0 or getattr(e, "is_countdown", False):
+                continue
+            if not include_memosprites and getattr(e, "is_memosprite", False):
+                continue
+            if hasattr(self.sim, "port") and hasattr(self.sim.port, "is_action_suppressed") and self.sim.port.is_action_suppressed(e.name):
+                proxy_id = self.sim.port.get_active_proxy(e.name)
+                if proxy_id:
+                    if proxy_id not in allies:
+                        allies.append(proxy_id)
+                continue
+            allies.append(e.name)
         return tuple(allies)
 
     def apply_enemy_attack(
@@ -159,6 +164,107 @@ class BaseEnemyCombatPortImpl:
         cur = float(getattr(tgt, "hp_lock_ratio", 0.0))
         tgt.hp_lock_ratio = min(max_ratio, cur + delta_ratio)
         tgt.clamp_hp()
+
+    def apply_corruption(
+        self,
+        *,
+        owner_id: str,
+        target_id: str,
+        delta_stacks: int = 1,
+    ) -> bool:
+        attacker = self.sim.get_entity(owner_id)
+        target = self.sim.get_entity(target_id)
+        if attacker is None or target is None:
+            return False
+        hit_provider = getattr(self.sim, "debuff_hit_provider", None)
+        av = float(getattr(self.sim, "current_av", 0.0))
+        if hit_provider is not None:
+            hit = hit_provider(attacker, target, "corruption", av)
+            if not hit:
+                return False
+        corruption_dict = getattr(self.sim, "_apoli_corruption_stacks", None)
+        if corruption_dict is None:
+            corruption_dict = {}
+            self.sim._apoli_corruption_stacks = corruption_dict
+        cur_stacks = corruption_dict.get(target_id, 0) + delta_stacks
+        corruption_dict[target_id] = cur_stacks
+        if cur_stacks >= 3:
+            self.set_phantom_state(target_id, active=True)
+        return True
+
+    def set_phantom_state(
+        self,
+        target_id: str,
+        *,
+        active: bool,
+        proxy_name: str = "狂躁的铃音",
+        proxy_uid: int = 6025,
+        proxy_hp: float = 9002.091353935655,
+        tb_hp_add: Optional[float] = None,
+    ) -> None:
+        target = self.sim.get_entity(target_id)
+        if target is None:
+            return
+        if active:
+            if hasattr(self.sim, "port") and hasattr(self.sim.port, "register_proxy"):
+                self.sim.port.register_proxy(target_id, proxy_name)
+            proxy = self.sim.get_entity(proxy_name)
+            if proxy is None:
+                from ...core import Entity
+                proxy = Entity(
+                    name=proxy_name,
+                    base_speed=float(getattr(target, "speed", 92.92)),
+                    max_hp=proxy_hp,
+                    is_enemy=False,
+                )
+                setattr(proxy, "uid", proxy_uid)
+                setattr(proxy, "avatar_id", proxy_uid)
+                setattr(proxy, "is_proxy", True)
+                proxy.current_hp = proxy_hp
+                proxy.distance_remaining = float(getattr(target, "distance_remaining", 36.82))
+                self.sim.entities.append(proxy)
+            else:
+                setattr(proxy, "is_proxy", True)
+                proxy.max_hp = proxy_hp
+                proxy.current_hp = proxy_hp
+                proxy.speed = float(getattr(target, "speed", 92.92))
+                proxy.distance_remaining = float(getattr(target, "distance_remaining", 36.82))
+            from ...combat_port import BuffSpec
+            from ...status import StatusTag
+            spec = BuffSpec(
+                key="Apoli_Phantom_Transformation",
+                name="幻身",
+                source_id=self.sim.get_entity("堕神之血•亚婆离").name if self.sim.get_entity("堕神之血•亚婆离") else target_id,
+                target_id=target_id,
+                modifiers=(),
+                duration=None,
+                tags=(StatusTag.TARGET_DEBUFF,),
+            )
+            if hasattr(self.sim, "port") and hasattr(self.sim.port, "upsert_status"):
+                self.sim.port.upsert_status(spec)
+            elif getattr(target, "kit", None) is not None:
+                target.kit.port.upsert_status(spec)
+            if tb_hp_add is not None and getattr(target, "kit", None) is not None:
+                from ...combat_port import BuffSpec
+                from ...status import Modifier, ModifierOp, StatType
+                target.kit.port.upsert_status(BuffSpec(
+                    key="bell_6025_tb_hp",
+                    name="铃音城墙外羊羔",
+                    source_id=target_id,
+                    target_id=target_id,
+                    modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, tb_hp_add / target.base_white_hp),),
+                    duration=None,
+                ))
+        else:
+            if hasattr(self.sim, "port") and hasattr(self.sim.port, "remove_proxy"):
+                self.sim.port.remove_proxy(target_id)
+            proxy = self.sim.get_entity(proxy_name)
+            if proxy is not None:
+                proxy.current_hp = 0.0
+            if hasattr(self.sim, "port") and hasattr(self.sim.port, "remove_status"):
+                self.sim.port.remove_status(target_id, "Apoli_Phantom_Transformation")
+            elif getattr(target, "kit", None) is not None:
+                target.kit.port.remove_status(target_id, "Apoli_Phantom_Transformation")
 
     def apply_speed_debuff(
         self,

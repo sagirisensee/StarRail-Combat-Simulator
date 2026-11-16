@@ -630,6 +630,8 @@ class TibaoKit(KitHandler):
         E6 自大招齐射的回能已在大招本体处一并结算, 其待发标记由
         cast_ultimate 直接置位时不重复回能 (见 _pending_volley 的置位点)。
         """
+        if getattr(self.port, "is_action_suppressed", lambda x: False)(self.owner_id):
+            return
         fu_mult = self.skill_param("talent", 0, default=0.198)
         e6_boost = self.eidolon_param(6, 0, default=7.29) if self.eidolon >= 6 else 0.0
         for e in self.port.enemies(self.owner_id):
