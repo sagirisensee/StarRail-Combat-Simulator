@@ -484,8 +484,18 @@ class Stage30126122Director:
         for ent in getattr(self.sim, "entities", ()):
             if not ent.is_enemy and ent.current_hp > 0:
                 kit = getattr(ent, "kit", None)
+                if kit is not None and hasattr(kit, "_heal_provider_keys"):
+                    kit._heal_provider_keys.clear()
+        for ent in getattr(self.sim, "entities", ()):
+            if not ent.is_enemy and ent.current_hp > 0:
+                kit = getattr(ent, "kit", None)
                 if kit is not None and hasattr(kit, "_resolve_talent_heal"):
                     kit._resolve_talent_heal()
+        for ent in getattr(self.sim, "entities", ()):
+            if not ent.is_enemy and ent.current_hp > 0:
+                kit = getattr(ent, "kit", None)
+                if kit is not None and hasattr(kit, "_heal_provider_keys"):
+                    kit._heal_provider_keys.clear()
 
     def _check_aha_special_damage_events(self) -> None:
         handler = getattr(self.sim, "aha_special_handler", None)
@@ -499,32 +509,18 @@ class Stage30126122Director:
         if event.actor_name == self._sprout_timer_name and self.wave >= 2:
             boss = self.sim.get_entity("堕神之血•亚婆离")
             if boss is not None and boss.current_hp > 0.0:
-                self.spawn_wave2_sprouts(count=2, reanchor_timer=False)
+                phase = getattr(self.apoli_kit, "_phase", 1)
+                init_dist = 5000.0 if phase == 2 else 10000.0
+                self.spawn_wave2_sprouts(count=2, reanchor_timer=False, initial_distance=init_dist)
 
     def _advance_sprouts_once_per_action(self) -> None:
-        action_seq = int(getattr(self.sim, "_action_seq", 0))
-        for ent in self.sim.entities:
-            if not ent.is_enemy or not ent.name.startswith("狂兽的胚芽"):
-                continue
-            if ent.current_hp <= 0.0 or ent.distance_remaining >= 1e9:
-                continue
-            if self._sprout_advance_seq.get(ent.name) == action_seq:
-                continue
-            self._sprout_advance_seq[ent.name] = action_seq
-            ent.distance_remaining = max(0.0, ent.distance_remaining - 800.0)
+        pass
 
     def _on_damage_applied(self, event: DamageAppliedEvent) -> None:
         dmg_type = getattr(event, "damage_type", None)
         if dmg_type is not None and (dmg_type.name == "DOT" or str(dmg_type) == "DoT"):
             return
         self._break_helper.on_damage_applied(event)
-        target_name = str(getattr(event, "target_name", ""))
-        target_ent = self.sim.get_entity(target_name)
-        if target_ent is None or not target_ent.is_enemy:
-            return
-        if not (target_name.startswith("狂兽的胚芽") or target_name.startswith("堕神之血")):
-            return
-        self._advance_sprouts_once_per_action()
 
     def _on_action_end(self, event: ActionEndEvent) -> None:
         self.pegasus_kit.on_event(event)

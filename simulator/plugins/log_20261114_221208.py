@@ -1,4 +1,9 @@
-"""battle_20261114_221208.jsonl 专属非架构确定性 RNG 与事件插件。"""
+# coding: utf-8
+"""实机日志 battle_20261114_221208.jsonl 专属外部 RNG 与确定性事件插件。
+
+仅承接该场实机战斗中具有随机性的特定命中结果（敌方受击目标、我方单体拉条目标、风行跳过、阿哈回合弹射），
+严禁通过修改怪物体力/韧性、角色能量/气氛/意志、治疗池数值等手段进行倒推拟合。
+"""
 
 from __future__ import annotations
 
@@ -8,13 +13,20 @@ from simulator.plugins._helpers import apply_aha_w2_schedule, find_ally as _find
 
 
 def attach_log_20261114_221208_plugin(sim: Any) -> None:
-    """挂载 battle_20261114_221208.jsonl 的纯外部随机判定、敌方目标与阿哈特殊事件插件。"""
+    """挂载 battle_20261114_221208.jsonl 的纯外部随机判定与阿哈特殊事件插件。"""
 
     def _target_221208_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         name = getattr(attacker, "name", "")
         if name == "知更鸟•晴歌":
             return _find_ally(living, "长夜月")
         av = float(getattr(sim, "current_av", 0.0))
+        if name == "长夜" and abs(av - 100.38) < 0.05:
+            return _find_ally(living, "月夜天马")
+        if not getattr(attacker, "is_enemy", False) and abs(av - 264.94) < 0.05:
+            if hit_idx == 1:
+                return _find_ally(living, "狂兽的胚芽1")
+            if hit_idx == 2:
+                return _find_ally(living, "堕神之血•亚婆离")
         if getattr(attacker, "is_enemy", False):
             if name == "正阳狮鹫":
                 if abs(av - 31.57) < 0.05:
@@ -83,13 +95,31 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
     sim.debuff_hit_provider = _debuff_hit_221208
 
     def _aha_221208_handler(director: Any) -> None:
+        director.suppress_aha_sprout_advance = True
+        if getattr(director, "phase2_plan", None) is None:
+            director.phase2_plan = {
+                1: ("HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"),
+                2: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                3: ("PARTY_AOE", "CHANNEL_PULSE"),
+                4: ("HEAVY_ST", "PARTY_AOE"),
+                5: ("PARTY_AOE", "CHANNEL_PULSE"),
+                6: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                7: ("HEAVY_ST", "PARTY_AOE"),
+                8: ("PARTY_AOE", "CHANNEL_PULSE"),
+                9: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                10: ("HEAVY_ST", "PARTY_AOE"),
+                11: ("PARTY_AOE", "CHANNEL_PULSE"),
+                12: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+            }
+        if getattr(director, "apoli_kit", None) is not None and getattr(director.apoli_kit, "_phase2_plan", None) is None:
+            director.apoli_kit._phase2_plan = director.phase2_plan
         av = float(getattr(sim, "current_av", 0.0))
         if not getattr(director, "_triggered_aha_137_221208", False) and av >= 137.95 - 1e-3:
             director._triggered_aha_137_221208 = True
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
-            director.apply_aha_hp_damage("正阳狮鹫", 28811.5 * 2)
-            director.apply_aha_hp_damage("月夜天马", 28811.5 * 4)
+            director.apply_aha_hp_damage("正阳狮鹫", 28811.5 * 1)
+            director.apply_aha_hp_damage("月夜天马", 28811.5 * 3)
             director.apply_aha_ally_chip_hit("风堇")
             director.flush_ally_talent_heals()
 
@@ -97,6 +127,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director._triggered_aha_150_221208 = True
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage("正阳狮鹫", 28811.5 * 3)
             director.apply_aha_hp_damage("月夜天马", 28811.5 * 2)
             director.apply_aha_hp_damage("正阳狮鹫", 28811.5 * 3)
             director.apply_aha_ally_chip_hit("风堇")

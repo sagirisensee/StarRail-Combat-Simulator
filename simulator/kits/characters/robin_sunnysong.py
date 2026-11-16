@@ -449,7 +449,7 @@ class RobinSunnySongKit(KitHandler):
                     self.musician_speed,
                 )
 
-    def gain_vibes(self, amount: int = 1, trigger_ally_id: Optional[str] = None) -> None:
+    def gain_vibes(self, amount: float = 1, trigger_ally_id: Optional[str] = None) -> None:
         """增加气氛值：
         - 若处于任意目标回合内首次获得气氛值且持有【律动】，消耗 1 层律动并固定恢复 3 点能量 (行迹【即兴蓝调】)；
         - 触发行迹【偏离和弦】属性增益；
@@ -468,8 +468,8 @@ class RobinSunnySongKit(KitHandler):
             ):
                 trigger_ally_id = None
 
-        old_vibes = self.vibes
-        self.vibes = min(self.max_vibes, old_vibes + int(amount))
+        old_vibes = float(self.vibes)
+        self.vibes = min(float(self.max_vibes), old_vibes + float(amount))
 
         tracer = getattr(self.port, "tracer", None)
         if tracer is not None and self.vibes != old_vibes:
@@ -731,11 +731,11 @@ class RobinSunnySongKit(KitHandler):
             # 先登记，阻止回能/退场事件重入重复扣除。
             self._countdown_settled_turn_id = turn_id
 
-        old_vibes = self.vibes
-        minimum = int(self.skill_param("1151203", 5, default=12.0))
+        old_vibes = float(self.vibes)
+        minimum = float(self.skill_param("1151203", 5, default=12.0))
         ratio = float(self.skill_param("1151203", 9, default=0.50))
-        deduction = max(minimum, math.floor(old_vibes * ratio))
-        self.vibes = max(0, old_vibes - deduction)
+        deduction = max(minimum, old_vibes * ratio)
+        self.vibes = max(0.0, old_vibes - deduction)
 
         tracer = getattr(self.port, "tracer", None)
         if tracer is not None:
