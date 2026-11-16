@@ -223,6 +223,8 @@ class ChangyeyueKit(KitHandler):
             is_countdown = hasattr(self.port, "is_countdown") and self.port.is_countdown(actor_name)
             if self.port.is_ally(actor_name) and not is_countdown:
                 self._sync_darkness_vuln()
+                if self.port.has_status(self.owner_id, "Changyeyue_Skill_SharedCritDmg"):
+                    self._sync_memosprite_crit_buffs()
 
             # 1. 长夜月自身施放技能 (战技 / 终结技)
             is_owner_skill = (
@@ -507,6 +509,16 @@ class ChangyeyueKit(KitHandler):
             return
 
         chosen = ctx.target_ids[0] if ctx and ctx.target_ids else None
+        if not chosen:
+            sim = getattr(self.port, "sim", None)
+            tp = getattr(sim, "target_provider", None) if sim is not None else None
+            if tp is not None:
+                spirit_ent = sim.get_entity(self.spirit_name)
+                cand_ents = [sim.get_entity(e) for e in enemies if sim.get_entity(e) is not None]
+                if spirit_ent is not None and cand_ents:
+                    picked = tp(spirit_ent, cand_ents, 0)
+                    if picked is not None and getattr(picked, "name", None) in enemies:
+                        chosen = picked.name
         is_boss_fn = getattr(self.port, "is_boss", lambda _: False)
         target = (
             chosen

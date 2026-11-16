@@ -28,14 +28,14 @@ class BaseEnemyCombatPortImpl:
         ent = self.sim.get_entity(entity_id)
         return ent is not None and getattr(ent, "current_hp", 0.0) > 0
 
-    def get_living_allies(self) -> Tuple[str, ...]:
+    def get_living_allies(self, include_memosprites: bool = False) -> Tuple[str, ...]:
         allies = [
             e.name
             for e in self.sim.entities
             if not e.is_enemy
             and getattr(e, "current_hp", 0.0) > 0
             and not getattr(e, "is_countdown", False)
-            and not getattr(e, "is_memosprite", False)
+            and (include_memosprites or not getattr(e, "is_memosprite", False))
         ]
         return tuple(allies)
 
@@ -50,6 +50,7 @@ class BaseEnemyCombatPortImpl:
         hits: int = 1,
         blast: bool = False,
         adjacent_multiplier_ratio: float = 1.0,
+        increment_action_seq: bool = True,
     ) -> Tuple[str, ...]:
         attacker = self.sim.get_entity(owner_id)
         if attacker is None or attacker.current_hp <= 0:
@@ -58,7 +59,8 @@ class BaseEnemyCombatPortImpl:
         if skip_provider is not None and skip_provider(attacker, float(getattr(self.sim, "current_av", 0.0))):
             return ()
         attacker.hit_energy = hit_energy
-        self.sim._action_seq += 1
+        if increment_action_seq:
+            self.sim._action_seq += 1
 
         resolved_targets: List[Any] = []
         for tid in target_ids:
@@ -324,6 +326,29 @@ class BaseEnemyCombatPortImpl:
             return
         ent.base_speed = speed
 
+    def set_barrier_state(
+        self,
+        entity_id: str,
+        *,
+        active: bool,
+        damage_reduction: float = 0.75,
+        toughness_dmg_reduction: Optional[float] = None,
+    ) -> None:
+        ent = self.sim.get_entity(entity_id)
+        if ent is None:
+            return
+        def _apply() -> None:
+            ent.barrier_guarded = bool(active)
+            ent.toughness_locked = bool(active)
+            ent.damage_reduction = float(damage_reduction) if active else 0.0
+            if toughness_dmg_reduction is not None:
+                ent.toughness_dmg_reduction = float(toughness_dmg_reduction)
+        resolver = getattr(self.sim, "resolver", None)
+        if active and resolver is not None and getattr(resolver, "_resolving", False):
+            resolver.defer_post_resolve(_apply)
+            return
+        _apply()
+
     def break_entity_toughness_and_deduct_hp(
         self,
         entity_id: str,
@@ -352,35 +377,29 @@ class BaseEnemyCombatPortImpl:
         *,
         owner_id: str,
         allies: Tuple[str, ...],
+        multipliers: Optional[Tuple[float, ...]] = None,
+        tick_hit_energy: float = 1.0,
+        final_hit_energy: float = 12.0,
     ) -> None:
         attacker = self.sim.get_entity(owner_id)
         if attacker is None or attacker.current_hp <= 0.0:
             return
+        seq_mults = multipliers if multipliers is not None else ((0.12,) * 8 + (1.44,))
+        if not seq_mults:
+            return
         setattr(self.sim, "_in_channel_pulse", True)
         try:
-            for _ in range(8):
-                if hasattr(self.sim, "_action_seq"):
-                    self.sim._action_seq += 1
+            for idx, mult in enumerate(seq_mults):
                 self.apply_enemy_attack(
                     owner_id=owner_id,
                     target_ids=allies,
-                    multiplier=0.1,
+                    multiplier=float(mult),
                     element="Physical",
-                    hit_energy=1.0,
+                    hit_energy=float(final_hit_energy),
                     hits=1,
                     blast=False,
+                    increment_action_seq=(idx == 0),
                 )
-            if hasattr(self.sim, "_action_seq"):
-                self.sim._action_seq += 1
-            self.apply_enemy_attack(
-                owner_id=owner_id,
-                target_ids=allies,
-                multiplier=0.8,
-                element="Physical",
-                hit_energy=12.0,
-                hits=1,
-                blast=False,
-            )
         finally:
             setattr(self.sim, "_in_channel_pulse", False)
 

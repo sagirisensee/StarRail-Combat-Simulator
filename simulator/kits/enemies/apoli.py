@@ -31,14 +31,14 @@ def _phase2_plan_for_turn(combat_turn: int) -> Tuple[str, ...]:
 class ApoliBossKit(EnemyKit):
     """堕神之血•亚婆离 (5034010) 专属机制 Kit。
 
-    核心机制 (Lv.95 关卡 30126122):
-    - Phase 1: 进场速度置 0（不执行常规行动）。当生命首次跌破 65% Phase 1 MaxHP 时开启【血脑屏障】，
-      期间护盾吸收伤害、本体锁血锁韧；护盾击破时直接击破韧性并扣除 35% Phase 1 MaxHP。
-      Phase 1 生命归零时立即转入 Phase 2。
-    - Phase 2: MaxHP 翻倍为 10,212,865.688196555，韧性重置为 1080.0，速度恢复为 237.60 并立即行动。
+    核心机制 (参数化支持 Lv.95 关卡 30126122 与 Lv.100 关卡 30510021):
+    - Phase 1: 进场速度置 0（不执行常规行动）。当生命首次跌破 trigger_ratio (默认 70%) Phase 1 MaxHP，
+      或单次伤害直接打穿 30% 血线时开启【血脑屏障】，期间护盾吸收伤害、本体锁血锁韧；
+      护盾击破时直接击破韧性并扣除 35% Phase 1 MaxHP。Phase 1 生命归零时立即转入 Phase 2。
+    - Phase 2: MaxHP 翻倍，韧性重置为 1080.0，速度恢复为 237.60 并立即行动。
       按多子动模组循环（HEAVY_ST / PARTY_AOE / SUMMON_SPROUTS / CHANNEL_PULSE），子动间开放插队窗口。
-      当 Phase 2 生命首次跌破 70% MaxHP 时进入狂暴加速（Speed 237.60 -> 356.40）并开启二阶段屏障，
-      持续 250.00 AV 后解除加速、击破韧性并扣除相应百分比 MaxHP。
+      当 Phase 2 生命首次跌破 trigger_ratio (默认 70%) MaxHP，或单次伤害直接打穿 30% 血线时进入狂暴加速
+      （Speed 237.60 -> 356.40）并开启二阶段屏障，持续 250.00 AV 后解除加速、击破韧性并扣除相应百分比 MaxHP。
     """
 
     ENEMY_ID = 5034010
@@ -57,16 +57,55 @@ class ApoliBossKit(EnemyKit):
         owner_id: str,
         port: ApoliCombatPort,
         *,
-        phase1_barrier_shield: float = PHASE1_BARRIER_SHIELD,
-        phase2_barrier_shield: float = PHASE2_BARRIER_SHIELD,
+        phase1_max_hp: float = PHASE1_MAX_HP,
+        phase2_max_hp: float = PHASE2_MAX_HP,
+        phase1_barrier_shield: float | None = None,
+        phase2_barrier_shield: float | None = None,
+        phase1_barrier_shield_ratio: float = 0.65,
+        phase2_barrier_shield_ratio: float = 0.65,
+        phase1_barrier_trigger_ratio: float = 0.70,
+        phase2_barrier_trigger_ratio: float = 0.70,
+        phase2_toughness_dmg_reduction: float = 0.10,
+        apply_hp_lock_on_st: bool = False,
+        apply_hp_lock_on_aoe: bool = False,
+        apply_hp_lock_on_pulse: bool = True,
+        transition_pulse_multipliers: Tuple[float, ...] | None = None,
+        transition_pulse_hit_energy: Tuple[float, float] = (12.0, 12.0),
+        aoe_include_memosprites: bool = False,
+        party_aoe_multiplier: float = 1.2,
+        heavy_st_multiplier: float = 2.4,
         phase2_berserk_duration_av: float = 250.0,
+        phase2_plan: dict[int, Tuple[str, ...]] | None = None,
     ) -> None:
         super().__init__(owner_id, port)
         self._phase = 1
         self._barrier_active = False
         self._phase1_barrier_triggered = False
-        self._phase1_barrier_shield = phase1_barrier_shield
-        self._phase2_barrier_shield = phase2_barrier_shield
+        self._phase1_max_hp = float(phase1_max_hp)
+        self._phase2_max_hp = float(phase2_max_hp)
+        self._phase1_barrier_shield_ratio = float(phase1_barrier_shield_ratio)
+        self._phase2_barrier_shield_ratio = float(phase2_barrier_shield_ratio)
+        self._phase1_barrier_shield = (
+            float(phase1_barrier_shield)
+            if phase1_barrier_shield is not None
+            else self._phase1_max_hp * self._phase1_barrier_shield_ratio
+        )
+        self._phase2_barrier_shield = (
+            float(phase2_barrier_shield)
+            if phase2_barrier_shield is not None
+            else self._phase2_max_hp * self._phase2_barrier_shield_ratio
+        )
+        self._phase1_barrier_trigger_ratio = float(phase1_barrier_trigger_ratio)
+        self._phase2_barrier_trigger_ratio = float(phase2_barrier_trigger_ratio)
+        self._phase2_toughness_dmg_reduction = float(phase2_toughness_dmg_reduction)
+        self._apply_hp_lock_on_st = bool(apply_hp_lock_on_st)
+        self._apply_hp_lock_on_aoe = bool(apply_hp_lock_on_aoe)
+        self._apply_hp_lock_on_pulse = bool(apply_hp_lock_on_pulse)
+        self._transition_pulse_multipliers = transition_pulse_multipliers
+        self._transition_pulse_hit_energy = transition_pulse_hit_energy
+        self._aoe_include_memosprites = bool(aoe_include_memosprites)
+        self._party_aoe_multiplier = float(party_aoe_multiplier)
+        self._heavy_st_multiplier = float(heavy_st_multiplier)
         self._barrier_initial_shield = 0.0
         self._barrier_hp = 0.0
         self._barrier_sprout_stacks = 0
@@ -76,6 +115,7 @@ class ApoliBossKit(EnemyKit):
         self._phase2_berserk_triggered = False
         self._phase2_berserk_end_av: float | None = None
         self._phase2_berserk_duration_av = phase2_berserk_duration_av
+        self._phase2_plan = phase2_plan
 
         self._combat_turns = 0
         self._subaction_idx = 0
@@ -106,6 +146,50 @@ class ApoliBossKit(EnemyKit):
             if self._barrier_hp <= 0.0:
                 self._break_barrier()
             return overflow
+
+        # 单次伤害直接打穿 30% 血线时，锁血在 30% 并强制开启当前阶段屏障吸收溢出伤害
+        cur_hp, _ = self.port.get_entity_hp_and_max(self.owner_id)
+        av = self.port.get_current_av()
+        if self._phase == 1 and not self._phase1_barrier_triggered:
+            floor_hp = self._phase1_max_hp * 0.30
+            if cur_hp > 0.0 and cur_hp - raw_damage <= floor_hp:
+                self._phase1_barrier_triggered = True
+                effective = max(0.0, cur_hp - floor_hp)
+                overflow = raw_damage - effective
+                self._activate_barrier(
+                    av,
+                    shield=self._phase1_barrier_shield,
+                    sphere_interval_av=self.PHASE1_SPHERE_INTERVAL_AV,
+                )
+                if overflow > 0.0 and self._barrier_active:
+                    absorbed = min(self._barrier_hp, overflow)
+                    self._barrier_hp = max(0.0, self._barrier_hp - overflow)
+                    extra_overflow = overflow - absorbed
+                    if self._barrier_hp <= 0.0:
+                        self._break_barrier()
+                    return effective + extra_overflow
+                return effective
+        elif self._phase == 2 and not self._phase2_berserk_triggered:
+            floor_hp = self._phase2_max_hp * 0.30
+            if cur_hp > 0.0 and cur_hp - raw_damage <= floor_hp:
+                self._phase2_berserk_triggered = True
+                effective = max(0.0, cur_hp - floor_hp)
+                overflow = raw_damage - effective
+                self._activate_barrier(
+                    av,
+                    shield=self._phase2_barrier_shield,
+                    sphere_interval_av=self.PHASE2_SPHERE_INTERVAL_AV,
+                )
+                self._phase2_berserk_end_av = av + self._phase2_berserk_duration_av
+                self.port.set_entity_speed(self.owner_id, self.PHASE2_BERSERK_SPEED)
+                if overflow > 0.0 and self._barrier_active:
+                    absorbed = min(self._barrier_hp, overflow)
+                    self._barrier_hp = max(0.0, self._barrier_hp - overflow)
+                    extra_overflow = overflow - absorbed
+                    if self._barrier_hp <= 0.0:
+                        self._break_barrier()
+                    return effective + extra_overflow
+                return effective
         return raw_damage
 
     def notify_sprout_killed_on_barrier(self, damage: float) -> None:
@@ -122,16 +206,30 @@ class ApoliBossKit(EnemyKit):
         self._barrier_sprout_stacks = 0
         self._barrier_sphere_removed = 0.0
         self._barrier_sphere_next_av = av + sphere_interval_av
+        if hasattr(self.port, "set_barrier_state"):
+            self.port.set_barrier_state(
+                self.owner_id,
+                active=True,
+                damage_reduction=0.75,
+                toughness_dmg_reduction=(0.0 if self._phase == 2 else None),
+            )
 
     def _break_barrier(self) -> None:
         self._barrier_active = False
         self._barrier_sphere_next_av = None
         self._phase2_berserk_end_av = None
+        if hasattr(self.port, "set_barrier_state"):
+            self.port.set_barrier_state(
+                self.owner_id,
+                active=False,
+                damage_reduction=0.0,
+                toughness_dmg_reduction=(self._phase2_toughness_dmg_reduction if self._phase == 2 else None),
+            )
         if self._barrier_initial_shield > 0.0:
             ratio = max(0.0, 1.0 - self._barrier_sphere_removed / self._barrier_initial_shield)
         else:
             ratio = 1.0
-        phase_max_hp = self.PHASE1_MAX_HP if self._phase == 1 else self.PHASE2_MAX_HP
+        phase_max_hp = self._phase1_max_hp if self._phase == 1 else self._phase2_max_hp
         if self._phase == 2:
             self.port.set_entity_speed(self.owner_id, self.PHASE2_BASE_SPEED)
         self.port.break_entity_toughness_and_deduct_hp(
@@ -164,7 +262,7 @@ class ApoliBossKit(EnemyKit):
         av = self.port.get_current_av()
 
         if self._phase == 1:
-            if not self._phase1_barrier_triggered and 0.0 < cur_hp <= max_hp * 0.65:
+            if not self._phase1_barrier_triggered and 0.0 < cur_hp <= max_hp * self._phase1_barrier_trigger_ratio:
                 self._phase1_barrier_triggered = True
                 self._activate_barrier(
                     av,
@@ -185,7 +283,7 @@ class ApoliBossKit(EnemyKit):
             return
 
         # Phase 2: 检查 70% HP 狂暴加速与二阶段屏障激活
-        if not self._phase2_berserk_triggered and 0.0 < cur_hp <= self.PHASE2_MAX_HP * 0.70:
+        if not self._phase2_berserk_triggered and 0.0 < cur_hp <= self._phase2_max_hp * self._phase2_barrier_trigger_ratio:
             self._phase2_berserk_triggered = True
             self._activate_barrier(
                 av,
@@ -214,19 +312,40 @@ class ApoliBossKit(EnemyKit):
         self._subaction_idx = 0
         self.port.set_entity_phase_stats(
             self.owner_id,
-            max_hp=self.PHASE2_MAX_HP,
-            current_hp=self.PHASE2_MAX_HP,
+            max_hp=self._phase2_max_hp,
+            current_hp=self._phase2_max_hp,
             speed=self.PHASE2_BASE_SPEED,
             toughness=self.PHASE2_TOUGHNESS,
             reset_distance=0.0,
-            toughness_dmg_reduction=0.10,
+            toughness_dmg_reduction=self._phase2_toughness_dmg_reduction,
         )
-        allies = self.port.get_living_allies()
+        allies = self._get_aoe_allies()
         if allies:
+            self._execute_pulse_with_config(allies)
+            if self._apply_hp_lock_on_pulse:
+                for tgt in allies:
+                    if hasattr(self.port, "apply_hp_lock"):
+                        self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
+
+    def _get_aoe_allies(self) -> Tuple[str, ...]:
+        if self._aoe_include_memosprites:
+            try:
+                return self.port.get_living_allies(include_memosprites=True)
+            except TypeError:
+                pass
+        return self.port.get_living_allies()
+
+    def _execute_pulse_with_config(self, allies: Tuple[str, ...]) -> None:
+        try:
+            self.port.execute_channel_pulse(
+                owner_id=self.owner_id,
+                allies=allies,
+                multipliers=self._transition_pulse_multipliers,
+                tick_hit_energy=self._transition_pulse_hit_energy[0],
+                final_hit_energy=self._transition_pulse_hit_energy[1],
+            )
+        except TypeError:
             self.port.execute_channel_pulse(owner_id=self.owner_id, allies=allies)
-            for tgt in allies:
-                if hasattr(self.port, "apply_hp_lock"):
-                    self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
 
     def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
         if self._phase == 1:
@@ -246,7 +365,10 @@ class ApoliBossKit(EnemyKit):
         if self._subaction_idx == 0:
             self._combat_turns += 1
 
-        plan: Tuple[str, ...] = _phase2_plan_for_turn(self._combat_turns)
+        if getattr(self, "_phase2_plan", None) and self._combat_turns in self._phase2_plan:
+            plan = self._phase2_plan[self._combat_turns]
+        else:
+            plan = _phase2_plan_for_turn(self._combat_turns)
         subaction = plan[self._subaction_idx]
 
         if subaction in ("HEAVY_ST", "ABSORB_AND_HEAVY_ST"):
@@ -255,37 +377,42 @@ class ApoliBossKit(EnemyKit):
             hits = self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(allies[0],),
-                multiplier=2.4,
+                multiplier=self._heavy_st_multiplier,
                 element="Physical",
                 hit_energy=10.0,
                 hits=1,
                 blast=False,
             )
-            for tgt in hits:
-                if hasattr(self.port, "apply_hp_lock"):
-                    self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
+            if self._apply_hp_lock_on_st:
+                for tgt in hits:
+                    if hasattr(self.port, "apply_hp_lock"):
+                        self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
         elif subaction == "PARTY_AOE":
+            aoe_allies = self._get_aoe_allies()
             hits = self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
-                target_ids=allies,
-                multiplier=1.2,
+                target_ids=aoe_allies,
+                multiplier=self._party_aoe_multiplier,
                 element="Physical",
                 hit_energy=10.0,
                 hits=1,
                 blast=False,
             )
-            for tgt in hits:
-                if hasattr(self.port, "apply_hp_lock"):
-                    self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
+            if self._apply_hp_lock_on_aoe:
+                for tgt in hits:
+                    if hasattr(self.port, "apply_hp_lock"):
+                        self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
         elif subaction == "SUMMON_SPROUTS":
             self.port.summon_transition_sprouts(owner_id=self.owner_id)
         elif subaction in ("CHANNEL_PULSE", "ABSORB_AND_CHANNEL_PULSE"):
             if subaction == "ABSORB_AND_CHANNEL_PULSE":
                 self.port.absorb_sprout_and_heal(owner_id=self.owner_id, heal_ratio=0.04)
-            self.port.execute_channel_pulse(owner_id=self.owner_id, allies=allies)
-            for tgt in allies:
-                if hasattr(self.port, "apply_hp_lock"):
-                    self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
+            aoe_allies = self._get_aoe_allies()
+            self._execute_pulse_with_config(aoe_allies)
+            if self._apply_hp_lock_on_pulse:
+                for tgt in aoe_allies:
+                    if hasattr(self.port, "apply_hp_lock"):
+                        self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
 
         self._subaction_idx += 1
         if self._subaction_idx < len(plan):

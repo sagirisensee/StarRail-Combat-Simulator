@@ -95,13 +95,18 @@ MEMORIA_BURST_PEAKS: List[Tuple[int, int, float, int, int]] = [
 ]
 
 
+from simulator.plugins.log_20261026_062503 import attach_log_20261026_062503_plugin
+from simulator.plugins.non_crit_ledgers import OFFICIAL_20261026_NON_CRITS
+
+
 def _collect_av_yizhi_vibes() -> Dict[str, Any]:
     golden = parse_golden_jsonl(GOLDEN_20261026)
     with open(GROUND_TRUTH_JSON, encoding="utf-8") as f:
         gt = json.load(f)
 
     sim, director = build_stage_sim(log_path=GOLDEN_20261026)
-    attach_exact_crit_oracle(sim, log_path=GOLDEN_20261026)
+    attach_exact_crit_oracle(sim, log_path=GOLDEN_20261026, non_crits=OFFICIAL_20261026_NON_CRITS)
+    attach_log_20261026_062503_plugin(sim)
 
     cyy = next(e for e in sim.entities if e.name == "长夜月")
     robin = next(e for e in sim.entities if e.name == "知更鸟•晴歌")

@@ -53,6 +53,9 @@ from .status import StatusTag
 GUARD_HP = 459777.8        # 千星戍卫 8032040 (日志 OnInitializeEnemy 实测 459777.75)
 BOSS_HP = 6389558.5        # 堕神之血•亚婆离 5034010 一阶段血池 (日志实测)
 BOSS_PHASE2_HP = 12779116.9    # 亚婆离二阶段血池 (日志实测, 为一阶段的 2 倍)
+BOSS_ATK = 1763.33         # 亚婆离二阶段有效攻击力 (日志掉血反推)
+BOSS_PHASE1_BARRIER_RATIO = 0.95  # 一阶段【血脑屏障】盾量占一阶段 MaxHP 比例
+BOSS_PHASE2_BARRIER_RATIO = 1.39  # 二阶段【血脑屏障】盾量占二阶段 MaxHP 比例
 BOSS_PHASE2_FLOOR = 3833735.0  # 【血脑屏障】锁血地板 (二阶段血池的 30%, 日志实测冻结值)
 BOSS_PHASE1_FLOOR = 4540781.72  # 一阶段屏障冻结值 (日志实存首个冻结平台: 4,540,781.72)
 BOSS_PHASE1_BARRIER_DELAY_AV = 40.5  # 一阶段屏障开启时点相对 AV
@@ -285,9 +288,7 @@ def _make_minion_ai(sim: TurnSimulator, w1_state: Optional[dict] = None, sync_w1
                 if boss is not None and boss.current_hp > 0:
                     boss.current_hp = min(boss.max_hp, boss.current_hp + 127791.17)
                 return
-            target = next((a for a in allies if a.name == "缇宝"), None)
-            if target is None or getattr(sim, "target_provider", None) is not None:
-                target = _select_target(entity, allies, sub_idx=0)
+            target = _select_target(entity, allies, sub_idx=0)
             req = DamageRequest(attacker=entity, target=target, skill_multiplier=1.0)
             resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
             return
@@ -330,20 +331,10 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
         1: ["HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"],
         2: ["PARTY_AOE", "HEAVY_ST"],
         3: ["PARTY_AOE", "HEAVY_ST", "CHANNEL_PULSE"],
-        4: ["PARTY_AOE", "HEAVY_ST"],
+        4: ["HEAVY_ST", "PARTY_AOE"],
         5: ["PARTY_AOE", "HEAVY_ST"],
         6: ["PARTY_AOE", "HEAVY_ST", "CHANNEL_PULSE"],
         7: ["HEAVY_ST", "PARTY_AOE"],
-    }
-
-    PHASE2_ST_TARGETS = {
-        1: "缇宝",
-        2: "风堇",
-        3: "长夜月",
-        4: "知更鸟•晴歌",
-        5: "缇宝",
-        6: "风堇",
-        7: "长夜月",
     }
 
     def _ai(entity, resolver, action) -> None:
@@ -382,8 +373,13 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
         subaction = plan[state["subaction_idx"]]
 
         if subaction == "HEAVY_ST":
-            st_target_name = PHASE2_ST_TARGETS.get(t, "风堇")
-            primary = next((a for a in allies if a.name == st_target_name), None)
+            primary = None
+            target_provider = getattr(sim, "target_provider", None)
+            if target_provider is not None:
+                try:
+                    primary = target_provider(entity, allies, sub_idx=state["subaction_idx"])
+                except TypeError:
+                    primary = target_provider(entity, allies, state["subaction_idx"])
             if primary is None:
                 primary = max(
                     allies,
@@ -392,7 +388,11 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
             _hit(primary, 2.4)
 
         elif subaction == "PARTY_AOE":
-            for target in allies:
+            aoe_allies = [
+                e for e in sim.entities
+                if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+            ]
+            for target in aoe_allies:
                 _hit(target, 1.2)
 
         elif subaction == "SUMMON_SPROUTS":
@@ -405,10 +405,14 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
             # 8 次小 AOE 脉冲 tick (0.1 系数) + 1 次终结 AOE (0.8 系数)
             setattr(sim, "_in_channel_pulse", True)
             try:
+                aoe_allies = [
+                    e for e in sim.entities
+                    if not e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+                ]
                 for _ in range(8):
                     if hasattr(sim, "_action_seq"):
                         sim._action_seq += 1
-                    for target in allies:
+                    for target in aoe_allies:
                         _hit(target, 0.1)
                     resolver.resolve_all()
                 if hasattr(sim, "_action_seq"):
@@ -416,6 +420,8 @@ def _make_boss_ai(sim: TurnSimulator, director: Optional["Stage30510021Director"
                 for target in allies:
                     if not getattr(target, "is_memosprite", False):
                         _hit(target, 0.8)
+                        target.hp_lock_ratio = min(0.50, float(getattr(target, "hp_lock_ratio", 0.0)) + 0.10)
+                        target.clamp_hp()
                 resolver.resolve_all()
             finally:
                 setattr(sim, "_in_channel_pulse", False)
@@ -612,9 +618,13 @@ class Stage30510021Director:
                         req = DamageRequest(attacker=boss, target=ally, skill_multiplier=mult)
                         self.sim.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
                 self.sim.resolver.resolve_all()
+                for ally in char_allies:
+                    if ally.current_hp > 0:
+                        ally.hp_lock_ratio = min(0.50, float(getattr(ally, "hp_lock_ratio", 0.0)) + 0.10)
+                        ally.clamp_hp()
                 return True
             if not getattr(self, "_barrier_release_pulsed", False):
-                if av >= wave2_av + BOSS_PHASE1_BARRIER_DELAY_AV:
+                if getattr(self, "phase1_barrier_floor", None) is not None or boss.current_hp <= getattr(boss, "max_hp", BOSS_HP) * 0.70:
                     if getattr(self, "phase1_barrier_floor", None) is None:
                         self.phase1_barrier_floor = boss.current_hp
                     if boss.current_hp <= self.phase1_barrier_floor:
@@ -756,21 +766,7 @@ def build_stage_30510021(
         auto_ult=True,
         stage_mechanics=mech_list,
     )
-    sim.enemy_target_oracle = {
-        0.0: "长夜月",
-        13.77: "缇宝",
-        41.32: "缇宝",
-        75.76: "知更鸟•晴歌",
-        138.67: "缇宝",
-        218.72: "缇宝",
-        281.39: "缇宝",
-        309.45: "风堇",
-        337.51: "风堇",
-        365.56: "知更鸟•晴歌",
-        393.62: "风堇",
-        421.68: "风堇",
-        449.74: "长夜月",
-    }
+
 
     # 第一波「灯塔」(8033020) 官方机制通过 LighthouseBossKit 驱动:
     # - 开局 0.00 AV 首回合施放【正道战线】召唤 千星戍卫A/B/C，并进入【除恶】状态获得 12 层【众愿】；

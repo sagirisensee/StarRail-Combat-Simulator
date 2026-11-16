@@ -67,6 +67,8 @@ GRIFFIN_WEAKNESSES = ["Physical", "Quantum", "Imaginary"]
 # 第二波 Lv.95 敌方实测数值覆盖
 APOLI_PHASE1_HP = 5106432.844098277
 APOLI_PHASE2_HP = 10212865.688196555
+APOLI_PHASE1_BARRIER_RATIO = 0.65
+APOLI_PHASE2_BARRIER_RATIO = 0.65
 APOLI_BASE_SPEED = 237.60000005364418
 APOLI_TOUGHNESS = 1080.0
 APOLI_WEAKNESSES = ["Ice", "Quantum", "Imaginary"]
@@ -428,8 +430,9 @@ class Stage30126122Director:
         self.aha_special_damage += dmg
         if actual > 0.0:
             self._break_helper.add_quantum_stack(target_name)
-        if target_name.startswith("狂兽的胚芽") or target_name.startswith("堕神之血"):
-            self._advance_sprouts_once_per_action()
+        if not getattr(self, "suppress_aha_sprout_advance", False):
+            if target_name.startswith("狂兽的胚芽") or target_name.startswith("堕神之血"):
+                self._advance_sprouts_once_per_action()
         if ent.current_hp <= 0.0:
             self.sim.event_bus.publish(
                 EnemyDefeatedEvent(
@@ -510,6 +513,9 @@ class Stage30126122Director:
             ent.distance_remaining = max(0.0, ent.distance_remaining - 800.0)
 
     def _on_damage_applied(self, event: DamageAppliedEvent) -> None:
+        dmg_type = getattr(event, "damage_type", None)
+        if dmg_type is not None and (dmg_type.name == "DOT" or str(dmg_type) == "DoT"):
+            return
         self._break_helper.on_damage_applied(event)
         target_name = str(getattr(event, "target_name", ""))
         target_ent = self.sim.get_entity(target_name)
@@ -583,7 +589,15 @@ class Stage30126122Director:
     def _spawn_default_wave2(self) -> None:
         port = Stage30126122CombatPort(self.sim)
         boss = create_apoli_boss("堕神之血•亚婆离")
-        apoli_kit = ApoliBossKit(owner_id=boss.name, port=port)
+        apoli_kit = ApoliBossKit(
+            owner_id=boss.name,
+            port=port,
+            phase1_max_hp=APOLI_PHASE1_HP,
+            phase2_max_hp=APOLI_PHASE2_HP,
+            phase1_barrier_shield_ratio=APOLI_PHASE1_BARRIER_RATIO,
+            phase2_barrier_shield_ratio=APOLI_PHASE2_BARRIER_RATIO,
+            phase2_plan=getattr(self, "phase2_plan", None),
+        )
         boss.kit = apoli_kit
         self.apoli_kit = apoli_kit
         self._apoli_locked_toughness = APOLI_TOUGHNESS
@@ -638,12 +652,10 @@ class Stage30126122Director:
                             boss.current_toughness = self._apoli_locked_toughness
                             boss.barrier_guarded = True
                             boss.damage_reduction = 0.75
-                            boss.toughness_dmg_reduction = 0.0 if getattr(self.apoli_kit, "_phase", 1) == 2 else 0.10
                         else:
                             self._apoli_locked_toughness = float(boss.current_toughness)
                             boss.barrier_guarded = False
                             boss.damage_reduction = 0.0
-                            boss.toughness_dmg_reduction = 0.10
                     self.apoli_kit.check_state_transitions()
                     berserk_end_av = self.apoli_kit.phase2_berserk_end_av
                     b_timer = self.sim.get_entity("血脑屏障狂暴倒计时")
@@ -666,11 +678,6 @@ class Stage30126122Director:
                     if boss.current_hp > 0:
                         boss.barrier_guarded = self.apoli_kit.barrier_active
                         boss.damage_reduction = 0.75 if self.apoli_kit.barrier_active else 0.0
-                        boss.toughness_dmg_reduction = (
-                            0.0
-                            if (self.apoli_kit.barrier_active and getattr(self.apoli_kit, "_phase", 1) == 2)
-                            else 0.10
-                        )
 
         # 4. 混沌回忆式波次切换判定 (Wave 1 -> Wave 2)
         if self._wave_mode.advance_wave(self.sim):

@@ -329,6 +329,7 @@ class TestStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"220255 总伤偏差过大: {err:.2%}")
+        self._assert_per_turn_sub_0_2_pct("220255", g, traj)
 
     def test_20261114_221208_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_221208.jsonl")
@@ -364,6 +365,7 @@ class TestStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"221208 总伤偏差过大: {err:.2%}")
+        self._assert_per_turn_sub_0_2_pct("221208", g, traj)
 
     def test_20261114_222204_trajectory_and_elation_events(self) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_222204.jsonl")
@@ -397,6 +399,30 @@ class TestStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, 0.002, f"222204 总伤偏差过大: {err:.2%}")
+        self._assert_per_turn_sub_0_2_pct("222204", g, traj)
+
+    def _assert_per_turn_sub_0_2_pct(self, tag: str, g: object, traj: object) -> None:
+        gt_by_av: dict[float, float] = {}
+        for t in g.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                gt_by_av[av] = gt_by_av.get(av, 0.0) + amt
+        sim_by_av: dict[float, float] = {}
+        for t in traj.replay.sequence.turns:
+            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
+            if amt > 0:
+                av = round(t.av, 2)
+                sim_by_av[av] = sim_by_av.get(av, 0.0) + amt
+        self.assertEqual(set(sim_by_av.keys()), set(gt_by_av.keys()))
+        for av, gt_dmg in sorted(gt_by_av.items()):
+            sim_dmg = sim_by_av[av]
+            turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
+            self.assertLess(
+                turn_err,
+                0.002,
+                f"{tag} AV={av:.2f} 单动伤害偏差过大: {turn_err:.3%} (GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+            )
 
 
 if __name__ == "__main__":

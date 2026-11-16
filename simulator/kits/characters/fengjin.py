@@ -795,17 +795,17 @@ class IkaKit(KitHandler):
             my_max_hp = float(self.port.max_hp(self.owner_id))
             if my_max_hp <= 0.0:
                 return
+            enemies = [e for e in self.port.enemies(self.owner_id) if self.port.entity_exists(e)]
+            if not enemies:
+                return
             accumulated = float(master.accumulated_healing)
             base_value = accumulated * self.DMG_RATIO_OF_HEALING
             master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
             if base_value > 0.0:
                 eq_mult = base_value / my_max_hp
-                enemies = list(self.port.enemies(self.owner_id))
                 if hasattr(self.port, "_get_entity"):
                     enemies.sort(key=lambda eid: getattr(self.port._get_entity(eid), "_spawn_seq", 0))
                 for enemy in enemies:
-                    if not self.port.entity_exists(enemy):
-                        continue
                     self.port.attack(
                         self.owner_id,
                         enemy,

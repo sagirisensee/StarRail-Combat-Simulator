@@ -156,6 +156,17 @@ class ApoliCombatPort(BaseEnemyCombatPort, Protocol):
         """更新实体速度并同步重算行动条。"""
         ...
 
+    def set_barrier_state(
+        self,
+        entity_id: str,
+        *,
+        active: bool,
+        damage_reduction: float = 0.75,
+        toughness_dmg_reduction: Optional[float] = None,
+    ) -> None:
+        """同步【血脑屏障】的受击护盾锁韧、减伤与韧性减伤状态。"""
+        ...
+
     def break_entity_toughness_and_deduct_hp(
         self,
         entity_id: str,

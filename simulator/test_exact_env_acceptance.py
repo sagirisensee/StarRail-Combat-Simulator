@@ -23,13 +23,18 @@ from simulator.golden_diff import (
 )
 
 
+from simulator.plugins.log_20261026_062503 import attach_log_20261026_062503_plugin
+from simulator.plugins.non_crit_ledgers import OFFICIAL_20261026_NON_CRITS
+
+
 class TestExactEnvAcceptance(unittest.TestCase):
     GOLDEN_PATH = "battle_logs/battle_20261026_062503.jsonl"
 
     def test_exact_env_zero_grant_and_full_alignment(self):
         random.seed(42)
         golden = parse_golden_jsonl(self.GOLDEN_PATH)
-        sim, director = build_stage_sim()
+        sim, director = build_stage_sim(log_path=self.GOLDEN_PATH)
+        attach_log_20261026_062503_plugin(sim)
         traj = run_trajectory_replay(
             sim,
             director,
@@ -80,8 +85,9 @@ class TestExactEnvAcceptance(unittest.TestCase):
         """变态对齐验证：100% 消除暴击判定偏差，验证全场总伤与分项极限收敛。"""
         from simulator.golden_diff import attach_exact_crit_oracle
         golden = parse_golden_jsonl(self.GOLDEN_PATH)
-        sim, director = build_stage_sim()
-        attach_exact_crit_oracle(sim)
+        sim, director = build_stage_sim(log_path=self.GOLDEN_PATH)
+        attach_exact_crit_oracle(sim, log_path=self.GOLDEN_PATH, non_crits=OFFICIAL_20261026_NON_CRITS)
+        attach_log_20261026_062503_plugin(sim)
         traj = run_trajectory_replay(
             sim,
             director,

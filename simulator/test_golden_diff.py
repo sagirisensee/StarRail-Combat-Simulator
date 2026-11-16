@@ -218,13 +218,13 @@ class TestStageBossPhases(unittest.TestCase):
         boss = sim.get_entity("堕神之血•亚婆离")
         self.assertIsNotNone(boss)
         self.assertEqual(director.boss_phase, 1)
-        # 屏障开启前 (延迟窗内): 无地板钳制、无压制
-        boss.current_hp = BOSS_PHASE1_FLOOR - 100000.0
+        # 血量高于 70% 时: 无地板钳制、无屏障压制
+        boss.current_hp = boss.max_hp * 0.75
         director.after_step()
-        self.assertEqual(boss.current_hp, BOSS_PHASE1_FLOOR - 100000.0)
+        self.assertEqual(boss.current_hp, boss.max_hp * 0.75)
         self.assertFalse(boss.barrier_guarded)
-        # 一阶段屏障期内打到地板以下 -> 钳制在冻结值, 不转阶段; 真实伤害免疫且承伤 25%
-        sim.current_av = (director.wave2_av or 0.0) + BOSS_PHASE1_BARRIER_DELAY_AV + 1.0
+        # 一阶段跌破 70% 时开启屏障并钳制在冻结值, 不转阶段; 真实伤害免疫且承伤 25%
+        boss.current_hp = BOSS_PHASE1_FLOOR - 100000.0
         director.after_step()
         self.assertEqual(director.boss_phase, 1)
         self.assertEqual(boss.current_hp, director.phase1_barrier_floor)

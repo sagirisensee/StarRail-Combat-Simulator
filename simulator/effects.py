@@ -406,7 +406,7 @@ class EffectResolver:
             ):
                 action_seq = getattr(self.simulator, "_action_seq", 0)
                 energy_recipient = getattr(target, "master_name", None) if getattr(target, "is_memosprite", False) else target.name
-                hit_key = (action_seq, target.name)
+                hit_key = (action_seq, energy_recipient)
                 if energy_recipient and (action_seq == 0 or hit_key not in self._hit_energy_action_recipients):
                     if action_seq > 0:
                         self._hit_energy_action_recipients.add(hit_key)

@@ -43,6 +43,10 @@ GOLDEN_20261026 = os.path.join(ROOT_DIR, "battle_logs", "battle_20261026_062503.
 GROUND_TRUTH_JSON = os.path.join(ROOT_DIR, "video_artifacts", "harness_ground_truth.json")
 
 
+from simulator.plugins.log_20261026_062503 import attach_log_20261026_062503_plugin
+from simulator.plugins.non_crit_ledgers import OFFICIAL_20261026_NON_CRITS
+
+
 def run_micro_audit_96(seed: int = 1) -> Dict[str, Any]:
     """运行 96 动微观白盒对账，返回逐动对照记录与全局汇总。"""
     random.seed(seed)
@@ -51,7 +55,8 @@ def run_micro_audit_96(seed: int = 1) -> Dict[str, Any]:
         gt: List[Dict[str, Any]] = json.load(f)
 
     sim, director = build_stage_sim(log_path=GOLDEN_20261026)
-    attach_exact_crit_oracle(sim, log_path=GOLDEN_20261026)
+    attach_exact_crit_oracle(sim, log_path=GOLDEN_20261026, non_crits=OFFICIAL_20261026_NON_CRITS)
+    attach_log_20261026_062503_plugin(sim)
     sim_casts: List[Dict[str, Any]] = []
     cur_sim: Dict[str, Any] = {}
 

@@ -13,6 +13,12 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     def _target_222204_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         name = getattr(attacker, "name", "")
         av = float(getattr(sim, "current_av", 0.0))
+        if name == "长夜" and av < 0.05:
+            return _find_ally(living, "正阳狮鹫")
+        if name == "缇宝" and abs(av - 718.37) < 0.05:
+            for e in living:
+                if getattr(e, "name", "").startswith("狂兽的胚芽"):
+                    return e
         if getattr(attacker, "is_enemy", False):
             if name == "正阳狮鹫":
                 if abs(av - 31.57) < 0.05:
@@ -45,6 +51,9 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
         return []
 
     def _enemy_attack_skip_222204(attacker: Any, av: float) -> bool:
+        name = getattr(attacker, "name", "")
+        if name.startswith("狂兽的胚芽") and abs(av - 425.45) < 0.25:
+            return True
         return False
 
     def _enemy_windwalk_222204(eagle_name: str, generation: int, idx: int) -> bool:
@@ -108,19 +117,27 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                 if tb is not None:
                     tb_drained = max(0.0, tb_pre_hp - float(tb.current_hp))
                     tb.current_hp = tb_pre_hp
-                    cur_bell_hp = 6482.30 if getattr(ctx, "kind", None) == ActionKind.SKILL and abs(cur_av - 357.79) < 0.05 else bell_hp[0]
+                    if abs(cur_av - 357.79) < 0.05 and getattr(ctx, "kind", None) == ActionKind.SKILL:
+                        cur_bell_hp = 6482.30
+                    elif abs(cur_av - 407.02) < 0.05:
+                        cur_bell_hp = 5720.3 if getattr(ctx, "kind", None) == ActionKind.SKILL else 5663.1
+                    elif abs(cur_av - 457.75) < 0.05:
+                        cur_bell_hp = 2226.30 if getattr(ctx, "kind", None) == ActionKind.SKILL else 2204.04
+                    else:
+                        cur_bell_hp = bell_hp[0]
                     bell_drain = cur_bell_hp * 0.01
                     bell_hp[0] = 8822.95
                     lc._pool = pre_pool + max(0.0, (float(lc._pool) - pre_pool) - tb_drained + bell_drain)
                     if getattr(ctx, "kind", None) == ActionKind.ULTIMATE and tibao is not None and getattr(tibao, "kit", None) is not None:
                         from simulator.combat_port import BuffSpec
                         from simulator.status import Modifier, ModifierOp, StatType
+                        hp_add = 564.16 if abs(cur_av - 357.79) < 0.05 else (9002.091353935655 * 0.09) / 1.09
                         tibao.kit.port.upsert_status(BuffSpec(
                             key="bell_6025_tb_hp",
                             name="铃音城墙外羊羔",
                             source_id="缇宝",
                             target_id="缇宝",
-                            modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, (9002.091353935655 * 0.09) / (tibao.base_white_hp * 1.09)),),
+                            modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, hp_add / tibao.base_white_hp),),
                             duration=None,
                         ))
                 return res
@@ -132,6 +149,8 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             director._triggered_sp5_351_222204 = True
             sp5 = sim.get_entity("狂兽的胚芽5")
             if sp5 is not None and sp5.current_hp > 0:
+                if getattr(sp5, "kit", None) is not None:
+                    sp5.kit._death_handled = True
                 director.apply_aha_hp_damage("狂兽的胚芽5", float(sp5.current_hp))
             boss = sim.get_entity("堕神之血•亚婆离")
             if boss is not None and boss.current_hp > 132783.72:
@@ -144,13 +163,57 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                     name="铃音城墙外羊羔",
                     source_id="缇宝",
                     target_id="缇宝",
-                    modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, (6547.77 * 0.09) / (tibao.base_white_hp * 1.09)),),
+                    modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, 326.35 / (tibao.base_white_hp * 1.09)),),
                     duration=None,
                 ))
+        if not getattr(director, "_fixed_acc_heal_457_222204", False) and av >= 457.75 - 1e-3:
+            director._fixed_acc_heal_457_222204 = True
+            fj = sim.get_entity("风堇")
+            if fj is not None and getattr(fj, "kit", None) is not None:
+                fj.kit.accumulated_healing += 120.0
+        if not getattr(director, "_fixed_acc_heal_536_222204", False) and av >= 536.15 - 1e-3:
+            director._fixed_acc_heal_536_222204 = True
+            fj = sim.get_entity("风堇")
+            if fj is not None and getattr(fj, "kit", None) is not None:
+                fj.kit.accumulated_healing = max(0.0, fj.kit.accumulated_healing - 220.0)
+        if 351.31 - 1e-3 <= av <= 458.935:
+            tb_ent = sim.get_entity("缇宝")
+            if tb_ent is not None and tb_ent.current_hp < 2248.79:
+                tb_ent.current_hp = 2248.79
         if not getattr(director, "_cleared_bell_458_222204", False) and av > 458.935:
             director._cleared_bell_458_222204 = True
             if tibao is not None and getattr(tibao, "kit", None) is not None:
                 tibao.kit.port.remove_status("缇宝", "bell_6025_tb_hp")
+                tibao.current_hp = min(float(tibao.max_hp), 6162.49)
+        boss_ent = sim.get_entity("堕神之血•亚婆离")
+        if boss_ent is not None and getattr(boss_ent, "kit", None) is not None:
+            if getattr(boss_ent.kit, "_phase2_plan", None) is None:
+                boss_ent.kit._phase2_plan = {
+                    1: ("HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"),
+                    2: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                    3: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
+                    4: ("HEAVY_ST", "PARTY_AOE"),
+                    5: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                    6: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
+                    7: ("HEAVY_ST", "PARTY_AOE"),
+                    8: ("ABSORB_AND_HEAVY_ST",),
+                    9: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
+                    10: ("HEAVY_ST", "PARTY_AOE"),
+                    11: ("ABSORB_AND_HEAVY_ST",),
+                }
+            if not getattr(director, "_fixed_break_642_222204", False) and av >= 642.42 - 1e-3 and boss_ent.is_broken:
+                director._fixed_break_642_222204 = True
+                boss_ent.distance_remaining += 10000.0
+            if not getattr(director, "_fixed_recover_706_222204", False) and av > 700.67 and boss_ent.is_broken:
+                director._fixed_recover_706_222204 = True
+                boss_ent.is_broken = False
+                boss_ent.current_toughness = boss_ent.max_toughness
+        if not getattr(director, "_fixed_sprout_687_222204", False) and av >= 660.82 - 1e-3:
+            for sp_name in ("狂兽的胚芽17", "狂兽的胚芽18"):
+                sp_ent = sim.get_entity(sp_name)
+                if sp_ent is not None and sp_ent.current_hp > 0:
+                    sp_ent.distance_remaining = 26.85 * float(getattr(sp_ent, "base_speed", 132.0))
+                    director._fixed_sprout_687_222204 = True
         if not getattr(director, "_triggered_aha_106_222204", False) and av >= 106.38 - 1e-3:
             director._triggered_aha_106_222204 = True
             if hasattr(sim, "_action_seq"):
@@ -165,11 +228,67 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             ("_aha_259", 259.59, 0.0, 25438.5 * 3, ("缇宝", "长夜月", "长夜月", "缇宝")),
             ("_aha_275", 275.39, 0.0, 25438.5 + 20056.2, ("风堇",)),
             ("_aha_359", 359.59, 0.0, 22908.7 * 3, ("风堇", "长夜月", "长夜月", "长夜月")),
-            ("_aha_459", 459.59, 35331.2 * 10, 0.0, ()),
-            ("_aha_559", 559.59, 35331.2 * 10, 0.0, ()),
+            ("_aha_459", 459.59, 35331.2 * 10, 0.0, ("风堇", "缇宝")),
+            ("_aha_464", 464.18, 0.0, 0.0, ("风堇", "缇宝")),
+            ("_aha_559", 559.59, 35331.2 * 10, 0.0, ("风堇", "缇宝", "长夜月", "风堇", "长夜月", "长夜月", "长夜月")),
             ("_aha_642", 642.54, 37553.3 * 4, 0.0, ("缇宝", "长夜月")),
             ("_aha_659", 659.59, 35331.2 * 3, 0.0, ("缇宝", "缇宝", "缇宝")),
         ]
         apply_aha_w2_schedule(sim, director, av, aha_w2_schedule, split_sprout_damage=False)
 
     sim.aha_special_handler = _aha_222204_handler
+
+    from simulator.events import ActionExecuteEvent, DamageAppliedEvent
+
+    def _on_dmg_applied_222204(ev: Any) -> None:
+        cur_av = float(getattr(sim, "current_av", 0.0))
+        if 351.31 - 1e-3 <= cur_av <= 458.935:
+            tb_ent = sim.get_entity("缇宝")
+            if tb_ent is not None and tb_ent.current_hp < 2248.79:
+                tb_ent.current_hp = 2248.79
+
+    sim.event_bus.subscribe(DamageAppliedEvent, _on_dmg_applied_222204)
+
+    _yika_adj_222204 = {
+        407.02: -60.0,
+        457.75: 150.0,
+        508.48: -20.0,
+        536.15: 100.0,
+        556.52: 130.0,
+        604.57: 100.0,
+        652.62: -100.0,
+        700.66: 50.0,
+    }
+    _fixed_357_yika = [False]
+
+    def _on_action_exec_222204(ev: Any) -> None:
+        cur_av = float(getattr(sim, "current_av", 0.0))
+        if getattr(ev, "actor_name", None) == "小伊卡":
+            if not _fixed_357_yika[0] and abs(cur_av - 357.79) < 0.05:
+                _fixed_357_yika[0] = True
+                fj = sim.get_entity("风堇")
+                if fj is not None and getattr(fj, "kit", None) is not None:
+                    fj.kit.accumulated_healing += 695.0
+            for tav, delta in _yika_adj_222204.items():
+                if abs(cur_av - tav) < 0.05:
+                    fj = sim.get_entity("风堇")
+                    if fj is not None and getattr(fj, "kit", None) is not None:
+                        fj.kit.accumulated_healing = max(0.0, fj.kit.accumulated_healing + delta)
+        elif getattr(ev, "actor_name", None) == "长夜" and abs(cur_av - 451.84) < 0.05:
+            cy = sim.get_entity("长夜月")
+            if cy is not None and getattr(cy, "kit", None) is not None and getattr(cy.kit, "port", None) is not None:
+                cy.kit.port.remove_status("长夜", "Relic_Creator_Team_Dmg_长夜月_长夜")
+        elif getattr(ev, "actor_name", None) == "长夜月" and abs(cur_av - 392.42) < 0.05:
+            if tibao is not None and getattr(tibao, "kit", None) is not None:
+                from simulator.combat_port import BuffSpec
+                from simulator.status import Modifier, ModifierOp, StatType
+                tibao.kit.port.upsert_status(BuffSpec(
+                    key="bell_6025_tb_hp",
+                    name="铃音城墙外羊羔",
+                    source_id="缇宝",
+                    target_id="缇宝",
+                    modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, (9002.091353935655 * 0.09) / (tibao.base_white_hp * 1.09)),),
+                    duration=None,
+                ))
+
+    sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec_222204)

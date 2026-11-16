@@ -121,7 +121,6 @@ class TestEnemyKitsUnit(unittest.TestCase):
         self.assertFalse(port.has_mark_status(target_id=ally.name, mark_key=ORONYX_MARK_KEY))
 
         # 重新挂上印记并在 Turn 3 引爆清除
-        kit.execute_turn(EnemyActionContext(action_id="p2", actor_id=pegasus.name))
         port.apply_mark_status(
             owner_id=pegasus.name,
             target_id=ally.name,
@@ -172,6 +171,97 @@ class TestEnemyKitsUnit(unittest.TestCase):
         griffin.kit.execute_turn(EnemyActionContext(action_id="g4", actor_id=griffin.name))
         self.assertEqual(griffin.kit.generation, 2)
         self.assertEqual(len(griffin.kit.summon_ids), 3)
+
+    def test_apoli_one_hit_30_percent_floor_triggers_barrier(self) -> None:
+        from simulator.kits.enemies import ApoliBossKit
+        from simulator.stage_30126122 import Stage30126122CombatPort, create_apoli_boss
+
+        ally = _dummy_ally("长夜月", speed=50.0)
+        boss = create_apoli_boss("堕神之血•亚婆离")
+        sim = TurnSimulator(entities=[ally, boss], use_techniques=False, auto_ult=False)
+        port = Stage30126122CombatPort(sim)
+        kit = ApoliBossKit(owner_id=boss.name, port=port)
+        boss.kit = kit
+
+        # Phase 1: 单击尝试直接打穿 30% 血线，应锁血在 30% 并强制开启一阶段屏障吸收溢出
+        huge_hit = ApoliBossKit.PHASE1_MAX_HP * 0.90
+        effective = kit.intercept_incoming_damage(boss.name, huge_hit)
+        self.assertTrue(kit.barrier_active)
+        self.assertAlmostEqual(boss.current_hp - effective, ApoliBossKit.PHASE1_MAX_HP * 0.30, places=2)
+
+        # Phase 2: 转入二阶段后单击尝试直接打穿 30% 血线，应锁血在 30% 并强制开启狂暴加速与二阶段屏障
+        kit._enter_phase2()
+        self.assertEqual(kit.phase, 2)
+        self.assertFalse(kit.barrier_active)
+        huge_p2_hit = ApoliBossKit.PHASE2_MAX_HP * 0.90
+        effective_p2 = kit.intercept_incoming_damage(boss.name, huge_p2_hit)
+        self.assertTrue(kit.barrier_active)
+        self.assertEqual(boss.base_speed, ApoliBossKit.PHASE2_BERSERK_SPEED)
+        self.assertAlmostEqual(boss.current_hp - effective_p2, ApoliBossKit.PHASE2_MAX_HP * 0.30, places=2)
+
+    def test_apoli_parameterized_lv100_config(self) -> None:
+        from simulator.kits.enemies import ApoliBossKit
+        from simulator.stage_30126122 import Stage30126122CombatPort, create_apoli_boss
+
+        ally = _dummy_ally("风堇", speed=50.0)
+        boss = create_apoli_boss("堕神之血•亚婆离")
+        boss.max_hp = 6389558.5
+        boss.current_hp = 6389558.5
+        sim = TurnSimulator(entities=[ally, boss], use_techniques=False, auto_ult=False)
+        port = Stage30126122CombatPort(sim)
+        kit = ApoliBossKit(
+            owner_id=boss.name,
+            port=port,
+            phase1_max_hp=6389558.5,
+            phase2_max_hp=12779116.9,
+            phase1_barrier_shield_ratio=0.95,
+            phase2_barrier_shield_ratio=1.39,
+            phase2_toughness_dmg_reduction=0.0,
+            apply_hp_lock_on_st=False,
+            apply_hp_lock_on_aoe=False,
+            apply_hp_lock_on_pulse=True,
+            transition_pulse_multipliers=(0.12,) * 8 + (1.44,),
+            transition_pulse_hit_energy=(12.0, 12.0),
+            aoe_include_memosprites=True,
+        )
+        boss.kit = kit
+        self.assertAlmostEqual(kit._phase1_barrier_shield, 6389558.5 * 0.95)
+        self.assertAlmostEqual(kit._phase2_barrier_shield, 12779116.9 * 1.39)
+
+        # 验证一阶段 70% 触发与自定义 MaxHP
+        boss.current_hp = 6389558.5 * 0.69
+        kit.check_state_transitions()
+        self.assertTrue(kit.barrier_active)
+
+        # 验证转阶段使用自定义二阶段血池与转阶段脉冲倍率
+        hp_before_t = ally.current_hp
+        kit._enter_phase2()
+        self.assertEqual(boss.max_hp, 12779116.9)
+        self.assertEqual(boss.base_speed, ApoliBossKit.PHASE2_BASE_SPEED)
+        self.assertEqual(boss.toughness_dmg_reduction, 0.0)
+        self.assertLess(ally.current_hp, hp_before_t)
+        self.assertAlmostEqual(ally.hp_lock_ratio, 0.10)
+
+    def test_aoe_hitting_master_and_memosprite_grants_single_hit_energy(self) -> None:
+        from simulator.stage_30126122 import Stage30126122CombatPort, create_apoli_boss
+
+        master = _dummy_ally("风堇", speed=50.0)
+        master.max_energy = 140.0
+        master.energy = 0.0
+        memo = _dummy_ally("小伊卡", speed=50.0)
+        memo.is_memosprite = True
+        memo.master_name = "风堇"
+        boss = create_apoli_boss("堕神之血•亚婆离")
+        sim = TurnSimulator(entities=[master, memo, boss], use_techniques=False, auto_ult=False)
+        port = Stage30126122CombatPort(sim)
+
+        port.apply_enemy_attack(
+            owner_id=boss.name,
+            target_ids=(master.name, memo.name),
+            multiplier=0.72,
+            hit_energy=10.0,
+        )
+        self.assertAlmostEqual(master.energy, 10.0)
 
 
 class TestStage30126122Timeline(unittest.TestCase):

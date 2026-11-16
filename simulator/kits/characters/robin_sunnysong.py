@@ -90,7 +90,9 @@ class SunnyMusiciansKit(KitHandler):
             e6_boost = self.master_kit.eidolon_param(6, 0, default=1.0)
             mult *= (1.0 + e6_boost)
 
-        enemies = self.port.enemies(self.owner_id)
+        enemies = list(self.port.enemies(self.owner_id))
+        if hasattr(self.port, "_get_entity"):
+            enemies.sort(key=lambda eid: getattr(self.port._get_entity(eid), "_spawn_seq", 0))
         self.master_kit._update_musician_aura()
         # 晴空乐手在场时同步主人身上的全队结界抗穿与减防光环, 仅以物理乘区与屏障吸收结算
         from ...status import StatusTag
@@ -1098,7 +1100,9 @@ class RobinSunnySongKit(KitHandler):
         """普攻【音浪，为海风定调】：
         对敌方单体造成等同于知更鸟•晴歌 70% 生命上限 (Lv10) 的风属性伤害，回能 20 点。
         """
-        enemies = self.port.enemies(self.owner_id)
+        enemies = list(self.port.enemies(self.owner_id))
+        if hasattr(self.port, "_get_entity"):
+            enemies.sort(key=lambda eid: getattr(self.port._get_entity(eid), "_spawn_seq", 0))
         if not enemies:
             return
         target_id = ctx.target_ids[0] if ctx.target_ids else enemies[0]
