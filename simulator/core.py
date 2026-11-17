@@ -152,6 +152,9 @@ class TurnSimulator:
                     rh.port = self.port
                     rh.on_battle_start()
 
+            if getattr(self, "vm_runtime", None) is not None:
+                self.vm_runtime.enter_battle()
+
             self.resolver.resolve_all()
 
             # 4. 战斗开局根据全队秘技与进场光环对满血角色生命值进行上限初始化对齐 (满血进场)

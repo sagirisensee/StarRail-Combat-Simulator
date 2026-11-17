@@ -136,17 +136,17 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         memosprite_mult = self._spirit_memosprite_mult
         self._spirit_memosprite_mult = 1.0
 
-        eq_mult = (base_value / wearer_max_hp) * spirit_dmg_mult * memosprite_mult
+        eq_flat = base_value * spirit_dmg_mult * memosprite_mult
         for target in targets:
             if self.port.entity_exists(target):
                 self.port.attack(
                     self.owner_id,
                     target,
                     element=self.SPIRIT_ELEMENT,
-                    atk_multiplier=eq_mult,
+                    atk_multiplier=0.0,
+                    flat_damage=eq_flat,
                     toughness_damage=0.0,
                     damage_type=DamageType.ADDITIONAL,
-                    scaling_stat="hp",
                     fixed_crit_dmg=spirit_crit_dmg
                 )
         if hasattr(self.port, "resolve_effects"):

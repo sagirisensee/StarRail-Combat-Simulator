@@ -137,7 +137,8 @@ class CombatPort(Protocol):
         target_id: str,
         *,
         element: str,
-        atk_multiplier: float,
+        atk_multiplier: float = 0.0,
+        flat_damage: float = 0.0,
         toughness_damage: float,
         damage_tag: str = "direct",
         damage_type: Optional[DamageType] = None,
@@ -145,7 +146,11 @@ class CombatPort(Protocol):
         scaling_stat: str = "atk",
         force_crit: Optional[bool] = None,
         fixed_crit_dmg: Optional[float] = None,
-        extra_dmg_boost: float = 0.0
+        extra_dmg_boost: float = 0.0,
+        extra_def_ignore: float = 0.0,
+        extra_res_pen: float = 0.0,
+        extra_vuln: float = 0.0,
+        extra_crit_dmg: float = 0.0,
     ) -> None: ...
     def schedule_follow_up(
         self,
@@ -895,7 +900,8 @@ class SimulatorCombatPort:
         target_id: str,
         *,
         element: str,
-        atk_multiplier: float,
+        atk_multiplier: float = 0.0,
+        flat_damage: float = 0.0,
         toughness_damage: float,
         damage_tag: str = "direct",
         damage_type: Optional[DamageType] = None,
@@ -903,7 +909,11 @@ class SimulatorCombatPort:
         scaling_stat: str = "atk",
         force_crit: Optional[bool] = None,
         fixed_crit_dmg: Optional[float] = None,
-        extra_dmg_boost: float = 0.0
+        extra_dmg_boost: float = 0.0,
+        extra_def_ignore: float = 0.0,
+        extra_res_pen: float = 0.0,
+        extra_vuln: float = 0.0,
+        extra_crit_dmg: float = 0.0,
     ) -> None:
         resolved_damage_type = damage_type or DamageType.from_tag(damage_tag)
         tgt = self._get_entity(target_id)
@@ -911,12 +921,15 @@ class SimulatorCombatPort:
         if not tgt or not src:
             return
         eff_multiplier = atk_multiplier
+        eff_flat_damage = flat_damage
         if (resolved_damage_type == DamageType.SERVANT or self.is_memosprite(source_id)) and not src.is_enemy:
             for e in self.sim.entities:
                 if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
                     fn = getattr(e.kit, "_memosprite_damage_mult", None)
                     if callable(fn):
-                        eff_multiplier *= float(fn())
+                        m = float(fn())
+                        eff_multiplier *= m
+                        eff_flat_damage *= m
         base_res = 0.20
         if hasattr(tgt, "damage_res") and isinstance(tgt.damage_res, dict) and element in tgt.damage_res:
             base_res = tgt.damage_res[element]
@@ -926,12 +939,17 @@ class SimulatorCombatPort:
             attacker=src,
             target=tgt,
             skill_multiplier=eff_multiplier,
+            flat_damage=eff_flat_damage,
             target_level=int(getattr(tgt, "level", 90) or 90),
             target_base_res=base_res,
             target_is_broken=tgt.is_broken,
             force_crit=force_crit,
             fixed_crit_dmg=fixed_crit_dmg,
             extra_dmg_boost=extra_dmg_boost,
+            extra_def_ignore=extra_def_ignore,
+            extra_res_pen=extra_res_pen,
+            extra_vuln=extra_vuln,
+            extra_crit_dmg=extra_crit_dmg,
             scaling_stat=scaling_stat,
             is_true_damage=(resolved_damage_type == DamageType.TRUE),
             damage_type=resolved_damage_type

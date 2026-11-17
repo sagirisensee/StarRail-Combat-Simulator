@@ -35,6 +35,7 @@ from ..base import KitHandler
 from ..registry import register_kit
 from ...actions import ActionContext, ActionKind, AbilityDefinition, ResourceCost, TargetMode, DamageType, ActionScheduleCategory
 from ...combat_port import BuffSpec, CombatPort
+from ...events import ActionExecuteEvent
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
 
 
@@ -802,7 +803,6 @@ class IkaKit(KitHandler):
             base_value = accumulated * self.DMG_RATIO_OF_HEALING
             master.accumulated_healing = accumulated * self.HEALING_RETAIN_RATIO
             if base_value > 0.0:
-                eq_mult = base_value / my_max_hp
                 if hasattr(self.port, "_get_entity"):
                     enemies.sort(key=lambda eid: getattr(self.port._get_entity(eid), "_spawn_seq", 0))
                 for enemy in enemies:
@@ -810,10 +810,10 @@ class IkaKit(KitHandler):
                         self.owner_id,
                         enemy,
                         element="Wind",
-                        atk_multiplier=eq_mult,
+                        atk_multiplier=0.0,
+                        flat_damage=base_value,
                         toughness_damage=30.0,
                         damage_type=DamageType.SERVANT,
-                        scaling_stat="hp"
                     )
                     if hasattr(self.port, "resolve_effects"):
                         self.port.resolve_effects()

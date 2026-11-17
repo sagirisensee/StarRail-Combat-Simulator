@@ -76,6 +76,10 @@ class DamageRequest:
     force_crit: Optional[bool] = None   # None: 随机/期望; True: 必暴; False: 不暴
     fixed_crit_dmg: Optional[float] = None # 若指定固定暴击伤害 (如知更鸟协奏附加伤害 150%)，覆盖面板暴伤
     extra_dmg_boost: float = 0.0        # 技能或星魂专有额外增伤 (如缇宝 E6 追加攻击 +729%)
+    extra_def_ignore: float = 0.0       # 单次命中临时减防/无视防御 (ModifyDamageData.Defender_DefenceAddedRatio)
+    extra_res_pen: float = 0.0          # 单次命中临时抗性穿透
+    extra_vuln: float = 0.0             # 单次命中临时易伤
+    extra_crit_dmg: float = 0.0         # 单次命中临时暴击伤害
     scaling_stat: str = "atk"           # "atk" | "hp" | "def"
     is_true_damage: bool = False        # 真实伤害: 仅取基础区数值, 跳过双暴/增伤/防御/抗性/易伤/减伤全部乘区
     damage_type: Any = None             # DamageType 枚举 (供屏障转化等按类别结算的规则读取)
@@ -93,22 +97,22 @@ class DamageCalculator:
             white_atk = getattr(req.attacker, "base_white_atk", 0.0) or req.attacker.base_atk
             atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE, white_base=white_atk)
             dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST) + getattr(req, "extra_dmg_boost", 0.0)
-            res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN)
+            res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN) + getattr(req, "extra_res_pen", 0.0)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
             if getattr(req.target, "is_enemy", False):
                 target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
             else:
                 target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED, category="debuff")
-            attacker_def_ignore = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DEF_SHRED, category="buff")
+            attacker_def_ignore = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DEF_SHRED, category="buff") + getattr(req, "extra_def_ignore", 0.0)
             def_shred = target_def_shred + attacker_def_ignore
-            vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY)
+            vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY) + getattr(req, "extra_vuln", 0.0)
         else:
-            dmg_boost = base_dmg_boost
-            res_pen = 0.0
-            def_shred = 0.0
+            dmg_boost = base_dmg_boost + getattr(req, "extra_dmg_boost", 0.0)
+            res_pen = getattr(req, "extra_res_pen", 0.0)
+            def_shred = getattr(req, "extra_def_ignore", 0.0)
             target_def_shred = 0.0
-            attacker_def_ignore = 0.0
-            vuln = 0.0
+            attacker_def_ignore = def_shred
+            vuln = getattr(req, "extra_vuln", 0.0)
 
         # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
         scaling = getattr(req, "scaling_stat", "atk")
@@ -151,7 +155,7 @@ class DamageCalculator:
 
         # 2. 双暴区
         crit_rate = getattr(req.attacker, "crit_rate", 0.05)
-        crit_dmg = req.fixed_crit_dmg if req.fixed_crit_dmg is not None else getattr(req.attacker, "crit_dmg", 0.50)
+        crit_dmg = (req.fixed_crit_dmg if req.fixed_crit_dmg is not None else getattr(req.attacker, "crit_dmg", 0.50)) + getattr(req, "extra_crit_dmg", 0.0)
 
         if req.force_crit is not None:
             is_crit = req.force_crit
