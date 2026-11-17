@@ -21,7 +21,14 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .expr import dotnet_hash
 
-DEFAULT_TBGD_ROOT = "/tmp/tbgd"
+_REPO_TBGD_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "data", "TurnBasedGameData")
+)
+DEFAULT_TBGD_ROOT = (
+    _REPO_TBGD_ROOT
+    if os.path.isdir(os.path.join(_REPO_TBGD_ROOT, "ExcelOutput"))
+    else "/tmp/tbgd"
+)
 
 # 经实证确认的纯表现/客户端无逻辑副作用节点，加载期裁剪以压缩 AST 体积
 PRUNABLE_PRESENTATION_TYPES: Set[str] = {
