@@ -133,6 +133,7 @@ def parse_golden_jsonl(path: str) -> BattleSequence:
     """解析 Veritas 官方 JSONL, 归纳为标准时序。"""
     seq = BattleSequence(source=path)
     enemy_names: Dict[int, str] = {}
+    sprout_cnt = 0
     current: Optional[TurnRecord] = None
 
     def open_turn(av: float, owner: str) -> TurnRecord:
@@ -152,8 +153,14 @@ def parse_golden_jsonl(path: str) -> BattleSequence:
 
             if ev == "OnInitializeEnemy":
                 e = data.get("enemy") or {}
-                if e.get("uid") is not None:
-                    enemy_names[e["uid"]] = e.get("name", f"敌人#{e['uid']}")
+                uid = e.get("uid")
+                if uid is not None:
+                    ename = e.get("name", f"敌人#{uid}")
+                    if ename == "狂兽的胚芽" and uid not in enemy_names:
+                        sprout_cnt += 1
+                        enemy_names[uid] = f"狂兽的胚芽{sprout_cnt}"
+                    else:
+                        enemy_names[uid] = ename
             elif ev == "OnTurnBegin":
                 owner_ref = data.get("turn_owner")
                 if owner_ref:
@@ -1596,7 +1603,11 @@ def run_trajectory_replay(
                 e is not cur_turn
                 and getattr(e, "is_enemy", False)
                 and float(getattr(e, "current_hp", 0.0)) > 0.0
-                and getattr(e, "name", "").startswith(u_owner)
+                and (
+                    getattr(e, "name", "") == u_owner
+                    if u_owner[-1:].isdigit()
+                    else getattr(e, "name", "").startswith(u_owner)
+                )
                 and float(getattr(e, "speed", 0.0)) > 0.0
                 and now_av + float(getattr(e, "distance_remaining", 0.0)) / float(e.speed) <= u_item.av + 1e-4
                 for e in getattr(sim, "entities", ())
@@ -1677,7 +1688,11 @@ def run_trajectory_replay(
                 or (
                     getattr(actor_ent, "is_enemy", False)
                     and bool(getattr(ult_queue[0][1], "turn_owner", ""))
-                    and act_name.startswith(getattr(ult_queue[0][1], "turn_owner", ""))
+                    and (
+                        act_name == getattr(ult_queue[0][1], "turn_owner", "")
+                        if getattr(ult_queue[0][1], "turn_owner", "")[-1:].isdigit()
+                        else act_name.startswith(getattr(ult_queue[0][1], "turn_owner", ""))
+                    )
                 )
             )
             and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av)

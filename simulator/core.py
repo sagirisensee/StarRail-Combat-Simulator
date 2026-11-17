@@ -15,7 +15,8 @@ from .inspector import BattleInspector
 from .events import (
     EventBus, BattleEvent, TurnBeginEvent, TurnEndEvent, ActionExecuteEvent,
     PrimaryDamageCompleteEvent, ActionEndEvent, 
-    ToughnessRecoverEvent, TechniqueExecuteEvent
+    ToughnessRecoverEvent, TechniqueExecuteEvent,
+    SpiritSummonedEvent, SpiritDespawnEvent
 )
 from .effects import (
     EffectResolver, ModifySPEffect, InterruptActionEffect, ApplyDamageEffect, DamageRequest
@@ -97,6 +98,16 @@ class TurnSimulator:
 
         # 注册事件总线转发至各实体挂载的技能套件、光锥与遗器
         def _forward_event_to_handlers(evt: BattleEvent):
+            if isinstance(evt, (SpiritSummonedEvent, SpiritDespawnEvent)):
+                for ent in list(self.entities):
+                    if getattr(ent, "light_cone", None) is not None:
+                        ent.light_cone.on_event(evt)
+                    for rh in getattr(ent, "relic_handlers", []):
+                        rh.on_event(evt)
+                for ent in list(self.entities):
+                    if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_event"):
+                        ent.kit.on_event(evt)
+                return
             for ent in list(self.entities):
                 if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_event"):
                     ent.kit.on_event(evt)
@@ -387,6 +398,15 @@ class TurnSimulator:
 
         with self.scheduler.action_frame():
             self.status_mgr.tick_on_turn_begin(active_entity)
+            if active_entity.is_enemy and active_entity.is_broken:
+                active_entity.is_broken = False
+                active_entity.current_toughness = active_entity.max_toughness
+                self.event_bus.publish(ToughnessRecoverEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    target_name=active_entity.name,
+                    max_toughness=active_entity.max_toughness
+                ))
             self.event_bus.publish(TurnBeginEvent(
                 av=round(self.current_av, 2),
                 cycle=self.current_cycle,

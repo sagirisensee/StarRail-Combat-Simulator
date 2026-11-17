@@ -328,6 +328,20 @@ class EffectResolver:
             if getattr(effect.request, "target_is_broken", None) is None:
                 effect.request.target_is_broken = getattr(target, "is_broken", False)
 
+            req_attacker = effect.request.attacker
+            if (
+                (effect.request.damage_type == DamageType.SERVANT or getattr(req_attacker, "is_memosprite", False))
+                and not req_attacker.is_enemy
+                and not getattr(effect.request, "is_true_damage", False)
+            ):
+                for e in list(getattr(self.simulator, "entities", [])):
+                    if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
+                        fn = getattr(e.kit, "_memosprite_damage_mult", None)
+                        if callable(fn):
+                            m = float(fn())
+                            effect.request.skill_multiplier *= m
+                            effect.request.flat_damage *= m
+
             # 1. 伤害纯计算
             breakdown = DamageCalculator.calculate(effect.request)
             raw_dmg = breakdown.final_damage

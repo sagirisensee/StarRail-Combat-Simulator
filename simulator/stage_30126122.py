@@ -26,6 +26,7 @@ from .events import (
     DamageAppliedEvent,
     EnemyDefeatedEvent,
     EnemySpawnedEvent,
+    ToughnessRecoverEvent,
     TurnBeginEvent,
     WeaknessBreakEvent,
 )
@@ -269,15 +270,13 @@ class Stage30126122CombatPort(BaseEnemyCombatPortImpl):
         if boss is None or boss.current_hp <= 0.0:
             return False
         director = getattr(self.sim, "_stage_director", None)
-        target_sprout = next(
-            (
-                ent for ent in self.sim.entities
-                if ent.is_enemy and ent.current_hp > 0.0 and ent.name.startswith("狂兽的胚芽")
-            ),
-            None,
-        )
-        if target_sprout is None:
+        sprouts = [
+            ent for ent in self.sim.entities
+            if ent.is_enemy and ent.current_hp > 0.0 and ent.name.startswith("狂兽的胚芽")
+        ]
+        if not sprouts:
             return False
+        target_sprout = sprouts[-1] if getattr(self.sim, "absorb_last_sprout", False) else sprouts[0]
         if director is not None and hasattr(director, "_notified_dead_sprouts"):
             director._notified_dead_sprouts.add(target_sprout.name)
         target_sprout.current_hp = 0.0
@@ -353,6 +352,7 @@ class Stage30126122Director:
         self.sim.event_bus.subscribe(EnemyDefeatedEvent, self._on_entity_defeated)
         self.sim.event_bus.subscribe(DamageAppliedEvent, self._on_damage_applied)
         self.sim.event_bus.subscribe(WeaknessBreakEvent, self._break_helper.on_weakness_break)
+        self.sim.event_bus.subscribe(ToughnessRecoverEvent, self._on_toughness_recover)
 
     # ---- 向后兼容属性/代理 ----
     @property
@@ -514,13 +514,31 @@ class Stage30126122Director:
                 self.spawn_wave2_sprouts(count=2, reanchor_timer=False, initial_distance=init_dist)
 
     def _advance_sprouts_once_per_action(self) -> None:
-        pass
+        if getattr(self.apoli_kit, "_phase", 1) != 1:
+            return
+        action_seq = int(getattr(self.sim, "_action_seq", 0))
+        for ent in self.sim.entities:
+            if not ent.is_enemy or not ent.name.startswith("狂兽的胚芽"):
+                continue
+            if ent.current_hp <= 0.0 or ent.distance_remaining >= 1e9:
+                continue
+            if self._sprout_advance_seq.get(ent.name) == action_seq:
+                continue
+            self._sprout_advance_seq[ent.name] = action_seq
+            ent.distance_remaining = max(0.0, ent.distance_remaining - 800.0)
 
     def _on_damage_applied(self, event: DamageAppliedEvent) -> None:
         dmg_type = getattr(event, "damage_type", None)
         if dmg_type is not None and (dmg_type.name == "DOT" or str(dmg_type) == "DoT"):
             return
         self._break_helper.on_damage_applied(event)
+        target_name = str(getattr(event, "target_name", ""))
+        target_ent = self.sim.get_entity(target_name)
+        if target_ent is None or not target_ent.is_enemy:
+            return
+        if not target_name.startswith("堕神之血"):
+            return
+        self._advance_sprouts_once_per_action()
 
     def _on_action_end(self, event: ActionEndEvent) -> None:
         self.pegasus_kit.on_event(event)
@@ -542,9 +560,22 @@ class Stage30126122Director:
                     description=f"[ElationLaughGain] {event.actor_name} 施放终结技，获得 5 个笑点（当前 {self.laugh_points}）",
                 )
             )
+        if self.wave >= 2 and self.apoli_kit is not None and getattr(self.apoli_kit, "_phase", 1) == 2:
+            boss = self.sim.get_entity("堕神之血•亚婆离")
+            if boss is not None and boss.current_hp <= 0.0:
+                for sp in self.sim.entities:
+                    if sp.is_enemy and sp.name.startswith("狂兽的胚芽") and sp.current_hp > 0.0:
+                        sp.current_hp = 0.0
+                        sp.distance_remaining = 1e12
 
     def _on_entity_defeated(self, event: EnemyDefeatedEvent) -> None:
         self.griffin_kit.on_event(event)
+
+    def _on_toughness_recover(self, event: ToughnessRecoverEvent) -> None:
+        if event.target_name == "堕神之血•亚婆离" and getattr(self.apoli_kit, "_phase", 1) == 2:
+            boss = self.sim.get_entity(event.target_name)
+            if boss is not None:
+                boss.toughness_dmg_reduction = 0.10
 
     def spawn_wave2_sprouts(
         self,
@@ -679,6 +710,11 @@ class Stage30126122Director:
         # 4. 混沌回忆式波次切换判定 (Wave 1 -> Wave 2)
         if self._wave_mode.advance_wave(self.sim):
             self._triggered_aha_cycles.add((self.wave, 0))
+            for ent in getattr(self.sim, "entities", ()):
+                if not ent.is_enemy and ent.current_hp > 0:
+                    kit = getattr(ent, "kit", None)
+                    if kit is not None and hasattr(kit, "_heal_provider_keys"):
+                        kit._heal_provider_keys.clear()
             if self._wave2_factory is not None:
                 for ent in self._wave2_factory(self.sim):
                     self.sim.add_entity(ent, trigger_battle_start=True)

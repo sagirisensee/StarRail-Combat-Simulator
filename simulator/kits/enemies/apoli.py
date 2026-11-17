@@ -65,7 +65,7 @@ class ApoliBossKit(EnemyKit):
         phase2_barrier_shield_ratio: float = 0.65,
         phase1_barrier_trigger_ratio: float = 0.70,
         phase2_barrier_trigger_ratio: float = 0.70,
-        phase2_toughness_dmg_reduction: float = 0.10,
+        phase2_toughness_dmg_reduction: float = 0.0,
         apply_hp_lock_on_st: bool = False,
         apply_hp_lock_on_aoe: bool = False,
         apply_hp_lock_on_pulse: bool = True,
@@ -140,6 +140,10 @@ class ApoliBossKit(EnemyKit):
         if target_id != self.owner_id or raw_damage <= 0.0:
             return raw_damage
         if self._barrier_active:
+            self._tick_purple_sphere(self.port.get_current_av())
+            if self._barrier_active and self._barrier_hp <= 0.0:
+                self._break_barrier()
+                return raw_damage
             absorbed = min(self._barrier_hp, raw_damage)
             self._barrier_hp = max(0.0, self._barrier_hp - raw_damage)
             overflow = raw_damage - absorbed

@@ -161,9 +161,27 @@ class BaseEnemyCombatPortImpl:
         tgt = self.sim.get_entity(target_id)
         if tgt is None or tgt.is_enemy or tgt.current_hp <= 0.0:
             return
+        if hasattr(self.sim, "port") and hasattr(self.sim.port, "is_action_suppressed") and self.sim.port.is_action_suppressed(target_id):
+            return
         cur = float(getattr(tgt, "hp_lock_ratio", 0.0))
         tgt.hp_lock_ratio = min(max_ratio, cur + delta_ratio)
+        old_hp = float(tgt.current_hp)
         tgt.clamp_hp()
+        actual_loss = old_hp - float(tgt.current_hp)
+        if actual_loss > 0.0:
+            from ...events import HPLostEvent
+            self.sim.event_bus.publish(HPLostEvent(
+                av=round(float(getattr(self.sim, "current_av", 0.0)), 2),
+                cycle=int(getattr(self.sim, "current_cycle", 0)),
+                entity_name=tgt.name,
+                amount=actual_loss,
+                hp_left=float(tgt.current_hp),
+                cause="hp_lock",
+            ))
+            for e in list(getattr(self.sim, "entities", ())):
+                kit = getattr(e, "kit", None)
+                if kit is not None and hasattr(kit, "on_hp_lost"):
+                    kit.on_hp_lost(tgt.name, actual_loss, cause="hp_lock")
 
     def apply_corruption(
         self,
@@ -425,6 +443,13 @@ class BaseEnemyCombatPortImpl:
             ent.distance_remaining = reset_distance
         if toughness_dmg_reduction is not None:
             ent.toughness_dmg_reduction = float(toughness_dmg_reduction)
+        if hasattr(self.sim, "status_mgr"):
+            from ...status import StatusTag
+            for st in list(self.sim.status_mgr.get_statuses(entity_id)):
+                tags = getattr(st, "tags", ())
+                is_debuff = getattr(st, "category", "") == "debuff" or StatusTag.TARGET_DEBUFF in tags
+                if is_debuff and getattr(st, "duration", None) is not None and StatusTag.FIELD_AURA not in tags:
+                    self.sim.status_mgr.remove_status(entity_id, st.id)
 
     def set_entity_speed(self, entity_id: str, speed: float) -> None:
         ent = self.sim.get_entity(entity_id)
@@ -466,9 +491,21 @@ class BaseEnemyCombatPortImpl:
             return
         ent.current_toughness = 0.0
         ent.is_broken = True
-        ent.current_hp = max(0.0, float(ent.current_hp) - hp_deduct)
+        break_dmg = 0.0
+        max_t = float(getattr(ent, "max_toughness", 0.0) or 0.0)
+        if max_t > 0.0 and hasattr(self.sim, "status_mgr"):
+            sm = self.sim.status_mgr
+            tgt_lvl = float(getattr(ent, "level", 95) or 95)
+            atk_lvl = 80.0
+            def_shred = sm.calculate_stat(ent.name, 0.0, StatType.DEF_SHRED)
+            def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred) + (atk_lvl + 20.0))
+            base_res = ent.damage_res.get("Quantum", 0.0) if isinstance(getattr(ent, "damage_res", None), dict) else 0.0
+            res_mult = max(0.0, 1.0 - base_res)
+            vuln_mult = 1.0 + sm.calculate_stat(ent.name, 0.0, StatType.VULNERABILITY)
+            break_dmg = 3767.5533 * 0.5 * (0.5 + max_t / 120.0) * def_mult * res_mult * vuln_mult * 1.15
+        ent.current_hp = max(0.0, float(ent.current_hp) - hp_deduct - break_dmg)
         if ent.distance_remaining < 1e9:
-            ent.distance_remaining += 2500.0
+            ent.distance_remaining += 12500.0
 
     def is_broken(self, entity_id: str) -> bool:
         ent = self.sim.get_entity(entity_id)

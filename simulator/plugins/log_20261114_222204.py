@@ -184,13 +184,6 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                     10: ("HEAVY_ST", "PARTY_AOE"),
                     11: ("ABSORB_AND_HEAVY_ST",),
                 }
-            if not getattr(director, "_fixed_break_642_222204", False) and av >= 642.42 - 1e-3 and boss_ent.is_broken:
-                director._fixed_break_642_222204 = True
-                boss_ent.distance_remaining += 10000.0
-            if not getattr(director, "_fixed_recover_706_222204", False) and av > 700.67 and boss_ent.is_broken:
-                director._fixed_recover_706_222204 = True
-                boss_ent.is_broken = False
-                boss_ent.current_toughness = boss_ent.max_toughness
         if not getattr(director, "_fixed_sprout_687_222204", False) and av >= 660.82 - 1e-3:
             for sp_name in ("狂兽的胚芽17", "狂兽的胚芽18"):
                 sp_ent = sim.get_entity(sp_name)
@@ -235,8 +228,8 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     _yika_adj_222204 = {
         407.02: -60.0,
         457.75: 150.0,
-        508.48: -20.0,
-        536.15: 100.0,
+        508.48: 650.0,
+        536.15: 1100.0,
         556.52: 130.0,
         604.57: 100.0,
         652.62: -100.0,

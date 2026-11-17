@@ -468,8 +468,8 @@ class RobinSunnySongKit(KitHandler):
             ):
                 trigger_ally_id = None
 
-        old_vibes = float(self.vibes)
-        self.vibes = min(float(self.max_vibes), old_vibes + float(amount))
+        old_vibes = int(self.vibes)
+        self.vibes = min(int(self.max_vibes), old_vibes + int(amount))
 
         tracer = getattr(self.port, "tracer", None)
         if tracer is not None and self.vibes != old_vibes:
@@ -519,21 +519,15 @@ class RobinSunnySongKit(KitHandler):
         """检测并推进「晴空乐手」啾米与派丁的登台。"""
         drummie_threshold = int(self.skill_param("talent", 5, default=6.0))
         paddie_threshold = int(self.skill_param("talent", 6, default=12.0))
-        err = (self.port.stat(self.owner_id, StatType.ERR) or 1.0) if self.port.is_in_turn() else 1.0
-        summon_energy = self.skill_param("1151205", 0, default=20.0) * err
 
         if self.vibes >= drummie_threshold and not self.has_drummie:
             self.has_drummie = True
             self.member_count = max(self.member_count, 2)
-            # 1151205 贴近海的心跳：被召唤时为知更鸟恢复 20 点能量
-            self.port.gain_energy(self.owner_id, summon_energy, cause="忆灵天赋《贴近海的心跳》召唤「啾米」登台回能 (+20.0 点)", source_plugin="晴空乐手天赋")
             self._update_musician_aura()
 
         if self.vibes >= paddie_threshold and not self.has_paddie:
             self.has_paddie = True
             self.member_count = 3
-            # 1151205 贴近海的心跳：被召唤时为知更鸟恢复 20 点能量
-            self.port.gain_energy(self.owner_id, summon_energy, cause="忆灵天赋《贴近海的心跳》召唤「派丁」登台回能 (+20.0 点)", source_plugin="晴空乐手天赋")
             self._update_musician_aura()
 
         # 全员登台 -> 开启【Fever】状态与结界
@@ -555,8 +549,9 @@ class RobinSunnySongKit(KitHandler):
         self.has_bessie = True
         self.member_count = 1
 
-        # 1151205 贴近海的心跳：召唤贝茜为知更鸟恢复 20 点能量
-        summon_energy = self.skill_param("1151205", 0, default=20.0)
+        # 1151205 贴近海的心跳：召唤「晴空乐手」为知更鸟恢复 20 点能量 (受 ERR 放大)
+        err = (self.port.stat(self.owner_id, StatType.ERR) or 1.0) if self.port.is_in_turn() else 1.0
+        summon_energy = self.skill_param("1151205", 0, default=20.0) * err
         self.port.gain_energy(self.owner_id, summon_energy, cause="忆灵天赋《贴近海的心跳》召唤「贝茜」登台回能 (+20.0 点)", source_plugin="晴空乐手天赋")
 
         # 注册实体至跑道
@@ -731,11 +726,11 @@ class RobinSunnySongKit(KitHandler):
             # 先登记，阻止回能/退场事件重入重复扣除。
             self._countdown_settled_turn_id = turn_id
 
-        old_vibes = float(self.vibes)
-        minimum = float(self.skill_param("1151203", 5, default=12.0))
+        old_vibes = int(self.vibes)
+        minimum = int(self.skill_param("1151203", 5, default=12.0))
         ratio = float(self.skill_param("1151203", 9, default=0.50))
-        deduction = max(minimum, old_vibes * ratio)
-        self.vibes = max(0.0, old_vibes - deduction)
+        deduction = max(minimum, math.ceil(old_vibes * ratio))
+        self.vibes = max(0, old_vibes - deduction)
 
         tracer = getattr(self.port, "tracer", None)
         if tracer is not None:

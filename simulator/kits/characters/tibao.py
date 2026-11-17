@@ -569,7 +569,7 @@ class TibaoKit(KitHandler):
                     hits += 1
 
                 for _ in range(hits):
-                    if target not in self.port.enemies(self.owner_id):
+                    if not self.port.entity_exists(target):
                         break
 
                     self.port.attack(
@@ -590,7 +590,7 @@ class TibaoKit(KitHandler):
                 if (
                     self.eidolon >= 1
                     and true_base >= 0
-                    and target in self.port.enemies(self.owner_id)
+                    and self.port.entity_exists(target)
                 ):
                     hp = self.port.max_hp(self.owner_id)
                     if hp > 0:

@@ -922,14 +922,6 @@ class SimulatorCombatPort:
             return
         eff_multiplier = atk_multiplier
         eff_flat_damage = flat_damage
-        if (resolved_damage_type == DamageType.SERVANT or self.is_memosprite(source_id)) and not src.is_enemy:
-            for e in self.sim.entities:
-                if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
-                    fn = getattr(e.kit, "_memosprite_damage_mult", None)
-                    if callable(fn):
-                        m = float(fn())
-                        eff_multiplier *= m
-                        eff_flat_damage *= m
         base_res = 0.20
         if hasattr(tgt, "damage_res") and isinstance(tgt.damage_res, dict) and element in tgt.damage_res:
             base_res = tgt.damage_res[element]

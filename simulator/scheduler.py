@@ -414,6 +414,21 @@ class ActionScheduler:
                 intent: ScheduledActionIntent = popped  # type: ignore[assignment]
                 if not self._is_entity_alive(intent.actor_id):
                     continue
+                if (
+                    intent.action_kind == ActionKind.MEMOSPRITE_SKILL
+                    and any(getattr(e, "is_enemy", False) for e in getattr(self.sim, "entities", ()))
+                    and not any(
+                        getattr(e, "is_enemy", False)
+                        and (getattr(e, "current_hp", 0.0) > 0 or getattr(e, "is_infinite_hp", False))
+                        for e in getattr(self.sim, "entities", ())
+                    )
+                ):
+                    ent = self.sim.get_entity(intent.actor_id)
+                    kit = getattr(ent, "kit", None) if ent is not None else None
+                    if kit is not None and hasattr(kit, "_resolve_talent_heal"):
+                        kit._resolve_talent_heal()
+                        self.sim.resolver.resolve_all()
+                    continue
 
                 executed_count += 1
                 if executed_count > MAX_SCHEDULED_ACTIONS_PER_DRAIN:

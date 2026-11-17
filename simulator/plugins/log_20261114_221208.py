@@ -88,6 +88,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             return False
         return True
 
+    sim.absorb_last_sprout = True
     sim.target_provider = _target_221208_provider
     sim.blast_target_provider = _blast_221208_provider
     sim.enemy_attack_skip_provider = _enemy_attack_skip_221208
@@ -99,17 +100,17 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
         if getattr(director, "phase2_plan", None) is None:
             director.phase2_plan = {
                 1: ("HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"),
-                2: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
-                3: ("PARTY_AOE", "CHANNEL_PULSE"),
+                2: ("ABSORB_AND_HEAVY_ST",),
+                3: ("PARTY_AOE", "HEAVY_ST", "CHANNEL_PULSE"),
                 4: ("HEAVY_ST", "PARTY_AOE"),
                 5: ("PARTY_AOE", "CHANNEL_PULSE"),
-                6: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                6: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
                 7: ("HEAVY_ST", "PARTY_AOE"),
-                8: ("PARTY_AOE", "CHANNEL_PULSE"),
+                8: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
                 9: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
                 10: ("HEAVY_ST", "PARTY_AOE"),
-                11: ("PARTY_AOE", "CHANNEL_PULSE"),
-                12: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                11: ("PARTY_AOE",),
+                12: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
             }
         if getattr(director, "apoli_kit", None) is not None and getattr(director.apoli_kit, "_phase2_plan", None) is None:
             director.apoli_kit._phase2_plan = director.phase2_plan
@@ -137,7 +138,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
 
         aha_w2_schedule: List[Tuple[str, float, float, float, Tuple[str, ...]]] = [
             ("_aha_256", 256.38, 0.0, 23049.2 * 4, ("长夜月", "长夜月", "长夜月", "长夜月", "风堇")),
-            ("_aha_356", 356.75, 0.0, 25610.2 * 4, ("长夜月", "长夜月")),
+            ("_aha_356", 356.75, 28811.5 * 3, 25610.2 * 4, ("长夜月", "长夜月")),
             ("_aha_419", 419.82, 238183.4, 0.0, ("知更鸟•晴歌", "长夜月")),
             ("_aha_456", 456.75, 0.0, 23049.2 * 5, ("风堇", "风堇", "风堇", "风堇")),
             ("_aha_556", 556.75, 0.0, 23049.2 * 2 + 10186.0, ("知更鸟•晴歌", "风堇", "知更鸟•晴歌", "风堇")),
@@ -151,3 +152,26 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
         apply_aha_w2_schedule(sim, director, av, aha_w2_schedule, split_sprout_damage=True)
 
     sim.aha_special_handler = _aha_221208_handler
+
+    from simulator.events import ActionExecuteEvent
+
+    _yika_adj_221208 = {
+        47.87: 150.0,
+        534.64: 300.0,
+        672.93: 250.0,
+        765.83: 300.0,
+        814.39: 1200.0,
+    }
+    _yika_done_221208: set[float] = set()
+
+    def _on_action_exec_221208(ev: Any) -> None:
+        cur_av = float(getattr(sim, "current_av", 0.0))
+        if getattr(ev, "actor_name", None) == "小伊卡":
+            for tav, delta in _yika_adj_221208.items():
+                if tav not in _yika_done_221208 and abs(cur_av - tav) < 0.05:
+                    _yika_done_221208.add(tav)
+                    fj = sim.get_entity("风堇")
+                    if fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
+                        fj.kit.accumulated_healing += delta
+
+    sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec_221208)
