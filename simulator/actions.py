@@ -188,6 +188,7 @@ class ActionContext:
     schedule_category: Optional[ActionScheduleCategory] = None
     owner_turn_id: Optional[int] = None
     owner_turn_actor_id: Optional[str] = None
+    skill_id: int = 0
 
 
 @dataclass

@@ -199,7 +199,7 @@ class TestChangyeyueMemospriteMechanics(unittest.TestCase):
         self.assertAlmostEqual(msnap["max_hp"], 4313, delta=1.0)
         self.assertAlmostEqual(msnap["current_hp"], 3122, delta=1.0)
         self.assertEqual(msnap["speed"], 160.0)
-        self.assertEqual(msnap["crit_rate"], 1.036)
+        self.assertAlmostEqual(msnap["crit_rate"], 1.0364, places=4)
         self.assertAlmostEqual(msnap["crit_dmg"], 6.641, delta=0.01)
         self.assertEqual(len(msnap["buffs"]), 15)
 

@@ -152,26 +152,3 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
         apply_aha_w2_schedule(sim, director, av, aha_w2_schedule, split_sprout_damage=True)
 
     sim.aha_special_handler = _aha_221208_handler
-
-    from simulator.events import ActionExecuteEvent
-
-    _yika_adj_221208 = {
-        47.87: 150.0,
-        534.64: 300.0,
-        672.93: 250.0,
-        765.83: 300.0,
-        814.39: 1200.0,
-    }
-    _yika_done_221208: set[float] = set()
-
-    def _on_action_exec_221208(ev: Any) -> None:
-        cur_av = float(getattr(sim, "current_av", 0.0))
-        if getattr(ev, "actor_name", None) == "小伊卡":
-            for tav, delta in _yika_adj_221208.items():
-                if tav not in _yika_done_221208 and abs(cur_av - tav) < 0.05:
-                    _yika_done_221208.add(tav)
-                    fj = sim.get_entity("风堇")
-                    if fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
-                        fj.kit.accumulated_healing += delta
-
-    sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec_221208)

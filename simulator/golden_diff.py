@@ -1395,13 +1395,112 @@ def run_trajectory_replay(
         moon = sim.get_entity("长夜月")
         return getattr(moon, "kit", None) if moon is not None else None
 
+    def _get_vm_memoria() -> float:
+        rt = getattr(sim, "vm_runtime", None)
+        if rt is None:
+            return 0.0
+        from .vm.expr import dotnet_hash
+        if sim.get_entity("长夜") is not None and "长夜" in rt.entity_dynamics:
+            return float(rt.get_dynamic_value("长夜", dotnet_hash("_Partner_Count")))
+        if "长夜月" in rt.entity_dynamics:
+            return float(rt.get_dynamic_value("长夜月", dotnet_hash("_Partner_Count_Show")))
+        return 0.0
+
+    def _set_vm_memoria(val: float) -> None:
+        rt = getattr(sim, "vm_runtime", None)
+        if rt is None:
+            return
+        from .vm.expr import dotnet_hash
+        v = float(val)
+        if "长夜月" in rt.entity_dynamics:
+            rt.set_dynamic_value("长夜月", dotnet_hash("_Partner_Count_Show"), v)
+        if "长夜" in rt.entity_dynamics:
+            rt.set_dynamic_value("长夜", dotnet_hash("_Partner_Count"), v)
+
     # --- 忆灵技强制施放 (与 v1 相同口径) ---
     def _force_spirit(cast: TrajectoryCast, now_av: float) -> TrajectoryRecord:
         patches: List[str] = []
         sid = cast.skill_id
         organic_before = len(organic)
+        rt = getattr(sim, "vm_runtime", None)
         try:
-            if sid in (1141301, 1141307):
+            if rt is not None:
+                from .actions import ActionContext
+                enemies = tuple(
+                    e.name for e in sim.entities
+                    if getattr(e, "is_enemy", False) and float(getattr(e, "current_hp", 0.0)) > 0.0
+                )
+                if sid in (1141301, 1141307):
+                    if sim.get_entity("长夜月") is None:
+                        return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
+                    changye_ent = sim.get_entity("长夜")
+                    if changye_ent is None or float(getattr(changye_ent, "current_hp", 0.0)) <= 0.0:
+                        changye_ent = rt.summon_servant("长夜月", 11413)
+                        patches.append("presence")
+                        result.presence_grants += 1
+                    sim.cancel_immediate_action("长夜")
+                    if changye_ent is not None:
+                        sim._turn_id += 1
+                        sim.event_bus.publish(TurnBeginEvent(
+                            av=round(sim.current_av, 2),
+                            cycle=sim.current_cycle,
+                            actor_id=changye_ent.name,
+                            actor_name=changye_ent.name,
+                            speed=round(changye_ent.speed, 1),
+                            turn_id=sim._turn_id
+                        ))
+                        sim.run_stage_turn_begin(changye_ent)
+                    if sid == 1141307:
+                        if stash["amount"] > 0:
+                            cur_mem = _get_vm_memoria()
+                            _set_vm_memoria(cur_mem + stash["amount"])
+                            patches.append(f"stash+{stash['amount']:.0f}")
+                            stash["amount"] = 0.0
+                        cur_mem = _get_vm_memoria()
+                        if cur_mem < 16:
+                            deficit = 16 - cur_mem
+                            _set_vm_memoria(16.0)
+                            patches.append(f"memoria+{deficit:.0f}")
+                            result.memoria_granted += deficit
+                        rt.trigger_ability(
+                            caster_id="长夜",
+                            ability_name="Servant_EvernightServant_00_Skill11_Phase01",
+                            target_ids=enemies,
+                            skill_target_ids=enemies,
+                            current_skill_type="Servant",
+                            current_attack_type="Servant",
+                        )
+                        rt.modifier_engine.dispatch_event(
+                            "OnListenAfterSkillUse",
+                            param_entity_id="长夜",
+                            current_skill_type="Servant",
+                        )
+                        if sim.port.entity_exists("长夜"):
+                            sim.port.despawn_spirit("长夜", reason="1141307 自毁离场")
+                    else:
+                        if changye_ent is None or getattr(changye_ent, "kit", None) is None:
+                            return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
+                        ctx = ActionContext(action_id="trajectory", actor_id="长夜", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies)
+                        changye_ent.kit.execute(ctx)
+                elif sid == 1140901:
+                    if sim.get_entity("风堇") is None:
+                        return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
+                    ika_ent = sim.get_entity("小伊卡")
+                    if ika_ent is None or float(getattr(ika_ent, "current_hp", 0.0)) <= 0.0:
+                        ika_ent = rt.summon_servant("风堇", 11409)
+                        patches.append("presence")
+                        result.presence_grants += 1
+                    if ika_ent is None or getattr(ika_ent, "kit", None) is None:
+                        return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
+                    ctx = ActionContext(action_id="trajectory", actor_id="小伊卡", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies)
+                    ika_ent.kit.execute(ctx)
+                elif sid == 1151201:
+                    ent = sim.get_entity("晴空乐手")
+                    if ent is None or getattr(ent, "kit", None) is None:
+                        return TrajectoryRecord(sid, cast.name, cast.av, None, "unforceable", ())
+                    ctx = ActionContext(action_id="trajectory", actor_id="晴空乐手", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=tuple(e.name for e in sim.entities if getattr(e, "is_enemy", False)))
+                    ent.kit.execute(ctx)
+            elif sid in (1141301, 1141307):
                 kit = _changye_kit()
                 if kit is None:
                     return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
@@ -1474,6 +1573,18 @@ def run_trajectory_replay(
         q = spirit_queues.get(1141307)
         if not q:
             return
+        if getattr(sim, "vm_runtime", None) is not None:
+            if sim.get_entity("长夜月") is None:
+                return
+            cur_mem = _get_vm_memoria()
+            if q[0].av - now_av > 10.0 and cur_mem > 15:
+                excess = cur_mem - 15
+                _set_vm_memoria(15.0)
+                stash["amount"] += excess
+            elif q[0].av - now_av <= 10.0 and stash["amount"] > 0:
+                _set_vm_memoria(int(cur_mem + stash["amount"]))
+                stash["amount"] = 0.0
+            return
         kit = _changye_kit()
         if kit is None:
             return
@@ -1536,9 +1647,13 @@ def run_trajectory_replay(
         if ent is None:
             return False
         if sid == 1141307:
-            kit = _changye_kit()
-            if kit is None or float(getattr(kit, "yizhi", 0)) + 4 < 16:
-                return False
+            if getattr(sim, "vm_runtime", None) is not None:
+                if _get_vm_memoria() + 4 < 16:
+                    return False
+            else:
+                kit = _changye_kit()
+                if kit is None or float(getattr(kit, "yizhi", 0)) + 4 < 16:
+                    return False
         if ent.name in getattr(sim, "_ready_queue", ()):
             return True
         if float(getattr(ent, "distance_remaining", 1e9)) <= 5.0:

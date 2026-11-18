@@ -204,9 +204,9 @@ class TestChangyeyueTeamSynergy(unittest.TestCase):
 
         snap = sim.query_status("知更鸟•晴歌")
 
-        # 1. 双暴对账：暴击率 91.3% (基础 41.3% + 重构谐乐 50.0%)，暴击伤害 234.1% (7 气氛值偏离和弦 50.5%)
-        self.assertAlmostEqual(snap["current_crit_rate"], 0.913, places=3)
-        self.assertAlmostEqual(snap["current_crit_dmg"], 2.341, places=3)
+        # 1. 双暴对账：暴击率 91.308% (基础 41.308% + 重构谐乐 50.0%)，暴击伤害 234.18% (7 气氛值偏离和弦 50.5%)
+        self.assertAlmostEqual(snap["current_crit_rate"], 0.91308, places=4)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.3418, places=4)
 
         # 2. 能量对账：73 / 140 (初始 70 + 消耗 1 层律动回能 3 点)
         self.assertEqual(int(snap["current_energy"]), 73)

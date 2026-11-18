@@ -30,6 +30,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         super().__init__(*args, **kwargs)
         self._pool: float = 0.0
         self._spirit_action_open: bool = False
+        self._spirit_action_id: int | None = None
         self._spirit_hit_targets: List[str] = []
         self._spirit_memosprite_mult: float = 1.0
 
@@ -52,7 +53,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
         并在下一行动开始前结算上一个忆灵攻击行动的蓄池附加伤害。"""
         if not self.port:
             return
-        from ...events import ActionExecuteEvent, DamageAppliedEvent, TurnBeginEvent, TurnEndEvent
+        from ...events import ActionEndEvent, ActionExecuteEvent, DamageAppliedEvent, TurnBeginEvent, TurnEndEvent
 
         if isinstance(event, ActionExecuteEvent):
             if getattr(event, "action_kind", None) == ActionKind.TALENT:
@@ -61,6 +62,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
             actor = event.actor_name or event.actor_id
             if self.port.is_own_memosprite(self.owner_id, actor):
                 self._spirit_action_open = True
+                self._spirit_action_id = getattr(event, "action_id", None)
                 self._spirit_memosprite_mult = self._calc_memosprite_mult()
                 if getattr(event, "action_kind", None) == ActionKind.MEMOSPRITE_SKILL:
                     self._apply_vulnerability()
@@ -71,6 +73,12 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
                 and event.target_name not in self._spirit_hit_targets
             ):
                 self._spirit_hit_targets.append(event.target_name)
+        elif isinstance(event, ActionEndEvent):
+            if self._spirit_action_open and (
+                self._spirit_action_id is None
+                or getattr(event, "action_id", None) == self._spirit_action_id
+            ):
+                self._flush_discharge()
         elif isinstance(event, (TurnBeginEvent, TurnEndEvent)):
             self._flush_discharge()
 
@@ -110,6 +118,7 @@ class MayRainbowsRemainInTheSkyHandler(LightConeHandler):
             self._pending_vuln = False
             self._apply_vulnerability()
         self._spirit_action_open = False
+        self._spirit_action_id = None
         targets = list(dict.fromkeys(self._spirit_hit_targets))
         self._spirit_hit_targets = []
         if self._pool <= 0 or not targets:

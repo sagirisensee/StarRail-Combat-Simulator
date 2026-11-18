@@ -64,6 +64,6 @@ def apply_equipped_relics_affixes(relics: Any, entity: Any) -> None:
     for r in relics:
         main_affix = getattr(r, "main_affix_name", "")
         if "治疗量" in main_affix:
-            # 5 星治疗衣 +15 主词条通常为 +34.5% (0.345)
-            entity.base_outgoing_healing += 0.345
+            # 5 星治疗衣 +15 主词条精确值 (RelicMainAffixConfig GroupID=53 AffixID=6: 0.345606)
+            entity.base_outgoing_healing += 0.345606
 

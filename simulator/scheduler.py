@@ -290,8 +290,9 @@ class ActionScheduler:
         self._staging_intents = remaining_followups
 
         if immediates:
-            immediates.sort(key=lambda i: (0 if i.preempt_follow_up else 1, i.enqueue_seq))
-            self._immediate_queue.extend(immediates)
+            merged_immediates = list(self._immediate_queue) + immediates
+            merged_immediates.sort(key=lambda i: (0 if i.preempt_follow_up else 1, i.enqueue_seq))
+            self._immediate_queue = deque(merged_immediates)
 
         if reserved:
             def _reserved_sort_key(intent: ScheduledActionIntent):

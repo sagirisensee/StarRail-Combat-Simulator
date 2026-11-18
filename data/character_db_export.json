@@ -380,8 +380,8 @@
       ],
       "stats_summary": {
         "生命值 (HP)": 6756,
-        "攻击力 (ATK)": 1856,
-        "防御力 (DEF)": 966,
+        "攻击力 (ATK)": 1879,
+        "防御力 (DEF)": 965,
         "速度 (SPD)": 183,
         "速度面板显示": "183 (白字 95 + 绿字 +88)",
         "速度实战精算": 183.332,
@@ -395,104 +395,78 @@
       },
       "breakdowns": {
         "hp": {
-          "base_white": 2473.0,
-          "flat_bonus": 4283.152,
-          "percent_bonus": "173.19%",
-          "final_value": 6756.152
+          "base_white": 2473.128,
+          "flat_bonus": 739.47004,
+          "percent_bonus": "143.28%",
+          "final_value": 6756.095895281944
         },
         "atk": {
-          "base_white": 1077.0,
-          "flat_bonus": 779.51,
-          "percent_bonus": "72.30%",
-          "final_value": 1856.51
+          "base_white": 1077.804,
+          "flat_bonus": 494.63078,
+          "percent_bonus": "28.51%",
+          "final_value": 1879.7382748026682
         },
         "def": {
-          "base_white": 948.0,
-          "flat_bonus": 18.13,
-          "percent_bonus": "1.81%",
-          "final_value": 966.13
+          "base_white": 948.15,
+          "flat_bonus": 16.935019,
+          "percent_bonus": "0.00%",
+          "final_value": 965.085019
         },
         "spd": {
           "base_white": 95.0,
-          "flat_bonus": 88.332,
-          "percent_bonus": "0.00%",
+          "flat_bonus": 71.232,
+          "percent_bonus": "18.00%",
           "final_value": 183.332
-        }
-      },
-      "relic_details": [
-        {"slot": 1, "set_name": "再创天地的救世主", "sub_affixes": []},
-        {"slot": 2, "set_name": "再创天地的救世主", "sub_affixes": []},
-        {"slot": 3, "set_name": "再创天地的救世主", "sub_affixes": []},
-        {"slot": 4, "set_name": "再创天地的救世主", "sub_affixes": []},
-        {"slot": 5, "set_name": "永恒之地翁法罗斯", "sub_affixes": []},
-        {"slot": 6, "set_name": "永恒之地翁法罗斯", "sub_affixes": []}
-      ]
-    },
-    {
-      "avatar_id": 1512,
-      "name": "知更鸟•晴歌",
-      "element": "Wind",
-      "path": 8,
-      "level": 80,
-      "eidolon": "E0",
-      "light_cone": {
-        "item_id": 24005,
-        "name": "记忆永不落幕",
-        "superimposition": "S5",
-        "level": 80
-      },
-      "relic_count": 6,
-      "relic_sets": [
-        "永恒之地翁法罗斯 (ID 323)",
-        "再创天地的救世主 (ID 127)"
-      ],
-      "stats_summary": {
-        "生命值 (HP)": 6241,
-        "攻击力 (ATK)": 1947,
-        "防御力 (DEF)": 898,
-        "速度 (SPD)": 177,
-        "速度面板显示": "177 (白字 95 + 绿字 +82)",
-        "速度实战精算": 177.63,
-        "暴击率 (CR)": "41.3%",
-        "暴击伤害 (CD)": "72.6%",
-        "击破特攻 (BE)": "5.1%",
-        "能量恢复效率 (ERR)": "119.4%",
-        "效果命中 (EHR)": "0.0%",
-        "效果抵抗 (RES)": "0.0%",
-        "属性伤害加成 (DMG%)": "0.0%"
-      },
-      "breakdowns": {
-        "hp": {
-          "base_white": 2261.0,
-          "flat_bonus": 3979.0,
-          "percent_bonus": "175.98%",
-          "final_value": 6241.87004
         },
-        "atk": {
-          "base_white": 1130.0,
-          "flat_bonus": 817.0,
-          "percent_bonus": "72.30%",
-          "final_value": 1947.83078
+        "crit_rate": {
+          "base_white": 0.05,
+          "flat_bonus": 0.0,
+          "percent_bonus": "36.3080%",
+          "final_value": 0.4130799994
         },
-        "def": {
-          "base_white": 882.0,
-          "flat_bonus": 16.0,
-          "percent_bonus": "1.81%",
-          "final_value": 898.935019
+        "crit_dmg": {
+          "base_white": 0.5,
+          "flat_bonus": 0.0,
+          "percent_bonus": "22.6800%",
+          "final_value": 0.7268000012
         },
-        "spd": {
-          "base_white": 95.0,
-          "flat_bonus": 82.63,
-          "percent_bonus": "0.00%",
-          "final_value": 177.63
+        "break_effect": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "5.1840%",
+          "final_value": 0.05184
+        },
+        "err": {
+          "base_white": 1.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "19.4394%",
+          "final_value": 1.194394015
+        },
+        "ehr": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "res": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "dmg_boost": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
         }
       },
       "substat_roll_stats": {
         "total_rolls": 50,
-        "low_rolls": 21,
-        "mid_rolls": 18,
-        "high_rolls": 11,
-        "overall_quality_pct": 40.0
+        "low_rolls": 12,
+        "mid_rolls": 26,
+        "high_rolls": 12,
+        "overall_quality_pct": 50.0
       },
       "relic_details": [
         {
@@ -524,17 +498,17 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 2.016,
+              "value": 2.6,
               "count": 1,
-              "low_rolls": 1,
+              "low_rolls": 0,
               "mid_rolls": 0,
-              "high_rolls": 0,
+              "high_rolls": 1,
               "is_pct": false
             },
             {
               "name": "暴击率",
               "key": "crit_rate",
-              "value": 0.0518,
+              "value": 0.05184,
               "count": 2,
               "low_rolls": 2,
               "mid_rolls": 0,
@@ -552,7 +526,7 @@
             {
               "name": "防御力",
               "key": "flat_def",
-              "value": 16.935,
+              "value": 16.935019,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -572,17 +546,17 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 10.656,
+              "value": 11.2,
               "count": 5,
-              "low_rolls": 3,
-              "mid_rolls": 2,
+              "low_rolls": 1,
+              "mid_rolls": 4,
               "high_rolls": 0,
               "is_pct": false
             },
             {
               "name": "暴击伤害",
               "key": "crit_dmg",
-              "value": 0.0518,
+              "value": 0.05184,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -610,17 +584,17 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 6.048,
+              "value": 6.9,
               "count": 3,
-              "low_rolls": 3,
-              "mid_rolls": 0,
+              "low_rolls": 0,
+              "mid_rolls": 3,
               "high_rolls": 0,
               "is_pct": false
             },
             {
               "name": "暴击率",
               "key": "crit_rate",
-              "value": 0.0518,
+              "value": 0.05184,
               "count": 2,
               "low_rolls": 2,
               "mid_rolls": 0,
@@ -630,7 +604,7 @@
             {
               "name": "攻击力",
               "key": "atk_pct",
-              "value": 0.0778,
+              "value": 0.07776,
               "count": 2,
               "low_rolls": 0,
               "mid_rolls": 2,
@@ -668,7 +642,7 @@
             {
               "name": "攻击力",
               "key": "atk_pct",
-              "value": 0.0389,
+              "value": 0.03888,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 1,
@@ -678,7 +652,7 @@
             {
               "name": "暴击伤害",
               "key": "crit_dmg",
-              "value": 0.175,
+              "value": 0.17496,
               "count": 3,
               "low_rolls": 0,
               "mid_rolls": 3,
@@ -696,7 +670,7 @@
             {
               "name": "攻击力",
               "key": "atk_pct",
-              "value": 0.1253,
+              "value": 0.12528,
               "count": 3,
               "low_rolls": 0,
               "mid_rolls": 1,
@@ -706,17 +680,17 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 6.624,
+              "value": 6.9,
               "count": 3,
-              "low_rolls": 1,
-              "mid_rolls": 2,
+              "low_rolls": 0,
+              "mid_rolls": 3,
               "high_rolls": 0,
               "is_pct": false
             },
             {
               "name": "击破特攻",
               "key": "break_effect",
-              "value": 0.0518,
+              "value": 0.05184,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -726,7 +700,7 @@
             {
               "name": "生命值",
               "key": "flat_hp",
-              "value": 33.87,
+              "value": 33.87004,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -754,7 +728,7 @@
             {
               "name": "生命值",
               "key": "hp_pct",
-              "value": 0.1555,
+              "value": 0.15552,
               "count": 4,
               "low_rolls": 0,
               "mid_rolls": 4,
@@ -764,10 +738,409 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 4.032,
+              "value": 4.6,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "暴击率",
+              "key": "crit_rate",
+              "value": 0.0324,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "avatar_id": 1512,
+      "name": "知更鸟•晴歌",
+      "element": "Wind",
+      "path": 8,
+      "level": 80,
+      "eidolon": "E0",
+      "light_cone": {
+        "item_id": 24005,
+        "name": "记忆永不落幕",
+        "superimposition": "S5",
+        "level": 80
+      },
+      "relic_count": 6,
+      "relic_sets": [
+        "永恒之地翁法罗斯 (ID 323)",
+        "再创天地的救世主 (ID 127)"
+      ],
+      "stats_summary": {
+        "生命值 (HP)": 6241,
+        "攻击力 (ATK)": 1947,
+        "防御力 (DEF)": 898,
+        "速度 (SPD)": 177,
+        "速度面板显示": "177 (白字 95 + 绿字 +82)",
+        "速度实战精算": 177.632,
+        "暴击率 (CR)": "41.3%",
+        "暴击伤害 (CD)": "72.6%",
+        "击破特攻 (BE)": "5.1%",
+        "能量恢复效率 (ERR)": "119.4%",
+        "效果命中 (EHR)": "0.0%",
+        "效果抵抗 (RES)": "0.0%",
+        "属性伤害加成 (DMG%)": "0.0%"
+      },
+      "breakdowns": {
+        "hp": {
+          "base_white": 2261.448,
+          "flat_bonus": 739.47004,
+          "percent_bonus": "143.28%",
+          "final_value": 6241.120786413304
+        },
+        "atk": {
+          "base_white": 1130.724,
+          "flat_bonus": 494.63078,
+          "percent_bonus": "28.51%",
+          "final_value": 1947.746826102308
+        },
+        "def": {
+          "base_white": 882.0,
+          "flat_bonus": 16.935019,
+          "percent_bonus": "0.00%",
+          "final_value": 898.935019
+        },
+        "spd": {
+          "base_white": 95.0,
+          "flat_bonus": 71.232,
+          "percent_bonus": "12.00%",
+          "final_value": 177.632
+        },
+        "crit_rate": {
+          "base_white": 0.05,
+          "flat_bonus": 0.0,
+          "percent_bonus": "36.3080%",
+          "final_value": 0.4130799994
+        },
+        "crit_dmg": {
+          "base_white": 0.5,
+          "flat_bonus": 0.0,
+          "percent_bonus": "22.6800%",
+          "final_value": 0.7268000012
+        },
+        "break_effect": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "5.1840%",
+          "final_value": 0.05184
+        },
+        "err": {
+          "base_white": 1.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "19.4394%",
+          "final_value": 1.194394015
+        },
+        "ehr": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "res": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "dmg_boost": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        }
+      },
+      "substat_roll_stats": {
+        "total_rolls": 50,
+        "low_rolls": 12,
+        "mid_rolls": 26,
+        "high_rolls": 12,
+        "overall_quality_pct": 50.0
+      },
+      "relic_details": [
+        {
+          "slot": 1,
+          "slot_name": "部件 1",
+          "set_name": "再创天地的救世主",
+          "main_affix": "生命值 +705",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "flat_atk",
+              "value": 63.506,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 3,
+              "is_pct": false
+            },
+            {
+              "name": "生命值",
+              "key": "hp_pct",
+              "value": 0.1037,
+              "count": 3,
+              "low_rolls": 3,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 2.6,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": false
+            },
+            {
+              "name": "暴击率",
+              "key": "crit_rate",
+              "value": 0.05184,
               "count": 2,
               "low_rolls": 2,
               "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 2,
+          "slot_name": "部件 2",
+          "set_name": "再创天地的救世主",
+          "main_affix": "攻击力 +352",
+          "sub_affixes": [
+            {
+              "name": "防御力",
+              "key": "flat_def",
+              "value": 16.935019,
+              "count": 1,
+              "low_rolls": 1,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.0432,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 11.2,
+              "count": 5,
+              "low_rolls": 1,
+              "mid_rolls": 4,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.05184,
+              "count": 1,
+              "low_rolls": 1,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 3,
+          "slot_name": "部件 3",
+          "set_name": "再创天地的救世主",
+          "main_affix": "生命值 +43.2%",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "flat_atk",
+              "value": 19.052,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 6.9,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 3,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "暴击率",
+              "key": "crit_rate",
+              "value": 0.05184,
+              "count": 2,
+              "low_rolls": 2,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.07776,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 4,
+          "slot_name": "部件 4",
+          "set_name": "再创天地的救世主",
+          "main_affix": "速度 +25",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "flat_atk",
+              "value": 21.169,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": false
+            },
+            {
+              "name": "生命值",
+              "key": "hp_pct",
+              "value": 0.1296,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 3,
+              "is_pct": true
+            },
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.03888,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.17496,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 3,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 5,
+          "slot_name": "部件 5",
+          "set_name": "永恒之地翁法罗斯",
+          "main_affix": "生命值 +43.2%",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.12528,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 2,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 6.9,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 3,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "击破特攻",
+              "key": "break_effect",
+              "value": 0.05184,
+              "count": 1,
+              "low_rolls": 1,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "生命值",
+              "key": "flat_hp",
+              "value": 33.87004,
+              "count": 1,
+              "low_rolls": 1,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": false
+            }
+          ]
+        },
+        {
+          "slot": 6,
+          "slot_name": "部件 6",
+          "set_name": "永恒之地翁法罗斯",
+          "main_affix": "能量恢复效率 +19.4%",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "flat_atk",
+              "value": 38.104,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "生命值",
+              "key": "hp_pct",
+              "value": 0.15552,
+              "count": 4,
+              "low_rolls": 0,
+              "mid_rolls": 4,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 4.6,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 2,
               "high_rolls": 0,
               "is_pct": false
             },
@@ -3323,36 +3696,78 @@
       },
       "breakdowns": {
         "hp": {
-          "base_white": 2589.0,
-          "flat_bonus": 5519.704064483614,
-          "percent_bonus": "213.17%",
-          "final_value": 8108.804064483615
+          "base_white": 2589.552,
+          "flat_bonus": 743.703795,
+          "percent_bonus": "184.42%",
+          "final_value": 8108.804069325966
         },
         "atk": {
-          "base_white": 1072.0,
-          "flat_bonus": 371.0,
-          "percent_bonus": "34.61%",
-          "final_value": 1444.051896
+          "base_white": 1072.512,
+          "flat_bonus": 371.851896,
+          "percent_bonus": "0.00%",
+          "final_value": 1444.363896
         },
         "def": {
-          "base_white": 979.0,
-          "flat_bonus": 47.0,
-          "percent_bonus": "4.80%",
-          "final_value": 1026.0
+          "base_white": 979.02,
+          "flat_bonus": 0.0,
+          "percent_bonus": "4.86%",
+          "final_value": 1026.600372
         },
         "spd": {
           "base_white": 99.0,
           "flat_bonus": 19.8,
           "percent_bonus": "0.00%",
           "final_value": 118.8
+        },
+        "crit_rate": {
+          "base_white": 0.05,
+          "flat_bonus": 0.0,
+          "percent_bonus": "63.6360%",
+          "final_value": 0.68636
+        },
+        "crit_dmg": {
+          "base_white": 0.5,
+          "flat_bonus": 0.0,
+          "percent_bonus": "149.3800%",
+          "final_value": 1.9938000056
+        },
+        "break_effect": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "5.1840%",
+          "final_value": 0.05184
+        },
+        "err": {
+          "base_white": 1.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 1.0
+        },
+        "ehr": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "res": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "3.4560%",
+          "final_value": 0.034560002
+        },
+        "dmg_boost": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "38.8803%",
+          "final_value": 0.388803015
         }
       },
       "substat_roll_stats": {
         "total_rolls": 49,
-        "low_rolls": 20,
-        "mid_rolls": 21,
-        "high_rolls": 8,
-        "overall_quality_pct": 37.8
+        "low_rolls": 15,
+        "mid_rolls": 27,
+        "high_rolls": 7,
+        "overall_quality_pct": 41.8
       },
       "relic_details": [
         {
@@ -3374,10 +3789,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 2.016,
+              "value": 2.3,
               "count": 1,
-              "low_rolls": 1,
-              "mid_rolls": 0,
+              "low_rolls": 0,
+              "mid_rolls": 1,
               "high_rolls": 0,
               "is_pct": false
             },
@@ -3422,10 +3837,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 4.032,
+              "value": 4.6,
               "count": 2,
-              "low_rolls": 2,
-              "mid_rolls": 0,
+              "low_rolls": 0,
+              "mid_rolls": 2,
               "high_rolls": 0,
               "is_pct": false
             },
@@ -3441,12 +3856,12 @@
             },
             {
               "name": "效果抵抗",
-              "key": "unknown",
-              "value": 0.034,
+              "key": "res",
+              "value": 0.03456,
               "count": 1,
-              "low_rolls": 0,
+              "low_rolls": 1,
               "mid_rolls": 0,
-              "high_rolls": 1,
+              "high_rolls": 0,
               "is_pct": true
             }
           ]
@@ -3470,10 +3885,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 6.048,
+              "value": 6.6,
               "count": 3,
-              "low_rolls": 3,
-              "mid_rolls": 0,
+              "low_rolls": 1,
+              "mid_rolls": 2,
               "high_rolls": 0,
               "is_pct": false
             },
@@ -3490,7 +3905,7 @@
             {
               "name": "击破特攻",
               "key": "break_effect",
-              "value": 0.0518,
+              "value": 0.05184,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -3518,7 +3933,7 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 2.016,
+              "value": 2.0,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -3538,7 +3953,7 @@
             {
               "name": "暴击伤害",
               "key": "crit_dmg",
-              "value": 0.175,
+              "value": 0.17496,
               "count": 3,
               "low_rolls": 0,
               "mid_rolls": 3,
@@ -3556,7 +3971,7 @@
             {
               "name": "生命值",
               "key": "flat_hp",
-              "value": 38.104,
+              "value": 38.103795,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 1,
@@ -3614,10 +4029,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 4.032,
+              "value": 4.3,
               "count": 2,
-              "low_rolls": 2,
-              "mid_rolls": 0,
+              "low_rolls": 1,
+              "mid_rolls": 1,
               "high_rolls": 0,
               "is_pct": false
             },
@@ -3883,7 +4298,7 @@
         "防御力 (DEF)": 1528,
         "速度 (SPD)": 201,
         "速度面板显示": "201 (白字 110 + 绿字 +91)",
-        "速度实战精算": 201.53,
+        "速度实战精算": 201.532,
         "暴击率 (CR)": "5.0%",
         "暴击伤害 (CD)": "90.1%",
         "击破特攻 (BE)": "5.8%",
@@ -3894,35 +4309,77 @@
       },
       "breakdowns": {
         "hp": {
-          "base_white": 2250.0,
-          "flat_bonus": 2862.8884002879577,
-          "percent_bonus": "127.24%",
-          "final_value": 5114.199785287958
+          "base_white": 2250.864,
+          "flat_bonus": 819.911385,
+          "percent_bonus": "90.78%",
+          "final_value": 5114.199808504094
         },
         "atk": {
-          "base_white": 864.0,
-          "flat_bonus": 472.0,
-          "percent_bonus": "54.63%",
-          "final_value": 1337.051896
+          "base_white": 864.36,
+          "flat_bonus": 371.852019,
+          "percent_bonus": "11.66%",
+          "final_value": 1337.030852364084
         },
         "def": {
-          "base_white": 1159.0,
-          "flat_bonus": 368.0,
-          "percent_bonus": "31.75%",
-          "final_value": 1528.090707
+          "base_white": 1159.83,
+          "flat_bonus": 74.090707,
+          "percent_bonus": "25.38%",
+          "final_value": 1528.285561
         },
         "spd": {
           "base_white": 110.0,
-          "flat_bonus": 91.53,
-          "percent_bonus": "0.00%",
-          "final_value": 201.53
+          "flat_bonus": 58.532,
+          "percent_bonus": "30.00%",
+          "final_value": 201.532
+        },
+        "crit_rate": {
+          "base_white": 0.05,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.05
+        },
+        "crit_dmg": {
+          "base_white": 0.5,
+          "flat_bonus": 0.0,
+          "percent_bonus": "40.1760%",
+          "final_value": 0.9017600024
+        },
+        "break_effect": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "5.8320%",
+          "final_value": 0.0583200004
+        },
+        "err": {
+          "base_white": 1.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "19.4394%",
+          "final_value": 1.194394015
+        },
+        "ehr": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "res": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "41.7600%",
+          "final_value": 0.4176000141
+        },
+        "dmg_boost": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
         }
       },
       "substat_roll_stats": {
         "total_rolls": 49,
-        "low_rolls": 18,
-        "mid_rolls": 19,
-        "high_rolls": 12,
+        "low_rolls": 13,
+        "mid_rolls": 29,
+        "high_rolls": 7,
         "overall_quality_pct": 43.9
       },
       "relic_details": [
@@ -3945,10 +4402,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 4.032,
+              "value": 4.3,
               "count": 2,
-              "low_rolls": 2,
-              "mid_rolls": 0,
+              "low_rolls": 1,
+              "mid_rolls": 1,
               "high_rolls": 0,
               "is_pct": false
             },
@@ -3965,7 +4422,7 @@
             {
               "name": "击破特攻",
               "key": "break_effect",
-              "value": 0.0583,
+              "value": 0.05832,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 1,
@@ -3983,7 +4440,7 @@
             {
               "name": "生命值",
               "key": "flat_hp",
-              "value": 42.338,
+              "value": 42.33755,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 0,
@@ -4013,10 +4470,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 6.048,
+              "value": 6.9,
               "count": 3,
-              "low_rolls": 3,
-              "mid_rolls": 0,
+              "low_rolls": 0,
+              "mid_rolls": 3,
               "high_rolls": 0,
               "is_pct": false
             }
@@ -4041,7 +4498,7 @@
             {
               "name": "防御力",
               "key": "flat_def",
-              "value": 16.935,
+              "value": 16.935019,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -4060,12 +4517,12 @@
             },
             {
               "name": "效果抵抗",
-              "key": "unknown",
-              "value": 0.159,
+              "key": "res",
+              "value": 0.15984,
               "count": 4,
               "low_rolls": 0,
-              "mid_rolls": 0,
-              "high_rolls": 4,
+              "mid_rolls": 3,
+              "high_rolls": 1,
               "is_pct": true
             }
           ]
@@ -4137,7 +4594,7 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 4.032,
+              "value": 4.0,
               "count": 2,
               "low_rolls": 2,
               "mid_rolls": 0,
@@ -4156,12 +4613,12 @@
             },
             {
               "name": "效果抵抗",
-              "key": "unknown",
-              "value": 0.077,
+              "key": "res",
+              "value": 0.07776,
               "count": 2,
               "low_rolls": 0,
-              "mid_rolls": 0,
-              "high_rolls": 2,
+              "mid_rolls": 2,
+              "high_rolls": 0,
               "is_pct": true
             }
           ]
@@ -4205,10 +4662,10 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 4.032,
+              "value": 4.3,
               "count": 2,
-              "low_rolls": 2,
-              "mid_rolls": 0,
+              "low_rolls": 1,
+              "mid_rolls": 1,
               "high_rolls": 0,
               "is_pct": false
             }
@@ -4732,28 +5189,70 @@
       },
       "breakdowns": {
         "hp": {
-          "base_white": 2317.0,
-          "flat_bonus": 4229.0,
-          "percent_bonus": "182.52%",
-          "final_value": 6546.94774
+          "base_white": 2317.896,
+          "flat_bonus": 786.041345,
+          "percent_bonus": "148.58%",
+          "final_value": 6547.774561357713
         },
         "atk": {
-          "base_white": 1053.0,
-          "flat_bonus": 430.0,
-          "percent_bonus": "40.84%",
-          "final_value": 1483.0
+          "base_white": 1053.108,
+          "flat_bonus": 352.8,
+          "percent_bonus": "7.34%",
+          "final_value": 1483.2482560483647
         },
         "def": {
-          "base_white": 1124.0,
-          "flat_bonus": 90.0,
-          "percent_bonus": "8.01%",
-          "final_value": 1214.986811
+          "base_white": 1124.55,
+          "flat_bonus": 35.987019,
+          "percent_bonus": "4.86%",
+          "final_value": 1215.190045
         },
         "spd": {
           "base_white": 96.0,
-          "flat_bonus": -3.08,
-          "percent_bonus": "0.00%",
+          "flat_bonus": 4.6,
+          "percent_bonus": "-8.00%",
           "final_value": 92.92
+        },
+        "crit_rate": {
+          "base_white": 0.05,
+          "flat_bonus": 0.0,
+          "percent_bonus": "62.8680%",
+          "final_value": 0.6786800032
+        },
+        "crit_dmg": {
+          "base_white": 0.5,
+          "flat_bonus": 0.0,
+          "percent_bonus": "269.0200%",
+          "final_value": 3.1902000084
+        },
+        "break_effect": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "err": {
+          "base_white": 1.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "19.4394%",
+          "final_value": 1.194394015
+        },
+        "ehr": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "res": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "0.0000%",
+          "final_value": 0.0
+        },
+        "dmg_boost": {
+          "base_white": 0.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "10.0000%",
+          "final_value": 0.1
         }
       },
       "substat_roll_stats": {
@@ -4831,7 +5330,7 @@
             {
               "name": "速度",
               "key": "spd",
-              "value": 2.016,
+              "value": 2.0,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -4869,7 +5368,7 @@
             {
               "name": "生命值",
               "key": "flat_hp",
-              "value": 38.104,
+              "value": 38.103795,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 1,
@@ -4879,7 +5378,7 @@
             {
               "name": "防御力",
               "key": "flat_def",
-              "value": 16.935,
+              "value": 16.935019,
               "count": 1,
               "low_rolls": 1,
               "mid_rolls": 0,
@@ -4995,7 +5494,7 @@
             {
               "name": "生命值",
               "key": "flat_hp",
-              "value": 41.8439,
+              "value": 42.33755,
               "count": 1,
               "low_rolls": 0,
               "mid_rolls": 0,

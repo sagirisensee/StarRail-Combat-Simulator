@@ -62,25 +62,30 @@ class FengjinKit(KitHandler):
         self.accumulated_healing: float = 0.0
 
         # 基于 action_id 的 E1 治疗因果追踪
-        self._e1_pending_actions: dict[int, str] = {}
+        self._e1_pending_actions: dict[int, tuple[str, Any]] = {}
         self._e1_seen_actions: set[int] = set()
         self._tech_weather_is_fine_used: bool = False
 
     def apply_trace_passives(self, entity: Any) -> None:
-        """行迹常驻被动属性注入与实机面板校准：
+        """行迹常驻被动属性注入与未指定基线回退：
         - 行迹【阴云莞尔】：暴击率提高 100% (+1.00)
         - 行迹【雷雨轻柔】：效果抵抗提高 50% (+0.50)
-        - 实机面板精算基线：攻击力 1336、防御力 1527、暴击伤害 90.1%
+        - 仅在未从数据库注入有效面板基线时提供精确回退值，不覆盖数据库高精度面板。
         """
         entity.base_crit_rate += 1.00
         entity.base_effect_res += 0.50
-        entity.base_crit_dmg = 0.901
-        entity.base_atk = 1336.0
-        entity.base_def = 1527.0
-        entity.base_white_hp = 2250.0
-        entity.base_white_speed = 110.0
+        if getattr(entity, "base_crit_dmg", 0.50) <= 0.50 + 1e-6:
+            entity.base_crit_dmg = 0.9017600024
+        if getattr(entity, "base_atk", 0.0) in (0.0, 1000.0):
+            entity.base_atk = 1337.030852364084
+        if getattr(entity, "base_def", 0.0) in (0.0, 600.0):
+            entity.base_def = 1528.285561
+        if getattr(entity, "base_white_hp", 0.0) <= 0.0 or getattr(entity, "base_white_hp", 0.0) == getattr(entity, "max_hp", 0.0):
+            entity.base_white_hp = 2250.864
+        if getattr(entity, "base_white_speed", 0.0) <= 0.0:
+            entity.base_white_speed = 110.0
         if getattr(entity, "base_outgoing_healing", 0.0) == 0.0:
-            entity.base_outgoing_healing = 0.545
+            entity.base_outgoing_healing = 0.545606
 
     def _sync_storm_calm(self) -> None:
         """行迹【暴风停歇】(官方 1409 point08, param_list: [200, 0.2, 1, 0.01, 200]):
@@ -567,7 +572,7 @@ class FengjinKit(KitHandler):
                     getattr(event, "action_type", ""),
                 )
             ):
-                self._e1_pending_actions[action_id] = actor
+                self._e1_pending_actions[action_id] = (actor, getattr(event, "action_kind", None))
             return
 
         if not isinstance(
@@ -579,15 +584,30 @@ class FengjinKit(KitHandler):
         action_id = require_id(event, "action_id")
 
         # 先移除再治疗，防止治疗事件重入重复触发。
-        actor = self._e1_pending_actions.pop(action_id, None)
-        if actor is None:
+        pending = self._e1_pending_actions.pop(action_id, None)
+        if pending is None:
             return
+        actor, action_kind = pending
 
         if (
             self.eidolon < 1
             or not self._sun_after_rain_active()
         ):
             return
+
+        # 长夜月 141303 (Avatar_Evernight_00_Skill03_Phase02) 实际通过 TriggerAbility(CasterServant)
+        # 由伴生忆灵「长夜」发起攻击，风堇 E1 治疗归属于实际攻击主体「长夜」，而非长夜月本体。
+        if actor == "长夜月" and action_kind == ActionKind.ULTIMATE:
+            servant = next(
+                (
+                    a for a in self.port.allies(self.owner_id)
+                    if self.port.is_memosprite(a) and self.port.get_master_name(a) == actor
+                ),
+                None,
+            )
+            if servant is None:
+                return
+            actor = servant
 
         raw_heal = 0.08 * self.port.max_hp(self.owner_id)
         if not self.port.entity_exists(actor) or self.port.current_hp(actor) <= 0:

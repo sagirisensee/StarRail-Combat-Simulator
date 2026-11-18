@@ -229,6 +229,13 @@ class TurnSimulator:
             rh.port = self.port
             if trigger_battle_start:
                 rh.on_battle_start()
+        if (
+            self.battle_started
+            and getattr(self, "vm_runtime", None) is not None
+            and not getattr(entity, "is_countdown", False)
+            and (trigger_battle_start or getattr(entity, "is_enemy", False))
+        ):
+            self.vm_runtime.modifier_engine.on_entity_created(entity.name)
 
     @property
     def current_cycle(self) -> int:

@@ -97,8 +97,8 @@ class SunlitGriffinKit(EnemyKit):
                 self.port.apply_enemy_attack(
                     owner_id=self.owner_id,
                     target_ids=(allies[0],),
-                    multiplier=1.10,
-                    element="Physical",
+                    multiplier=3.0,
+                    element="Fire",
                     hit_energy=5.0,
                     hits=1,
                 )
@@ -114,8 +114,8 @@ class SunlitGriffinKit(EnemyKit):
                 self.port.apply_enemy_attack(
                     owner_id=self.owner_id,
                     target_ids=allies,
-                    multiplier=0.95,
-                    element="Physical",
+                    multiplier=2.6,
+                    element="Fire",
                     hit_energy=5.0,
                     hits=1,
                 )
@@ -127,14 +127,14 @@ class SunlitGriffinKit(EnemyKit):
 
         self._turns_since_summon += 1
         if allies:
-            # 常规攻击节奏: 召唤后第 1 动单体攻击 (实机 94.70 AV 扣血 991.46) / 第 2 动 4 段单体扑击
+            # 常规攻击节奏: 召唤后第 1 动单体攻击 (Skill01 = 3.0) / 第 2 动 4 段扩散扑击 (Skill04 = 4.0)
             if self._turns_since_summon % 2 == 1:
                 target = allies[0]
                 resolved = self.port.apply_enemy_attack(
                     owner_id=self.owner_id,
                     target_ids=(target,),
-                    multiplier=1.10,
-                    element="Physical",
+                    multiplier=3.0,
+                    element="Fire",
                     hit_energy=5.0,
                     hits=1,
                 )
@@ -145,8 +145,8 @@ class SunlitGriffinKit(EnemyKit):
                 resolved = self.port.apply_enemy_attack(
                     owner_id=self.owner_id,
                     target_ids=(target,),
-                    multiplier=0.365,
-                    element="Physical",
+                    multiplier=1.0,
+                    element="Fire",
                     hit_energy=5.0,
                     hits=4,
                     blast=True,

@@ -12,7 +12,15 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..actions import AbilityDefinition, ActionContext, ActionKind, ResourceCost, TargetMode
 from ..entity import Entity
-from ..events import ActionEndEvent, ActionExecuteEvent, HPLostEvent, TurnBeginEvent, TurnEndEvent
+from ..events import (
+    ActionEndEvent,
+    ActionExecuteEvent,
+    HPLostEvent,
+    SpiritDespawnEvent,
+    SpiritSummonedEvent,
+    TurnBeginEvent,
+    TurnEndEvent,
+)
 from ..kits.base import KitHandler
 from ..light_cones.base import LightConeHandler
 from ..relics.base import RelicSetHandler
@@ -38,8 +46,15 @@ class VMRuntime:
         self.named_targets: Dict[str, List[str]] = {}
         # 已激活的装备 / 遗器能力上下文：(owner_id, ability_name) -> {hash_int: float}
         self.equip_dynamics: Dict[Tuple[str, str], Dict[int, float]] = {}
+        self.global_target_aliases: Dict[str, Any] = {}
+        self._global_aliases_loaded: bool = False
         self._battle_entered: bool = False
         self._in_turn_phase1_end: bool = False
+        self._attack_scope_depth: int = 0
+        self._attack_targets_by_key: Dict[Tuple[int, str], List[str]] = {}
+        self._pending_after_attack: Optional[Tuple[int, str, Dict[str, Any], str]] = None
+        self._active_skill_sp_base: float = 0.0
+        self._skill_sp_ratio_granted: bool = False
 
         # 订阅 TurnSimulator 核心事实事件，转发给官方 Modifier 引擎
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
@@ -47,6 +62,56 @@ class VMRuntime:
         self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)
         self.sim.event_bus.subscribe(ActionEndEvent, self._on_action_end)
         self.sim.event_bus.subscribe(HPLostEvent, self._on_hp_lost)
+        self.sim.event_bus.subscribe(SpiritDespawnEvent, self._on_spirit_despawn)
+
+    def resolve_global_target_alias(self, alias_name: str) -> Optional[Dict[str, Any]]:
+        if not self._global_aliases_loaded:
+            self.loader.ensure_ability_index()
+            for data in self.loader._file_cache.values():
+                if isinstance(data, dict) and isinstance(data.get("GlobalTargetAlias"), dict):
+                    self.global_target_aliases.update(data["GlobalTargetAlias"])
+            self._global_aliases_loaded = True
+        return self.global_target_aliases.get(alias_name)
+
+    def begin_attack_scope(self) -> None:
+        self._attack_scope_depth += 1
+
+    def flush_pending_after_attack(self) -> None:
+        if self._pending_after_attack is None:
+            return
+        atk_seq, caster_id, dmg_data, atk_type = self._pending_after_attack
+        self._pending_after_attack = None
+        all_targets = tuple(self._attack_targets_by_key.get((atk_seq, caster_id), ()))
+        after_set = getattr(self, "_after_attack_fired", None)
+        if after_set is None:
+            after_set = set()
+            self._after_attack_fired = after_set
+        after_key = (atk_seq, caster_id)
+        if after_key not in after_set:
+            after_set.add(after_key)
+            self._in_after_attack = True
+            try:
+                self.modifier_engine.dispatch_event(
+                    "OnAfterAttack",
+                    owner_id=caster_id,
+                    attack_target_ids=all_targets,
+                    damage_data=dmg_data,
+                    current_attack_type=atk_type,
+                )
+                self.modifier_engine.dispatch_event(
+                    "OnListenAfterAttack",
+                    param_entity_id=caster_id,
+                    attack_target_ids=all_targets,
+                    damage_data=dmg_data,
+                    current_attack_type=atk_type,
+                )
+            finally:
+                self._in_after_attack = False
+
+    def end_attack_scope(self) -> None:
+        self._attack_scope_depth = max(0, self._attack_scope_depth - 1)
+        if self._attack_scope_depth == 0:
+            self.flush_pending_after_attack()
 
     def register_character(self, entity_name: str, spec: CompiledCharacterSpec) -> None:
         self.entity_specs[entity_name] = spec
@@ -162,7 +227,8 @@ class VMRuntime:
             current_skill_type=current_skill_type,
             current_attack_type=current_attack_type,
         )
-        self.executor.execute_tasks(ab.get("OnStart", []), ctx)
+        tasks = ab.get("OnStart") if "OnStart" in ab else ab.get("OnAdd", [])
+        self.executor.execute_tasks(tasks, ctx)
 
     def enter_battle(self) -> None:
         """统一执行所有 VM 实体的进场被动、装备/遗器初始化，并按官方 Priority 升序触发 OnEnterBattle。"""
@@ -234,27 +300,59 @@ class VMRuntime:
         if init_dynamics:
             self.entity_dynamics[sv_name].update(init_dynamics)
 
-        # 触发忆灵自身被动与入场能力
+        # 触发忆灵自身被动与入场能力（SkillP* 仅触发 EntryAbility / 被动，禁止误触 _Resummon/_Insert）
+        seen_init: set[str] = set()
         for ab_name in sv_spec.config.get("AbilityList", []):
-            if "PassiveSkill" in ab_name:
+            if "PassiveSkill" in ab_name and ab_name not in seen_init:
+                seen_init.add(ab_name)
                 self.trigger_ability(caster_id=sv_name, ability_name=ab_name, target_ids=(sv_name,))
+        sv_entry_map = {
+            s.get("Name", ""): s.get("EntryAbility", "")
+            for s in sv_spec.config.get("SkillList", [])
+            if isinstance(s, dict)
+        }
         for item in sv_spec.config.get("SkillAbilityList", []):
             sk = item.get("Skill", "")
             if sk.startswith("SkillP"):
-                for ab_name in item.get("AbilityList", []):
-                    self.trigger_ability(caster_id=sv_name, ability_name=ab_name, target_ids=(sv_name,))
+                entry_ab = sv_entry_map.get(sk, "")
+                candidates = [entry_ab] if entry_ab else [
+                    a for a in item.get("AbilityList", [])
+                    if ("Passive" in a or "BattleCry" in a or "DeathRattle" in a)
+                    and not any(bad in a for bad in ("Insert", "Resummon", "Camera"))
+                ]
+                for ab_name in candidates:
+                    if ab_name and ab_name not in seen_init:
+                        seen_init.add(ab_name)
+                        self.trigger_ability(caster_id=sv_name, ability_name=ab_name, target_ids=(sv_name,))
+
+        # 初始跑道对齐：11409 (小伊卡) 永不进入自然跑道；11512 (晴空乐手) 未进 Fever 前隐藏跑条
+        if servant_id in (11409, 11512):
+            sv_entity.distance_remaining = 1e12
 
         # 通知全队光环 / OnListenCharacterCreate，并按最新光环刷新满血上限
         self.modifier_engine.on_entity_created(sv_name)
         full_hp = float(self.sim.port.max_hp(sv_name))
         if full_hp > 0:
             sv_entity.current_hp = full_hp
+
+        # 发布官方 SpiritSummonedEvent 并通知关卡机制插件 (如血噬)
+        self.sim.event_bus.publish(SpiritSummonedEvent(
+            av=round(getattr(self.sim, "current_av", 0.0), 2),
+            cycle=getattr(self.sim, "current_cycle", 0),
+            owner_name=master_id,
+            spirit_name=sv_name,
+        ))
+        for plugin in getattr(self.sim, "stage_plugins", []):
+            if hasattr(plugin, "on_entity_summoned"):
+                plugin.on_entity_summoned(sv_entity, self.sim)
         return sv_entity
 
     # ------------------------------------------------------------------
     # EventBus 桥接回调
     # ------------------------------------------------------------------
     def _on_turn_begin(self, evt: TurnBeginEvent) -> None:
+        # 实机日志已证实 (184845 [961..966], 204943 [637..640])：
+        # ModifierPhase1End 在回合开始阶段（TurnPhase1 结束、行动阶段开始前）扣减。
         self.modifier_engine.tick_life_step("ModifierPhase1End", evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnPhase1Begin", param_entity_id=evt.actor_name)
@@ -280,6 +378,8 @@ class VMRuntime:
             return "Ultra"
         if kind == ActionKind.MEMOSPRITE_SKILL:
             return "Servant"
+        if kind == ActionKind.FOLLOW_UP:
+            return "Pursued"
         if kind == ActionKind.TECHNIQUE:
             return "Maze"
         at = str(getattr(evt, "action_type", ""))
@@ -329,10 +429,16 @@ class VMRuntime:
             param_entity_id=evt.actor_name,
             param_flags=("CallBack_SettleSkillOrInsertAbility",),
         )
+        if evt.actor_name in self.entity_specs:
+            self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
+        self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
 
     def _on_hp_lost(self, evt: HPLostEvent) -> None:
         self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.entity_name, change_value=-evt.amount)
         self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.entity_name, change_value=-evt.amount)
+
+    def _on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
+        self.modifier_engine.destroy_all_for_entity(evt.spirit_name)
 
 
 def ensure_vm_runtime(sim: Any, *, loader: Optional[GameDataLoader] = None, strict: bool = True) -> VMRuntime:
@@ -371,6 +477,16 @@ class ConfigAbilityKitAdapter(KitHandler):
             item.get("Skill", ""): list(item.get("AbilityList", []))
             for item in self.spec.config.get("SkillAbilityList", [])
         }
+        self._skill_entries: Dict[str, str] = {
+            item.get("Name", ""): item.get("EntryAbility", "")
+            for item in self.spec.config.get("SkillList", [])
+            if isinstance(item, dict) and item.get("Name")
+        }
+        self._skill_target_infos: Dict[str, Dict[str, Any]] = {
+            item.get("Name", ""): dict(item.get("TargetInfo") or {})
+            for item in self.spec.config.get("SkillList", [])
+            if isinstance(item, dict) and item.get("Name")
+        }
         self._registered = False
 
     def _rt(self) -> VMRuntime:
@@ -387,24 +503,167 @@ class ConfigAbilityKitAdapter(KitHandler):
         if not self._registered:
             self._registered = True
             rt.register_character(self.owner_id, self.spec)
+            seen_init: set[str] = set()
             for ab_name in self.spec.config.get("AbilityList", []):
-                if "PassiveSkill" in ab_name:
+                if "PassiveSkill" in ab_name and ab_name not in seen_init:
+                    seen_init.add(ab_name)
                     rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,))
             for sk, ab_list in self._skill_abilities.items():
                 if sk.startswith("SkillP"):
-                    for ab_name in ab_list:
-                        rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,))
+                    entry_ab = self._skill_entries.get(sk, "")
+                    candidates = [entry_ab] if entry_ab else [
+                        a for a in ab_list
+                        if ("Passive" in a or "BattleCry" in a or "DeathRattle" in a)
+                        and not any(bad in a for bad in ("Insert", "Resummon", "Camera"))
+                    ]
+                    for ab_name in candidates:
+                        if ab_name and ab_name not in seen_init:
+                            seen_init.add(ab_name)
+                            rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,))
         return rt
 
+    def _has_runtime_modifier(self, mod_name: str) -> bool:
+        rt = self._runtime
+        if rt is None and self.port and getattr(self.port, "sim", None) is not None:
+            rt = getattr(self.port.sim, "vm_runtime", None)
+        return bool(rt is not None and rt.modifier_engine.has_modifier(self.owner_id, mod_name))
+
+    def _is_evernight_ultra_mode(self) -> bool:
+        if self.is_servant or self.unit_id != 1413:
+            return False
+        if not self._has_runtime_modifier("MAvatar_Evernight_00_UltraMode"):
+            return False
+        rt = self._runtime or (getattr(self.port.sim, "vm_runtime", None) if (self.port and getattr(self.port, "sim", None)) else None)
+        if rt is None:
+            return False
+        return any(
+            getattr(e, "is_memosprite", False)
+            and getattr(e, "master_name", None) == self.owner_id
+            and e.current_hp > 0
+            for e in rt.sim.entities
+        )
+
+    def _is_evey_burst_mode(self) -> bool:
+        if not self.is_servant or self.unit_id != 11413:
+            return False
+        rt = self._runtime or (getattr(self.port.sim, "vm_runtime", None) if (self.port and getattr(self.port, "sim", None)) else None)
+        if rt is None:
+            return False
+        me = rt.modifier_engine
+        if not me.has_modifier(self.owner_id, "MServant_EvernightServant_00_TriggerNormal"):
+            return False
+        if me.has_behavior_flag(self.owner_id, "STAT_CTRL") or me.has_behavior_flag(self.owner_id, "DisableAction"):
+            return False
+        ent = rt.sim.get_entity(self.owner_id)
+        master_id = getattr(ent, "master_name", None) if ent is not None else None
+        if master_id and (me.has_behavior_flag(master_id, "STAT_CTRL") or me.has_behavior_flag(master_id, "DisableAction")):
+            return False
+        return True
+
+    def _resolve_skill_row(self, sk_key: str) -> Optional[Dict[str, Any]]:
+        if self.is_servant:
+            self._loader._ensure_servants()
+            self._loader._ensure_servant_skills()
+            sv = self._loader._servants.get(self.unit_id, {})
+            for sid in sv.get("SkillIDList", []):
+                row = self._loader._servant_skills.get((int(sid), 1))
+                if row and row.get("SkillTriggerKey") == sk_key:
+                    return row
+            return None
+        self._loader._ensure_avatars()
+        self._loader._ensure_avatar_skills()
+        av = self._loader._avatars.get(self.unit_id, {})
+        for sid in av.get("SkillList", []):
+            row = self._loader._avatar_skills.get((int(sid), 1))
+            if row and row.get("SkillTriggerKey") == sk_key:
+                return row
+        return None
+
+    def _resolve_skill_id(self, sk_key: str, fallback_slot: int) -> int:
+        row = self._resolve_skill_row(sk_key)
+        if row and row.get("SkillID"):
+            return int(row["SkillID"])
+        return self.unit_id * 100 + fallback_slot
+
+    def _resolve_target_mode(self, sk_key: str, default: TargetMode) -> TargetMode:
+        info = self._skill_target_infos.get(sk_key) or {}
+        tt = str(info.get("TargetType", ""))
+        sub = str(info.get("SubTargetType", ""))
+        if tt == "EnemySelect":
+            return TargetMode.BLAST if sub == "TargetAdjoinEntity" else TargetMode.SINGLE_ENEMY
+        if tt == "AllEnemy":
+            return TargetMode.ALL_ENEMIES
+        if tt == "Caster":
+            return TargetMode.SELF
+        if tt == "AllTeamMember":
+            return TargetMode.ALL_ALLIES
+        if tt == "FriendSelect":
+            return TargetMode.SINGLE_ALLY
+        return default
+
+    def _resolve_sp_cost(self, sk_key: str, default_sp: int = 0) -> ResourceCost:
+        if self.is_servant:
+            if self.unit_id == 11512 and sk_key == "Skill01":
+                return ResourceCost(sp=-1)
+            return ResourceCost(sp=0)
+        row = self._resolve_skill_row(sk_key)
+        if row is not None:
+            bp_need = row.get("BPNeed")
+            bp_add = row.get("BPAdd")
+            if isinstance(bp_need, dict) and float(bp_need.get("Value", 0.0)) > 0:
+                return ResourceCost(sp=int(round(float(bp_need["Value"]))))
+            if isinstance(bp_add, dict) and float(bp_add.get("Value", 0.0)) > 0:
+                return ResourceCost(sp=-int(round(float(bp_add["Value"]))))
+            return ResourceCost(sp=0)
+        return ResourceCost(sp=default_sp)
+
     def definition(self, kind: ActionKind) -> AbilityDefinition:
+        if self.is_servant:
+            if kind in (ActionKind.SKILL, ActionKind.MEMOSPRITE_SKILL):
+                if self._is_evey_burst_mode():
+                    sk_id = self._resolve_skill_id("Skill11", 7)
+                    return AbilityDefinition(kind=kind, name="忆灵爆发", target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=0), is_auto=True, skill_id=sk_id)
+                sk_id = self._resolve_skill_id("Skill01", 1)
+                cost = ResourceCost(sp=-1) if self.unit_id == 11512 else ResourceCost(sp=0)
+                return AbilityDefinition(kind=kind, name="忆灵技", target_mode=TargetMode.ALL_ENEMIES, cost=cost, is_auto=True, skill_id=sk_id)
+            return AbilityDefinition(kind=kind, name=str(kind.name), target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=0), is_auto=True)
+
         if kind == ActionKind.BASIC:
-            return AbilityDefinition(kind=kind, name="普攻", target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1))
+            sk_id = self._resolve_skill_id("Skill01", 1)
+            return AbilityDefinition(
+                kind=kind,
+                name="普攻",
+                target_mode=self._resolve_target_mode("Skill01", TargetMode.SINGLE_ENEMY),
+                cost=self._resolve_sp_cost("Skill01", -1),
+                skill_id=sk_id,
+            )
         if kind == ActionKind.SKILL:
-            return AbilityDefinition(kind=kind, name="战技", target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost(sp=1))
+            sk_key = "Skill21" if self._is_evernight_ultra_mode() else "Skill02"
+            sk_id = self._resolve_skill_id(sk_key, 9 if sk_key == "Skill21" else 2)
+            return AbilityDefinition(
+                kind=kind,
+                name="战技",
+                target_mode=self._resolve_target_mode(sk_key, TargetMode.ALL_ALLIES),
+                cost=self._resolve_sp_cost(sk_key, 1),
+                skill_id=sk_id,
+            )
         if kind == ActionKind.ULTIMATE:
-            return AbilityDefinition(kind=kind, name="终结技", target_mode=TargetMode.ALL_ALLIES, cost=ResourceCost())
+            sk_id = self._resolve_skill_id("Skill03", 3)
+            return AbilityDefinition(
+                kind=kind,
+                name="终结技",
+                target_mode=self._resolve_target_mode("Skill03", TargetMode.ALL_ALLIES),
+                cost=ResourceCost(),
+                skill_id=sk_id,
+            )
         if kind == ActionKind.TECHNIQUE:
-            return AbilityDefinition(kind=kind, name="秘技", target_mode=TargetMode.SELF, priority=1)
+            sk_id = self._resolve_skill_id("SkillMaze", 7)
+            return AbilityDefinition(kind=kind, name="秘技", target_mode=TargetMode.SELF, priority=1, skill_id=sk_id)
+        if kind == ActionKind.FOLLOW_UP:
+            if any("Insert" in a for a in self._skill_abilities.get("SkillP01", [])):
+                sk_id = self._resolve_skill_id("SkillP01", 4)
+                return AbilityDefinition(kind=kind, name="追击", target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(), skill_id=sk_id)
+            return None  # type: ignore[return-value]
         if kind == ActionKind.MEMOSPRITE_SKILL:
             return AbilityDefinition(kind=kind, name="忆灵技", target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost())
         return AbilityDefinition(kind=kind, name=str(kind.name), target_mode=TargetMode.SINGLE_ENEMY)
@@ -419,48 +678,90 @@ class ConfigAbilityKitAdapter(KitHandler):
 
     def execute(self, ctx: ActionContext) -> None:
         rt = self._ensure_registered()
-        sk_map = {
-            ActionKind.BASIC: ("Skill01", "Normal"),
-            ActionKind.SKILL: ("Skill02", "BPSkill"),
-            ActionKind.ULTIMATE: ("Skill03", "Ultra"),
-            ActionKind.MEMOSPRITE_SKILL: ("Skill01", "Servant"),
-        }
-        sk_key, sk_type = sk_map.get(ctx.kind, ("Skill01", "Normal"))
+        if self.is_servant:
+            if ctx.kind in (ActionKind.SKILL, ActionKind.MEMOSPRITE_SKILL):
+                if self.unit_id == 11413 and ctx.skill_id == 1141301:
+                    sk_key = "Skill01"
+                elif self.unit_id == 11413 and ctx.skill_id == 1141307:
+                    sk_key = "Skill11"
+                else:
+                    sk_key = "Skill11" if self._is_evey_burst_mode() else "Skill01"
+                sk_type = "Servant"
+            else:
+                sk_key, sk_type = ("Skill01", "Servant")
+        else:
+            if ctx.kind == ActionKind.SKILL and self._is_evernight_ultra_mode():
+                sk_key, sk_type = ("Skill21", "BPSkill")
+            else:
+                sk_map = {
+                    ActionKind.BASIC: ("Skill01", "Normal"),
+                    ActionKind.SKILL: ("Skill02", "BPSkill"),
+                    ActionKind.ULTIMATE: ("Skill03", "Ultra"),
+                    ActionKind.MEMOSPRITE_SKILL: ("Skill01", "Servant"),
+                }
+                sk_key, sk_type = sk_map.get(ctx.kind, ("Skill01", "Normal"))
+
         ab_list = self._skill_abilities.get(sk_key, [])
+        t_info = self._skill_target_infos.get(sk_key) or {}
+        t_type = str(t_info.get("TargetType", ""))
+        if t_type in ("EnemySelect", "FriendSelect") and ctx.target_ids:
+            eff_targets = ctx.target_ids[:1]
+        elif t_type == "Caster" and not ctx.target_ids:
+            eff_targets = (self.owner_id,)
+        else:
+            eff_targets = ctx.target_ids
+
         # 在执行 Ability 前以当前 SkillTargetEntityList 分发 OnListenBeforeSkillUse（支撑光锥 23052 等读取 ParamEntitySkillTargetEntityList）
         rt.modifier_engine.dispatch_event(
             "OnListenBeforeSkillUse",
             param_entity_id=self.owner_id,
-            skill_target_ids=ctx.target_ids,
-            param_skill_targets=ctx.target_ids,
+            skill_target_ids=eff_targets,
+            param_skill_targets=eff_targets,
             current_skill_type=sk_type,
         )
-        # 只执行 Phase01/Phase02（跳过 _Camera）
-        entry = [a for a in ab_list if a.endswith("_Phase01")] or [a for a in ab_list if not a.endswith("_Camera")]
-        for ab_name in entry[:1]:
-            rt.trigger_ability(
-                caster_id=self.owner_id,
-                ability_name=ab_name,
-                target_ids=ctx.target_ids,
-                skill_target_ids=ctx.target_ids,
-                current_skill_type=sk_type,
-                current_attack_type=sk_type,
+
+        # 读取官方 ExcelOutput SPBase 能量基数
+        row = self._resolve_skill_row(sk_key)
+        sp_obj = (row.get("SPBase") or {}) if row else {}
+        base_en = float(sp_obj.get("Value", 0.0)) if isinstance(sp_obj, dict) else 0.0
+
+        prev_sp_base = rt._active_skill_sp_base
+        prev_sp_granted = rt._skill_sp_ratio_granted
+        rt._active_skill_sp_base = base_en
+        rt._skill_sp_ratio_granted = False
+        rt.begin_attack_scope()
+        try:
+            # 只执行 Phase01/Phase02（跳过 _Camera）
+            entry_ab = self._skill_entries.get(sk_key, "")
+            entry = [entry_ab] if (entry_ab and not entry_ab.endswith("_Camera")) else (
+                [a for a in ab_list if a.endswith("_Phase01")] or [a for a in ab_list if not a.endswith("_Camera")]
             )
-        # 读取官方 ExcelOutput SPBase 能量回复
-        if not self.is_servant and self.port:
-            self._loader._ensure_avatars()
-            self._loader._ensure_avatar_skills()
-            av = self._loader._avatars.get(self.unit_id, {})
-            base_en = 0.0
-            for sid in av.get("SkillList", []):
-                row = self._loader._avatar_skills.get((int(sid), 1))
-                if row and row.get("SkillTriggerKey") == sk_key:
-                    sp_obj = row.get("SPBase") or {}
-                    base_en = float(sp_obj.get("Value", 0.0)) if isinstance(sp_obj, dict) else 0.0
-                    break
-            if base_en > 0:
-                err = self.port.stat(self.owner_id, StatType.ERR) or 1.0
-                self.port.gain_energy(self.owner_id, base_en * err, cause=f"技能回能 {sk_key}")
+            for ab_name in entry[:1]:
+                rt.trigger_ability(
+                    caster_id=self.owner_id,
+                    ability_name=ab_name,
+                    target_ids=eff_targets,
+                    skill_target_ids=eff_targets,
+                    current_skill_type=sk_type,
+                    current_attack_type=sk_type,
+                )
+        finally:
+            rt.end_attack_scope()
+            sp_granted_by_task = rt._skill_sp_ratio_granted
+            rt._active_skill_sp_base = prev_sp_base
+            rt._skill_sp_ratio_granted = prev_sp_granted
+
+        # 若 Ability 内未通过 ModifySPNew(AddRatio) 结算技能基础回能，则在此统一按 SPBase * ERR 结算
+        if base_en > 0 and not sp_granted_by_task and self.port:
+            ep_recipient = self.owner_id
+            if self.is_servant:
+                ent = rt.sim.get_entity(self.owner_id)
+                master_id = getattr(ent, "master_name", None) if ent is not None else None
+                if not master_id:
+                    return
+                ep_recipient = master_id
+            err = self.port.stat(ep_recipient, StatType.ERR) or 1.0
+            self.port.gain_energy(ep_recipient, base_en * err, cause=f"技能回能 {sk_key}")
 
 
 class ConfigAbilityRelicAdapter(RelicSetHandler):

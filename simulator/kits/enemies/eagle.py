@@ -70,7 +70,7 @@ class MeteorEagleKit(EnemyKit):
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(target,),
-                multiplier=0.85,
+                multiplier=2.0,
                 element="Wind",
                 hit_energy=5.0,
                 hits=1,

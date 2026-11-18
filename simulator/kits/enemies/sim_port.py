@@ -527,7 +527,7 @@ class BaseEnemyCombatPortImpl:
         attacker = self.sim.get_entity(owner_id)
         if attacker is None or attacker.current_hp <= 0.0:
             return
-        seq_mults = multipliers if multipliers is not None else ((0.12,) * 8 + (1.44,))
+        seq_mults = multipliers if multipliers is not None else ((0.25,) * 8 + (3.00,))
         if not seq_mults:
             return
         setattr(self.sim, "_in_channel_pulse", True)
@@ -537,7 +537,7 @@ class BaseEnemyCombatPortImpl:
                     owner_id=owner_id,
                     target_ids=allies,
                     multiplier=float(mult),
-                    element="Physical",
+                    element="Quantum",
                     hit_energy=float(final_hit_energy),
                     hits=1,
                     blast=False,

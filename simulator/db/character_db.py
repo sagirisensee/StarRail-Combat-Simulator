@@ -214,19 +214,24 @@ class CharacterDB:
             def_exact = float(b.get("def", {}).get("final_value", s.get("防御力 (DEF)", 0)))
             spd_exact = float(s.get("速度实战精算", b.get("spd", {}).get("final_value", s.get("速度 (SPD)", 100))))
 
+            def exact_stat(bd_key: str, summary_key: str, default_str: str) -> float:
+                if bd_key in b and "final_value" in b[bd_key]:
+                    return float(b[bd_key]["final_value"])
+                return parse_pct(s.get(summary_key, default_str))
+
             panel = CharacterPanel(
                 hp=hp_exact,
                 atk=atk_exact,
                 def_stat=def_exact,
                 spd=spd_exact,
-                crit_rate=parse_pct(s.get("暴击率 (CR)", "5.0%")),
-                crit_dmg=parse_pct(s.get("暴击伤害 (CD)", "50.0%")),
-                break_effect=parse_pct(s.get("击破特攻 (BE)", "0.0%")),
-                err=parse_pct(s.get("能量恢复效率 (ERR)", "100.0%")),
-                ehr=parse_pct(s.get("效果命中 (EHR)", "0.0%")),
-                res=parse_pct(s.get("效果抵抗 (RES)", "0.0%")),
-                dmg_boost=parse_pct(s.get("属性伤害加成 (DMG%)", "0.0%")),
-                elation=parse_pct(s.get("欢愉度 (Elation)", "0.0%")),
+                crit_rate=exact_stat("crit_rate", "暴击率 (CR)", "5.0%"),
+                crit_dmg=exact_stat("crit_dmg", "暴击伤害 (CD)", "50.0%"),
+                break_effect=exact_stat("break_effect", "击破特攻 (BE)", "0.0%"),
+                err=exact_stat("err", "能量恢复效率 (ERR)", "100.0%"),
+                ehr=exact_stat("ehr", "效果命中 (EHR)", "0.0%"),
+                res=exact_stat("res", "效果抵抗 (RES)", "0.0%"),
+                dmg_boost=exact_stat("dmg_boost", "属性伤害加成 (DMG%)", "0.0%"),
+                elation=exact_stat("elation", "欢愉度 (Elation)", "0.0%"),
                 breakdowns=breakdowns
             )
 

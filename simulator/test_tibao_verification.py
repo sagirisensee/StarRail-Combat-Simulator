@@ -44,10 +44,10 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         ult_success = sim.cast_ultimate("缇宝")
         self.assertTrue(ult_success, "终结技施放应成功")
 
-        # 3. 验证回能：大招 5 点 + E6 追击 5 点 + S5 专武追击 12 点 = 22 * 1.194 = 26.268；
-        #    此外终结技连锁每击败 1 名敌人另提供标准击杀回能 10 * ERR = 11.94 (击败数随伤害浮动, 按实测计)
+        # 3. 验证回能：大招 5 点 + E6 追击 5 点 + S5 专武追击 12 点 = 22 * 1.194394015 = 26.276668；
+        #    此外终结技连锁每击败 1 名敌人另提供标准击杀回能 10 * ERR = 11.94394 (击败数随伤害浮动, 按实测计)
         kills = sum(1 for e in self.enemies if e.current_hp <= 0)
-        self.assertAlmostEqual(tibao.energy, 26.268 + kills * 11.94, places=2)
+        self.assertAlmostEqual(tibao.energy, 26.27666833 + kills * 11.94394015, places=3)
 
         # 4. 获取真理源 status 快照
         snap = sim.query_status("缇宝")
@@ -155,15 +155,14 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         self.assertAlmostEqual(snap["hp_pct"], 1.0, places=3)
         self.assertEqual(int(snap["current_energy"]), 70)
         self.assertEqual(int(snap["max_energy"]), 140)
-        self.assertEqual(int(snap["current_atk"]), 1336)
-        self.assertEqual(int(snap["current_def"]), 1527)
+        self.assertEqual(int(snap["current_atk"]), 1337)
+        self.assertEqual(int(snap["current_def"]), 1528)
         self.assertEqual(round(snap["current_speed"]), 208)
         self.assertAlmostEqual(snap["current_crit_rate"], 1.05, places=2)
-        self.assertAlmostEqual(snap["current_crit_dmg"], 2.426, places=3)
-        # 0.625: 2026-11-05 按官方日志实测修正面板速度 (201.53, 原导出估算 201.144) 后,
-        # 暴风停歇速度加成取 8 点 (208.13) -> 0.545 + 0.08; chen 实机面板治疗加成 62.5% 实证
-        self.assertAlmostEqual(snap["outgoing_healing"], 0.625, places=3)
-        self.assertAlmostEqual(snap["effect_res"], 0.917, places=3)
+        self.assertAlmostEqual(snap["current_crit_dmg"], 2.42676, places=4)
+        # 0.625606: 实机面板治疗加成 54.5606% + 暴风停歇速度加成 8 点 (+8%) = 62.5606%
+        self.assertAlmostEqual(snap["outgoing_healing"], 0.625606, places=4)
+        self.assertAlmostEqual(snap["effect_res"], 0.9176, places=4)
 
     def test_tibao_trace_pebble_ally_hit_energy(self):
         """验证行迹【岔路旁的小石子？】：队友直接攻击每命中 1 目标回复 1.5 点固定能量，并免疫 DoT/反伤误判。"""
@@ -179,9 +178,9 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         tibao = sim.get_entity("缇宝")
         sim.cast_ultimate("缇宝")
         energy_after_ult = tibao.energy
-        # 基线 = 施放回能 26.268 + 终结技连锁击杀回能 (每名敌人 10 * ERR = 11.94, 击败数按实测计)
+        # 基线 = 施放回能 26.276668 + 终结技连锁击杀回能 (每名敌人 10 * ERR = 11.94394, 击败数按实测计)
         kills = sum(1 for e in self.enemies if e.current_hp <= 0)
-        self.assertAlmostEqual(energy_after_ult, 26.268 + kills * 11.94, places=2)
+        self.assertAlmostEqual(energy_after_ult, 26.27666833 + kills * 11.94394015, places=3)
 
         # 1. 模拟长夜直接攻击命中 2 个敌人 -> 回复 1.5 * 2 = 3.0 点固定能量
         breakdown_valid = DamageBreakdown(
@@ -272,8 +271,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
             # 官方日志中两次治疗恰好顶到 8627 (idx192/233) 亦实证此动态值
             "长夜月": 8627,
             "缇宝": 9565,
-            "知更鸟•晴歌": 7237,
-            "风堇": 6014,
+            "知更鸟•晴歌": 7236,
+            "风堇": 6015,
         }
         for name, exp in expected_hp.items():
             snap = sim.query_status(name)
@@ -290,8 +289,8 @@ class TestTibaoFullStatusVerification(unittest.TestCase):
         sim.port.remove_status("缇宝", "Tribbie_Ult_Zone_GuessWhoLivesHere")
         sim.get_entity("缇宝").kit._sync_glass_ball_hp()
         self.assertFalse(sim.port.has_status("缇宝", "Tribbie_A4_GlassBallWithWings"))
-        self.assertAlmostEqual(sim.port.max_hp("缇宝"), 6968.5, places=1)
-        self.assertAlmostEqual(sim.get_entity("缇宝").current_hp, 6968.5, places=1)
+        self.assertAlmostEqual(sim.port.max_hp("缇宝"), 6968.68, places=1)
+        self.assertAlmostEqual(sim.get_entity("缇宝").current_hp, 6968.68, places=1)
 
     def test_glass_ball_derived_status_uses_tags_not_hardcoded_id(self):
         """验证【长翅膀的玻璃球！】以语义标签实现防自循环 (红线 1/3):

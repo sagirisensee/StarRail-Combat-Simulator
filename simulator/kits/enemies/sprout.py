@@ -57,8 +57,8 @@ class BeastSproutKit(EnemyKit):
             hit_targets = self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(allies[0],),
-                multiplier=1.2,
-                element="Physical",
+                multiplier=2.2,
+                element="Quantum",
                 hit_energy=10.0,
                 hits=1,
                 blast=False,

@@ -459,6 +459,14 @@ class ModifierEngine:
         if mod.owner_id != "__LEVEL__":
             self.check_property_changes(mod.owner_id)
 
+    def destroy_all_for_entity(self, owner_id: str) -> None:
+        """销毁实体自身挂载及由其施放的 RemoveWhenCasterDead Modifier。"""
+        for m in list(self.get_modifiers(owner_id)):
+            self.destroy_modifier(m)
+        for m in list(self.by_uid.values()):
+            if not m._destroyed and m.caster_id == owner_id and "RemoveWhenCasterDead" in m.behavior_flags:
+                self.destroy_modifier(m)
+
     def stack_property(
         self,
         mod: VMModifierInstance,
@@ -504,6 +512,11 @@ class ModifierEngine:
                     ent.base_speed = float(val)
                     if float(val) <= 0.0:
                         ent.distance_remaining = 1e12
+                continue
+            if prop_name == "BaseSpeed":
+                ent = self.rt.sim.get_entity(mod.owner_id)
+                if ent is not None and getattr(ent, "is_countdown", False):
+                    ent.base_speed = max(1.0, float(val))
                 continue
             mapping = PROPERTY_TO_STAT.get(prop_name)
             if mapping is None:

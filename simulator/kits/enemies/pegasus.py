@@ -67,23 +67,23 @@ class MoonlitPegasusKit(EnemyKit):
 
         phase = (self._turn_count - 1) % 3
         if phase == 0:
-            # Turn 1: 单体攻击
+            # Turn 1: 单体攻击 (Skill01 = 3.0)
             target = self._select_primary_target(allies)
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(target,),
-                multiplier=1.0,
+                multiplier=3.0,
                 element="Quantum",
                 hit_energy=5.0,
                 hits=1,
             )
         elif phase == 1:
-            # Turn 2: 3 段扩散攻击 (命中主目标及相邻目标) 并附加【欧洛尼斯印记】
+            # Turn 2: 3 段扩散攻击 (Skill04 = 4.5 -> 1.5 x 3) 并附加【欧洛尼斯印记】
             target = self._select_primary_target(allies)
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(target,),
-                multiplier=0.67,
+                multiplier=1.5,
                 element="Quantum",
                 hit_energy=20.0 / 3.0,
                 hits=3,
@@ -104,12 +104,12 @@ class MoonlitPegasusKit(EnemyKit):
                     description="月夜天马附加的【欧洛尼斯印记】，施放终结技可解除，否则将在后续爆发结算额外伤害。",
                 )
         else:
-            # Turn 3: 先单体攻击 (+5 回能)，再全体攻击 (+10 回能) + 引爆【欧洛尼斯印记】
+            # Turn 3: 先单体攻击 (Skill01 = 3.0, +5 回能)，再全体攻击 (Skill02 = 2.6, +10 回能) + 引爆【欧洛尼斯印记】
             target = self._select_primary_target(allies)
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(target,),
-                multiplier=1.0,
+                multiplier=3.0,
                 element="Quantum",
                 hit_energy=5.0,
                 hits=1,
@@ -117,7 +117,7 @@ class MoonlitPegasusKit(EnemyKit):
             self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=allies,
-                multiplier=1.0,
+                multiplier=2.6,
                 element="Quantum",
                 hit_energy=10.0,
                 hits=1,
@@ -127,7 +127,7 @@ class MoonlitPegasusKit(EnemyKit):
                     self.port.trigger_oronyx_detonation(
                         owner_id=self.owner_id,
                         target_id=target_id,
-                        multiplier=2.8,
+                        multiplier=6.27,
                         element="Quantum",
                     )
                     self.port.remove_mark_status(target_id=target_id, mark_key=ORONYX_MARK_KEY)

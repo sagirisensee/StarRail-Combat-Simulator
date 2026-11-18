@@ -79,7 +79,7 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     # 底层通过 CombatPort 的 proxy 路由与 ActionGate 统一管控，无需对 heal/volley/专武打猴子补丁
     tibao = sim.get_entity("缇宝")
     fj = sim.get_entity("风堇")
-    if fj is not None and getattr(fj, "light_cone", None) is not None:
+    if getattr(sim, "vm_runtime", None) is None and fj is not None and getattr(fj, "light_cone", None) is not None:
         lc = fj.light_cone
         orig_lc_before = lc.on_action_before
         def _proxy_hp_sync_before(ctx: Any) -> Any:
@@ -132,7 +132,12 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             boss = sim.get_entity("堕神之血•亚婆离")
             if boss is not None and boss.current_hp > 132783.72:
                 boss.current_hp = 132783.72
-            if tibao is not None and getattr(tibao, "kit", None) is not None:
+            if (
+                getattr(sim, "vm_runtime", None) is None
+                and tibao is not None
+                and getattr(tibao, "kit", None) is not None
+                and getattr(tibao.kit, "port", None) is not None
+            ):
                 from simulator.combat_port import BuffSpec
                 from simulator.status import Modifier, ModifierOp, StatType
                 tibao.kit.port.upsert_status(BuffSpec(
@@ -146,12 +151,12 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
         if not getattr(director, "_fixed_acc_heal_457_222204", False) and av >= 457.75 - 1e-3:
             director._fixed_acc_heal_457_222204 = True
             fj = sim.get_entity("风堇")
-            if fj is not None and getattr(fj, "kit", None) is not None:
+            if getattr(sim, "vm_runtime", None) is None and fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
                 fj.kit.accumulated_healing += 120.0
         if not getattr(director, "_fixed_acc_heal_536_222204", False) and av >= 536.15 - 1e-3:
             director._fixed_acc_heal_536_222204 = True
             fj = sim.get_entity("风堇")
-            if fj is not None and getattr(fj, "kit", None) is not None:
+            if getattr(sim, "vm_runtime", None) is None and fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
                 fj.kit.accumulated_healing = max(0.0, fj.kit.accumulated_healing - 220.0)
         if 351.31 - 1e-3 <= av <= 458.935:
             tb_ent = sim.get_entity("缇宝")
@@ -165,7 +170,12 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                 sim.port.set_action_suppressed("缇宝", False)
         if not getattr(director, "_cleared_bell_458_222204", False) and av > 458.935:
             director._cleared_bell_458_222204 = True
-            if tibao is not None and getattr(tibao, "kit", None) is not None:
+            if (
+                getattr(sim, "vm_runtime", None) is None
+                and tibao is not None
+                and getattr(tibao, "kit", None) is not None
+                and getattr(tibao.kit, "port", None) is not None
+            ):
                 tibao.kit.port.remove_status("缇宝", "bell_6025_tb_hp")
                 tibao.current_hp = min(float(tibao.max_hp), 6162.49)
         boss_ent = sim.get_entity("堕神之血•亚婆离")
@@ -238,24 +248,26 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     _fixed_357_yika = [False]
 
     def _on_action_exec_222204(ev: Any) -> None:
+        if getattr(sim, "vm_runtime", None) is not None:
+            return
         cur_av = float(getattr(sim, "current_av", 0.0))
         if getattr(ev, "actor_name", None) == "小伊卡":
             if not _fixed_357_yika[0] and abs(cur_av - 357.79) < 0.05:
                 _fixed_357_yika[0] = True
                 fj = sim.get_entity("风堇")
-                if fj is not None and getattr(fj, "kit", None) is not None:
+                if fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
                     fj.kit.accumulated_healing += 695.0
             for tav, delta in _yika_adj_222204.items():
                 if abs(cur_av - tav) < 0.05:
                     fj = sim.get_entity("风堇")
-                    if fj is not None and getattr(fj, "kit", None) is not None:
+                    if fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
                         fj.kit.accumulated_healing = max(0.0, fj.kit.accumulated_healing + delta)
         elif getattr(ev, "actor_name", None) == "长夜" and abs(cur_av - 451.84) < 0.05:
             cy = sim.get_entity("长夜月")
             if cy is not None and getattr(cy, "kit", None) is not None and getattr(cy.kit, "port", None) is not None:
                 cy.kit.port.remove_status("长夜", "Relic_Creator_Team_Dmg_长夜月_长夜")
         elif getattr(ev, "actor_name", None) == "长夜月" and abs(cur_av - 392.42) < 0.05:
-            if tibao is not None and getattr(tibao, "kit", None) is not None:
+            if tibao is not None and getattr(tibao, "kit", None) is not None and getattr(tibao.kit, "port", None) is not None:
                 from simulator.combat_port import BuffSpec
                 from simulator.status import Modifier, ModifierOp, StatType
                 tibao.kit.port.upsert_status(BuffSpec(

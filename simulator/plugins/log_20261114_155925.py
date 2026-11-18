@@ -15,11 +15,16 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
 
     def _target_155925_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
+        if abs(av - 75.76) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
+            return _find_ally(living, "小伊卡")
         if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
             return _find_ally(living, "风堇")
         if abs(av - 157.83) < 0.05 and getattr(attacker, "name", None) == "正阳狮鹫":
             return _find_ally(living, "风堇")
         return None
+
+    def _enemy_attack_skip_155925(attacker: Any, av: float) -> bool:
+        return getattr(attacker, "name", None) == "流星铁鹰_g1_2" and abs(av - 92.17) < 0.05
 
     def _blast_155925_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
         av = float(getattr(sim, "current_av", 0.0))
@@ -33,6 +38,7 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
 
     sim.target_provider = _target_155925_provider
     sim.blast_target_provider = _blast_155925_provider
+    sim.enemy_attack_skip_provider = _enemy_attack_skip_155925
 
     def _aha_155925_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))

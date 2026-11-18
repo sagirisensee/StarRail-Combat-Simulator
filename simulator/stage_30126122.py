@@ -26,6 +26,7 @@ from .events import (
     DamageAppliedEvent,
     EnemyDefeatedEvent,
     EnemySpawnedEvent,
+    HPLostEvent,
     ToughnessRecoverEvent,
     TurnBeginEvent,
     WeaknessBreakEvent,
@@ -111,6 +112,9 @@ def _build_enemy_entity(
     return ent
 
 
+ENEMY_LV95_BASE_ATK = 18.0 * 34.75065  # 625.5117 (HardLevelGroup=3, Level=95)
+
+
 def create_moonlit_pegasus(name: str = "月夜天马") -> Entity:
     """构建月夜天马 (4023020, Lv.95) 实体。"""
     return _build_enemy_entity(
@@ -121,7 +125,7 @@ def create_moonlit_pegasus(name: str = "月夜天马") -> Entity:
         max_toughness=PEGASUS_TOUGHNESS,
         initial_distance=10000.0,
         is_boss=False,
-        base_atk=1400.0,
+        base_atk=ENEMY_LV95_BASE_ATK,
     )
 
 
@@ -135,7 +139,7 @@ def create_sunlit_griffin(name: str = "正阳狮鹫") -> Entity:
         max_toughness=GRIFFIN_TOUGHNESS,
         initial_distance=GRIFFIN_INITIAL_DISTANCE,
         is_boss=True,
-        base_atk=1711.0,
+        base_atk=ENEMY_LV95_BASE_ATK,
     )
 
 
@@ -152,7 +156,7 @@ def create_meteor_eagle(
         max_toughness=EAGLE_TOUGHNESS,
         initial_distance=initial_distance,
         is_boss=False,
-        base_atk=1476.0,
+        base_atk=ENEMY_LV95_BASE_ATK,
     )
 
 
@@ -164,7 +168,7 @@ def create_apoli_boss(name: str = "堕神之血•亚婆离") -> Entity:
         max_toughness=APOLI_TOUGHNESS,
         weaknesses=APOLI_WEAKNESSES,
         is_boss=True,
-        base_atk=1476.0,
+        base_atk=ENEMY_LV95_BASE_ATK,
     )
 
 
@@ -175,7 +179,7 @@ def create_beast_sprout(name: str) -> Entity:
         speed=SPROUT_SPEED,
         max_toughness=SPROUT_TOUGHNESS,
         weaknesses=SPROUT_WEAKNESSES,
-        base_atk=1476.0,
+        base_atk=ENEMY_LV95_BASE_ATK,
     )
 
 
@@ -461,10 +465,20 @@ class Stage30126122Director:
         actual = min(max(0.0, ent.current_hp - 1.0), dmg) if ent.current_hp > 1.0 else 0.0
         ent.current_hp = max(1.0, ent.current_hp - dmg) if ent.current_hp > 0.0 else 0.0
         if actual > 0.0:
-            for ally in self.sim.entities:
-                kit = getattr(ally, "kit", None)
-                if kit is not None and hasattr(kit, "on_hp_lost"):
-                    kit.on_hp_lost(ent.name, actual, cause="attack_damage")
+            if getattr(self.sim, "vm_runtime", None) is not None:
+                self.sim.event_bus.publish(HPLostEvent(
+                    av=round(self.sim.current_av, 2),
+                    cycle=self.sim.current_cycle,
+                    entity_name=ent.name,
+                    amount=actual,
+                    hp_left=ent.current_hp,
+                    cause="attack_damage",
+                ))
+            else:
+                for ally in self.sim.entities:
+                    kit = getattr(ally, "kit", None)
+                    if kit is not None and hasattr(kit, "on_hp_lost"):
+                        kit.on_hp_lost(ent.name, actual, cause="attack_damage")
         energy_target = ent
         if getattr(ent, "is_memosprite", False) and getattr(ent, "max_energy", 0.0) <= 0.0:
             master_name = getattr(ent, "master_name", None)

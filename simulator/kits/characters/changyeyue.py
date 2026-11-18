@@ -59,12 +59,13 @@ class ChangyeyueKit(KitHandler):
         self._spirit_deaths: int = 0
 
     def apply_trace_passives(self, entity: Any) -> None:
-        """战前静态基线校准：注入长夜月角色白字与面板基线，消除数据库模块中的角色 ID 硬编码。"""
-        entity.base_atk = 1443.0
+        """战前静态基线校准：仅在未提供有效基线时注入长夜月角色白字与面板回退值。"""
+        if getattr(entity, "base_atk", 0.0) in (0.0, 1000.0):
+            entity.base_atk = 1444.363896
         if getattr(entity, "base_white_atk", 0.0) <= 0.0:
-            entity.base_white_atk = 1072.0
+            entity.base_white_atk = 1072.512
         if getattr(entity, "base_white_def", 0.0) <= 0.0:
-            entity.base_white_def = 979.0
+            entity.base_white_def = 979.02
 
     @property
     def spirit_hp(self) -> float:

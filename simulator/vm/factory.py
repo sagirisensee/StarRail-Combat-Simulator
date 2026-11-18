@@ -1,0 +1,121 @@
+# coding: utf-8
+"""官方 ConfigAbility VM 队伍与实体构建工厂。
+
+从 `vm_reconciliation.py` 抽离标准配队表 (`TEAM_VM_LOADOUT`) 与面板去重逻辑
+（扣除 `character_db_export.json` 中已预烘焙、但官方 VM 进场/局内会主动添加的被动属性），
+供 `VMReconciliationHarness` 与完整关卡对账 (`build_stage_30126122` + `run_trajectory_replay`) 共用。
+"""
+from __future__ import annotations
+
+import os
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
+
+from simulator.db.character_db import CharacterDB
+from simulator.entity import Entity
+from simulator.vm.loader import GameDataLoader
+from simulator.vm.runtime import (
+    ConfigAbilityKitAdapter,
+    ConfigAbilityLightConeAdapter,
+    ConfigAbilityRelicAdapter,
+)
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_CHAR_DB_PATH = os.path.join(ROOT_DIR, "data", "character_db_export.json")
+
+UID_TO_NAME: Dict[int, str] = {
+    1403: "缇宝",
+    1409: "风堇",
+    1413: "长夜月",
+    1512: "知更鸟•晴歌",
+}
+
+NAME_TO_UID: Dict[str, int] = {
+    "缇宝": 1403,
+    "风堇": 1409,
+    "长夜月": 1413,
+    "知更鸟•晴歌": 1512,
+    "知更鸟•晴歌_爱如此刻永恒": 1512,
+}
+
+# 本队官方配置表: uid -> (avatar_id, eidolon, lc_id, lc_superimposition, relics)
+TEAM_VM_LOADOUT: Dict[int, Tuple[int, int, int, int, List[Tuple[int, int]]]] = {
+    1403: (1403, 6, 23038, 5, [(124, 4), (319, 2)]),
+    1409: (1409, 1, 23042, 1, [(125, 4), (320, 2)]),
+    1413: (1413, 2, 23040, 1, [(127, 4), (319, 2)]),
+    1512: (1512, 0, 23052, 1, [(127, 4), (323, 2)]),
+}
+
+
+def resolve_vm_uid(uid_or_name: Union[int, str]) -> int:
+    """将角色 UID 或名称解析为标准 avatar_id。"""
+    if isinstance(uid_or_name, int):
+        return uid_or_name
+    text = str(uid_or_name).strip()
+    if text.isdigit():
+        return int(text)
+    if text in NAME_TO_UID:
+        return NAME_TO_UID[text]
+    raise KeyError(f"未知 VM 角色标识: {uid_or_name!r}")
+
+
+def build_vm_entity(
+    uid_or_name: Union[int, str],
+    *,
+    db: Optional[CharacterDB] = None,
+    loader: Optional[GameDataLoader] = None,
+    loadout: Optional[Tuple[int, int, int, int, List[Tuple[int, int]]]] = None,
+    db_path: str = DEFAULT_CHAR_DB_PATH,
+) -> Entity:
+    """构建单个挂载官方 VM 适配器 (`Kit`/`LightCone`/`Relic`) 的战斗实体。"""
+    uid = resolve_vm_uid(uid_or_name)
+    name = UID_TO_NAME[uid]
+    char_db = db if db is not None else CharacterDB().load(db_path)
+    vm_loader = loader if loader is not None else GameDataLoader()
+
+    if name == "知更鸟•晴歌":
+        rp = char_db.get_by_name("知更鸟•晴歌_爱如此刻永恒") or char_db.get_by_name(name)
+        if rp is not None:
+            rp.name = "知更鸟•晴歌"
+    else:
+        rp = char_db.get_by_name(name)
+    if rp is None:
+        raise KeyError(f"CharacterDB 中未找到角色档案: {name!r} (uid={uid})")
+
+    ent = char_db.to_combat_entity(rp)
+    ent.name = name
+
+    aid, eid, lc_id, lc_s, relics = loadout if loadout is not None else TEAM_VM_LOADOUT[uid]
+    # 扣除 character_db_export 中已预烘焙、但官方 VM 会主动添加的局内被动：
+    # 1409: PointB1 (+1.00 CR), Relic 320 (+0.20 OH)
+    # 1403 / 1413: Relic 319 拾骨地 (+0.28 CD)
+    if uid == 1409:
+        ent.base_crit_rate = max(0.05, ent.base_crit_rate - 1.00)
+        ent.base_effect_res = max(0.0, ent.base_effect_res - 0.50)
+        ent.base_outgoing_healing = max(0.0, ent.base_outgoing_healing - 0.20)
+    elif uid in (1403, 1413):
+        ent.base_crit_dmg = max(0.50, ent.base_crit_dmg - 0.28)
+    # 1413: PointB3 / 行迹已含暴击，Relic 319 仅在局内加暴伤(未进面板)
+
+    ent.kit = ConfigAbilityKitAdapter(name, aid, eidolon=eid, loader=vm_loader)
+    ent.light_cone = ConfigAbilityLightConeAdapter(name, lc_id, superimposition=lc_s)
+    ent.relic_handlers = [ConfigAbilityRelicAdapter(name, sid, pieces=pc) for sid, pc in relics]
+    return ent
+
+
+def build_vm_team(
+    uids_or_names: Sequence[Union[int, str]],
+    *,
+    db: Optional[CharacterDB] = None,
+    loader: Optional[GameDataLoader] = None,
+    loadouts: Optional[Mapping[int, Tuple[int, int, int, int, List[Tuple[int, int]]]]] = None,
+    db_path: str = DEFAULT_CHAR_DB_PATH,
+) -> List[Entity]:
+    """按传入顺序构建整支 VM 队伍，严格保留站位顺序。"""
+    char_db = db if db is not None else CharacterDB().load(db_path)
+    vm_loader = loader if loader is not None else GameDataLoader()
+    team: List[Entity] = []
+    for item in uids_or_names:
+        uid = resolve_vm_uid(item)
+        ov = loadouts.get(uid) if loadouts is not None else None
+        team.append(build_vm_entity(uid, db=char_db, loader=vm_loader, loadout=ov, db_path=db_path))
+    return team

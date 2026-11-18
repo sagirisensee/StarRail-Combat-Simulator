@@ -80,7 +80,7 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit("知更鸟•晴歌")
             director.apply_aha_ally_chip_hit("风堇")
             director.apply_aha_ally_chip_hit("晴空乐手")
-            if robin_ent is not None and getattr(robin_ent, "kit", None) is not None:
+            if robin_ent is not None and getattr(robin_ent, "kit", None) is not None and hasattr(robin_ent.kit, "_heal_provider_keys"):
                 robin_ent.kit._heal_provider_keys.clear()
             director.flush_ally_talent_heals()
         if not getattr(director, "_triggered_aha_15002_204943", False) and av >= 150.019 - 1e-6:
@@ -95,7 +95,7 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit("风堇")
             director.apply_aha_ally_chip_hit("知更鸟•晴歌")
             director.apply_aha_ally_chip_hit("晴空乐手")
-            if robin_ent is not None and getattr(robin_ent, "kit", None) is not None:
+            if robin_ent is not None and getattr(robin_ent, "kit", None) is not None and hasattr(robin_ent.kit, "_heal_provider_keys"):
                 robin_ent.kit._heal_provider_keys.clear()
             director.flush_ally_talent_heals()
 
@@ -117,14 +117,14 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
                     if hasattr(ika_kit, "_resolve_talent_heal"):
                         ika_kit._resolve_talent_heal()
                     master = getattr(ika_kit, "master_kit", None)
-                    if master is not None and master.in_rain_state():
+                    if master is not None and hasattr(master, "in_rain_state") and master.in_rain_state():
                         raw_heal = ika_kit.port.max_hp(master.owner_id) * ika_kit.TALENT_HEAL_PCT + ika_kit.TALENT_HEAL_FLAT
                         for ally in ika_kit.port.allies(ika_kit.owner_id):
                             if not (hasattr(ika_kit.port, "is_countdown") and ika_kit.port.is_countdown(ally)):
                                 ika_kit.port.heal(ika_kit.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
                         master.on_healing_provided()
                 robin_ent = sim.get_entity("知更鸟•晴歌")
-                if robin_ent is not None and getattr(robin_ent, "kit", None) is not None:
+                if robin_ent is not None and getattr(robin_ent, "kit", None) is not None and hasattr(robin_ent.kit, "_heal_provider_keys"):
                     robin_ent.kit._heal_provider_keys.clear()
                 # 实机 157.83 AV 第二动仅命中知更鸟•晴歌 (884.26)，未命中风堇
                 griffin.kit._turn_count += 1
@@ -142,8 +142,8 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
                     griffin.kit.port.apply_enemy_attack(
                         owner_id=griffin.kit.owner_id,
                         target_ids=("知更鸟•晴歌",),
-                        multiplier=0.95,
-                        element="Physical",
+                        multiplier=2.6,
+                        element="Fire",
                         hit_energy=5.0,
                         hits=1,
                     )
