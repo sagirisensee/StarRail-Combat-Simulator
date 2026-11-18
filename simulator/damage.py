@@ -83,6 +83,7 @@ class DamageRequest:
     scaling_stat: str = "atk"           # "atk" | "hp" | "def"
     is_true_damage: bool = False        # 真实伤害: 仅取基础区数值, 跳过双暴/增伤/防御/抗性/易伤/减伤全部乘区
     damage_type: Any = None             # DamageType 枚举 (供屏障转化等按类别结算的规则读取)
+    vm_hit_hooks_applied: bool = False  # VM TaskExecutor 已执行 OnBeforeHitAll 时为 True，避免外部计算二次叠乘
 
 
 class DamageCalculator:

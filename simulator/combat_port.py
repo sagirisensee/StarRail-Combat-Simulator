@@ -151,6 +151,7 @@ class CombatPort(Protocol):
         extra_res_pen: float = 0.0,
         extra_vuln: float = 0.0,
         extra_crit_dmg: float = 0.0,
+        vm_hit_hooks_applied: bool = False,
     ) -> None: ...
     def schedule_follow_up(
         self,
@@ -914,6 +915,7 @@ class SimulatorCombatPort:
         extra_res_pen: float = 0.0,
         extra_vuln: float = 0.0,
         extra_crit_dmg: float = 0.0,
+        vm_hit_hooks_applied: bool = False,
     ) -> None:
         resolved_damage_type = damage_type or DamageType.from_tag(damage_tag)
         tgt = self._get_entity(target_id)
@@ -944,7 +946,8 @@ class SimulatorCombatPort:
             extra_crit_dmg=extra_crit_dmg,
             scaling_stat=scaling_stat,
             is_true_damage=(resolved_damage_type == DamageType.TRUE),
-            damage_type=resolved_damage_type
+            damage_type=resolved_damage_type,
+            vm_hit_hooks_applied=vm_hit_hooks_applied,
         )
         if resolved_damage_type == DamageType.FOLLOW_UP:
             scheduler = getattr(self.sim, "scheduler", None)

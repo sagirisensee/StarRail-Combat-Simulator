@@ -127,6 +127,10 @@ class BaseEnemyCombatPortImpl:
                         if 0 <= adj_idx < len(living_allies):
                             resolved_targets.append(living_allies[adj_idx])
 
+        vm_rt = getattr(self.sim, "vm_runtime", None)
+        if vm_rt is not None and increment_action_seq:
+            vm_rt.begin_being_attacked(attacker.name, [t.name for t in resolved_targets])
+
         for _ in range(max(1, hits)):
             for tgt in resolved_targets:
                 if tgt.current_hp <= 0:
@@ -356,7 +360,14 @@ class BaseEnemyCombatPortImpl:
             self.remove_mark_status(target_id=target_id, mark_key=opposite_key)
             max_hp = self.sim.port.max_hp(target_id)
             if max_hp > 0.0:
+                vm_rt = getattr(self.sim, "vm_runtime", None)
+                if vm_rt is not None:
+                    atk_id = vm_rt._open_enemy_attack or owner_id
+                    vm_rt.modifier_engine.dispatch_event("OnBeforeBeingHitAll", owner_id=target_id, param_entity_id=atk_id)
                 self.sim.port.lose_hp(target_id, max_hp * 0.25, cause="attack_damage")
+                if vm_rt is not None:
+                    atk_id = vm_rt._open_enemy_attack or owner_id
+                    vm_rt.modifier_engine.dispatch_event("OnAfterBeingHitAll", owner_id=target_id, param_entity_id=atk_id)
             return
         self.sim.port.upsert_status(
             BuffSpec(
@@ -450,6 +461,19 @@ class BaseEnemyCombatPortImpl:
                 is_debuff = getattr(st, "category", "") == "debuff" or StatusTag.TARGET_DEBUFF in tags
                 if is_debuff and getattr(st, "duration", None) is not None and StatusTag.FIELD_AURA not in tags:
                     self.sim.status_mgr.remove_status(entity_id, st.id)
+        vm_rt = getattr(self.sim, "vm_runtime", None)
+        if vm_rt is not None:
+            for mod in list(vm_rt.modifier_engine.all_modifiers()):
+                if mod.owner_id != entity_id or mod.is_halo or mod.life_time is None:
+                    continue
+                is_debuff = (
+                    mod.config.get("StatusType") == "Debuff"
+                    or any("DEBUFF" in str(flag).upper() for flag in mod.behavior_flags)
+                    or any(mod.properties.get(k, 0.0) > 0.0 for k in ("AllDamageTypeTakenRatio", "DamageTakenRatio"))
+                    or any(mod.properties.get(k, 0.0) < 0.0 for k in ("DefenceDelta", "DefenceAddedRatio"))
+                )
+                if is_debuff:
+                    vm_rt.modifier_engine.destroy_modifier(mod, reason="DISPEL")
 
     def set_entity_speed(self, entity_id: str, speed: float) -> None:
         ent = self.sim.get_entity(entity_id)
@@ -545,6 +569,9 @@ class BaseEnemyCombatPortImpl:
                 )
         finally:
             setattr(self.sim, "_in_channel_pulse", False)
+            vm_rt = getattr(self.sim, "vm_runtime", None)
+            if vm_rt is not None:
+                vm_rt.end_being_attacked(owner_id)
 
     def heal_boss_by_ratio(self, *, boss_id: str, ratio: float) -> float:
         boss = self.sim.get_entity(boss_id)

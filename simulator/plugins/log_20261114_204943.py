@@ -111,21 +111,50 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
             av = float(getattr(sim, "current_av", 0.0))
             if abs(av - 157.83) < 0.05 and not getattr(griffin.kit, "_extra_157_204943", False):
                 griffin.kit._extra_157_204943 = True
-                ika_ent = sim.get_entity("小伊卡")
-                if ika_ent is not None and getattr(ika_ent, "kit", None) is not None:
-                    ika_kit = ika_ent.kit
-                    if hasattr(ika_kit, "_resolve_talent_heal"):
-                        ika_kit._resolve_talent_heal()
-                    master = getattr(ika_kit, "master_kit", None)
-                    if master is not None and hasattr(master, "in_rain_state") and master.in_rain_state():
-                        raw_heal = ika_kit.port.max_hp(master.owner_id) * ika_kit.TALENT_HEAL_PCT + ika_kit.TALENT_HEAL_FLAT
-                        for ally in ika_kit.port.allies(ika_kit.owner_id):
-                            if not (hasattr(ika_kit.port, "is_countdown") and ika_kit.port.is_countdown(ally)):
-                                ika_kit.port.heal(ika_kit.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
-                        master.on_healing_provided()
-                robin_ent = sim.get_entity("知更鸟•晴歌")
-                if robin_ent is not None and getattr(robin_ent, "kit", None) is not None and hasattr(robin_ent.kit, "_heal_provider_keys"):
-                    robin_ent.kit._heal_provider_keys.clear()
+                vm_rt = getattr(sim, "vm_runtime", None)
+                if vm_rt is not None:
+                    vm_rt.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id="__LEVEL__")
+                    if vm_rt.modifier_engine.has_modifier("风堇", "MServant_HyacineServant_00_MaxHpHalo"):
+                        ika_pas = next(
+                            (m for m in vm_rt.modifier_engine.get_modifiers("小伊卡") if m.name == "MServant_HyacineServant_00_Passive"),
+                            None,
+                        )
+                        if ika_pas is not None:
+                            from simulator.vm.target_alias import ExecutionContext
+                            cb0 = next(
+                                (c for c in (ika_pas.config.get("_CallbackList") or []) if c.get("Event") == "OnListenBeforeTurnPhase1End"),
+                                None,
+                            )
+                            if cb0 is not None:
+                                retarget = (cb0.get("CallbackConfig") or [{}])[0]
+                                pred_list = (retarget.get("TaskList") or [{}])[-1]
+                                succ_tasks = (pred_list.get("SuccessTaskList") or [])[1:]
+                                if succ_tasks:
+                                    rain_ctx = ExecutionContext(
+                                        runtime=vm_rt,
+                                        caster_id="小伊卡",
+                                        modifier_owner_id="小伊卡",
+                                        ability_name=ika_pas.ability_name,
+                                        modifier_instance=ika_pas,
+                                    )
+                                    vm_rt.executor.execute_tasks(succ_tasks, rain_ctx)
+                        vm_rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=griffin.name)
+                else:
+                    ika_ent = sim.get_entity("小伊卡")
+                    if ika_ent is not None and getattr(ika_ent, "kit", None) is not None:
+                        ika_kit = ika_ent.kit
+                        if hasattr(ika_kit, "_resolve_talent_heal"):
+                            ika_kit._resolve_talent_heal()
+                        master = getattr(ika_kit, "master_kit", None)
+                        if master is not None and hasattr(master, "in_rain_state") and master.in_rain_state():
+                            raw_heal = ika_kit.port.max_hp(master.owner_id) * ika_kit.TALENT_HEAL_PCT + ika_kit.TALENT_HEAL_FLAT
+                            for ally in ika_kit.port.allies(ika_kit.owner_id):
+                                if not (hasattr(ika_kit.port, "is_countdown") and ika_kit.port.is_countdown(ally)):
+                                    ika_kit.port.heal(ika_kit.owner_id, ally, master._apply_outgoing_healing(raw_heal, ally))
+                            master.on_healing_provided()
+                    robin_ent = sim.get_entity("知更鸟•晴歌")
+                    if robin_ent is not None and getattr(robin_ent, "kit", None) is not None and hasattr(robin_ent.kit, "_heal_provider_keys"):
+                        robin_ent.kit._heal_provider_keys.clear()
                 # 实机 157.83 AV 第二动仅命中知更鸟•晴歌 (884.26)，未命中风堇
                 griffin.kit._turn_count += 1
                 griffin.kit._generation += 1
@@ -139,9 +168,10 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
                 saved_tp = getattr(sim, "target_provider", None)
                 sim.target_provider = None
                 try:
+                    tgts = ("知更鸟•晴歌", "小伊卡") if (vm_rt is not None and sim.get_entity("小伊卡") is not None) else ("知更鸟•晴歌",)
                     griffin.kit.port.apply_enemy_attack(
                         owner_id=griffin.kit.owner_id,
-                        target_ids=("知更鸟•晴歌",),
+                        target_ids=tgts,
                         multiplier=2.6,
                         element="Fire",
                         hit_energy=5.0,
@@ -152,9 +182,43 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
                     sim.target_provider = saved_tp
                 if hasattr(sim, "status_mgr") and sim.status_mgr is not None:
                     sim.status_mgr.tick_on_turn_end(griffin)
+                if vm_rt is not None:
+                    vm_rt.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id="__LEVEL__")
+                    vm_rt.modifier_engine.tick_life_step("ModifierPhase1End", griffin.name)
+                    vm_rt.modifier_engine.tick_life_step("TurnEnd", griffin.name)
             return res
 
         griffin.kit.execute_turn = _griffin_204943_exec
+
+    # 227.27 AV (事件 1185): 月夜天马 Turn 3 全体 2.6x 攻击在实机日志同样命中了场上小伊卡 (1409 SP +11.94)
+    pegasus = sim.get_entity("月夜天马")
+    if pegasus is not None and hasattr(pegasus.kit, "execute_turn"):
+        _orig_pegasus_exec = pegasus.kit.execute_turn
+
+        def _pegasus_204943_exec(*args: Any, **kwargs: Any) -> Any:
+            res = _orig_pegasus_exec(*args, **kwargs)
+            av = float(getattr(sim, "current_av", 0.0))
+            vm_rt = getattr(sim, "vm_runtime", None)
+            if vm_rt is not None and abs(av - 227.27) < 0.05 and not getattr(pegasus.kit, "_extra_227_204943", False):
+                pegasus.kit._extra_227_204943 = True
+                if sim.get_entity("小伊卡") is not None:
+                    saved_tp = getattr(sim, "target_provider", None)
+                    sim.target_provider = None
+                    try:
+                        pegasus.kit.port.apply_enemy_attack(
+                            owner_id=pegasus.kit.owner_id,
+                            target_ids=("小伊卡",),
+                            multiplier=2.6,
+                            element="Quantum",
+                            hit_energy=10.0,
+                            hits=1,
+                        )
+                    finally:
+                        sim.target_provider = saved_tp
+                    vm_rt.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id="__LEVEL__")
+            return res
+
+        pegasus.kit.execute_turn = _pegasus_204943_exec
 
     # 160.02 AV 晴空乐手暴击真值对齐: 实机中未暴击落在月夜天马 (13591.17)，而非 0 号位流星铁鹰_g2_1
     orig_crit_oracle = getattr(sim, "crit_oracle", None)

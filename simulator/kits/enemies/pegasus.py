@@ -80,7 +80,7 @@ class MoonlitPegasusKit(EnemyKit):
         elif phase == 1:
             # Turn 2: 3 段扩散攻击 (Skill04 = 4.5 -> 1.5 x 3) 并附加【欧洛尼斯印记】
             target = self._select_primary_target(allies)
-            self.port.apply_enemy_attack(
+            resolved = self.port.apply_enemy_attack(
                 owner_id=self.owner_id,
                 target_ids=(target,),
                 multiplier=1.5,
@@ -89,20 +89,16 @@ class MoonlitPegasusKit(EnemyKit):
                 hits=3,
                 blast=True,
             )
-            idx = allies.index(target)
-            mark_targets = [target]
-            if idx - 1 >= 0:
-                mark_targets.append(allies[idx - 1])
-            if idx + 1 < len(allies):
-                mark_targets.append(allies[idx + 1])
-            for mt in mark_targets:
-                self.port.apply_mark_status(
-                    owner_id=self.owner_id,
-                    target_id=mt,
-                    mark_key=ORONYX_MARK_KEY,
-                    mark_name=ORONYX_MARK_NAME,
-                    description="月夜天马附加的【欧洛尼斯印记】，施放终结技可解除，否则将在后续爆发结算额外伤害。",
-                )
+            ally_set = set(allies)
+            for mt in resolved:
+                if mt in ally_set:
+                    self.port.apply_mark_status(
+                        owner_id=self.owner_id,
+                        target_id=mt,
+                        mark_key=ORONYX_MARK_KEY,
+                        mark_name=ORONYX_MARK_NAME,
+                        description="月夜天马附加的【欧洛尼斯印记】，施放终结技可解除，否则将在后续爆发结算额外伤害。",
+                    )
         else:
             # Turn 3: 先单体攻击 (Skill01 = 3.0, +5 回能)，再全体攻击 (Skill02 = 2.6, +10 回能) + 引爆【欧洛尼斯印记】
             target = self._select_primary_target(allies)

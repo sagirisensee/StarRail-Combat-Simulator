@@ -53,6 +53,7 @@ class VMRuntime:
         self._attack_scope_depth: int = 0
         self._attack_targets_by_key: Dict[Tuple[int, str], List[str]] = {}
         self._pending_after_attack: Optional[Tuple[int, str, Dict[str, Any], str]] = None
+        self._open_enemy_attack: Optional[str] = None
         self._active_skill_sp_base: float = 0.0
         self._skill_sp_ratio_granted: bool = False
 
@@ -112,6 +113,25 @@ class VMRuntime:
         self._attack_scope_depth = max(0, self._attack_scope_depth - 1)
         if self._attack_scope_depth == 0:
             self.flush_pending_after_attack()
+
+    def begin_being_attacked(self, attacker_name: str, target_ids: Sequence[str]) -> None:
+        if self._open_enemy_attack is not None:
+            self.end_being_attacked(self._open_enemy_attack)
+        self._open_enemy_attack = attacker_name
+        for tid in target_ids:
+            self.modifier_engine.dispatch_event(
+                "OnBeforeBeingAttacked",
+                owner_id=tid,
+                param_entity_id=attacker_name,
+            )
+
+    def end_being_attacked(self, attacker_name: Optional[str] = None) -> None:
+        atk = attacker_name or self._open_enemy_attack
+        if atk is None:
+            return
+        if self._open_enemy_attack == atk or attacker_name is None:
+            self._open_enemy_attack = None
+        self.modifier_engine.dispatch_event("OnListenAfterAttack", param_entity_id=atk)
 
     def register_character(self, entity_name: str, spec: CompiledCharacterSpec) -> None:
         self.entity_specs[entity_name] = spec
@@ -230,6 +250,31 @@ class VMRuntime:
         tasks = ab.get("OnStart") if "OnStart" in ab else ab.get("OnAdd", [])
         self.executor.execute_tasks(tasks, ctx)
 
+    def collect_hit_modifiers(
+        self,
+        attacker_id: str,
+        target_ids: Tuple[str, ...],
+        *,
+        attack_type: str = "ElementDamage",
+    ) -> Dict[str, Any]:
+        """收集非 TaskExecutor._execute_damage 发起的命中（如弱点击破 / 量子纠缠）在 VM 中的 OnBeforeHitAll 修饰。"""
+        dmg_data: Dict[str, Any] = {}
+        self.modifier_engine.dispatch_event(
+            "OnBeforeHitAll",
+            owner_id=attacker_id,
+            attack_target_ids=target_ids,
+            damage_data=dmg_data,
+            current_attack_type=attack_type,
+        )
+        self.modifier_engine.dispatch_event(
+            "OnListenBeforeHitAll",
+            param_entity_id=attacker_id,
+            attack_target_ids=target_ids,
+            damage_data=dmg_data,
+            current_attack_type=attack_type,
+        )
+        return dmg_data
+
     def enter_battle(self) -> None:
         """统一执行所有 VM 实体的进场被动、装备/遗器初始化，并按官方 Priority 升序触发 OnEnterBattle。"""
         if self._battle_entered:
@@ -265,6 +310,7 @@ class VMRuntime:
         sv_max_hp = inh["hp_base"] + master_base_hp * inh["hp_inherit"]
         sv_white_hp = master_white_hp * inh["hp_inherit"]
         sv_speed = inh["speed_base"] + float(master.speed) * inh["speed_inherit"]
+        sv_white_speed = float(inh["speed_base"]) + float(getattr(master, "base_white_speed", 0.0) or 0.0) * float(inh["speed_inherit"])
 
         sv_entity = self.sim.get_entity(sv_name)
         if sv_entity is None:
@@ -278,7 +324,15 @@ class VMRuntime:
                 max_hp=sv_max_hp,
                 current_hp=sv_max_hp,
                 base_white_hp=sv_white_hp,
+                base_white_speed=sv_white_speed,
+                base_white_atk=getattr(master, "base_white_atk", 0.0),
+                base_white_def=getattr(master, "base_white_def", 0.0),
                 base_def=master.base_def,
+                base_effect_res=getattr(master, "base_effect_res", 0.10),
+                base_effect_hit_rate=getattr(master, "base_effect_hit_rate", 0.0),
+                base_break_effect=getattr(master, "base_break_effect", 0.0),
+                base_err=getattr(master, "base_err", 1.0),
+                base_dmg_boost=getattr(master, "base_dmg_boost", 0.0),
                 element=master.element,
                 path=master.path,
                 is_memosprite=True,
@@ -291,12 +345,17 @@ class VMRuntime:
         else:
             sv_entity.base_max_hp = sv_max_hp
             sv_entity.base_white_hp = sv_white_hp
+            sv_entity.base_white_speed = sv_white_speed
+            sv_entity.base_dmg_boost = getattr(master, "base_dmg_boost", 0.0)
             sv_entity.current_hp = sv_max_hp
             sv_entity.master_name = master_id
 
         self.register_character(sv_name, sv_spec)
-        if getattr(sv_entity, "kit", None) is not None and hasattr(sv_entity.kit, "_registered"):
-            sv_entity.kit._registered = True
+        if getattr(sv_entity, "kit", None) is not None:
+            if hasattr(sv_entity.kit, "_registered"):
+                sv_entity.kit._registered = True
+            if hasattr(sv_entity.kit, "_passives_triggered"):
+                sv_entity.kit._passives_triggered = True
         if init_dynamics:
             self.entity_dynamics[sv_name].update(init_dynamics)
 
@@ -351,14 +410,17 @@ class VMRuntime:
     # EventBus 桥接回调
     # ------------------------------------------------------------------
     def _on_turn_begin(self, evt: TurnBeginEvent) -> None:
-        # 实机日志已证实 (184845 [961..966], 204943 [637..640])：
-        # ModifierPhase1End 在回合开始阶段（TurnPhase1 结束、行动阶段开始前）扣减。
+        # 实机日志已证实 (184845 [961..966], 204943 [637..640], 155925 [304..305])：
+        # ModifierPhase1End 与 OnPhase1 在自然回合开始阶段（TurnPhase1）触发；
+        # 终结技/追击等额外行动不经过 TurnBegin，不触发 OnPhase1。
         self.modifier_engine.tick_life_step("ModifierPhase1End", evt.actor_name)
+        self.modifier_engine.dispatch_event("OnPhase1", owner_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnPhase1Begin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnActionPhaseBegin", owner_id=evt.actor_name)
 
     def _on_turn_end(self, evt: TurnEndEvent) -> None:
+        self.end_being_attacked()
         self._in_turn_phase1_end = True
         try:
             self.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=evt.actor_name)
@@ -396,7 +458,6 @@ class VMRuntime:
     def _on_action_execute(self, evt: ActionExecuteEvent) -> None:
         sk_type = self._normalize_skill_type(evt)
         if evt.actor_name in self.entity_specs:
-            self.modifier_engine.dispatch_event("OnPhase1", owner_id=evt.actor_name)
             self.modifier_engine.dispatch_event(
                 "OnBeforeSkillUse",
                 owner_id=evt.actor_name,
@@ -410,6 +471,7 @@ class VMRuntime:
             )
 
     def _on_action_end(self, evt: ActionEndEvent) -> None:
+        self.end_being_attacked()
         sk_type = self._normalize_skill_type(evt)
         if evt.actor_name in self.entity_specs:
             self.modifier_engine.dispatch_event(
@@ -424,14 +486,14 @@ class VMRuntime:
             current_skill_type=sk_type,
         )
         self.modifier_engine.dispatch_event("OnListenActionEnd", param_entity_id=evt.actor_name)
+        if evt.actor_name in self.entity_specs:
+            self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
+        self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event(
             "CheckParamFlagCallBack",
             param_entity_id=evt.actor_name,
             param_flags=("CallBack_SettleSkillOrInsertAbility",),
         )
-        if evt.actor_name in self.entity_specs:
-            self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
-        self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
 
     def _on_hp_lost(self, evt: HPLostEvent) -> None:
         self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.entity_name, change_value=-evt.amount)
@@ -488,6 +550,7 @@ class ConfigAbilityKitAdapter(KitHandler):
             if isinstance(item, dict) and item.get("Name")
         }
         self._registered = False
+        self._passives_triggered = False
 
     def _rt(self) -> VMRuntime:
         if self._runtime is not None:
@@ -498,11 +561,13 @@ class ConfigAbilityKitAdapter(KitHandler):
         self._runtime = ensure_vm_runtime(sim, loader=self._loader)
         return self._runtime
 
-    def _ensure_registered(self) -> VMRuntime:
+    def _ensure_registered(self, *, trigger_passives: bool = True) -> VMRuntime:
         rt = self._rt()
         if not self._registered:
             self._registered = True
             rt.register_character(self.owner_id, self.spec)
+        if trigger_passives and not self._passives_triggered:
+            self._passives_triggered = True
             seen_init: set[str] = set()
             for ab_name in self.spec.config.get("AbilityList", []):
                 if "PassiveSkill" in ab_name and ab_name not in seen_init:
@@ -669,7 +734,7 @@ class ConfigAbilityKitAdapter(KitHandler):
         return AbilityDefinition(kind=kind, name=str(kind.name), target_mode=TargetMode.SINGLE_ENEMY)
 
     def use_technique(self) -> None:
-        rt = self._ensure_registered()
+        rt = self._ensure_registered(trigger_passives=False)
         for ab_name in self._skill_abilities.get("SkillMaze", []):
             rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,), current_skill_type="Maze")
 
@@ -706,6 +771,58 @@ class ConfigAbilityKitAdapter(KitHandler):
         t_type = str(t_info.get("TargetType", ""))
         if t_type in ("EnemySelect", "FriendSelect") and ctx.target_ids:
             eff_targets = ctx.target_ids[:1]
+        elif t_type == "EnemySelect" and not ctx.target_ids:
+            picked_ents = [
+                e for e in rt.sim.entities
+                if getattr(e, "is_enemy", False)
+                and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
+                and float(getattr(e, "current_hp", 0.0)) > 0.0
+            ]
+            chosen_ent = None
+            tp = getattr(rt.sim, "target_provider", None)
+            if tp is not None and picked_ents:
+                actor_ent = rt.sim.get_entity(self.owner_id)
+                if actor_ent is not None:
+                    chosen_ent = tp(actor_ent, picked_ents, 0)
+            if chosen_ent is None or chosen_ent not in picked_ents:
+                chosen_ent = max(
+                    picked_ents,
+                    key=lambda e: (
+                        bool(getattr(e, "is_boss", False)),
+                        float(getattr(e, "current_hp", 0.0)),
+                        float(getattr(e, "max_hp", 0.0)),
+                    ),
+                ) if picked_ents else None
+            eff_targets = (chosen_ent.name,) if chosen_ent is not None else ()
+        elif t_type == "FriendSelect" and not ctx.target_ids:
+            avoid_self = bool(t_info.get("AvoidSelf", False))
+            forbid_sv = str(t_info.get("AllowFriendServant", "")) == "Forbidden"
+            picked = [
+                e.name for e in rt.sim.entities
+                if not getattr(e, "is_enemy", False)
+                and not getattr(e, "is_countdown", False)
+                and float(getattr(e, "current_hp", 0.0)) > 0.0
+                and (not avoid_self or e.name != self.owner_id)
+                and (not forbid_sv or not getattr(e, "is_memosprite", False))
+            ]
+            eff_targets = (picked[0],) if picked else ((self.owner_id,) if not avoid_self else ())
+        elif t_type == "AllEnemy" and not ctx.target_ids:
+            eff_targets = tuple(
+                e.name for e in rt.sim.entities
+                if getattr(e, "is_enemy", False)
+                and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
+                and float(getattr(e, "current_hp", 0.0)) > 0.0
+            )
+        elif t_type == "AllTeamMember" and not ctx.target_ids:
+            eff_targets = tuple(
+                e.name for e in rt.sim.entities
+                if not getattr(e, "is_enemy", False)
+                and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
+                and float(getattr(e, "current_hp", 0.0)) > 0.0
+            )
         elif t_type == "Caster" and not ctx.target_ids:
             eff_targets = (self.owner_id,)
         else:

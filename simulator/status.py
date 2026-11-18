@@ -251,8 +251,15 @@ class StatusManager:
             hp_delta = new_max - old_max
             if hp_delta > 0 and getattr(target, "current_hp", 0.0) > 0:
                 target.current_hp = min(cap, target.current_hp * (new_max / old_max))
-            elif hp_delta < 0 and getattr(target, "current_hp", 0.0) > cap:
-                target.current_hp = cap
+            elif hp_delta < 0:
+                if (
+                    getattr(target, "is_memosprite", False)
+                    and old_max > 0
+                    and getattr(target, "current_hp", 0.0) > 0
+                ):
+                    target.current_hp = max(1.0, min(cap, target.current_hp * (new_max / old_max)))
+                elif getattr(target, "current_hp", 0.0) > cap:
+                    target.current_hp = cap
 
             if abs(hp_delta) > 1e-4 and StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (status.tags or ()) and self.simulator and hasattr(self.simulator, "event_bus"):
                 from .events import StatusApplyEvent
@@ -329,7 +336,6 @@ class StatusManager:
             new_max = self._calc_entity_max_hp(tgt)
             is_valid_ally = (
                 not getattr(tgt, "is_enemy", False)
-                and not getattr(tgt, "is_memosprite", False)
                 and not getattr(tgt, "is_countdown", False)
                 and (self.simulator and self.simulator.get_entity(getattr(tgt, "name", "")) is not None)
             )
@@ -356,7 +362,7 @@ class StatusManager:
 
         return removed_instances
 
-    def remove_status(self, target_name: str, status_id: str):
+    def remove_status(self, target_name: str, status_id: str, *, reason: str = "EXPLICIT"):
         """显式移除指定状态及其所有级联绑定的派生副本。"""
         root_uids = list(self._by_key.get((target_name, status_id), set()))
         if not root_uids:
@@ -368,7 +374,7 @@ class StatusManager:
                 if 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
                     tgt.current_hp = new_max
             return
-        self._remove_closure(root_uids, reason="EXPLICIT")
+        self._remove_closure(root_uids, reason=reason)
 
     def remove_all_for_target(self, target_name: str):
         """实体退场：批量删除该实体承载的全部状态及其所有级联绑定的派生副本。"""

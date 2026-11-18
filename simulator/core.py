@@ -7,7 +7,7 @@
 - `simulator/inspector.py`: 抽离 `BattleInspector` 状态快照与 `query_status` 查询引擎。
 （注：在 `core.py` 中重导出了 `Entity` 与 `SimulatorCombatPort`，确保外部 100% 向后兼容）。
 """
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Set
 
 from .entity import Entity
 from .combat_port import CombatPort, BuffSpec, SimulatorCombatPort
@@ -88,6 +88,7 @@ class TurnSimulator:
         # 2. 拉条至 0 (包含 100% 拉条) 者插队至队首 (insert(0));
         # 3. 若有连续拉条 100%，最晚拉条者插在最前面 (后拉条优先出手)。
         self._ready_queue: List[str] = []
+        self._natural_due_names: Set[str] = set()
         self.stage_mechanics: List[str] = list(stage_mechanics or [])
         from .stage_mechanics import StageMechanicRegistry, StageMechanicPlugin
         self.stage_plugins: List[StageMechanicPlugin] = [
@@ -283,14 +284,18 @@ class TurnSimulator:
     # --- 行动就绪队列 (Ready Queue - 基于纯拉条机制) ---
     def notify_entity_ready(self, entity_name: str) -> None:
         """当实体通过拉条使剩余距离降至 0 时触发:
-        新拉条者插在就绪队列最前端 (最晚被拉条 100% 的实体优先出手)。
+        新拉条者插在自然到点实体之后的就绪队列最前端 (最晚被拉条 100% 的实体优先于其他拉条者出手, 但不越过已自然到点的行动)。
         """
         ent = self.get_entity(entity_name)
         if ent is None or (ent.current_hp <= 0 and not getattr(ent, "is_infinite_hp", False)):
             return
         if entity_name in self._ready_queue:
             self._ready_queue.remove(entity_name)
-        self._ready_queue.insert(0, entity_name)
+        self._natural_due_names.discard(entity_name)
+        insert_idx = 0
+        while insert_idx < len(self._ready_queue) and self._ready_queue[insert_idx] in self._natural_due_names:
+            insert_idx += 1
+        self._ready_queue.insert(insert_idx, entity_name)
 
     def request_immediate_action(self, entity_name: str) -> None:
         """请求立即行动（统一按 100% 拉条机制处理）。"""
@@ -299,6 +304,7 @@ class TurnSimulator:
     def cancel_immediate_action(self, entity_name: str) -> None:
         """撤销某实体待服务的立即行动/拉条 (如对账驱动已直接补发该次施放)。"""
         self._ready_queue = [name for name in self._ready_queue if name != entity_name]
+        self._natural_due_names.discard(entity_name)
         ent = self.get_entity(entity_name)
         if ent:
             ent.distance_remaining = 10000.0
@@ -317,6 +323,7 @@ class TurnSimulator:
         due.sort(key=lambda e: (round(e.remaining_av, 4), -e.speed))
         for e in due:
             self._ready_queue.append(e.name)
+            self._natural_due_names.add(e.name)
 
     def advance_clock(self, delta_av: float) -> None:
         """仅推进时钟与全体跑道距离, 不服务任何行动。
@@ -341,6 +348,7 @@ class TurnSimulator:
             return self.current_av
         alive_names = {e.name for e in alive}
         self._ready_queue = [name for name in self._ready_queue if name in alive_names]
+        self._natural_due_names &= alive_names
         if not self._ready_queue:
             self._scan_due_turns(alive)
         if self._ready_queue:
@@ -356,6 +364,7 @@ class TurnSimulator:
             return None
         alive_names = {e.name for e in alive}
         self._ready_queue = [name for name in self._ready_queue if name in alive_names]
+        self._natural_due_names &= alive_names
         if not self._ready_queue:
             self._scan_due_turns(alive)
         if self._ready_queue:
@@ -376,6 +385,7 @@ class TurnSimulator:
 
         alive_names = {e.name for e in alive}
         self._ready_queue = [name for name in self._ready_queue if name in alive_names]
+        self._natural_due_names &= alive_names
 
         # 始终扫描已就绪 (remaining_av <= 0) 的存活实体补充到队列末尾
         self._scan_due_turns(alive)
@@ -394,6 +404,7 @@ class TurnSimulator:
             return None
 
         next_name = self._ready_queue.pop(0)
+        self._natural_due_names.discard(next_name)
         active_entity = self.get_entity(next_name)
         if active_entity is None:
             return None
@@ -742,17 +753,23 @@ class TurnSimulator:
         # 当前动作结算完毕后，按实机调度规则排空所有已入队的追加攻击 / 即时追加回合 / 预约动作队列 / 旅姬追加回合
         self.scheduler.drain()
 
-        hook = getattr(self, "turn_action_completed_hook", None)
-        if hook is not None:
-            hook(active_entity)
-            self.scheduler.drain()
-
         if self.auto_ult and not self.scheduler.continuous_action_hold:
             self.check_and_cast_ultimates()
 
         # 若当前处于连续行动锁定 (如 Archer 灵子回路连接尚未结束)，挂起自然回合结束直至锁定解除
         if not self.scheduler.continuous_action_hold:
             self._end_current_turn(active_entity)
+            hook = getattr(self, "turn_action_completed_hook", None)
+            if hook is not None:
+                hook(active_entity)
+                self.scheduler.drain()
+                if self.auto_ult and not self.scheduler.continuous_action_hold:
+                    self.check_and_cast_ultimates()
+        else:
+            hook = getattr(self, "turn_action_completed_hook", None)
+            if hook is not None:
+                hook(active_entity)
+                self.scheduler.drain()
         return active_entity
 
     def is_current_turn_auto(self) -> bool:

@@ -287,7 +287,7 @@ class VMReconciliationHarness(FixedReconciliationHarness):
                 return
             if ev.attacker_name == "小伊卡" and ev.damage_type == DamageType.SERVANT:
                 captured_cast["s_dmgs"].append(float(ev.damage))
-            elif ev.attacker_name == "小伊卡" and ev.damage_type == DamageType.FOLLOW_UP:
+            elif ev.attacker_name == "小伊卡" and ev.damage_type in (DamageType.ADDITIONAL, DamageType.FOLLOW_UP):
                 captured_cast["a_dmgs"].append(float(ev.damage))
             elif ev.attacker_name == "风堇" and ev.damage_type == DamageType.ADDITIONAL:
                 captured_cast["a_dmgs"].append(float(ev.damage))

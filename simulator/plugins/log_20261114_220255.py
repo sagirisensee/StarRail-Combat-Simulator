@@ -116,6 +116,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             ("_aha_380", 380.60, [("堕神之血•亚婆离", 65196.76), ("狂兽的胚芽5", 26078.71), ("狂兽的胚芽6", 26078.71)], ("知更鸟•晴歌", "缇宝", "风堇", "缇宝")),
             ("_aha_407", 407.83, [("堕神之血•亚婆离", 58169.57), ("狂兽的胚芽9", 20941.05), ("狂兽的胚芽10", 20941.05)], ("知更鸟•晴歌", "知更鸟•晴歌", "知更鸟•晴歌", "知更鸟•晴歌")),
             ("_aha_496", 496.99, [("狂兽的胚芽11", 33704.07), ("狂兽的胚芽12", 33704.07)], ("风堇", "知更鸟•晴歌", "缇宝", "缇宝", "缇宝", "风堇", "缇宝")),
+            ("_aha_507", 507.83, [("狂兽的胚芽11", 70412.51)], ("缇宝", "风堇", "知更鸟•晴歌")),
             ("_aha_607", 607.83, [("堕神之血•亚婆离", 161052.32)], ("缇宝", "风堇", "缇宝", "知更鸟•晴歌")),
             ("_aha_631", 631.27, [("堕神之血•亚婆离", 161052.32), ("狂兽的胚芽16", 25927.02 * 4)], ("知更鸟•晴歌", "风堇")),
             ("_aha_707", 707.83, [("堕神之血•亚婆离", 65196.76), ("狂兽的胚芽17", 20941.04 * 4), ("狂兽的胚芽18", 20941.04 * 2)], ("知更鸟•晴歌", "风堇")),
@@ -134,24 +135,6 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
                 director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_220255_handler
-
-    from simulator.events import ActionEndEvent
-
-    def _on_action_end_507(ev: ActionEndEvent) -> None:
-        director = getattr(sim, "_stage_director", None)
-        if director is None or getattr(director, "_aha_507", False):
-            return
-        av = float(getattr(sim, "current_av", 0.0))
-        if av >= 514.97 - 1e-3:
-            setattr(director, "_aha_507", True)
-            if hasattr(sim, "_action_seq"):
-                sim._action_seq += 1
-            director.apply_aha_hp_damage("狂兽的胚芽11", 70412.51)
-            for ally_name in ("缇宝", "风堇", "知更鸟•晴歌"):
-                director.apply_aha_ally_chip_hit(ally_name)
-            director.flush_ally_talent_heals()
-
-    sim.event_bus.subscribe(ActionEndEvent, _on_action_end_507)
 
     _orig_step = sim.step
 

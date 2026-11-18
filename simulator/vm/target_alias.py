@@ -32,6 +32,7 @@ class ExecutionContext:
     param_entity_id: Optional[str] = None
     param_entity2_id: Optional[str] = None
     param_skill_targets: Tuple[str, ...] = ()
+    template_param_targets: Tuple[str, ...] = ()
     local_dynamics: Dict[int, float] = field(default_factory=dict)
     damage_data: Optional[Dict[str, Any]] = None
     heal_data: Optional[Dict[str, Any]] = None
@@ -55,6 +56,7 @@ class ExecutionContext:
             "param_entity_id": self.param_entity_id,
             "param_entity2_id": self.param_entity2_id,
             "param_skill_targets": self.param_skill_targets,
+            "template_param_targets": self.template_param_targets,
             "local_dynamics": dict(self.local_dynamics),
             "damage_data": self.damage_data,
             "heal_data": self.heal_data,
@@ -125,19 +127,34 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             res.append(e.name)
         return res
 
-    def _alive_enemies(include_unselectable: bool = False, include_countdown: bool = True) -> List[str]:
-        res = []
-        for e in sim.entities:
+    def _alive_enemies(
+        include_unselectable: bool = False,
+        include_countdown: bool = True,
+        spatial_order: bool = False,
+    ) -> List[str]:
+        include_limbo = bool(getattr(rt, "_include_limbo", False))
+        has_living_wave_enemy = include_limbo and any(
+            getattr(x, "is_enemy", False) and not _is_battle_event(x) and _is_alive_entity(sim, x)
+            for x in sim.entities
+        )
+        matched = []
+        for idx, e in enumerate(sim.entities):
             if not getattr(e, "is_enemy", False):
                 continue
             if not _is_alive_entity(sim, e):
-                continue
+                if not (
+                    has_living_wave_enemy
+                    and any(m.owner_id == e.name for m in rt.modifier_engine.all_modifiers())
+                ):
+                    continue
             if not include_countdown and _is_battle_event(e):
                 continue
             if not include_unselectable and getattr(e, "is_unselectable", False):
                 continue
-            res.append(e.name)
-        return res
+            matched.append((idx, e))
+        if not spatial_order:
+            matched.sort(key=lambda pair: (getattr(pair[1], "_spawn_seq", pair[0]), pair[0]))
+        return [e.name for _, e in matched]
 
     def _servants_of(eid: str) -> List[str]:
         return [
@@ -186,7 +203,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             if primary is None:
                 cur = []
             else:
-                pool = _alive_enemies() if primary.is_enemy else _alive_allies(include_countdown=False)
+                pool = _alive_enemies(spatial_order=True) if primary.is_enemy else _alive_allies(include_countdown=False)
                 if primary.name in pool:
                     idx = pool.index(primary.name)
                     adj = []
@@ -201,6 +218,11 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = list(ctx.skill_target_ids or ctx.ability_target_ids)
     elif base == "ParamEntitySkillTargetEntityList":
         cur = list(ctx.param_skill_targets or ctx.skill_target_ids)
+    elif base == "TemplateParamEntityList":
+        if ctx.template_param_targets:
+            cur = list(ctx.template_param_targets)
+        else:
+            cur = [ctx.param_entity_id] if ctx.param_entity_id else []
     elif base == "AttackTargetList":
         cur = list(ctx.attack_target_ids or ctx.ability_target_ids)
     elif base == "CurrentTurnOwnerEntity":

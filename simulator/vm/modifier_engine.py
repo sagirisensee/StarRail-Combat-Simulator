@@ -305,6 +305,8 @@ class ModifierEngine:
 
         if self._apc_defer_depth == 0:
             self._flush_dirty_apc()
+        if is_new:
+            self._init_dynamic_value_ranges(mod, mod_ctx)
         return mod
 
     def _flush_dirty_apc(self) -> None:
@@ -414,7 +416,7 @@ class ModifierEngine:
             self.destroy_modifier(m)
         return len(targets)
 
-    def destroy_modifier(self, mod: VMModifierInstance) -> None:
+    def destroy_modifier(self, mod: VMModifierInstance, *, reason: str = "EXPLICIT") -> None:
         if mod._destroyed:
             return
         mod._destroyed = True
@@ -433,14 +435,14 @@ class ModifierEngine:
         for _, _, child_uid in list(mod.sub_modifier_links):
             child = self.by_uid.get(child_uid)
             if child is not None and not child._destroyed:
-                self.destroy_modifier(child)
+                self.destroy_modifier(child, reason=reason)
 
         # 从索引和 StatusManager 摘除
         self.by_uid.pop(mod.uid, None)
         if mod.owner_id in self.by_owner:
             self.by_owner[mod.owner_id] = [m for m in self.by_owner[mod.owner_id] if m.uid != mod.uid]
         if mod.owner_id != "__LEVEL__" and self.rt.sim.get_entity(mod.owner_id) is not None:
-            self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key)
+            self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key, reason=reason)
 
         # 通知 OnModifierRemove / OnListenModifierRemove
         self.dispatch_event(
@@ -636,6 +638,32 @@ class ModifierEngine:
                 finally:
                     self._checking_apc.discard(apc_key)
 
+    def _init_dynamic_value_ranges(self, mod: VMModifierInstance, mod_ctx: ExecutionContext) -> None:
+        """初始化新建 Modifier 上的 OnDynamicValueChange 范围状态并触发初始入域回调。"""
+        if mod._destroyed:
+            return
+        dvcs = mod.config.get("OnDynamicValueChange")
+        if not isinstance(dvcs, list):
+            return
+        for idx_dvc, dvc in enumerate(dvcs):
+            if mod._destroyed:
+                return
+            k = dvc.get("Key", {})
+            target_h = int(k.get("Hash", 0)) if isinstance(k, dict) else 0
+            if not target_h:
+                continue
+            scope = dvc.get("ContextScope", "")
+            scope_eid = mod.caster_id if scope == "ContextCaster" else mod.owner_id
+            cur_val = self.rt.resolve_hash(scope_eid, target_h, ability_name=mod.ability_name, local_ctx=mod_ctx)
+            for idx_rng, rng in enumerate(dvc.get("Ranges", [])):
+                lo = eval_dynamic_float(rng.get("Min"), lambda h: self._resolve_mod_hash(mod, h), -1e18)
+                hi = eval_dynamic_float(rng.get("Max"), lambda h: self._resolve_mod_hash(mod, h), 1e18)
+                now_in = (lo <= cur_val <= hi)
+                state_key = ("dvc", idx_dvc, idx_rng)
+                mod.range_states[state_key] = now_in
+                if now_in:
+                    self.rt.execute_tasks(rng.get("OnEnterRange", []), mod_ctx)
+
     def check_dynamic_value_changes(self, owner_id: str, key_hash: int, old_val: float, new_val: float) -> None:
         """触发订阅了 OnDynamicValueChange 的监听（如晴歌 HyperValue 同步）。"""
         for mod in list(self.by_uid.values()):
@@ -664,8 +692,10 @@ class ModifierEngine:
                 for idx_rng, rng in enumerate(dvc.get("Ranges", [])):
                     lo = eval_dynamic_float(rng.get("Min"), lambda h: self._resolve_mod_hash(mod, h), -1e18)
                     hi = eval_dynamic_float(rng.get("Max"), lambda h: self._resolve_mod_hash(mod, h), 1e18)
-                    was_in = (lo <= old_val <= hi)
+                    state_key = ("dvc", idx_dvc, idx_rng)
+                    was_in = mod.range_states.get(state_key, (lo <= old_val <= hi))
                     now_in = (lo <= new_val <= hi)
+                    mod.range_states[state_key] = now_in
                     if now_in and not was_in:
                         self.rt.execute_tasks(rng.get("OnEnterRange", []), mod_ctx)
                     if now_in:
@@ -688,7 +718,7 @@ class ModifierEngine:
             if mod.owner_id == actor_id:
                 mod.life_time -= 1.0
                 if mod.life_time <= 0.0:
-                    self.destroy_modifier(mod)
+                    self.destroy_modifier(mod, reason="EXPIRED")
 
     def dispatch_modifier_callbacks(self, mod: VMModifierInstance, event_name: str, ctx: ExecutionContext) -> None:
         for cb in mod.config.get("_CallbackList", []):

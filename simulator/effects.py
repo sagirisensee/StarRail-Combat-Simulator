@@ -280,15 +280,23 @@ class EffectResolver:
                         tgt_lvl = getattr(target, "level", 100)
                         def_shred = sm.calculate_stat(target.name, 0.0, StatType.DEF_SHRED) if sm else 0.0
                         def_ignore = sm.calculate_stat(effect.attacker.name, 0.0, StatType.DEF_SHRED) if sm else 0.0
-                        def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred - def_ignore) + (atk_lvl + 20.0))
                         base_res = getattr(target, "damage_res", {}).get(effect.element, 0.0) if isinstance(getattr(target, "damage_res", None), dict) else 0.0
                         res_pen = sm.calculate_stat(effect.attacker.name, 0.0, StatType.RES_PEN) if sm else 0.0
-                        res_mult = 1.0 - (base_res - res_pen)
                         vuln = sm.calculate_stat(target.name, 0.0, StatType.VULNERABILITY) if sm else 0.0
+                        vm_rt = getattr(self.simulator, "vm_runtime", None)
+                        vm_base_multi = 1.0
+                        if vm_rt is not None and effect.attacker.name in vm_rt.entity_specs:
+                            dmg_data = vm_rt.collect_hit_modifiers(effect.attacker.name, (target.name,), attack_type="Break")
+                            def_ignore += -float(dmg_data.get("Defender_DefenceAddedRatio", 0.0))
+                            res_pen += float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
+                            vuln += float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                            vm_base_multi = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 1.0))
+                        def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred - def_ignore) + (atk_lvl + 20.0))
+                        res_mult = 1.0 - (base_res - res_pen)
                         vuln_mult = 1.0 + vuln
                         dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
 
-                        memosprite_mult = 1.0
+                        memosprite_mult = vm_base_multi
                         if getattr(effect.attacker, "is_memosprite", False) and hasattr(self, "simulator") and self.simulator:
                             for ally_ent in self.simulator.entities:
                                 if not getattr(ally_ent, "is_enemy", False) and getattr(ally_ent, "current_hp", 0.0) > 0:
@@ -329,6 +337,23 @@ class EffectResolver:
                 effect.request.target_is_broken = getattr(target, "is_broken", False)
 
             req_attacker = effect.request.attacker
+            vm_rt = getattr(self.simulator, "vm_runtime", None)
+            if (
+                vm_rt is not None
+                and req_attacker.name in vm_rt.entity_specs
+                and not getattr(effect.request, "vm_hit_hooks_applied", False)
+                and not getattr(effect.request, "is_true_damage", False)
+            ):
+                is_dot = effect.request.damage_type == DamageType.DOT
+                atk_type = "Dot" if is_dot else "ElementDamage"
+                dmg_data = vm_rt.collect_hit_modifiers(req_attacker.name, (target.name,), attack_type=atk_type)
+                if not is_dot:
+                    effect.request.extra_dmg_boost += float(dmg_data.get("Attacker_AllDamageTypeAddedRatio", 0.0))
+                    effect.request.extra_crit_dmg += float(dmg_data.get("Attacker_CriticalDamageBase", 0.0))
+                effect.request.extra_def_ignore += -float(dmg_data.get("Defender_DefenceAddedRatio", 0.0))
+                effect.request.extra_res_pen += float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
+                effect.request.extra_vuln += float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                effect.request.vm_hit_hooks_applied = True
             if (
                 (effect.request.damage_type == DamageType.SERVANT or getattr(req_attacker, "is_memosprite", False))
                 and not req_attacker.is_enemy
@@ -359,6 +384,17 @@ class EffectResolver:
                 raw_dmg -= absorbed
 
             was_alive = getattr(target, "current_hp", 0.0) > 0
+            notify_vm_being_hit = bool(
+                vm_rt is not None
+                and getattr(req_attacker, "is_enemy", False)
+                and not getattr(target, "is_enemy", False)
+            )
+            if notify_vm_being_hit:
+                vm_rt.modifier_engine.dispatch_event(
+                    "OnBeforeBeingHitAll",
+                    owner_id=target.name,
+                    param_entity_id=req_attacker.name,
+                )
             if hasattr(target, "current_hp"):
                 old_hp = target.current_hp
                 target.current_hp = max(0.0, target.current_hp - raw_dmg)
@@ -378,6 +414,12 @@ class EffectResolver:
                             e.kit.on_hp_lost(target.name, actual_loss, cause="attack_damage")
             else:
                 hp_left = 0.0
+            if notify_vm_being_hit:
+                vm_rt.modifier_engine.dispatch_event(
+                    "OnAfterBeingHitAll",
+                    owner_id=target.name,
+                    param_entity_id=req_attacker.name,
+                )
 
             target_killed = bool(
                 was_alive

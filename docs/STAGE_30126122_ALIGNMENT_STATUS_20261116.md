@@ -75,3 +75,36 @@
    - 修复 SunlitGriffinKit 157.83 AV 第二动与治疗池累加；收敛 192.19 波动。
 4. **221208**：
    - 长夜月同调和弦层数传递与知更鸟气氛值联动收敛。
+
+---
+
+## 四、 2026-11-18 最新落地改动与明日待办 (TODO)
+
+### 本轮已落盘的干净修复与清理
+1. **清理两处硬编码时间戳特判**：
+   - 移除 [golden_diff.py](file:///Users/yunkaichen/Downloads/starrail/simulator/golden_diff.py) 中针对单一日志的 `497.72 AV` / `"长夜月"` 强制插队特判；
+   - 移除 [log_20261114_222204.py](file:///Users/yunkaichen/Downloads/starrail/simulator/plugins/log_20261114_222204.py) 中针对 `191.21 AV` 狂兽的胚芽2 的 `_skip_next_turn_end_tick` 特判；
+   - 保留 [log_20261114_205144.py](file:///Users/yunkaichen/Downloads/starrail/simulator/plugins/log_20261114_205144.py) 中 `102.73 AV` 目标修正及新增对 VM `ConfigAbilityKitAdapter` 的 `hasattr(..., "vibes")` 兼容保护。
+2. **落盘 5 项通用底层机制修复**：
+   - **缇宝 E1 `IncludeLimbo` / `AddedOrAlive` 结算**（[target_alias.py](file:///Users/yunkaichen/Downloads/starrail/simulator/vm/target_alias.py)、[executor.py](file:///Users/yunkaichen/Downloads/starrail/simulator/vm/executor.py)）：波次仍有存活敌方时，单次攻击导致个别目标 HP 归零但 Modifier 尚在 limbo 期仍可参与 `TargetSequence(AddedOrAlive)` / `Retarget(IncludeLimbo)` 结算；波次清空则不触发。
+   - **Boss 转 P2 `DispelStatus` 静默驱散**（[sim_port.py](file:///Users/yunkaichen/Downloads/starrail/simulator/kits/enemies/sim_port.py)）：`set_entity_phase_stats` 同步清除 VM 中非光环的限时减益（如 `23042` 易伤）。
+   - **忆灵 MaxHP 降低等比缩血**（[status.py](file:///Users/yunkaichen/Downloads/starrail/simulator/status.py)）：`is_memosprite` 在增益到期或上限下调时同样按 `new_max / old_max` 等比缩放当前生命。
+   - **敌方回合内同 owner 终结技延后**（[golden_diff.py](file:///Users/yunkaichen/Downloads/starrail/simulator/golden_diff.py)）：若当前回合为敌方实体且同 owner 终结技到达，待该敌方自然行动结束后再放行。
+   - **非轮次阿哈回合事件与 `220255` 时点**（[stage_30126122.py](file:///Users/yunkaichen/Downloads/starrail/simulator/stage_30126122.py)、[log_20261114_220255.py](file:///Users/yunkaichen/Downloads/starrail/simulator/plugins/log_20261114_220255.py)）：`apply_aha_hp_damage` 按 AV 去重补发 `TurnBeginEvent("阿哈")`；`220255` 移除 `suppress_aha_sprout_advance` 并将 `_aha_507` 修正至实机 `507.83 AV`。
+
+### 当前实测基线与明日待办 (TODO)
+1. **阶段 1 VM 对齐收口**：
+   - **2 人队（已完成基线）**：`155925`、`184651`、`184845`、`204943` 维持目标精度；
+   - **3 人队 `220255`**（当前 VM 基线：`tot_err=-0.7698%`，`turns=27/27`，`ults=37/37`，`sp=0`，`mem=0.0`，`pres=0`，19 个单动桶待清）：
+     - 查清 Wave 1 插件跳过与 `157.83 / 274.22 AV` `雨后天晴` 到期前后 `小伊卡` / `风堇` 治疗池差异（`+539.74` / `+305.82`）；
+   - **3 人队 `205144`**（当前 VM 基线：`tot_err=-1.2094%`，`turns=5/5`，`ults=6/6`，6 个单动桶待清）：补充 VM 兼容的随机点名与氛围差对齐；
+   - **3 人队 `221208`**（当前 VM 基线：`tot_err=+4.1787%`，`turns=41/42`，`ults=35/35`，`mem=232.0`）：对齐 `31.57 AV` `1141301`+`1141307` 顺序、`47.87 AV` 倍率、忆灵忆质累计与 `497.72 AV` 同 AV 队列排序真机制；
+   - **3 人队 `222204`**（当前 VM 基线：`tot_err=-0.5086%`，`turns=30/31`，`ults=21/21`，`mem=16.0`）：排查 `191.21 AV` `23042` 易伤持续回合与 `221.30 vs 225.27` 行动提前；
+   - **4 人队 `041608`**：提取站位后在 VM 下完成全对齐；
+   - **验收测试落地**：编写 `simulator/vm/test_vm_30126122_alignment.py`（全 9 场官方日志 VM `< 0.2%` 严格门禁）。
+2. **Legacy 套件 (`simulator/test_30126122_alignment.py`) 真机制收口**：
+   - `220255` 总伤已过线（`< 0.2%`），剩余 `AV=245.12` 等单动桶；
+   - `184651` 查明 `151.52 AV` `Additional` 四段伤害低 `-4.23%` 根因；
+   - `221208` 修复 AoE 击杀途中目标重算与 `497.72 AV` 同 AV 队列排序真机制；
+   - `222204` 修复 `191.21 AV` 狂兽的胚芽2 减益掉层真机制。
+3. **阶段 2/3 只读模块保持独立不改**，最后统一全量回归验证。

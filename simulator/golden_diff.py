@@ -1061,12 +1061,18 @@ def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...], Tu
     guard_names = ["千星戍卫A", "千星戍卫B", "千星戍卫C"]
     guard_cnt = 0
     sprout_cnt = 0
+    eagle_cnt = 0
     for e in events:
         if e.get("event") == "OnInitializeEnemy":
             en = e.get("data", {}).get("enemy", {})
             uid = en.get("uid")
-            if uid not in uid_map:
-                name = en.get("name")
+            name = en.get("name")
+            if name == "流星铁鹰":
+                gen = eagle_cnt // 3 + 1
+                slot = eagle_cnt % 3 + 1
+                uid_map[uid] = f"流星铁鹰_g{gen}_{slot}"
+                eagle_cnt += 1
+            elif uid not in uid_map:
                 if name == "千星戍卫":
                     uid_map[uid] = guard_names[guard_cnt % 3]
                     guard_cnt += 1
@@ -1089,6 +1095,23 @@ def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...], Tu
             if av.get("team") == "Player" and stype in ("Normal", "BPSkill", "Ultra"):
                 sid = s.get("skill_config_id")
                 hit_uids = []
+                if stype == "Ultra" and sid == 151203:
+                    for j in range(i + 1, min(i + 25, len(events))):
+                        ev2 = events[j]
+                        if ev2.get("event") in ("OnUseSkill", "OnTurnBegin"):
+                            break
+                        if ev2.get("event") == "OnStatChange":
+                            d2 = ev2.get("data", {})
+                            ent = d2.get("entity", {})
+                            prop = d2.get("property", {})
+                            if ent.get("team") == "Player" and prop.get("type") == "ActionDelay":
+                                u = ent.get("uid")
+                                if u is not None:
+                                    hit_uids.append(u)
+                                    break
+                    named_targets = tuple(KNOWN_AVATAR_NAMES[u] for u in hit_uids if u in KNOWN_AVATAR_NAMES)
+                    player_skill_targets.append((sid, named_targets, tuple(hit_uids)))
+                    continue
                 for j in range(i + 1, min(i + 100, len(events))):
                     ev2 = events[j]
                     if ev2.get("event") in ("OnUseSkill", "OnTurnBegin"):
@@ -1127,7 +1150,7 @@ def extract_timeline(path: str) -> List[TimelineItem]:
                     t_uids = None
                     if target_idx < len(target_plan):
                         p_sid, p_targets, p_uids = target_plan[target_idx]
-                        if p_sid == s.config_id and kind == "basic":
+                        if p_sid == s.config_id and (kind == "basic" or (kind == "ult" and s.config_id == 151203)):
                             if p_targets:
                                 t_ids = p_targets
                             if p_uids:
@@ -1294,6 +1317,8 @@ def run_trajectory_replay(
                 chosen = existing_target_provider(attacker, candidates, sub_idx)
                 if chosen is not None:
                     return chosen
+            if attacker is not None and not getattr(attacker, "is_enemy", False):
+                return None
             now_av = float(getattr(sim, "current_av", 0.0))
             best_turn = _find_turn(now_av, attacker)
             if best_turn:
@@ -1713,6 +1738,20 @@ def run_trajectory_replay(
             and abs(now_av - u_item.av) <= 0.5
         ):
             return True
+        if (
+            cur_turn is not None
+            and getattr(cur_turn, "is_enemy", False)
+            and u_owner
+            and u_owner not in _sim_player_actors(sim)
+            and abs(now_av - u_item.av) <= 0.5
+            and now_av <= u_item.av + 1e-4
+            and (
+                getattr(cur_turn, "name", "") == u_owner
+                if u_owner[-1:].isdigit()
+                else getattr(cur_turn, "name", "").startswith(u_owner)
+            )
+        ):
+            return True
         if u_owner and u_owner not in _sim_player_actors(sim) and abs(now_av - u_item.av) <= 0.5:
             if any(
                 e is not cur_turn
@@ -1870,28 +1909,37 @@ def run_trajectory_replay(
                     result.sunk_turns += 1
                     delays += 1
                     continue
-        # B0. 终结技按精确 AV 中断: 若下一终结技时点落在本次步进的旅行区间
-        # 内, 先把时钟推进到该时点并放行, 其行动提前等效果须在被跨越的
-        # 回合之前结算 (官方第二场 167.9 知更鸟终结技: 若迟至步末 178.2
-        # 才放行, 被提前的长夜月回合与同簇爆发整体迟发约 10 AV)。
+        # B0. 终结技与关卡轮次/阿哈精确 AV 中断: 若下一终结技或关卡轮次边界
+        # 落在本次步进的旅行区间内, 先把时钟推进到该时点并结算其效果。
         if getattr(sim, "_current_turn_entity", None) is None:
-            while ult_queue:
+            while True:
                 now0 = float(getattr(sim, "current_av", 0.0))
-                due_av = ult_queue[0][1].av
                 landing_av = sim.peek_landing_av()
-                if not (now0 < due_av <= landing_av):
+                ult_av: Optional[float] = None
+                if ult_queue:
+                    cand_ult = ult_queue[0][1].av
+                    if now0 < cand_ult <= landing_av:
+                        next_actor = getattr(sim, "peek_next_actor", lambda: None)()
+                        blocked_enemy = cand_ult >= landing_av - 0.25 and next_actor is not None and getattr(next_actor, "is_enemy", False)
+                        if not blocked_enemy and not (cand_ult >= landing_av - 0.25 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], cand_ult)):
+                            ult_av = cand_ult
+                dir_av: Optional[float] = None
+                if director is not None and hasattr(director, "peek_next_interrupt_av"):
+                    dir_av = director.peek_next_interrupt_av(now0, landing_av)
+                if ult_av is None and dir_av is None:
                     break
-                # 若终结技时点与即将落地的回合重合(如 105.22 AV 灯塔回合)，且落地者为敌方实体，
-                # 遵从官方实机时序: 敌方回合先结算(打出承伤并触发急救)，大招在敌方行动后抢断放行。
-                next_actor = getattr(sim, "peek_next_actor", lambda: None)()
-                if due_av >= landing_av - 0.25 and next_actor is not None and getattr(next_actor, "is_enemy", False):
-                    break
-                if due_av >= landing_av - 0.25 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], due_av):
-                    break
-                sim.advance_clock(due_av - now0)
-                if director is not None:
+                if dir_av is not None and (ult_av is None or dir_av <= ult_av + 1e-6):
+                    sim.advance_clock(dir_av - now0)
+                    if hasattr(director, "mark_interrupt_av_checked"):
+                        director.mark_interrupt_av_checked(dir_av)
                     director.after_step()
-                _fire_due_ults()
+                    _fire_due_ults()
+                else:
+                    assert ult_av is not None
+                    sim.advance_clock(ult_av - now0)
+                    if director is not None:
+                        director.after_step()
+                    _fire_due_ults()
         # B. 检查下一行动者: 若为敌方实体且恰好当前到达终点，让其先执行自然回合，大招在其行动后放行
         next_actor = getattr(sim, "peek_next_actor", lambda: None)()
         if not (next_actor is not None and getattr(next_actor, "is_enemy", False) and ult_queue and abs(ult_queue[0][1].av - float(getattr(sim, "current_av", 0.0))) < 0.25):

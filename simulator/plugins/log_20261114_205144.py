@@ -82,7 +82,7 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
     # 按实机 1409 CriticalDamage OnStatChange 对齐【气氛值】与 89.73 AV 小伊卡治疗池
     robin = sim.get_entity("知更鸟•晴歌")
     fj = sim.get_entity("风堇")
-    if robin is not None and getattr(robin, "kit", None) is not None:
+    if robin is not None and hasattr(getattr(robin, "kit", None), "gain_vibes"):
         _orig_gain_vibes = robin.kit.gain_vibes
 
         def _sync_vibes(amount: int, *args: Any, **kwargs: Any) -> Any:
@@ -108,7 +108,7 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
 
     def _on_battle_ev_205144(ev: BattleEvent) -> None:
         nonlocal _fu_count_151
-        if not isinstance(ev, ActionExecuteEvent) or robin is None or getattr(robin, "kit", None) is None:
+        if not isinstance(ev, ActionExecuteEvent) or robin is None or not hasattr(getattr(robin, "kit", None), "vibes"):
             return
         av = float(getattr(sim, "current_av", 0.0))
         if ev.actor_name == "风堇" and abs(av - 89.73) < 0.05:
@@ -162,7 +162,7 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
     def _step_205144(*args: Any, **kwargs: Any) -> Any:
         av = float(getattr(sim, "current_av", 0.0))
         if abs(av - 102.73) < 0.05 and kwargs.get("action_override") == ActionKind.BASIC:
-            kwargs["target_ids"] = ["月夜天马", "正阳狮鹫", "流星铁鹰_g1_3"]
+            kwargs["target_ids"] = ["月夜天马", "正阳狮鹫", "流星铁鹰_g1_2"]
         return _orig_step(*args, **kwargs)
 
     sim.step = _step_205144

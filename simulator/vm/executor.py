@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..actions import ActionKind, ActionScheduleCategory, DamageType, FollowUpPhase
 from ..entity import Entity
-from ..events import DamageAppliedEvent, HPLostEvent
+from ..events import DamageAppliedEvent, HPLostEvent, WeaknessBreakEvent
 from ..status import StatType
 from .expr import dotnet_hash, eval_dynamic_float
 from .loader import CompiledCharacterSpec, PRUNABLE_PRESENTATION_TYPES
@@ -60,10 +60,18 @@ class TaskExecutor:
         self._damage_capture_stack: List[List[float]] = []
         if getattr(runtime, "sim", None) is not None and getattr(runtime.sim, "event_bus", None) is not None:
             runtime.sim.event_bus.subscribe(DamageAppliedEvent, self._on_damage_applied)
+            runtime.sim.event_bus.subscribe(WeaknessBreakEvent, self._on_weakness_break)
 
     def _on_damage_applied(self, evt: DamageAppliedEvent) -> None:
         if self._damage_capture_stack:
+            tgt = self.rt.sim.get_entity(evt.target_name)
+            if tgt is not None and getattr(tgt, "barrier_guarded", False):
+                return
             self._damage_capture_stack[-1][0] += float(evt.damage)
+
+    def _on_weakness_break(self, evt: WeaknessBreakEvent) -> None:
+        if self._damage_capture_stack:
+            self._damage_capture_stack[-1][0] += float(evt.break_damage)
 
     def _resolve_targets(self, target_spec: Any, ctx: ExecutionContext) -> List[str]:
         """解析 TargetType（支持 GlobalTargetAlias 查表与 TargetSequence.Sequence 管道）。"""
@@ -89,29 +97,48 @@ class TaskExecutor:
             steps = target_spec.get("Sequence") or []
             if not steps:
                 return []
-            cur = self._resolve_targets(steps[0], ctx)
-            me = self.rt.modifier_engine
-            sim = self.rt.sim
-            for step in steps[1:]:
-                if not isinstance(step, Mapping):
-                    continue
-                st = step.get("$type", "")
-                if st == "RPG.GameCore.TargetFilter":
-                    pred = step.get("Predicate")
-                    cur = [tid for tid in cur if self.eval_predicate(pred, ctx.clone(param_entity_id=tid))]
-                elif st == "RPG.GameCore.TargetShuffle":
-                    continue
-                elif st == "RPG.GameCore.TargetSortByProperty":
-                    prop = str(step.get("PropertyType", "CurrentHP"))
-                    highest = bool(step.get("HighestFirst", True))
-                    if step.get("AliveOnly", True):
-                        cur = [tid for tid in cur if _is_alive(sim, tid)]
-                    cur = sorted(cur, key=lambda tid: me.get_entity_property(tid, prop), reverse=highest)
-                elif st == "RPG.GameCore.TargetTake":
-                    cnt = max(0, int(round(self._eval_num(step.get("Count"), ctx, 1.0))))
-                    cur = cur[:cnt]
-                else:
-                    cur = self._resolve_targets(step, ctx)
+
+            def _run_sequence() -> List[str]:
+                cur = self._resolve_targets(steps[0], ctx)
+                me = self.rt.modifier_engine
+                sim = self.rt.sim
+                for step in steps[1:]:
+                    if not isinstance(step, Mapping):
+                        continue
+                    st = step.get("$type", "")
+                    if st == "RPG.GameCore.TargetFilter":
+                        pred = step.get("Predicate")
+                        cur = [tid for tid in cur if self.eval_predicate(pred, ctx.clone(param_entity_id=tid))]
+                    elif st == "RPG.GameCore.TargetShuffle":
+                        continue
+                    elif st == "RPG.GameCore.TargetSortByProperty":
+                        prop = str(step.get("PropertyType", "CurrentHP"))
+                        highest = bool(step.get("HighestFirst", True))
+                        if step.get("AliveOnly", True):
+                            cur = [tid for tid in cur if _is_alive(sim, tid)]
+                        cur = sorted(cur, key=lambda tid: me.get_entity_property(tid, prop), reverse=highest)
+                    elif st == "RPG.GameCore.TargetTake":
+                        cnt = max(0, int(round(self._eval_num(step.get("Count"), ctx, 1.0))))
+                        cur = cur[:cnt]
+                    else:
+                        cur = self._resolve_targets(step, ctx)
+                return cur
+
+            cur = _run_sequence()
+            if not cur and not getattr(self.rt, "_include_limbo", False):
+                has_added_or_alive = any(
+                    isinstance(st, Mapping)
+                    and st.get("$type") == "RPG.GameCore.TargetFilter"
+                    and isinstance(st.get("Predicate"), Mapping)
+                    and st["Predicate"].get("AddedOrAlive")
+                    for st in steps[1:]
+                )
+                if has_added_or_alive:
+                    self.rt._include_limbo = True
+                    try:
+                        cur = _run_sequence()
+                    finally:
+                        self.rt._include_limbo = False
             return cur
 
         if t == "RPG.GameCore.TargetConcat":
@@ -423,7 +450,10 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.ByIsBattleEventEntity":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
-            return any(bool(getattr(sim.get_entity(tid), "is_countdown", False)) for tid in targets)
+            return any(
+                tid == "阿哈" or bool(getattr(sim.get_entity(tid), "is_countdown", False))
+                for tid in targets
+            )
 
         if t == "RPG.GameCore.ByIsTurnOwnerEntity":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
@@ -598,6 +628,7 @@ class TaskExecutor:
             sub_ctx = ctx.clone(
                 local_dynamics=sub_dyn,
                 param_entity_id=param_tgts[0] if param_tgts else ctx.param_entity_id,
+                template_param_targets=tuple(param_tgts) if param_tgts else ctx.template_param_targets,
             )
             self.execute_tasks(tpl_tasks, sub_ctx)
             return
@@ -609,7 +640,12 @@ class TaskExecutor:
             sub_dyn = dict(ctx.local_dynamics)
             for k, v in (task.get("DynamicValues") or {}).items():
                 sub_dyn[dotnet_hash(k)] = self._eval_num(v, ctx, 0.0)
-            sub_ctx = ctx.clone(local_dynamics=sub_dyn)
+            param_tgts = self._resolve_targets(task.get("ParamTarget"), ctx) if "ParamTarget" in task else []
+            sub_ctx = ctx.clone(
+                local_dynamics=sub_dyn,
+                param_entity_id=param_tgts[0] if param_tgts else ctx.param_entity_id,
+                template_param_targets=tuple(param_tgts) if param_tgts else ctx.template_param_targets,
+            )
             for entry in tpl_entries:
                 tname = _str_val(entry.get("Name") if isinstance(entry, Mapping) else entry)
                 if not tname:
@@ -675,16 +711,26 @@ class TaskExecutor:
             return
 
         if t == "RPG.GameCore.Retarget":
-            candidates = self._resolve_targets(task.get("TargetType"), ctx)
-            pred = task.get("Predicate")
-            matched: List[str] = []
-            for cid in candidates:
-                p_ctx = ctx.clone(param_entity_id=cid)
-                if self.eval_predicate(pred, p_ctx):
-                    matched.append(cid)
-            if "MaxNumber" in task:
-                cap = max(0, int(round(self._eval_num(task.get("MaxNumber"), ctx, len(matched)))))
-                matched = matched[:cap]
+            def _match_retarget() -> List[str]:
+                candidates = self._resolve_targets(task.get("TargetType"), ctx)
+                pred = task.get("Predicate")
+                out: List[str] = []
+                for cid in candidates:
+                    p_ctx = ctx.clone(param_entity_id=cid)
+                    if self.eval_predicate(pred, p_ctx):
+                        out.append(cid)
+                if "MaxNumber" in task:
+                    cap = max(0, int(round(self._eval_num(task.get("MaxNumber"), ctx, len(out)))))
+                    out = out[:cap]
+                return out
+
+            matched = _match_retarget()
+            if not matched and task.get("IncludeLimbo") and not getattr(self.rt, "_include_limbo", False):
+                self.rt._include_limbo = True
+                try:
+                    matched = _match_retarget()
+                finally:
+                    self.rt._include_limbo = False
             for tid in matched:
                 t_ctx = ctx.clone(param_entity_id=tid, ability_target_ids=(tid,))
                 self.execute_tasks(task.get("TaskList", []), t_ctx)
@@ -716,9 +762,6 @@ class TaskExecutor:
             target_id = self._dyn_scope_entity(task, ctx)
             cur = rt.get_dynamic_value(target_id, key_h, ability_name=ctx.ability_name, local_ctx=ctx)
             nxt = cur + delta
-            if key_str == "HyperValue" and delta < 0 and ctx.ability_name == "BattleEventAbility_RobinS_00_BE":
-                # 实机验证 (204943 [1043]): Fever 倒计时扣除 math.ceil(max(12, hv * 0.50))，即余值向下取整
-                nxt = float(math.floor(max(0.0, nxt)))
             if "Min" in task:
                 nxt = max(self._eval_num(task["Min"], ctx, nxt), nxt)
             if "Max" in task:
@@ -987,7 +1030,7 @@ class TaskExecutor:
         if t == "RPG.GameCore.ResetActionDelay":
             targets = self._resolve_targets(task.get("TargetType"), ctx)
             for tid in targets:
-                sim.port.advance(ctx.caster_id, tid, 1.0)
+                sim.port.set_distance(tid, 10000.0)
             return
 
         if t == "RPG.GameCore.SetActionDelay":
@@ -1032,6 +1075,7 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.ForceKill":
             targets = self._resolve_targets(task.get("TargetType"), ctx)
+            mute_death = bool(task.get("MuteAllTriggerDeath", False))
             for tid in targets:
                 ent = sim.get_entity(tid)
                 if ent is None:
@@ -1045,6 +1089,8 @@ class TaskExecutor:
                         param_entity_id=tid,
                     )
                 ent.current_hp = 0.0
+                if not mute_death:
+                    me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
                 me.destroy_all_for_entity(tid)
                 if getattr(ent, "is_memosprite", False) or getattr(ent, "is_countdown", False):
                     sim.port.despawn_spirit(tid, reason="ForceKill")
@@ -1057,10 +1103,17 @@ class TaskExecutor:
             rt.flush_pending_after_attack()
             return
 
+        if t == "RPG.GameCore.ModifyCurrentSkillDelayCost":
+            val = self._eval_num(task.get("NormalizedValue") or task.get("Value"), ctx, 0.0)
+            if getattr(sim, "_current_turn_entity", None) is not None:
+                cur_d = getattr(sim, "_pending_turn_reset_distance", None)
+                base_d = 10000.0 if cur_d is None else float(cur_d)
+                sim._pending_turn_reset_distance = max(0.0, base_d + val * 10000.0)
+            return
+
         if t in (
             "RPG.GameCore.SetEnergyBarState",
             "RPG.GameCore.SetSummonerEnergyBarState",
-            "RPG.GameCore.ModifyCurrentSkillDelayCost",
             "RPG.GameCore.SetTargetAlwaysAutoBattle",
             "RPG.GameCore.AddEntityToTeamFormation",
             "RPG.GameCore.RemoveEntityFromTeamFormation",
@@ -1284,7 +1337,6 @@ class TaskExecutor:
         is_additional_pursued = (
             atk_type == "Pursued"
             and getattr(rt, "_in_after_attack", False)
-            and not is_equip_sub
         )
         dtype_map = {
             "Normal": DamageType.BASIC,
@@ -1342,6 +1394,7 @@ class TaskExecutor:
                 damage_data=dmg_data,
                 current_attack_type=atk_type,
             )
+            base_before_hit_all = dict(dmg_data)
             me.dispatch_event(
                 "OnListenBeforeHitAll",
                 param_entity_id=ctx.caster_id,
@@ -1356,20 +1409,47 @@ class TaskExecutor:
         extra_vuln = float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
         extra_crit_dmg = float(dmg_data.get("Attacker_CriticalDamageBase", 0.0))
         base_mult_ratio = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 0.0))
+        hit_split = self._eval_num(atk_prop.get("HitSplitRatio"), ctx, 1.0)
         if str(atk_prop.get("FinalFormulaType", "")) == "ByBaseDamage" and pct == 0.0:
             eff_pct = 0.0
-            eff_flat = flat
+            eff_flat = flat * hit_split
         else:
-            eff_pct = pct * base_mult_ratio if base_mult_ratio > 0 else pct
-            eff_flat = flat * base_mult_ratio if base_mult_ratio > 0 else flat
+            eff_pct = (pct * base_mult_ratio if base_mult_ratio > 0 else pct) * hit_split
+            eff_flat = (flat * base_mult_ratio if base_mult_ratio > 0 else flat) * hit_split
+        eff_stance = stance * hit_split
 
+        base_before_hit_all = dict(dmg_data) if is_true_dmg else base_before_hit_all
         captured = [0.0]
         self._damage_capture_stack.append(captured)
         sim.resolver.begin_aoe()
         try:
-            for tid in targets:
-                if tid == "__LEVEL__":
-                    continue
+            real_targets = [tid for tid in targets if tid != "__LEVEL__"]
+            any_died_mid_aoe = False
+            for idx, tid in enumerate(real_targets):
+                if idx > 0 and any_died_mid_aoe and not is_true_dmg:
+                    any_died_mid_aoe = False
+                    dmg_data = dict(base_before_hit_all)
+                    me.dispatch_event(
+                        "OnListenBeforeHitAll",
+                        param_entity_id=ctx.caster_id,
+                        attack_target_ids=tuple(real_targets[idx:]),
+                        damage_data=dmg_data,
+                        current_attack_type=atk_type,
+                    )
+                    extra_dmg_boost = float(dmg_data.get("Attacker_AllDamageTypeAddedRatio", 0.0))
+                    extra_def_ignore = -float(dmg_data.get("Defender_DefenceAddedRatio", 0.0))
+                    extra_res_pen = float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
+                    extra_vuln = float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                    extra_crit_dmg = float(dmg_data.get("Attacker_CriticalDamageBase", 0.0))
+                    base_mult_ratio = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 0.0))
+                    if str(atk_prop.get("FinalFormulaType", "")) == "ByBaseDamage" and pct == 0.0:
+                        eff_pct = 0.0
+                        eff_flat = flat * hit_split
+                    else:
+                        eff_pct = (pct * base_mult_ratio if base_mult_ratio > 0 else pct) * hit_split
+                        eff_flat = (flat * base_mult_ratio if base_mult_ratio > 0 else flat) * hit_split
+                tgt_ent = sim.get_entity(tid)
+                was_alive = bool(tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) > 0.0)
                 if not is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
@@ -1385,7 +1465,7 @@ class TaskExecutor:
                     element=element,
                     atk_multiplier=eff_pct,
                     flat_damage=eff_flat,
-                    toughness_damage=stance,
+                    toughness_damage=eff_stance,
                     scaling_stat=scaling_stat,
                     damage_type=damage_type,
                     extra_dmg_boost=extra_dmg_boost,
@@ -1393,7 +1473,12 @@ class TaskExecutor:
                     extra_res_pen=extra_res_pen,
                     extra_vuln=extra_vuln,
                     extra_crit_dmg=extra_crit_dmg,
+                    vm_hit_hooks_applied=not is_true_dmg,
                 )
+                if len(real_targets) > 1:
+                    sim.resolver.resolve_all()
+                    if was_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
+                        any_died_mid_aoe = True
             sim.resolver.resolve_all()
         finally:
             sim.resolver.end_aoe()
@@ -1490,6 +1575,17 @@ class TaskExecutor:
                 break
         if not sk_key:
             return 0, 0.0
+        if spec.is_servant:
+            self.rt.loader._ensure_servants()
+            self.rt.loader._ensure_servant_skills()
+            sv = self.rt.loader._servants.get(spec.unit_id, {})
+            for sid in sv.get("SkillIDList", []):
+                row = self.rt.loader._servant_skills.get((int(sid), 1))
+                if row and row.get("SkillTriggerKey") == sk_key:
+                    sp_obj = row.get("SPBase") or {}
+                    sp_base = float(sp_obj.get("Value", 0.0)) if isinstance(sp_obj, dict) else 0.0
+                    return int(row.get("SkillID") or 0), sp_base
+            return 0, 0.0
         self.rt.loader._ensure_avatars()
         self.rt.loader._ensure_avatar_skills()
         av = self.rt.loader._avatars.get(spec.unit_id, {})
@@ -1558,19 +1654,23 @@ class TaskExecutor:
                         rt._active_skill_sp_base = prev_sp_base
                         rt._skill_sp_ratio_granted = prev_sp_granted
                     if _sp > 0 and not sp_granted and sim.port:
-                        err = sim.port.stat(a_id, StatType.ERR) or 1.0
-                        sim.port.gain_energy(a_id, _sp * err, cause=f"追击回能 {ab}")
+                        ep_recipient = a_id
+                        a_ent = sim.get_entity(a_id)
+                        if a_ent is not None and getattr(a_ent, "is_memosprite", False) and getattr(a_ent, "master_name", None):
+                            ep_recipient = a_ent.master_name
+                        err = sim.port.stat(ep_recipient, StatType.ERR) or 1.0
+                        sim.port.gain_energy(ep_recipient, _sp * err, cause=f"追击回能 {ab}")
                     me.dispatch_event("OnAfterSkillUse", owner_id=a_id, current_skill_type=sk_t)
                     me.dispatch_event("OnActionEnd", owner_id=a_id)
                     me.dispatch_event("OnListenAfterSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
                     me.dispatch_event("OnListenActionEnd", param_entity_id=a_id)
+                    me.dispatch_event("OnAfterAction", owner_id=a_id)
+                    me.dispatch_event("OnListenAfterAction", param_entity_id=a_id)
                     me.dispatch_event(
                         "CheckParamFlagCallBack",
                         param_entity_id=a_id,
                         param_flags=("CallBack_SettleSkillOrInsertAbility",),
                     )
-                    me.dispatch_event("OnAfterAction", owner_id=a_id)
-                    me.dispatch_event("OnListenAfterAction", param_entity_id=a_id)
 
                 sim.scheduler.enqueue(
                     tid,
@@ -1596,7 +1696,7 @@ class TaskExecutor:
                     lambda m_ent=ent: sim._execute_action(
                         m_ent,
                         action_override=ActionKind.MEMOSPRITE_SKILL,
-                        target_ids=tuple(e.name for e in sim.entities if e.is_enemy and e.current_hp > 0),
+                        target_ids=(),
                         is_natural_turn_action=False,
                         advance_policy=False,
                     ),

@@ -401,6 +401,11 @@ class Stage30126122Director:
             self.aha_extra_turns.append(record)
             if cur_cycle >= 1:
                 self.sim._turn_seq = getattr(self.sim, "_turn_seq", 0) + 1
+                published = getattr(self, "_published_aha_turn_avs", None)
+                if published is None:
+                    published = set()
+                    self._published_aha_turn_avs = published
+                published.add(round(float(self.sim.current_av), 2))
                 self.sim.event_bus.publish(
                     TurnBeginEvent(
                         av=round(self.sim.current_av, 2),
@@ -422,7 +427,59 @@ class Stage30126122Director:
                 )
             )
 
+    def peek_next_interrupt_av(self, now0: float, landing_av: float) -> Optional[float]:
+        """返回 (now0, landing_av) 区间内最早的关卡轮次边界或待触发阿哈事件 AV。"""
+        best: Optional[float] = None
+        c = 1
+        while True:
+            if (self.wave, c) not in self._triggered_aha_cycles:
+                cyc_av = self._wave_start_av + 150.0 + 100.0 * (c - 1)
+                if now0 + 1e-6 < cyc_av < landing_av - 1e-6:
+                    best = cyc_av
+                break
+            c += 1
+        fired = getattr(self, "_fired_aha_interrupts", None)
+        if fired is None:
+            fired = set()
+            self._fired_aha_interrupts = fired
+        for idx, cand in enumerate(getattr(self.sim, "aha_interrupt_avs", ())):
+            if idx in fired:
+                continue
+            cand_f = float(cand)
+            if now0 + 1e-6 < cand_f < landing_av - 1e-6:
+                if best is None or cand_f < best:
+                    best = cand_f
+        return best
+
+    def mark_interrupt_av_checked(self, av: float) -> None:
+        fired = getattr(self, "_fired_aha_interrupts", None)
+        if fired is None:
+            fired = set()
+            self._fired_aha_interrupts = fired
+        for idx, cand in enumerate(getattr(self.sim, "aha_interrupt_avs", ())):
+            if abs(float(cand) - av) <= 1e-5:
+                fired.add(idx)
+
     def apply_aha_hp_damage(self, target_name: str, dmg: float) -> float:
+        self._pending_aha_turn = True
+        av_key = round(float(self.sim.current_av), 2)
+        published = getattr(self, "_published_aha_turn_avs", None)
+        if published is None:
+            published = set()
+            self._published_aha_turn_avs = published
+        if av_key not in published:
+            published.add(av_key)
+            self.sim._turn_seq = getattr(self.sim, "_turn_seq", 0) + 1
+            self.sim.event_bus.publish(
+                TurnBeginEvent(
+                    av=av_key,
+                    cycle=int(self.sim.current_cycle),
+                    actor_id="阿哈",
+                    actor_name="阿哈",
+                    speed=0.0,
+                    turn_id=self.sim._turn_seq,
+                )
+            )
         ent = self.sim.get_entity(target_name)
         if ent is None or ent.current_hp <= 0:
             return 0.0
@@ -435,9 +492,11 @@ class Stage30126122Director:
         self.aha_special_damage += dmg
         if actual > 0.0:
             self._break_helper.add_quantum_stack(target_name)
-        if not getattr(self, "suppress_aha_sprout_advance", False):
-            if target_name.startswith("狂兽的胚芽") or target_name.startswith("堕神之血"):
+        if target_name.startswith("堕神之血"):
+            if getattr(self.apoli_kit, "_phase", 1) == 1:
                 self._advance_sprouts_once_per_action()
+        elif not getattr(self, "suppress_aha_sprout_advance", False) and target_name.startswith("狂兽的胚芽"):
+            self._advance_sprouts_once_per_action()
         if ent.current_hp <= 0.0:
             self.sim.event_bus.publish(
                 EnemyDefeatedEvent(
@@ -451,6 +510,7 @@ class Stage30126122Director:
 
     def apply_aha_ally_chip_hit(self, target_name: str) -> None:
         """阿哈回合伴生 1.0 基础伤害 (Lv.95 DEF 减免) 与 +2.0 基础受击回能。"""
+        self._pending_aha_turn = True
         ent = self.sim.get_entity(target_name)
         if ent is None or ent.current_hp <= 0:
             return
@@ -465,7 +525,10 @@ class Stage30126122Director:
         actual = min(max(0.0, ent.current_hp - 1.0), dmg) if ent.current_hp > 1.0 else 0.0
         ent.current_hp = max(1.0, ent.current_hp - dmg) if ent.current_hp > 0.0 else 0.0
         if actual > 0.0:
-            if getattr(self.sim, "vm_runtime", None) is not None:
+            vm_rt = getattr(self.sim, "vm_runtime", None)
+            if vm_rt is not None:
+                vm_rt._open_enemy_attack = "阿哈"
+                vm_rt.modifier_engine.dispatch_event("OnBeforeBeingHitAll", owner_id=ent.name, param_entity_id="阿哈")
                 self.sim.event_bus.publish(HPLostEvent(
                     av=round(self.sim.current_av, 2),
                     cycle=self.sim.current_cycle,
@@ -474,6 +537,7 @@ class Stage30126122Director:
                     hp_left=ent.current_hp,
                     cause="attack_damage",
                 ))
+                vm_rt.modifier_engine.dispatch_event("OnAfterBeingHitAll", owner_id=ent.name, param_entity_id="阿哈")
             else:
                 for ally in self.sim.entities:
                     kit = getattr(ally, "kit", None)
@@ -495,6 +559,17 @@ class Stage30126122Director:
             energy_target.energy = min(energy_target.max_energy, energy_target.energy + 2.0 * err)
 
     def flush_ally_talent_heals(self) -> None:
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is not None:
+            rt.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id="__LEVEL__")
+            rt.end_being_attacked("阿哈")
+            # 仅当本轮由阿哈特殊事件触发时视作独立额外回合结束，重置 per-turn 监听旗标并还原当前回合宿主上下文
+            if getattr(self, "_pending_aha_turn", False):
+                self._pending_aha_turn = False
+                rt.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id="阿哈")
+                cur_owner = getattr(getattr(self.sim, "_current_turn_entity", None), "name", "__LEVEL__")
+                rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_owner)
+            return
         for ent in getattr(self.sim, "entities", ()):
             if not ent.is_enemy and ent.current_hp > 0:
                 kit = getattr(ent, "kit", None)
@@ -626,7 +701,29 @@ class Stage30126122Director:
             timer_ent = self.sim.get_entity(self._sprout_timer_name)
             if timer_ent is not None:
                 timer_ent.distance_remaining = 10000.0
+        self._arrange_wave2_spatial_order()
         return tuple(spawned)
+
+    def _arrange_wave2_spatial_order(self) -> None:
+        """保持第二波亚婆离居中的左右对称站位，确保扩散技能能同时命中两侧狂兽的胚芽。"""
+        boss = self.sim.get_entity("堕神之血•亚婆离")
+        if boss is None or boss.current_hp <= 0.0:
+            return
+        living_sprouts = [
+            e for e in self.sim.entities
+            if e.is_enemy and e.current_hp > 0.0 and e.name.startswith("狂兽的胚芽")
+        ]
+        if not living_sprouts:
+            return
+        living_sprouts.sort(key=lambda e: int(e.name.replace("狂兽的胚芽", "") or 0))
+        left = [e for i, e in enumerate(living_sprouts) if i % 2 == 0]
+        right = [e for i, e in enumerate(living_sprouts) if i % 2 == 1]
+        right.reverse()
+        wave2_ids = {id(e) for e in living_sprouts} | {id(boss)}
+        others = [e for e in self.sim.entities if id(e) not in wave2_ids]
+        self.sim.entities[:] = others + left + [boss] + right
+        if hasattr(self.sim, "_rebuild_entity_cache"):
+            self.sim._rebuild_entity_cache()
 
     def _spawn_default_wave2(self) -> None:
         port = Stage30126122CombatPort(self.sim)
@@ -724,6 +821,10 @@ class Stage30126122Director:
         # 4. 混沌回忆式波次切换判定 (Wave 1 -> Wave 2)
         if self._wave_mode.advance_wave(self.sim):
             self._triggered_aha_cycles.add((self.wave, 0))
+            vm_rt = getattr(self.sim, "vm_runtime", None)
+            if vm_rt is not None:
+                vm_rt.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id="__LEVEL__")
+                vm_rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id="__LEVEL__")
             for ent in getattr(self.sim, "entities", ()):
                 if not ent.is_enemy and ent.current_hp > 0:
                     kit = getattr(ent, "kit", None)
