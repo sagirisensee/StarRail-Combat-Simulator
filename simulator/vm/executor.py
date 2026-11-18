@@ -295,7 +295,7 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.ByContainBehaviorFlag":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
-            flag = str(pred.get("BehaviorFlag", ""))
+            flag = str(pred.get("BehaviorFlag") or pred.get("Flag") or "")
             return any(me.has_behavior_flag(tid, flag) for tid in targets)
 
         if t == "RPG.GameCore.ByRankActivated":
@@ -376,7 +376,14 @@ class TaskExecutor:
                     continue
                 if "Servant" in want and getattr(ent, "is_memosprite", False):
                     return True
-                if "Avatar" in want and not getattr(ent, "is_enemy", False) and not getattr(ent, "is_memosprite", False):
+                if (
+                    "Avatar" in want
+                    and not getattr(ent, "is_enemy", False)
+                    and not getattr(ent, "is_memosprite", False)
+                    and not getattr(ent, "is_proxy", False)
+                    and not getattr(ent, "is_countdown", False)
+                    and not getattr(ent, "is_battle_event", False)
+                ):
                     return True
                 if "Monster" in want and getattr(ent, "is_enemy", False):
                     return True
@@ -1056,7 +1063,7 @@ class TaskExecutor:
             targets = self._resolve_targets(task.get("TargetType"), ctx)
             un_obj = task.get("UniqueName")
             uname = str(un_obj.get("RawString", "")) if isinstance(un_obj, Mapping) else _str_val(un_obj)
-            if uname:
+            if uname and targets:
                 rt.named_targets[uname] = list(targets)
             return
 
@@ -1262,6 +1269,8 @@ class TaskExecutor:
             heal_data["ActualHealValue"] = actual_restored
             heal_data["OverflowHealValue"] = max(0.0, final_heal - actual_restored)
 
+            if hasattr(sim.port, "get_active_proxy") and sim.port.get_active_proxy(tid):
+                continue
             sim.port.heal(ctx.caster_id, tid, heal_data["HealValue"])
 
             me.dispatch_event(
@@ -1544,6 +1553,10 @@ class TaskExecutor:
         dyn_set = str(task.get("DynamicFloatSet", ""))
 
         for tid in targets:
+            if hasattr(sim.port, "get_active_proxy"):
+                proxy_id = sim.port.get_active_proxy(tid)
+                if proxy_id:
+                    tid = proxy_id
             ent = sim.get_entity(tid)
             if ent is None or ent.current_hp <= 0:
                 continue
@@ -1606,6 +1619,10 @@ class TaskExecutor:
         ability_tgt_spec = task.get("AbilityTarget")
 
         for tid in targets:
+            if hasattr(sim.port, "get_active_proxy"):
+                proxy_id = sim.port.get_active_proxy(tid)
+                if proxy_id:
+                    tid = proxy_id
             ent = sim.get_entity(tid)
             if ent is None or ent.current_hp <= 0:
                 continue

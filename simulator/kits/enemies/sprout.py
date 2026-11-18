@@ -7,6 +7,7 @@ from .base import (
     STANDARD_ACTION_DISTANCE,
 )
 from .port import SproutCombatPort
+from simulator.status import StatusTag
 
 
 class BeastSproutKit(EnemyKit):
@@ -62,6 +63,7 @@ class BeastSproutKit(EnemyKit):
                 hit_energy=10.0,
                 hits=1,
                 blast=False,
+                defer_after_being_hit=True,
             )
             for tgt in hit_targets:
                 self.port.apply_speed_debuff(
@@ -73,8 +75,11 @@ class BeastSproutKit(EnemyKit):
                     max_stacks=5,
                     duration=3,
                     base_chance=1.0,
+                    tags=(StatusTag.UNDISPELLABLE,),
                 )
                 self.port.apply_hp_lock(target_id=tgt, delta_ratio=0.10, max_ratio=0.50)
+            if hit_targets and hasattr(self.port, "finish_enemy_being_hit"):
+                self.port.finish_enemy_being_hit(owner_id=self.owner_id, target_ids=hit_targets)
         return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
 
     def notify_death(self) -> None:

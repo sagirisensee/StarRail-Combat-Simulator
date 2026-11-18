@@ -282,16 +282,20 @@ class TurnSimulator:
         return self._action_seq
 
     # --- 行动就绪队列 (Ready Queue - 基于纯拉条机制) ---
-    def notify_entity_ready(self, entity_name: str) -> None:
+    def notify_entity_ready(self, entity_name: str, *, allow_jump_natural: bool = False) -> None:
         """当实体通过拉条使剩余距离降至 0 时触发:
         新拉条者插在自然到点实体之后的就绪队列最前端 (最晚被拉条 100% 的实体优先于其他拉条者出手, 但不越过已自然到点的行动)。
+        SetActionDelay(0) 等直接置零/立即行动可通过 allow_jump_natural=True 插在自然到点队列前。
         """
         ent = self.get_entity(entity_name)
         if ent is None or (ent.current_hp <= 0 and not getattr(ent, "is_infinite_hp", False)):
             return
         if entity_name in self._ready_queue:
-            self._ready_queue.remove(entity_name)
+            return
         self._natural_due_names.discard(entity_name)
+        if allow_jump_natural:
+            self._ready_queue.insert(0, entity_name)
+            return
         insert_idx = 0
         while insert_idx < len(self._ready_queue) and self._ready_queue[insert_idx] in self._natural_due_names:
             insert_idx += 1
@@ -677,6 +681,9 @@ class TurnSimulator:
             active_entity._skip_next_turn_end_tick = False
         else:
             self.status_mgr.tick_on_turn_end(active_entity)
+            vm_rt = getattr(self, "vm_runtime", None)
+            if vm_rt is not None:
+                vm_rt.modifier_engine.check_property_changes(active_entity.name)
 
         if active_entity.is_broken:
             active_entity.is_broken = False
@@ -758,6 +765,12 @@ class TurnSimulator:
 
         # 若当前处于连续行动锁定 (如 Archer 灵子回路连接尚未结束)，挂起自然回合结束直至锁定解除
         if not self.scheduler.continuous_action_hold:
+            pre_hook = getattr(self, "pre_turn_end_hook", None)
+            if pre_hook is not None:
+                pre_hook(active_entity)
+                self.scheduler.drain()
+                if self.auto_ult and not self.scheduler.continuous_action_hold:
+                    self.check_and_cast_ultimates()
             self._end_current_turn(active_entity)
             hook = getattr(self, "turn_action_completed_hook", None)
             if hook is not None:

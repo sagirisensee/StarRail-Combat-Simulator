@@ -117,6 +117,11 @@ class ModifierEngine:
         return False
 
     def has_behavior_flag(self, owner_id: str, flag: str) -> bool:
+        if flag in ("STAT_CTRL", "DisableAction"):
+            sim = getattr(self.rt, "sim", None)
+            port = getattr(sim, "port", None)
+            if port is not None and port.is_action_suppressed(owner_id):
+                return True
         for m in self.get_modifiers(owner_id):
             if flag in m.behavior_flags:
                 return True
@@ -164,7 +169,7 @@ class ModifierEngine:
             return None
 
         cfg = self._lookup_modifier_config(mod_name, ability_name)
-        stacking = str(cfg.get("Stacking", "ReplaceByCaster"))
+        stacking = str(cfg.get("Stacking", "Unique"))
 
         # 确定 MaxLayer / LifeTime
         cfg_max_layer = cfg.get("MaxLayer")
@@ -209,7 +214,10 @@ class ModifierEngine:
                 if m.caster_id == caster_id:
                     target_existing = m
                     break
-        elif stacking in ("Replace", "Refresh", "Unique"):
+        elif stacking == "Unique":
+            if existing_list:
+                return existing_list[0]
+        elif stacking in ("Replace", "Refresh"):
             if existing_list:
                 target_existing = existing_list[0]
         elif stacking == "Stack":
@@ -260,6 +268,16 @@ class ModifierEngine:
 
         # 执行静态 Properties（若配置有直接写 Property 字段）
         self._apply_static_modifier_props(mod)
+
+        if mod.life_time is not None and mod.life_step_moment == "TurnEnd":
+            sim = getattr(self.rt, "sim", None)
+            cur = getattr(sim, "_current_turn_entity", None)
+            if cur is not None and getattr(cur, "name", None) == owner_id:
+                skip_set = getattr(self, "_skip_turn_end_uids", None)
+                if skip_set is None:
+                    skip_set = set()
+                    self._skip_turn_end_uids = skip_set
+                skip_set.add(mod.uid)
 
         # 触发 OnCreate (仅首次) 与 OnStack (每次)
         mod_ctx = ExecutionContext(
@@ -705,6 +723,7 @@ class ModifierEngine:
 
     def tick_life_step(self, moment: str, actor_id: str) -> None:
         """按官方 LifeStepMoment 衰减 Modifier 剩余回合数（如 ModifierPhase1End / TurnEnd）。"""
+        skip_set = getattr(self, "_skip_turn_end_uids", None) if moment == "TurnEnd" else None
         for mod in list(self.by_uid.values()):
             if mod._destroyed or mod.life_time is None:
                 continue
@@ -714,8 +733,11 @@ class ModifierEngine:
                 continue
             if mod.owner_id != actor_id and mod.caster_id != actor_id:
                 continue
-            # 常规在场期间风堇等自身回合结束扣减：若 owner==actor 扣减
+            # 常规在场期间风堇等自身回合结束扣减：若 owner==actor 扣减（在自身回合内新挂/刷新的 TurnEnd 效果跳过本回合末扣减）
             if mod.owner_id == actor_id:
+                if skip_set is not None and mod.uid in skip_set:
+                    skip_set.discard(mod.uid)
+                    continue
                 mod.life_time -= 1.0
                 if mod.life_time <= 0.0:
                     self.destroy_modifier(mod, reason="EXPIRED")

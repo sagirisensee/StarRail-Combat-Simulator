@@ -177,6 +177,8 @@ class FengjinKit(KitHandler):
             self.ika_kit = None
             return
 
+        # 官方 1140903【牵起晴空的手】：小伊卡的速度保持为 0，免疫负面效果
+        spirit.debuff_immune = True
         self.yika_alive = True
         self.ika_kit = getattr(spirit, "kit", None)
         self._ika_ever_summoned = True

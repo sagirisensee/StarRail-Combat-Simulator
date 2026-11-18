@@ -78,6 +78,7 @@ class ApplyDamageEffect(EffectRequest):
     damage_tag: str = "direct"
     damage_type: Optional[DamageType] = None  # 权威伤害分类；为 None 时由 damage_tag 经 DamageType.from_tag 收编
     action_id: int = 0
+    defer_after_being_hit: bool = False
 
 
 class EffectResolver:
@@ -389,7 +390,7 @@ class EffectResolver:
                 and getattr(req_attacker, "is_enemy", False)
                 and not getattr(target, "is_enemy", False)
             )
-            if notify_vm_being_hit:
+            if notify_vm_being_hit and not getattr(effect, "defer_after_being_hit", False):
                 vm_rt.modifier_engine.dispatch_event(
                     "OnBeforeBeingHitAll",
                     owner_id=target.name,
@@ -414,7 +415,7 @@ class EffectResolver:
                             e.kit.on_hp_lost(target.name, actual_loss, cause="attack_damage")
             else:
                 hp_left = 0.0
-            if notify_vm_being_hit:
+            if notify_vm_being_hit and not getattr(effect, "defer_after_being_hit", False):
                 vm_rt.modifier_engine.dispatch_event(
                     "OnAfterBeingHitAll",
                     owner_id=target.name,
@@ -461,10 +462,11 @@ class EffectResolver:
                 and resolved_damage_type == DamageType.DIRECT
             ):
                 action_seq = getattr(self.simulator, "_action_seq", 0)
+                in_pulse = getattr(self.simulator, "_in_channel_pulse", False)
                 energy_recipient = getattr(target, "master_name", None) if getattr(target, "is_memosprite", False) else target.name
-                hit_key = (action_seq, energy_recipient)
-                if energy_recipient and (action_seq == 0 or hit_key not in self._hit_energy_action_recipients):
-                    if action_seq > 0:
+                hit_key = (action_seq, target.name)
+                if energy_recipient and (in_pulse or action_seq == 0 or hit_key not in self._hit_energy_action_recipients):
+                    if action_seq > 0 and not in_pulse:
                         self._hit_energy_action_recipients.add(hit_key)
                     hit_base = getattr(effect.request.attacker, "hit_energy", 0.0) or getattr(effect.request, "hit_energy", 0.0) or 5.0
                     if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):

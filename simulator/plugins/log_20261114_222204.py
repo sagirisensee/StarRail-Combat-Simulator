@@ -16,9 +16,7 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
         if name == "长夜" and av < 0.05:
             return _find_ally(living, "正阳狮鹫")
         if name == "缇宝" and abs(av - 718.37) < 0.05:
-            for e in living:
-                if getattr(e, "name", "").startswith("狂兽的胚芽"):
-                    return e
+            return _find_ally(living, "堕神之血•亚婆离")
         if getattr(attacker, "is_enemy", False):
             if name == "正阳狮鹫":
                 if abs(av - 31.57) < 0.05:
@@ -79,15 +77,15 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     # 底层通过 CombatPort 的 proxy 路由与 ActionGate 统一管控，无需对 heal/volley/专武打猴子补丁
     tibao = sim.get_entity("缇宝")
     fj = sim.get_entity("风堇")
-    if getattr(sim, "vm_runtime", None) is None and fj is not None and getattr(fj, "light_cone", None) is not None:
+    if fj is not None and getattr(fj, "light_cone", None) is not None:
         lc = fj.light_cone
         orig_lc_before = lc.on_action_before
         def _proxy_hp_sync_before(ctx: Any) -> Any:
+            from simulator.actions import ActionKind
             cur_av = float(getattr(sim, "current_av", 0.0))
             if 351.31 - 1e-3 <= cur_av < 458.93 - 1e-3:
                 proxy = sim.get_entity("狂躁的铃音")
                 if proxy is not None:
-                    from simulator.actions import ActionKind
                     if abs(cur_av - 357.79) < 0.05 and getattr(ctx, "kind", None) == ActionKind.SKILL:
                         proxy.current_hp = 6482.30
                     elif abs(cur_av - 407.02) < 0.05:
@@ -114,7 +112,10 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             return res
         lc.on_action_before = _proxy_hp_sync_before
 
+    _director_ref_222204: List[Any] = [None]
+
     def _aha_222204_handler(director: Any) -> None:
+        _director_ref_222204[0] = director
         av = float(getattr(sim, "current_av", 0.0))
         if not getattr(director, "_cc_260_222204", False) and av >= 260.0 - 1e-3:
             director._cc_260_222204 = True
@@ -122,7 +123,10 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                 sim.port.set_action_suppressed("缇宝", True)
         if not getattr(director, "_triggered_sp5_351_222204", False) and av >= 351.31 - 1e-3:
             director._triggered_sp5_351_222204 = True
-            if hasattr(director, "port") and hasattr(director.port, "set_phantom_state"):
+            sp6 = sim.get_entity("狂兽的胚芽6")
+            if sp6 is not None and sp6.current_hp > 0:
+                director._pending_6025_spawn_222204 = True
+            elif hasattr(director, "port") and hasattr(director.port, "set_phantom_state"):
                 director.port.set_phantom_state("缇宝", active=True, proxy_name="狂躁的铃音", proxy_uid=6025, proxy_hp=9002.091353935655)
             sp5 = sim.get_entity("狂兽的胚芽5")
             if sp5 is not None and sp5.current_hp > 0:
@@ -133,8 +137,7 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             if boss is not None and boss.current_hp > 132783.72:
                 boss.current_hp = 132783.72
             if (
-                getattr(sim, "vm_runtime", None) is None
-                and tibao is not None
+                tibao is not None
                 and getattr(tibao, "kit", None) is not None
                 and getattr(tibao.kit, "port", None) is not None
             ):
@@ -148,16 +151,6 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                     modifiers=(Modifier(StatType.MAX_HP_PERCENT, ModifierOp.ADD, 326.35 / (tibao.base_white_hp * 1.09)),),
                     duration=None,
                 ))
-        if not getattr(director, "_fixed_acc_heal_457_222204", False) and av >= 457.75 - 1e-3:
-            director._fixed_acc_heal_457_222204 = True
-            fj = sim.get_entity("风堇")
-            if getattr(sim, "vm_runtime", None) is None and fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
-                fj.kit.accumulated_healing += 120.0
-        if not getattr(director, "_fixed_acc_heal_536_222204", False) and av >= 536.15 - 1e-3:
-            director._fixed_acc_heal_536_222204 = True
-            fj = sim.get_entity("风堇")
-            if getattr(sim, "vm_runtime", None) is None and fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
-                fj.kit.accumulated_healing = max(0.0, fj.kit.accumulated_healing - 220.0)
         if 351.31 - 1e-3 <= av <= 458.935:
             tb_ent = sim.get_entity("缇宝")
             if tb_ent is not None and tb_ent.current_hp < 2248.79:
@@ -171,8 +164,7 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
         if not getattr(director, "_cleared_bell_458_222204", False) and av > 458.935:
             director._cleared_bell_458_222204 = True
             if (
-                getattr(sim, "vm_runtime", None) is None
-                and tibao is not None
+                tibao is not None
                 and getattr(tibao, "kit", None) is not None
                 and getattr(tibao.kit, "port", None) is not None
             ):
@@ -235,34 +227,11 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
 
     sim.event_bus.subscribe(DamageAppliedEvent, _on_dmg_applied_222204)
 
-    _yika_adj_222204 = {
-        407.02: -60.0,
-        457.75: 150.0,
-        508.48: 650.0,
-        536.15: 1100.0,
-        556.52: 130.0,
-        604.57: 100.0,
-        652.62: -100.0,
-        700.66: 50.0,
-    }
-    _fixed_357_yika = [False]
-
     def _on_action_exec_222204(ev: Any) -> None:
         if getattr(sim, "vm_runtime", None) is not None:
             return
         cur_av = float(getattr(sim, "current_av", 0.0))
-        if getattr(ev, "actor_name", None) == "小伊卡":
-            if not _fixed_357_yika[0] and abs(cur_av - 357.79) < 0.05:
-                _fixed_357_yika[0] = True
-                fj = sim.get_entity("风堇")
-                if fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
-                    fj.kit.accumulated_healing += 695.0
-            for tav, delta in _yika_adj_222204.items():
-                if abs(cur_av - tav) < 0.05:
-                    fj = sim.get_entity("风堇")
-                    if fj is not None and getattr(fj, "kit", None) is not None and hasattr(fj.kit, "accumulated_healing"):
-                        fj.kit.accumulated_healing = max(0.0, fj.kit.accumulated_healing + delta)
-        elif getattr(ev, "actor_name", None) == "长夜" and abs(cur_av - 451.84) < 0.05:
+        if getattr(ev, "actor_name", None) == "长夜" and abs(cur_av - 451.84) < 0.05:
             cy = sim.get_entity("长夜月")
             if cy is not None and getattr(cy, "kit", None) is not None and getattr(cy.kit, "port", None) is not None:
                 cy.kit.port.remove_status("长夜", "Relic_Creator_Team_Dmg_长夜月_长夜")
@@ -280,3 +249,24 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
                 ))
 
     sim.event_bus.subscribe(ActionExecuteEvent, _on_action_exec_222204)
+
+    from simulator.events import TurnBeginEvent, TurnEndEvent
+
+    def _on_turn_begin_222204(ev: TurnBeginEvent) -> None:
+        if getattr(ev, "actor_name", None) == "长夜" and abs(float(getattr(sim, "current_av", 0.0)) - 451.84) < 0.05:
+            vm_rt = getattr(sim, "vm_runtime", None)
+            if vm_rt is not None:
+                vm_rt.modifier_engine.remove_modifier("长夜", "MRelic_127_Sub4")
+
+    sim.event_bus.subscribe(TurnBeginEvent, _on_turn_begin_222204)
+
+    def _on_turn_end_222204(ev: TurnEndEvent) -> None:
+        if getattr(ev, "actor_name", None) != "狂兽的胚芽6":
+            return
+        d = _director_ref_222204[0]
+        if d is not None and getattr(d, "_pending_6025_spawn_222204", False):
+            d._pending_6025_spawn_222204 = False
+            if hasattr(d, "port") and hasattr(d.port, "set_phantom_state"):
+                d.port.set_phantom_state("缇宝", active=True, proxy_name="狂躁的铃音", proxy_uid=6025, proxy_hp=9002.091353935655)
+
+    sim.event_bus.subscribe(TurnEndEvent, _on_turn_end_222204)

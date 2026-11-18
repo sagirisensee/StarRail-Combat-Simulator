@@ -724,7 +724,12 @@ class ChangyeyueKit(KitHandler):
                 "1141307", 1, default=0.06,
             )
 
-            ordered = [e for e in enemies if e != primary] + [primary]
+            secondary_enemies = [e for e in enemies if e != primary]
+            if hasattr(self.port, "_get_entity"):
+                secondary_enemies.sort(
+                    key=lambda eid: getattr(self.port._get_entity(eid), "_spawn_seq", 0)
+                )
+            ordered = secondary_enemies + [primary]
             resolver = getattr(getattr(self.port, "sim", None), "resolver", None)
             if resolver is not None and hasattr(resolver, "begin_aoe"):
                 resolver.begin_aoe()
@@ -820,11 +825,12 @@ class ChangyeyueKit(KitHandler):
             if cause == "attack_damage" and self.port and hasattr(self.port, "sim"):
                 sim = self.port.sim
                 act_seq = getattr(sim, "_action_seq", 0)
-                in_channel = getattr(sim, "_in_channel_pulse", False)
-                hit_key = ("channel_pulse", entity_id) if in_channel else (act_seq, entity_id)
-                if hit_key == getattr(self, "_last_attack_hp_loss_key", None):
+                if act_seq != getattr(self, "_last_attack_hp_loss_seq", None):
+                    self._last_attack_hp_loss_seq = act_seq
+                    self._last_attack_hp_loss_entities = set()
+                if entity_id in self._last_attack_hp_loss_entities:
                     return
-                self._last_attack_hp_loss_key = hit_key
+                self._last_attack_hp_loss_entities.add(entity_id)
 
             self.port.upsert_status(BuffSpec(
                 key="Changyeyue_Talent_CritDmg",

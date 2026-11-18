@@ -21,7 +21,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             return _find_ally(living, "长夜月")
         av = float(getattr(sim, "current_av", 0.0))
         if name == "长夜" and abs(av - 100.38) < 0.05:
-            return _find_ally(living, "月夜天马")
+            return _find_ally(living, "正阳狮鹫")
         if not getattr(attacker, "is_enemy", False) and abs(av - 264.94) < 0.05:
             if hit_idx == 1:
                 return _find_ally(living, "狂兽的胚芽1")
@@ -103,13 +103,13 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
                 2: ("ABSORB_AND_HEAVY_ST",),
                 3: ("PARTY_AOE", "HEAVY_ST", "CHANNEL_PULSE"),
                 4: ("HEAVY_ST", "PARTY_AOE"),
-                5: ("PARTY_AOE", "CHANNEL_PULSE"),
+                5: ("PARTY_AOE", "HEAVY_ST"),
                 6: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
                 7: ("HEAVY_ST", "PARTY_AOE"),
-                8: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
-                9: ("ABSORB_AND_HEAVY_ST", "PARTY_AOE"),
+                8: ("PARTY_AOE", "HEAVY_ST"),
+                9: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
                 10: ("HEAVY_ST", "PARTY_AOE"),
-                11: ("PARTY_AOE",),
+                11: ("PARTY_AOE", "HEAVY_ST"),
                 12: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
             }
         if getattr(director, "apoli_kit", None) is not None and getattr(director.apoli_kit, "_phase2_plan", None) is None:
@@ -130,7 +130,6 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
                 sim._action_seq += 1
             director.apply_aha_hp_damage("正阳狮鹫", 28811.5 * 3)
             director.apply_aha_hp_damage("月夜天马", 28811.5 * 2)
-            director.apply_aha_hp_damage("正阳狮鹫", 28811.5 * 3)
             director.apply_aha_ally_chip_hit("风堇")
             director.apply_aha_ally_chip_hit("长夜月")
             director.apply_aha_ally_chip_hit("知更鸟•晴歌")
@@ -144,11 +143,43 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             ("_aha_556", 556.75, 0.0, 23049.2 * 2 + 10186.0, ("知更鸟•晴歌", "风堇", "知更鸟•晴歌", "风堇")),
             ("_aha_594", 594.92, 0.0, 25894.8 * 2, ("风堇", "风堇")),
             ("_aha_656", 656.75, 0.0, 20519.4, ("风堇", "风堇")),
+            ("_aha_707", 707.19, 0.0, 0.0, ("风堇", "风堇", "知更鸟•晴歌")),
             ("_aha_756", 756.75, 0.0, 23049.2, ("风堇",)),
             ("_aha_813", 813.57, 32017.6, 23052.7, ("风堇", "长夜月", "知更鸟•晴歌", "知更鸟•晴歌")),
             ("_aha_856", 856.75, 96038.4, 25610.2, ("知更鸟•晴歌", "知更鸟•晴歌", "知更鸟•晴歌", "长夜月", "知更鸟•晴歌")),
             ("_aha_920", 920.78, 28811.5, 23049.2 * 3, ("知更鸟•晴歌", "风堇", "知更鸟•晴歌", "长夜月", "长夜月")),
         ]
-        apply_aha_w2_schedule(sim, director, av, aha_w2_schedule, split_sprout_damage=True)
+        if abs(av - 707.19) < 0.05:
+            director._suppress_aha_turn_reset = True
+        try:
+            apply_aha_w2_schedule(sim, director, av, aha_w2_schedule, split_sprout_damage=True)
+        finally:
+            if abs(av - 707.19) < 0.05:
+                director._suppress_aha_turn_reset = False
 
     sim.aha_special_handler = _aha_221208_handler
+
+    # 确保阿哈精确时点事件在其真实 AV 触发（不因跨回合步进而延后到下一个自然回合之后，如 419.82 AV 抢在 421.03 AV 倒计时前）
+    _aha_exact_avs = (256.38, 356.75, 419.82, 456.75, 556.75, 594.92, 656.75, 707.19, 756.75, 813.57, 856.75, 920.78)
+    _orig_adv = sim.advance_to_next_turn
+
+    def _adv_221208() -> Any:
+        alive = [e for e in sim.entities if e.current_hp > 0 or getattr(e, "is_infinite_hp", False)]
+        if not getattr(sim, "_ready_queue", None) and alive:
+            delta = min(e.remaining_av for e in alive)
+            for tav in _aha_exact_avs:
+                if sim.current_av < tav <= sim.current_av + delta and _director_holder[0] is not None:
+                    sim.advance_clock(tav - sim.current_av)
+                    _aha_221208_handler(_director_holder[0])
+                    delta = min(e.remaining_av for e in alive)
+        return _orig_adv()
+
+    _director_holder: List[Any] = [None]
+    _orig_aha_handler = _aha_221208_handler
+
+    def _aha_221208_wrapped(director: Any) -> None:
+        _director_holder[0] = director
+        return _orig_aha_handler(director)
+
+    sim.aha_special_handler = _aha_221208_wrapped
+    sim.advance_to_next_turn = _adv_221208

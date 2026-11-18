@@ -566,9 +566,10 @@ class Stage30126122Director:
             # 仅当本轮由阿哈特殊事件触发时视作独立额外回合结束，重置 per-turn 监听旗标并还原当前回合宿主上下文
             if getattr(self, "_pending_aha_turn", False):
                 self._pending_aha_turn = False
-                rt.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id="阿哈")
-                cur_owner = getattr(getattr(self.sim, "_current_turn_entity", None), "name", "__LEVEL__")
-                rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_owner)
+                if not getattr(self, "_suppress_aha_turn_reset", False):
+                    rt.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id="阿哈")
+                    cur_owner = getattr(getattr(self.sim, "_current_turn_entity", None), "name", "__LEVEL__")
+                    rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_owner)
             return
         for ent in getattr(self.sim, "entities", ()):
             if not ent.is_enemy and ent.current_hp > 0:
@@ -580,11 +581,6 @@ class Stage30126122Director:
                 kit = getattr(ent, "kit", None)
                 if kit is not None and hasattr(kit, "_resolve_talent_heal"):
                     kit._resolve_talent_heal()
-        for ent in getattr(self.sim, "entities", ()):
-            if not ent.is_enemy and ent.current_hp > 0:
-                kit = getattr(ent, "kit", None)
-                if kit is not None and hasattr(kit, "_heal_provider_keys"):
-                    kit._heal_provider_keys.clear()
 
     def _check_aha_special_damage_events(self) -> None:
         handler = getattr(self.sim, "aha_special_handler", None)
@@ -735,6 +731,7 @@ class Stage30126122Director:
             phase2_max_hp=APOLI_PHASE2_HP,
             phase1_barrier_shield_ratio=APOLI_PHASE1_BARRIER_RATIO,
             phase2_barrier_shield_ratio=APOLI_PHASE2_BARRIER_RATIO,
+            aoe_include_memosprites=True,
             phase2_plan=getattr(self, "phase2_plan", None),
         )
         boss.kit = apoli_kit

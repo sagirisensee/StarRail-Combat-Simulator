@@ -90,6 +90,7 @@ class StatusTag:
     CHARACTER_ONLY = "character_only"                            # 仅角色本体专享 (不继承/不投影至伴生忆灵)
     EXCLUDE_FROM_STAT_TRANSFERS = "exclude_from_stat_transfers"  # 排除属性二次转化/分享 (防自循环)
     CANNOT_ADVANCE_OTHER_ALLIES = "cannot_advance_other_allies"  # 无法使其他友方目标获得行动提前效果 (如【特邀嘉宾】)
+    UNDISPELLABLE = "undispellable"                              # 不可被常规驱散技能移除
     SUPPRESS_STATUS_APPLY_EVENT = "suppress_status_apply_event"  # 派生同步类状态: 应用时不广播 StatusApplyEvent (防事件自循环触发同步)
 
 

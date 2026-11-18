@@ -236,7 +236,7 @@ class RobinSunnySongKit(KitHandler):
         self.in_fever: bool = False     # 真实【Fever】状态
 
         # 气氛值核心系统
-        self.vibes: int = 0             # 气氛值
+        self.vibes: float = 0.0         # 气氛值 (实机倒计时扣 50% 保留小数, 如 47 -> 23.5)
         self._custom_max_vibes: Optional[int] = None
 
         # 行迹【即兴蓝调】与气氛值门禁
@@ -468,8 +468,8 @@ class RobinSunnySongKit(KitHandler):
             ):
                 trigger_ally_id = None
 
-        old_vibes = int(self.vibes)
-        self.vibes = min(int(self.max_vibes), old_vibes + int(amount))
+        old_vibes = float(self.vibes)
+        self.vibes = min(float(self.max_vibes), old_vibes + float(amount))
 
         tracer = getattr(self.port, "tracer", None)
         if tracer is not None and self.vibes != old_vibes:
@@ -726,11 +726,13 @@ class RobinSunnySongKit(KitHandler):
             # 先登记，阻止回能/退场事件重入重复扣除。
             self._countdown_settled_turn_id = turn_id
 
-        old_vibes = int(self.vibes)
-        minimum = int(self.skill_param("1151203", 5, default=12.0))
+        old_vibes = float(self.vibes)
+        minimum = float(self.skill_param("1151203", 5, default=12.0))
         ratio = float(self.skill_param("1151203", 9, default=0.50))
-        deduction = max(minimum, math.ceil(old_vibes * ratio))
-        self.vibes = max(0, old_vibes - deduction)
+        deduction = max(minimum, old_vibes * ratio)
+        self.vibes = max(0.0, old_vibes - deduction)
+        if self.vibes <= 1e-9:
+            self.vibes = 0.0
 
         tracer = getattr(self.port, "tracer", None)
         if tracer is not None:

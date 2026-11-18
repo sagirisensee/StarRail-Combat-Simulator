@@ -745,9 +745,14 @@ class ConfigAbilityKitAdapter(KitHandler):
         rt = self._ensure_registered()
         if self.is_servant:
             if ctx.kind in (ActionKind.SKILL, ActionKind.MEMOSPRITE_SKILL):
-                if self.unit_id == 11413 and ctx.skill_id == 1141301:
+                ent_obj = rt.sim.get_entity(self.owner_id)
+                forced_sid = getattr(ent_obj, "_trajectory_skill_id", 0) if ent_obj is not None else 0
+                if forced_sid:
+                    ent_obj._trajectory_skill_id = 0
+                eff_sid = ctx.skill_id or forced_sid
+                if self.unit_id == 11413 and eff_sid == 1141301:
                     sk_key = "Skill01"
-                elif self.unit_id == 11413 and ctx.skill_id == 1141307:
+                elif self.unit_id == 11413 and eff_sid == 1141307:
                     sk_key = "Skill11"
                 else:
                     sk_key = "Skill11" if self._is_evey_burst_mode() else "Skill01"
@@ -769,9 +774,7 @@ class ConfigAbilityKitAdapter(KitHandler):
         ab_list = self._skill_abilities.get(sk_key, [])
         t_info = self._skill_target_infos.get(sk_key) or {}
         t_type = str(t_info.get("TargetType", ""))
-        if t_type in ("EnemySelect", "FriendSelect") and ctx.target_ids:
-            eff_targets = ctx.target_ids[:1]
-        elif t_type == "EnemySelect" and not ctx.target_ids:
+        if t_type == "EnemySelect":
             picked_ents = [
                 e for e in rt.sim.entities
                 if getattr(e, "is_enemy", False)
@@ -785,7 +788,11 @@ class ConfigAbilityKitAdapter(KitHandler):
                 actor_ent = rt.sim.get_entity(self.owner_id)
                 if actor_ent is not None:
                     chosen_ent = tp(actor_ent, picked_ents, 0)
-            if chosen_ent is None or chosen_ent not in picked_ents:
+            if chosen_ent is not None and chosen_ent in picked_ents:
+                eff_targets = (chosen_ent.name,)
+            elif ctx.target_ids:
+                eff_targets = ctx.target_ids[:1]
+            else:
                 chosen_ent = max(
                     picked_ents,
                     key=lambda e: (
@@ -794,7 +801,9 @@ class ConfigAbilityKitAdapter(KitHandler):
                         float(getattr(e, "max_hp", 0.0)),
                     ),
                 ) if picked_ents else None
-            eff_targets = (chosen_ent.name,) if chosen_ent is not None else ()
+                eff_targets = (chosen_ent.name,) if chosen_ent is not None else ()
+        elif t_type == "FriendSelect" and ctx.target_ids:
+            eff_targets = ctx.target_ids[:1]
         elif t_type == "FriendSelect" and not ctx.target_ids:
             avoid_self = bool(t_info.get("AvoidSelf", False))
             forbid_sv = str(t_info.get("AllowFriendServant", "")) == "Forbidden"

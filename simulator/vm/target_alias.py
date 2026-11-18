@@ -108,7 +108,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                 continue
             if _is_battle_event(e):
                 continue
-            if not include_unselectable and getattr(e, "is_unselectable", False):
+            if not include_unselectable and (getattr(e, "is_unselectable", False) or getattr(e, "is_proxy", False)):
                 continue
             res.append(e.name)
         return res
@@ -122,7 +122,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                 continue
             if not include_countdown and _is_battle_event(e):
                 continue
-            if not include_unselectable and getattr(e, "is_unselectable", False):
+            if not include_unselectable and (getattr(e, "is_unselectable", False) or getattr(e, "is_proxy", False)):
                 continue
             res.append(e.name)
         return res

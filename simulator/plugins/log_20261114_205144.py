@@ -46,9 +46,14 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
     def _enemy_windwalk_205144(eagle_name: str, generation: int, idx: int) -> bool:
         return False
 
+    def _enemy_attack_skip_205144(attacker: Any, av: float) -> bool:
+        # 75.76 AV 实机月夜天马未造成我方掉血与小伊卡被动治疗
+        return getattr(attacker, "name", None) == "月夜天马" and abs(av - 75.76) < 0.05
+
     sim.target_provider = _target_205144_provider
     sim.blast_target_provider = _blast_205144_provider
     sim.enemy_windwalk_provider = _enemy_windwalk_205144
+    sim.enemy_attack_skip_provider = _enemy_attack_skip_205144
 
     def _aha_205144_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))

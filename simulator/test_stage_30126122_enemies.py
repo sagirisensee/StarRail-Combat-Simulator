@@ -242,7 +242,7 @@ class TestEnemyKitsUnit(unittest.TestCase):
         self.assertLess(ally.current_hp, hp_before_t)
         self.assertAlmostEqual(ally.hp_lock_ratio, 0.10)
 
-    def test_aoe_hitting_master_and_memosprite_grants_single_hit_energy(self) -> None:
+    def test_aoe_hitting_master_and_memosprite_grants_per_target_hit_energy(self) -> None:
         from simulator.stage_30126122 import Stage30126122CombatPort, create_apoli_boss
 
         master = _dummy_ally("风堇", speed=50.0)
@@ -255,13 +255,15 @@ class TestEnemyKitsUnit(unittest.TestCase):
         sim = TurnSimulator(entities=[master, memo, boss], use_techniques=False, auto_ult=False)
         port = Stage30126122CombatPort(sim)
 
+        # 官方实机规则：同一动作多段命中同一目标仅算 1 次受击回能，但 AoE 同时命中主人与忆灵时各计 1 次归主人
         port.apply_enemy_attack(
             owner_id=boss.name,
             target_ids=(master.name, memo.name),
             multiplier=0.72,
             hit_energy=10.0,
+            hits=3,
         )
-        self.assertAlmostEqual(master.energy, 10.0)
+        self.assertAlmostEqual(master.energy, 20.0)
 
 
 class TestStage30126122Timeline(unittest.TestCase):

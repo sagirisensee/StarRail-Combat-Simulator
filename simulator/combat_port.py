@@ -651,7 +651,10 @@ class SimulatorCombatPort:
             ent.distance_remaining = max(0.0, float(distance))
             if ent.distance_remaining <= 0.0:
                 if hasattr(self.sim, "notify_entity_ready"):
-                    self.sim.notify_entity_ready(ent.name)
+                    try:
+                        self.sim.notify_entity_ready(ent.name, allow_jump_natural=True)
+                    except TypeError:
+                        self.sim.notify_entity_ready(ent.name)
 
     def set_base_speed(self, entity_id: str, speed: float) -> None:
         ent = self._get_entity(entity_id)
@@ -741,7 +744,10 @@ class SimulatorCombatPort:
         if not ent:
             return
         cat = "debuff" if is_debuff else "buff"
-        statuses = self.sim.status_mgr.get_statuses(ent.name, category=cat)
+        statuses = [
+            s for s in self.sim.status_mgr.get_statuses(ent.name, category=cat)
+            if StatusTag.UNDISPELLABLE not in getattr(s, "tags", ())
+        ]
         if statuses:
             self.sim.status_mgr.remove_status(ent.name, statuses[0].id)
 

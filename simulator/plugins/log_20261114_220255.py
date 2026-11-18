@@ -69,6 +69,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
     sim.debuff_hit_provider = _debuff_hit_220255
 
     def _aha_220255_handler(director: Any) -> None:
+        director.suppress_aha_sprout_advance = True
         if getattr(director, "phase2_plan", None) is None:
             director.phase2_plan = {
                 1: ("HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"),
@@ -123,7 +124,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             ("_aha_737", 737.65, [("堕神之血•亚婆离", 69297.20), ("狂兽的胚芽17", 27718.88 * 4), ("狂兽的胚芽18", 27718.88 * 2)], ("缇宝",)),
         ]
         for flag, trg_av, dmg_list, chips in exact_aha_w2:
-            if not getattr(director, flag, False) and av >= trg_av - 1e-3:
+            if not getattr(director, flag, False) and av >= trg_av - 1e-2:
                 setattr(director, flag, True)
                 if hasattr(sim, "_action_seq"):
                     sim._action_seq += 1

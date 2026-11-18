@@ -40,10 +40,9 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
         # 31.57 AV 正阳狮鹫扩散在实机中仅命中长夜月
         if abs(av - 31.57) < 0.05:
             return []
-        # 151.52 AV 月夜天马双标记攻击同时命中长夜月与小伊卡
+        # 151.52 AV 月夜天马攻击仅命中长夜月，未扩散至小伊卡
         if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
-            ika = _find_ally(living, "小伊卡")
-            return [ika] if ika is not None else []
+            return []
         # 157.83 AV 正阳狮鹫点名小伊卡，扩散命中长夜月与风堇
         if abs(av - 157.83) < 0.05:
             res: List[Any] = []

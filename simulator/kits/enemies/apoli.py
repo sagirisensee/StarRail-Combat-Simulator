@@ -70,7 +70,7 @@ class ApoliBossKit(EnemyKit):
         apply_hp_lock_on_aoe: bool = False,
         apply_hp_lock_on_pulse: bool = True,
         transition_pulse_multipliers: Tuple[float, ...] | None = None,
-        transition_pulse_hit_energy: Tuple[float, float] = (12.0, 12.0),
+        transition_pulse_hit_energy: Tuple[float, float] = (1.0, 12.0),
         aoe_include_memosprites: bool = False,
         party_aoe_multiplier: float = 1.8,
         heavy_st_multiplier: float = 5.0,

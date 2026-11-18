@@ -56,6 +56,7 @@ class BaseEnemyCombatPortImpl:
         blast: bool = False,
         adjacent_multiplier_ratio: float = 1.0,
         increment_action_seq: bool = True,
+        defer_after_being_hit: bool = False,
     ) -> Tuple[str, ...]:
         attacker = self.sim.get_entity(owner_id)
         if attacker is None or attacker.current_hp <= 0:
@@ -150,10 +151,22 @@ class BaseEnemyCombatPortImpl:
                         request=req,
                         toughness_reduction=0.0,
                         element=element,
+                        defer_after_being_hit=defer_after_being_hit,
                     )
                 )
             self.sim.resolver.resolve_all()
         return tuple(t.name for t in resolved_targets)
+
+    def finish_enemy_being_hit(self, *, owner_id: str, target_ids: Tuple[str, ...]) -> None:
+        vm_rt = getattr(self.sim, "vm_runtime", None)
+        if vm_rt is None:
+            return
+        for tid in target_ids:
+            vm_rt.modifier_engine.dispatch_event(
+                "OnAfterBeingHitAll",
+                owner_id=tid,
+                param_entity_id=owner_id,
+            )
 
     def apply_hp_lock(
         self,
@@ -163,9 +176,7 @@ class BaseEnemyCombatPortImpl:
         max_ratio: float = 0.50,
     ) -> None:
         tgt = self.sim.get_entity(target_id)
-        if tgt is None or tgt.is_enemy or tgt.current_hp <= 0.0:
-            return
-        if hasattr(self.sim, "port") and hasattr(self.sim.port, "is_action_suppressed") and self.sim.port.is_action_suppressed(target_id):
+        if tgt is None or tgt.is_enemy or tgt.current_hp <= 0.0 or getattr(tgt, "debuff_immune", False):
             return
         cur = float(getattr(tgt, "hp_lock_ratio", 0.0))
         tgt.hp_lock_ratio = min(max_ratio, cur + delta_ratio)
@@ -299,6 +310,7 @@ class BaseEnemyCombatPortImpl:
         max_stacks: int = 5,
         duration: int = 3,
         base_chance: float = 1.0,
+        tags: Tuple[str, ...] = (),
     ) -> bool:
         attacker = self.sim.get_entity(owner_id)
         target = self.sim.get_entity(target_id)
@@ -338,6 +350,7 @@ class BaseEnemyCombatPortImpl:
                 category="debuff",
                 stacks=stacks,
                 max_stacks=max_stacks,
+                tags=tags,
                 description=f"速度降低 {abs(pct_per_stack) * stacks * 100:.0f}% ({stacks}层)",
             )
         )
@@ -557,12 +570,13 @@ class BaseEnemyCombatPortImpl:
         setattr(self.sim, "_in_channel_pulse", True)
         try:
             for idx, mult in enumerate(seq_mults):
+                is_final = (idx == len(seq_mults) - 1)
                 self.apply_enemy_attack(
                     owner_id=owner_id,
                     target_ids=allies,
                     multiplier=float(mult),
                     element="Quantum",
-                    hit_energy=float(final_hit_energy),
+                    hit_energy=float(final_hit_energy) if is_final else float(tick_hit_energy),
                     hits=1,
                     blast=False,
                     increment_action_seq=(idx == 0),

@@ -1505,7 +1505,7 @@ def run_trajectory_replay(
                     else:
                         if changye_ent is None or getattr(changye_ent, "kit", None) is None:
                             return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
-                        ctx = ActionContext(action_id="trajectory", actor_id="长夜", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies)
+                        ctx = ActionContext(action_id="trajectory", actor_id="长夜", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies, skill_id=1141301)
                         changye_ent.kit.execute(ctx)
                 elif sid == 1140901:
                     if sim.get_entity("风堇") is None:
@@ -1726,7 +1726,7 @@ def run_trajectory_replay(
                 cast = q.popleft()
                 result.records.append(_force_spirit(cast, now_av))
 
-    def _ult_blocked(u_idx: int, u_item: Any, now_av: float) -> bool:
+    def _ult_blocked(u_idx: int, u_item: Any, now_av: float, *, allow_cur_enemy: bool = False) -> bool:
         if now_av > u_item.av + 15.0:
             return False
         cur_turn = getattr(sim, "current_turn_entity", None)
@@ -1739,7 +1739,8 @@ def run_trajectory_replay(
         ):
             return True
         if (
-            cur_turn is not None
+            not allow_cur_enemy
+            and cur_turn is not None
             and getattr(cur_turn, "is_enemy", False)
             and u_owner
             and u_owner not in _sim_player_actors(sim)
@@ -1795,9 +1796,9 @@ def run_trajectory_replay(
                 return True
         return False
 
-    def _fire_due_ults() -> None:
+    def _fire_due_ults(*, allow_cur_enemy: bool = False) -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
-        while ult_queue and ult_queue[0][1].av <= now_av + 1e-4 and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av):
+        while ult_queue and ult_queue[0][1].av <= now_av + 1e-4 and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av, allow_cur_enemy=allow_cur_enemy):
             _idx, item = ult_queue.popleft()
             fired_master.add(_idx)
             ent = sim.get_entity(item.actor)
@@ -1827,15 +1828,18 @@ def run_trajectory_replay(
     if prev_auto_ult is not None:
         sim.auto_ult = False
 
-    def _on_turn_action_completed(actor_ent: Any) -> None:
+    def _on_turn_action_completed(actor_ent: Any, *, enemy_only: bool = False) -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
         act_name = getattr(actor_ent, "name", "")
+        if enemy_only and not getattr(actor_ent, "is_enemy", False):
+            return
         while (
             ult_queue
             and ult_queue[0][1].av <= now_av + 1e-4
             and (
                 (
-                    ult_queue[0][1].actor == act_name
+                    not enemy_only
+                    and ult_queue[0][1].actor == act_name
                     and getattr(ult_queue[0][1], "turn_owner", "") == act_name
                     and act_name == "缇宝"
                 )
@@ -1849,7 +1853,7 @@ def run_trajectory_replay(
                     )
                 )
             )
-            and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av)
+            and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av, allow_cur_enemy=enemy_only)
         ):
             _idx, item = ult_queue.popleft()
             fired_master.add(_idx)
@@ -1870,6 +1874,7 @@ def run_trajectory_replay(
             else:
                 result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
 
+    sim.pre_turn_end_hook = lambda actor_ent: _on_turn_action_completed(actor_ent, enemy_only=True)
     sim.turn_action_completed_hook = _on_turn_action_completed
     # 本体排期按角色分队列: 每名角色的回合只在其排期时点 (或迟到时) 发生,
     # 无排期的额外回合直接沉底, 与官方轨迹一一对应
@@ -1970,6 +1975,7 @@ def run_trajectory_replay(
             u_ent = sim.get_entity(u_item.actor)
             return u_ent is not None and float(u_ent.energy) >= float(u_ent.max_energy) - 1e-6
 
+        _pre_boss_ult = _ult_ready_before_enemy_step()
         if (
             float(getattr(sim, "current_av", 0.0)) < 1e-4
             or (
@@ -1978,9 +1984,9 @@ def run_trajectory_replay(
                 and ult_queue
                 and getattr(ult_queue[0][1], "turn_owner", "") == actor_ent.name
             )
-            or _ult_ready_before_enemy_step()
+            or _pre_boss_ult
         ):
-            _fire_due_ults()
+            _fire_due_ults(allow_cur_enemy=_pre_boss_ult)
         if actor_ent is None or getattr(actor_ent, "current_hp", 0.0) <= 0.0:
             if actor_ent is not None and getattr(sim, "_current_turn_entity", None) is actor_ent:
                 sim._current_turn_entity = None
@@ -2017,6 +2023,12 @@ def run_trajectory_replay(
                     if raw_tids and all(sim.get_entity(tid) is not None for tid in raw_tids):
                         target_ids = raw_tids
                 replay.turn_matched += 1
+        if actor_ent.name == "长夜":
+            q01 = spirit_queues.get(1141301)
+            q07 = spirit_queues.get(1141307)
+            cur_av_now = float(getattr(sim, "current_av", 0.0))
+            if q01 and q01[0].av <= cur_av_now + 0.05 and (not q07 or (q01[0].av, q01[0].order) < (q07[0].av, q07[0].order)):
+                actor_ent._trajectory_skill_id = 1141301
         sim.step(action_override=override, target_ids=target_ids)
         if director is not None:
             director.after_step()
