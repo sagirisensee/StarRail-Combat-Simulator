@@ -53,10 +53,10 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         non_crits: Optional[Set] = None,
         av_budget: Optional[float] = None,
         max_tl_av: Optional[float] = None,
-        data_driven: bool = False,
-        total_limit: float = 0.002,
-        turn_limit: float = 0.002,
-        ika_turn_limit: float = 0.02,
+        data_driven: bool = True,
+        total_limit: float = 0.0001,
+        turn_limit: float = 0.0001,
+        ika_turn_limit: float = 0.0001,
     ) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", filename)
         g = parse_golden_jsonl(log_path)
@@ -93,7 +93,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._assert_per_turn_sub_0_2_pct(tag, g, traj, turn_limit=turn_limit, ika_turn_limit=ika_turn_limit)
 
     def _assert_per_turn_sub_0_2_pct(
-        self, tag: str, g: object, traj: object, *, turn_limit: float = 0.002, ika_turn_limit: float = 0.002
+        self, tag: str, g: object, traj: object, *, turn_limit: float = 0.0001, ika_turn_limit: float = 0.0001
     ) -> None:
         gt_by_av: dict[float, float] = {}
         ika_avs: set[float] = set()
