@@ -25,18 +25,24 @@
 ### 3. 底层战斗机制对齐
 - **忆灵站位序对齐**（`target_alias.py`）：首个忆灵固定排列在队伍最右侧，解决天马 Skill04 扩散伤害目标偏差。
 - **生命上限缩放**（`status.py`）：修复上限到期回落时的当前生命值等比缩放。
-- **阿哈额外回合**（`stage_sim_adapter.py`）：首击广播 `TurnBeginEvent`，确保监听器时序一致。
+- **阿哈额外回合**（`stage_sim_adapter.py`）：首击广播 `TurnBeginEvent`，并在 `flush_ally_talent_heals` 中补齐 `OnListenBeforeTurnPhase1End` 事件派发，闭环多段受击后的延迟天赋治疗。
+- **治疗加成动态重算**（`executor.py`）：解锁 `_execute_heal` 治疗加成快照，支持秘技/群奶过程中动态响应遗器提速转治疗加成。
+
+### 4. 纯通用敌方机制与零硬编码生成器 (`stage_sim_adapter.py` / `reconcile_generator.py`)
+- **敌方风行再动与非攻击辅助回合**（`stage_sim_adapter.py`）：`DataDrivenEnemyKit` 接入 `MCommon_FastAction` / `enemy_windwalk_provider`（回合末 `reset_distance=0.0` 立即再动）及 `enemy_attack_skip_provider`。
+- **敌方技能 Modifier 原生 VM 执行**（`stage_sim_adapter.py`）：通用注入官方怪物 `CharacterConfig` 的 `SkillParam` 动态表，执行敌方技能 AST 的 `AddModifier`（如天马 `Unicorn_Debuff_Mark` + 狮鹫 `Griffin_Debuff_Mark` 叠加触发 `_MixedMark_LoseHpRatio = 0.25` 原生真伤）。
+- **生成器全面去硬编码**（`reconcile_generator.py`）：移除 `build_stage_30126122` 回退及所有关卡/怪物/角色/魔数特判，改为基于 `StageDataLoader` 自动映射敌方 UID，基于受击回能差额 (`sp_gain_counts > hit_counts`) 通用反推忆灵受击/扩散/阿哈微伤，并加入阿哈致死标记防残血。
 
 ---
 
 ## 二、当前对账达标状态 (按 `data_driven=True` + `0.01%` 严格红灯标准)
 
-> **原则**：单元测试统一以真实终态标准 `data_driven=True` 与 `limit=0.0001 (0.01%)` 为准挂红灯，实事求是暴露所有未达标点。
+> **原则**：单元测试统一以真实终态标准 `data_driven=True` 与 `total_limit=0.0001 / turn_limit=0.0001 (0.01%)` 为准挂红灯，实事求是暴露所有未达标点。
 
 | 用例 ID | 队伍阵容 | 状态 | 当前总伤误差 | 轨迹状态 | 备注 |
 | :--- | :--- | :---: | :---: | :---: | :--- |
+| **155925** | 风堇 + 长夜月 | 🟢 **全绿达标** | **0.0000%** | 8/8 动 + 3/3 大招 (100%) | 11/11 动全部 `<= 0.0002%`，零硬编码通用生成器一键生成通过 |
 | **204943** | 风堇 + 知更鸟•晴歌 | 🔴 待微调 | 0.4098% | 100% 吻合 | 纯数据驱动已打通，待微调晴歌受击/治疗层数收进 0.01% |
-| **155925** | 风堇 + 长夜月 | 🔴 待对齐扩散目标 | 14.35% | 12/12 动 Organic (100%) | 31.57 AV 狮鹫与召唤物 0.0000% 对齐，待微调天马 151.52 AV 扩散目标 |
 | **184651** | 风堇 + 长夜月 | 🔴 待跑纯数据驱动 | - | - | 前置机制已就绪 |
 | **184845** | 风堇 + 缇宝 | 🔴 待跑纯数据驱动 | - | - | 前置机制已就绪 |
 | **205144** | 缇宝 + 风堇 + 知更鸟•晴歌 | 🔴 待测第二波 | - | - | 待对接堕神之血 |
@@ -49,12 +55,13 @@
 ## 三、后续待办任务清单
 
 1. [ ] **2 人队纯数据驱动收尾 (< 0.01%)**：
-   - [ ] 对齐 `155925` 中 151.52 AV 天马扩散目标选择，使总伤误差缩减至 `< 0.01%`。
-   - [ ] 验证 `184651` 在纯数据驱动下压入 `< 0.01%`。
-   - [ ] 验证 `184845` 在纯数据驱动下压入 `< 0.01%`。
+   - [x] 对齐 `155925` 全场 11 动，零硬编码纯通用生成器一键跑进 `< 0.01%`（实测总伤 `0.0000%`、单动最大 `0.0002%`）。
+   - [ ] 使用纯通用生成器验证 `184651` 压入 `< 0.01%`。
+   - [ ] 使用纯通用生成器验证 `184845` 压入 `< 0.01%`。
+   - [ ] 使用纯通用生成器收尾 `204943` 压入 `< 0.01%`。
 2. [ ] **3 人队纯数据驱动对齐 (< 0.01%)**：
    - [ ] 在 `DataDrivenStageDirector` 中验证 Wave 2 Boss `堕神之血•亚婆离` 的转阶段韧性锁与 `狂兽的胚芽` 吞噬回血逻辑。
    - [ ] 依次跑通 `205144`、`220255`、`221208`、`222204`，确保全部进入 `< 0.01%`。
 3. [ ] **清理老代码与统一门禁**：
-   - [ ] 统一 [simulator/vm/test_vm_30126122_alignment.py](file:///Users/yunkaichen/Downloads/starrail/simulator/vm/test_vm_30126122_alignment.py) 门禁为 `data_driven=True` 且 `total_limit=0.0001`, `turn_limit=0.0001`。
-   - [ ] 彻底删除手写的 `simulator/stage_30126122.py` 与相关过渡测试。
+   - [x] 统一 [test_vm_30126122_alignment.py](file:///d:/Downloads/StarRail-Combat-Simulator/simulator/vm/test_vm_30126122_alignment.py) 全部 8 用例门禁为 `data_driven=True` 且 `total_limit=0.0001`, `turn_limit=0.0001`, `ika_turn_limit=0.0001`。
+   - [ ] 8 用例全绿后，彻底删除手写的 `simulator/stage_30126122.py` 与相关过渡测试。
