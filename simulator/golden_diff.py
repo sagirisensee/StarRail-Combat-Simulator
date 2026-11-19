@@ -2031,13 +2031,17 @@ def run_trajectory_replay(
                         if u not in uid_override_map:
                             continue
                         ename = uid_override_map[u]
-                        if sim.get_entity(ename) is None:
+                        ent = sim.get_entity(ename)
+                        if ent is not None:
+                            ename = ent.name
+                        else:
                             import re as _re
                             m_eg = _re.match(r"^(.+)_g(\d+)_(\d+)$", ename)
                             if m_eg:
                                 alt = f"{m_eg.group(1)}_{(int(m_eg.group(2)) - 1) * 3 + int(m_eg.group(3))}"
-                                if sim.get_entity(alt) is not None:
-                                    ename = alt
+                                ent_alt = sim.get_entity(alt)
+                                if ent_alt is not None:
+                                    ename = ent_alt.name
                         mapped_list.append(ename)
                     if mapped_list:
                         target_ids = tuple(mapped_list)
@@ -2047,16 +2051,18 @@ def run_trajectory_replay(
                         import re as _re
                         mapped_raw = []
                         for tid in raw_tids:
-                            if sim.get_entity(tid) is not None:
-                                mapped_raw.append(tid)
+                            ent = sim.get_entity(tid)
+                            if ent is not None:
+                                mapped_raw.append(ent.name)
                             elif tid == "「灯塔」" and sim.get_entity("正阳狮鹫") is not None:
                                 mapped_raw.append("正阳狮鹫")
                             else:
                                 m_eg = _re.match(r"^(.+)_g(\d+)_(\d+)$", tid)
                                 if m_eg:
                                     alt = f"{m_eg.group(1)}_{(int(m_eg.group(2)) - 1) * 3 + int(m_eg.group(3))}"
-                                    if sim.get_entity(alt) is not None:
-                                        mapped_raw.append(alt)
+                                    ent_alt = sim.get_entity(alt)
+                                    if ent_alt is not None:
+                                        mapped_raw.append(ent_alt.name)
                         if len(mapped_raw) == len(raw_tids):
                             target_ids = tuple(mapped_raw)
                 replay.turn_matched += 1

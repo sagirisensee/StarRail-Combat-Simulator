@@ -1422,13 +1422,17 @@ class TaskExecutor:
         pct = self._eval_num(task.get("HealPercentage"), ctx, 0.0)
         flat = self._eval_num(task.get("ModifyValue"), ctx, 0.0)
 
+        # 施法者属性快照 (Cast-time Snapshot)，避免群奶遍历中途被自身回调触发的 Buff (如加速/转治疗) 污染后续目标
+        snap_healer_max_hp = float(sim.port.max_hp(healer.name))
+        snap_healer_def = float(healer.defense)
+        snap_outgoing = float(sim.port.stat(healer.name, StatType.OUTGOING_HEALING))
+
         for tid in targets:
             tgt = sim.get_entity(tid)
             if tgt is None or tgt.current_hp <= 0:
                 continue
-            healer_max_hp = float(sim.port.max_hp(healer.name))
             if ftype == "HealByHealerMaxHP":
-                base_heal = healer_max_hp * pct + flat
+                base_heal = snap_healer_max_hp * pct + flat
             elif ftype == "HealByTargetMaxHP":
                 base_heal = float(sim.port.max_hp(tgt.name)) * pct + flat
             elif ftype == "HealByTargetLostHP":
@@ -1437,7 +1441,7 @@ class TaskExecutor:
             elif ftype == "HealByBaseValue":
                 base_heal = flat
             elif ftype == "HealByHealerDefence":
-                base_heal = float(healer.defense) * pct + flat
+                base_heal = snap_healer_def * pct + flat
             else:
                 raise NotImplementedError(f"未实现的 HealHP FormulaType: {ftype}")
 
@@ -1461,7 +1465,9 @@ class TaskExecutor:
                 heal_data=heal_data,
             )
 
-            outgoing = float(sim.port.stat(healer.name, StatType.OUTGOING_HEALING)) + heal_data["HealRatioAdded"]
+            # 动态读取施法者当前治疗加成（官方机制：遍历中途触发的遗器加速/转治疗对后续目标实时生效）
+            cur_outgoing = float(sim.port.stat(healer.name, StatType.OUTGOING_HEALING))
+            outgoing = cur_outgoing + heal_data["HealRatioAdded"]
             final_heal = max(0.0, base_heal * (1.0 + outgoing))
             hp_before = float(tgt.current_hp)
             cap = tgt.effective_hp_cap(float(sim.port.max_hp(tgt.name)))

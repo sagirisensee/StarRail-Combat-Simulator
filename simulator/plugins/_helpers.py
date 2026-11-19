@@ -12,6 +12,31 @@ def find_ally(living: Sequence[Any], name: str) -> Optional[Any]:
     return None
 
 
+def find_memosprite_of(living: Sequence[Any], owner_name: str) -> Optional[Any]:
+    """从存活实体列表中查找指定召唤师的存活忆灵（通用，不写死忆灵名称）。"""
+    for ent in living:
+        if getattr(ent, "is_memosprite", False) and (
+            getattr(ent, "summoner_name", None) == owner_name
+            or getattr(ent, "owner_name", None) == owner_name
+        ):
+            return ent
+    # 回退：若只存在唯一存活忆灵则返回之
+    memos = [ent for ent in living if getattr(ent, "is_memosprite", False)]
+    return memos[0] if len(memos) == 1 else None
+
+
+def find_memosprite_name(sim: Any, owner_name: str) -> Optional[str]:
+    """从模拟器当前存活实体中查找指定召唤师的忆灵名称。"""
+    living = [
+        e for e in getattr(sim, "entities", ())
+        if not getattr(e, "is_enemy", False)
+        and not getattr(e, "is_countdown", False)
+        and getattr(e, "current_hp", 0.0) > 0.0
+    ]
+    ent = find_memosprite_of(living, owner_name)
+    return getattr(ent, "name", None) if ent is not None else None
+
+
 def living_sprout_names(sim: Any) -> List[str]:
     """返回当前场上存活的狂兽的胚芽名称列表。"""
     return [

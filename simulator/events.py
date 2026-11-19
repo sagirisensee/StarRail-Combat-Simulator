@@ -222,6 +222,14 @@ class EnemySpawnedEvent(BattleEvent):
     cycle: int = 0
 
 
+@dataclass(frozen=True)
+class AhaExtraTurnEvent(BattleEvent):
+    fixed_laugh_points: int = 20
+    consumed_laugh_points: int = 0
+    remaining_laugh_points: int = 0
+    description: str = ""
+
+
 class EventBus:
     """全局战斗事件总线，负责事件发布与按继承树广播监听。"""
     def __init__(self):

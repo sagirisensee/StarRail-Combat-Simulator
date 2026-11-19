@@ -282,8 +282,12 @@ class VMRuntime:
         if self._battle_entered:
             return
         self._battle_entered = True
+        # 1. 进场前先刷新一次常驻属性区间监听（如风堇行迹 PointB3 速度转治疗加成），确保秘技/进场技能生效时享受足额面板
+        for e in list(self.sim.entities):
+            self.modifier_engine.check_property_changes(e.name)
+        # 2. 触发 OnEnterBattle
         self.modifier_engine.dispatch_event("OnEnterBattle")
-        # 进场初始化完成后刷新所有实体的属性区间监听（如风堇速度 > 200 暴风停歇）
+        # 3. 进场结算完成后再次刷新所有实体的属性区间监听（如风堇速度 > 200 暴风停歇）
         for e in list(self.sim.entities):
             self.modifier_engine.check_property_changes(e.name)
 
@@ -817,9 +821,12 @@ class ConfigAbilityKitAdapter(KitHandler):
             if chosen_ent is not None and chosen_ent in picked_ents:
                 eff_targets = (chosen_ent.name,)
             elif ctx.target_ids:
-                if str(t_info.get("SubTargetType", "")) == "TargetAdjoinEntity" and len(ctx.target_ids) >= 2:
+                norm_ctx_tids = tuple(
+                    getattr(rt.sim.get_entity(tid), "name", tid) for tid in ctx.target_ids
+                )
+                if str(t_info.get("SubTargetType", "")) == "TargetAdjoinEntity" and len(norm_ctx_tids) >= 2:
                     pos_map = {e.name: idx for idx, e in enumerate(picked_ents)}
-                    valid_tids = [tid for tid in ctx.target_ids if tid in pos_map]
+                    valid_tids = [tid for tid in norm_ctx_tids if tid in pos_map]
                     valid_tids.sort(key=lambda tid: pos_map[tid])
                     if len(valid_tids) == 3:
                         eff_targets = (valid_tids[1],)
@@ -829,18 +836,18 @@ class ConfigAbilityKitAdapter(KitHandler):
                         elif pos_map[valid_tids[1]] == len(picked_ents) - 1:
                             eff_targets = (valid_tids[1],)
                         else:
-                            eff_targets = (ctx.target_ids[0],)
+                            eff_targets = (norm_ctx_tids[0],)
                     else:
-                        eff_targets = ctx.target_ids[:1]
+                        eff_targets = norm_ctx_tids[:1]
                 else:
-                    eff_targets = ctx.target_ids[:1]
+                    eff_targets = norm_ctx_tids[:1]
             else:
                 chosen_ent = max(
                     picked_ents,
                     key=lambda e: (
                         bool(getattr(e, "is_boss", False)),
-                        float(getattr(e, "current_hp", 0.0)),
                         float(getattr(e, "max_hp", 0.0)),
+                        float(getattr(e, "current_hp", 0.0)),
                     ),
                 ) if picked_ents else None
                 eff_targets = (chosen_ent.name,) if chosen_ent is not None else ()

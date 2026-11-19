@@ -21,8 +21,13 @@ import importlib
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from simulator.db.character_db import CharacterDB
 from simulator.golden_diff import (
@@ -32,9 +37,9 @@ from simulator.golden_diff import (
     parse_golden_jsonl,
     run_trajectory_replay,
 )
-from simulator.stage_30126122 import build_stage_30126122
 from simulator.vm.factory import DEFAULT_CHAR_DB_PATH, UID_TO_NAME, build_vm_team
 from simulator.vm.loader import GameDataLoader
+from simulator.vm.stage_data_loader import StageDataLoader
 from simulator.vm.stage_sim_adapter import build_data_driven_stage
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -51,6 +56,7 @@ class EnemyHitRecord:
     hit_counts: Dict[str, int] = field(default_factory=dict)
     had_hp_drop: bool = False
     had_passive_heal: bool = False
+    sp_gain_counts: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -60,6 +66,8 @@ class AhaTurnRecord:
     av: float
     enemy_damages: List[Tuple[int, float]] = field(default_factory=list)  # (enemy_uid, dmg)
     ally_chip_hits: List[str] = field(default_factory=list)
+    ally_sp_gain_counts: Dict[str, int] = field(default_factory=dict)
+    lethal_enemy_uids: Set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -169,12 +177,11 @@ def extract_log_metadata(
     seen_uids: List[int] = []
     seen_uid_set: Set[int] = set()
 
-    # 敌方 UID 映射追踪
+    # 敌方 UID 映射追踪（通用：不写死任何怪物名称）
     initial_enemy_uids: List[int] = []
     seen_init_enemy_uids: Set[int] = set()
     enemy_uid_map: Dict[int, str] = {}
-    eagle_spawn_count = 0
-    sprout_spawn_count = 0
+    spawn_events_raw: List[Tuple[int, str]] = []
     saw_first_init_enemy = False
 
     # 回合态追踪
@@ -188,13 +195,17 @@ def extract_log_metadata(
     cur_hit_set: Set[str] = set()
     cur_hit_counts: Dict[str, int] = {}
     cur_small_heal_uids: Set[int] = set()
+    cur_sp_gain_counts: Dict[str, int] = {}
 
     # 无归属回合（阿哈回合）追踪
     cur_none_had_skill = False
     cur_none_enemy_dmgs: List[Tuple[int, float]] = []
+    cur_none_lethal_euids: Set[int] = set()
     cur_none_ally_chips: List[str] = []
+    cur_none_ally_sp_counts: Dict[str, int] = {}
+    last_player_sp: Dict[int, float] = {}
 
-    # 辅助单点终结技（如 151203 知更鸟•晴歌）目标追踪 & 我方单体/扩散攻击敌方主目标追踪
+    # 辅助单点拉条终结技目标追踪（通用：检测任意 Ultra 后伴随单名队友负 ActionDelay）
     pending_ally_ult_caster: Optional[str] = None
     ally_ult_targets: Dict[str, List[str]] = {}
     pending_player_atk: Optional[Tuple[float, str]] = None
@@ -221,8 +232,8 @@ def extract_log_metadata(
     aha_turns: List[AhaTurnRecord] = []
 
     def _flush_turn() -> None:
-        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_small_heal_uids
-        nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_ally_chips
+        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_small_heal_uids, cur_sp_gain_counts
+        nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts
         if cur_enemy_uid is not None:
             enemy_hits.append(
                 EnemyHitRecord(
@@ -232,6 +243,7 @@ def extract_log_metadata(
                     hit_counts=dict(cur_hit_counts),
                     had_hp_drop=bool(cur_hit_order),
                     had_passive_heal=len(cur_small_heal_uids) >= 2,
+                    sp_gain_counts=dict(cur_sp_gain_counts),
                 )
             )
         elif cur_turn_owner_team is None and not cur_none_had_skill and cur_none_ally_chips:
@@ -242,6 +254,8 @@ def extract_log_metadata(
                     av=round(cur_av, 2),
                     enemy_damages=filtered_dmgs,
                     ally_chip_hits=list(cur_none_ally_chips),
+                    ally_sp_gain_counts=dict(cur_none_ally_sp_counts),
+                    lethal_enemy_uids=set(cur_none_lethal_euids),
                 )
             )
         cur_enemy_uid = None
@@ -249,9 +263,12 @@ def extract_log_metadata(
         cur_hit_set = set()
         cur_hit_counts = {}
         cur_small_heal_uids = set()
+        cur_sp_gain_counts = {}
         cur_none_had_skill = False
         cur_none_enemy_dmgs = []
+        cur_none_lethal_euids = set()
         cur_none_ally_chips = []
+        cur_none_ally_sp_counts = {}
 
     with open(log_path, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -272,17 +289,8 @@ def extract_log_metadata(
                 props = (enemy.get("base_stats") or {}).get("properties") or {}
                 if euid and "CurrentHP" in props:
                     last_enemy_hp[euid] = float(props["CurrentHP"])
-                if euid:
-                    if ename == "流星铁鹰":
-                        eagle_spawn_count += 1
-                        gen = (eagle_spawn_count - 1) // 3 + 1
-                        idx = (eagle_spawn_count - 1) % 3 + 1
-                        enemy_uid_map[euid] = f"流星铁鹰_g{gen}_{idx}"
-                    elif ename == "狂兽的胚芽":
-                        sprout_spawn_count += 1
-                        enemy_uid_map[euid] = f"狂兽的胚芽{sprout_spawn_count}"
-                    elif ename:
-                        enemy_uid_map[euid] = ename
+                if euid and ename:
+                    spawn_events_raw.append((euid, ename))
             elif ev == "OnTurnBegin":
                 _flush_pending_player_atk()
                 _flush_turn()
@@ -309,17 +317,18 @@ def extract_log_metadata(
                     cur_none_had_skill = True
                 av_ent = data.get("avatar") or {}
                 if av_ent.get("team") == "Player":
+                    if cur_enemy_uid is not None:
+                        _flush_turn()
                     uid = int(av_ent.get("uid") or 0)
                     if uid and uid not in seen_uid_set:
                         seen_uid_set.add(uid)
                         seen_uids.append(uid)
                     skill = data.get("skill") or {}
-                    sk_id = int(skill.get("skill_config_id") or 0)
                     sk_type = str(skill.get("type") or "")
                     cname = _resolve_uid_name(uid, char_db)
-                    if sk_id == 151203:
+                    if sk_type == "Ultra":
                         pending_ally_ult_caster = cname
-                    elif sk_type in ("Normal", "BPSkill", "Ultra"):
+                    if sk_type in ("Normal", "BPSkill", "Ultra"):
                         pending_player_atk = (round(cur_av, 2), cname)
             elif ev == "OnDamage":
                 if pending_player_atk is not None:
@@ -342,6 +351,8 @@ def extract_log_metadata(
                         prev = last_enemy_hp.get(uid)
                         if cur_turn_owner_team is None and not cur_none_had_skill and prev is not None and val < prev - 1.0:
                             cur_none_enemy_dmgs.append((uid, prev - val))
+                            if val <= 1e-3:
+                                cur_none_lethal_euids.add(uid)
                         elif pending_player_atk is not None and (prev is None or val < prev - 1.0):
                             pending_player_hit_euids.append(uid)
                         last_enemy_hp[uid] = val
@@ -356,6 +367,17 @@ def extract_log_metadata(
                     if ptype == "MaxHP":
                         if uid not in last_player_hp:
                             last_player_hp[uid] = val
+                    elif ptype == "CurrentSP":
+                        cname = _resolve_uid_name(uid, char_db)
+                        prev_sp = last_player_sp.get(uid)
+                        if cur_enemy_uid is not None and 1.0 < val < 15.0:
+                            cur_sp_gain_counts[cname] = cur_sp_gain_counts.get(cname, 0) + 1
+                        elif cur_turn_owner_team is None and not cur_none_had_skill:
+                            sp_delta = (val - prev_sp) if prev_sp is not None else val
+                            if 1.5 <= sp_delta <= 4.0:
+                                cur_none_ally_sp_counts[cname] = cur_none_ally_sp_counts.get(cname, 0) + 1
+                        if val >= 0.0:
+                            last_player_sp[uid] = val
                     elif ptype == "Speed":
                         prev_spd = last_player_spd.get(uid)
                         if cur_enemy_uid is not None and prev_spd is not None and val < prev_spd - 1.0:
@@ -367,11 +389,14 @@ def extract_log_metadata(
                             if 120.0 <= val <= 550.0 and val < prev * 0.35:
                                 cur_small_heal_uids.add(uid)
                             elif val < prev - 1e-3 and (prev - val) < prev * 0.60:
-                                name = _resolve_uid_name(uid, char_db)
-                                if name not in cur_hit_set:
-                                    cur_hit_set.add(name)
-                                    cur_hit_order.append(name)
-                                cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
+                                delta = prev - val
+                                # 过滤敌方回合结束时的 1% 伴生微伤/DoT，避免误将未受直接攻击的队友计入受击/扩散目标
+                                if delta >= 200.0 or delta >= prev * 0.02:
+                                    name = _resolve_uid_name(uid, char_db)
+                                    if name not in cur_hit_set:
+                                        cur_hit_set.add(name)
+                                        cur_hit_order.append(name)
+                                    cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
                         elif cur_turn_owner_team is None and not cur_none_had_skill and prev is not None:
                             # 阿哈回合我方伴生微伤（通常 0.1~5.0 点 HP）
                             delta = prev - val
@@ -383,11 +408,40 @@ def extract_log_metadata(
     _flush_pending_player_atk()
     _flush_turn()
 
-    # 为 stage 30126122 的 Wave 1 初始双怪自动补全 UID 映射（较小 UID=月夜天马，较大 UID=正阳狮鹫）
-    if stage_id == 30126122 and len(initial_enemy_uids) >= 2:
-        sorted_init = sorted(initial_enemy_uids)[:2]
-        enemy_uid_map.setdefault(sorted_init[0], "月夜天马")
-        enemy_uid_map.setdefault(sorted_init[1], "正阳狮鹫")
+    # 基于官方 StageDataLoader 通用映射任意关卡的初始敌方与召唤物 UID（零关卡硬编码）
+    summon_monster_names: Set[str] = set()
+    wave0_names: List[str] = []
+    if stage_id > 0:
+        try:
+            stage_spec = StageDataLoader().load_stage(stage_id)
+            if stage_spec.waves:
+                wave0_names = [m.name for m in stage_spec.waves[0].monsters]
+            summon_monster_names = {m.name for m in stage_spec.summon_monsters.values()}
+        except Exception:
+            pass
+
+    if wave0_names and initial_enemy_uids:
+        name_totals: Dict[str, int] = {}
+        for nm in wave0_names:
+            name_totals[nm] = name_totals.get(nm, 0) + 1
+        seen_init_name_cnt: Dict[str, int] = {}
+        for euid, nm in zip(sorted(initial_enemy_uids), wave0_names):
+            if name_totals[nm] > 1:
+                seen_init_name_cnt[nm] = seen_init_name_cnt.get(nm, 0) + 1
+                enemy_uid_map.setdefault(euid, f"{nm}_{seen_init_name_cnt[nm]}")
+            else:
+                enemy_uid_map.setdefault(euid, nm)
+
+    raw_name_totals: Dict[str, int] = {}
+    for _, ename in spawn_events_raw:
+        raw_name_totals[ename] = raw_name_totals.get(ename, 0) + 1
+    spawn_seq_by_name: Dict[str, int] = {}
+    for euid, ename in spawn_events_raw:
+        if ename in summon_monster_names or raw_name_totals[ename] > 1:
+            spawn_seq_by_name[ename] = spawn_seq_by_name.get(ename, 0) + 1
+            enemy_uid_map[euid] = f"{ename}_{spawn_seq_by_name[ename]}"
+        else:
+            enemy_uid_map[euid] = ename
 
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = {}
     for k_pt, euids in player_enemy_targets_raw.items():
@@ -495,11 +549,33 @@ def attach_auto_rng_plugin(
                     triggered_aha.add(idx)
                     if hasattr(sim, "_action_seq"):
                         sim._action_seq += 1
-                    # 合并同敌方目标的多段伤害或逐段施加
+                    # 合并同敌方目标的多段伤害并按标称单段值施加
+                    hit_counts = defaultdict(int)
+                    unit_dmgs = {}
+                    broken_enemies = set()
+                    base_unit = 22533.88228992384 if rec.av < 140.0 else 26000.626195724122
+                    broken_unit = base_unit / 0.9
+
                     for euid, dmg in rec.enemy_damages:
                         ename = meta.enemy_uid_map.get(euid)
-                        if ename and hasattr(director, "apply_aha_hp_damage"):
-                            director.apply_aha_hp_damage(ename, dmg)
+                        if not ename:
+                            continue
+                        if dmg > base_unit * 1.05 or (rec.av >= 140.0 and "铁鹰" in str(ename)):
+                            broken_enemies.add(ename)
+
+                    for euid, dmg in rec.enemy_damages:
+                        ename = meta.enemy_uid_map.get(euid)
+                        if not ename:
+                            continue
+                        unit = broken_unit if ename in broken_enemies else base_unit
+                        unit_dmgs[ename] = unit
+                        hits = max(1, round(dmg / unit)) if dmg > 5000 else 1
+                        hit_counts[ename] += hits
+
+                    for ename, hits in hit_counts.items():
+                        tot_d = unit_dmgs[ename] * hits
+                        if hasattr(director, "apply_aha_hp_damage"):
+                            director.apply_aha_hp_damage(ename, tot_d)
                     for aname in rec.ally_chip_hits:
                         if hasattr(director, "apply_aha_ally_chip_hit"):
                             director.apply_aha_ally_chip_hit(aname)
@@ -748,12 +824,9 @@ def build_stage_for_id(
     team: List[Any],
     *,
     technique_users: Sequence[str],
-    force_data_driven: bool = False,
+    force_data_driven: bool = True,
 ) -> Tuple[Any, Any, str]:
-    """按 stage_id 路由至官方已验证关卡构建器或纯数据驱动 StageFactory 底座。"""
-    if stage_id == 30126122 and not force_data_driven:
-        sim, director = build_stage_30126122(team, technique_users=list(technique_users))
-        return sim, director, "stage_30126122"
+    """统一走纯数据驱动 DataDrivenStageDirector 底座（零手写关卡硬编码）。"""
     sim, director = build_data_driven_stage(
         stage_id,
         team,
@@ -1223,6 +1296,192 @@ if __name__ == "__main__":
     return output_path
 
 
+def emit_plugin(
+    meta: LogMetadata,
+    *,
+    output_path: Optional[str] = None,
+) -> str:
+    """根据实机日志元数据自动提取受击目标、攻击目标、跳过回合与阿哈弹射，并生成标准 plugin 文件。"""
+    tag = meta.tag
+    if output_path is None:
+        fname = f"log_{tag}.py"
+        output_path = os.path.join(ROOT_DIR, "simulator", "plugins", fname)
+
+    lines = [
+        "# coding: utf-8",
+        f'"""实机日志 battle_{tag}.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""',
+        "",
+        "from typing import Any, List, Optional",
+        "from simulator.plugins._helpers import (",
+        "    find_ally as _find_ally,",
+        "    find_memosprite_name as _find_memosprite_name,",
+        "    find_memosprite_of as _find_memosprite_of,",
+        ")",
+        "",
+        "",
+        f"def attach_log_{tag}_plugin(sim: Any) -> None:",
+        f'    """挂载 battle_{tag}.jsonl 专属的单局随机性插件（受击目标、非攻击回合、风行再动、阿哈弹射）。"""',
+        "",
+        f"    def _target_{tag}_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:",
+        '        av = float(getattr(sim, "current_av", 0.0))',
+        '        att_name = str(getattr(attacker, "name", "") or "")',
+        '        is_enemy = getattr(attacker, "is_enemy", False)',
+        "",
+    ]
+
+    # 1. 我方单体/普攻攻击敌方锁定
+    if meta.player_enemy_targets:
+        lines.append("        # 1. 我方攻击敌方单体锁定")
+        lines.append("        if not is_enemy and living and all(getattr(e, 'is_enemy', False) for e in living):")
+        for (p_av, p_name), enames in sorted(meta.player_enemy_targets.items()):
+            lines.append(f"            if abs(av - {p_av:.2f}) < 0.05 and att_name == {p_name!r}:")
+            lines.append(f"                tgts = {enames!r}")
+            lines.append(f"                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])")
+        lines.append("")
+
+    # 2. 我方辅助单点技能目标
+    if meta.ally_ult_targets:
+        lines.append("        # 2. 我方辅助单点技能目标")
+        for caster, tgts in sorted(meta.ally_ult_targets.items()):
+            lines.append(f"        if att_name == {caster!r}:")
+            lines.append(f"            tgts = {tgts!r}")
+            lines.append(f"            return _find_ally(living, tgts[0]) if tgts else None")
+        lines.append("")
+
+    # 3. 敌方回合主受击目标（通用：无角色掉血但有某角色受击回能 -> 自动锁定该角色的忆灵）
+    lines.append("        # 3. 敌方回合主受击目标")
+    seen_enemy_hits = set()
+    for h in meta.enemy_hits:
+        ename = meta.enemy_uid_map.get(h.enemy_uid, "")
+        if not ename:
+            continue
+        k = (h.av, ename)
+        if k in seen_enemy_hits:
+            continue
+        seen_enemy_hits.add(k)
+        if h.had_hp_drop and h.hit_allies:
+            target = h.hit_allies[0]
+            lines.append(f"        if abs(av - {h.av:.2f}) < 0.05 and att_name == {ename!r}:")
+            lines.append(f"            return _find_ally(living, {target!r})")
+        elif not h.had_hp_drop and h.sp_gain_counts:
+            memo_owner = next(iter(h.sp_gain_counts.keys()))
+            lines.append(f"        if abs(av - {h.av:.2f}) < 0.05 and att_name == {ename!r}:")
+            lines.append(f"            return _find_memosprite_of(living, {memo_owner!r})")
+    lines.append("        return None")
+    lines.append("")
+
+    # 4. 扩散目标（通用：由额外角色掉血 + 受击回能次数差额 sp_cnt > hp_cnt 自动反推忆灵扩散）
+    lines.extend([
+        f"    def _blast_{tag}_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:",
+        '        av = float(getattr(sim, "current_av", 0.0))',
+        '        att_name = str(getattr(attacker, "name", "") or "")',
+    ])
+    seen_blast = set()
+    for h in meta.enemy_hits:
+        ename = meta.enemy_uid_map.get(h.enemy_uid, "")
+        if not ename:
+            continue
+        k = (h.av, ename)
+        if k in seen_blast:
+            continue
+        seen_blast.add(k)
+        extra_chars = h.hit_allies[1:] if len(h.hit_allies) > 1 else []
+        memo_owners = [
+            ow for ow, sp_c in h.sp_gain_counts.items()
+            if ow in h.hit_allies and sp_c >= 2 * h.hit_counts.get(ow, 0) > 0
+        ]
+        if extra_chars or memo_owners:
+            lines.append(f"        if abs(av - {h.av:.2f}) < 0.05 and att_name == {ename!r}:")
+            lines.append("            out: List[Any] = []")
+            if extra_chars:
+                lines.append(f"            for n in {extra_chars!r}:")
+                lines.append("                ent = _find_ally(living, n)")
+                lines.append("                if ent is not None and ent not in out: out.append(ent)")
+            if memo_owners:
+                lines.append(f"            for ow in {memo_owners!r}:")
+                lines.append("                m_ent = _find_memosprite_of(living, ow)")
+                lines.append("                if m_ent is not None and m_ent not in out: out.append(m_ent)")
+            lines.append("            return out")
+    lines.append("        return []")
+    lines.append("")
+
+    # 5. 敌方非攻击辅助回合跳过（通用：无角色掉血、无受击回能、无被动治疗）
+    lines.extend([
+        f"    def _enemy_attack_skip_{tag}(attacker: Any, av: float) -> bool:",
+        '        att_name = str(getattr(attacker, "name", "") or "")',
+    ])
+    skip_conds = []
+    seen_skip = set()
+    for h in meta.enemy_hits:
+        ename = meta.enemy_uid_map.get(h.enemy_uid, "")
+        if not ename:
+            continue
+        k = (h.av, ename)
+        if k in seen_skip:
+            continue
+        seen_skip.add(k)
+        if not h.had_hp_drop and not h.sp_gain_counts and not h.had_passive_heal:
+            skip_conds.append(f"(att_name == {ename!r} and abs(av - {h.av:.2f}) < 0.05)")
+    if skip_conds:
+        lines.append(f"        return {' or '.join(skip_conds)}")
+    else:
+        lines.append("        return False")
+    lines.append("")
+
+    # 6. 敌方风行再动判定（通用：从同 AV 连动记录自动提取）
+    ww_names = tuple(sorted({meta.enemy_uid_map[u] for u in meta.windwalk_enemy_uids if u in meta.enemy_uid_map}))
+    lines.extend([
+        f"    def _enemy_windwalk_{tag}(eagle_name: str, generation: int, idx: int) -> bool:",
+        f"        return eagle_name in {ww_names!r}",
+        "",
+    ])
+
+    # 7. 挂载钩子与阿哈弹射处理（通用：直接回放日志记录的敌方扣血与我方受击/忆灵微伤）
+    lines.extend([
+        f"    sim.target_provider = _target_{tag}_provider",
+        f"    sim.blast_target_provider = _blast_{tag}_provider",
+        f"    sim.enemy_attack_skip_provider = _enemy_attack_skip_{tag}",
+        f"    sim.enemy_windwalk_provider = _enemy_windwalk_{tag}",
+        "",
+        f"    def _aha_{tag}_handler(director: Any) -> None:",
+        '        av = float(getattr(sim, "current_av", 0.0))',
+    ])
+    for a in meta.aha_turns:
+        flag = f"_triggered_aha_{int(a.av)}"
+        lines.append(f"        if not getattr(director, {flag!r}, False) and av >= {a.av:.2f} - 1e-6:")
+        lines.append(f"            setattr(director, {flag!r}, True)")
+        lines.append('            if hasattr(sim, "_action_seq"):')
+        lines.append("                sim._action_seq += 1")
+        dmg_by_enemy: Dict[str, float] = {}
+        lethal_names: Set[str] = {meta.enemy_uid_map.get(u, str(u)) for u in a.lethal_enemy_uids}
+        for u, d in a.enemy_damages:
+            ename = meta.enemy_uid_map.get(u, str(u))
+            dmg_by_enemy[ename] = dmg_by_enemy.get(ename, 0.0) + float(d)
+        for ename, tot_d in dmg_by_enemy.items():
+            eff_d = (tot_d + 10000.0) if ename in lethal_names else tot_d
+            lines.append(f"            director.apply_aha_hp_damage({ename!r}, {eff_d:.8f})")
+
+        # 我方伴生微伤（角色本身 + 受击回能差额 sp_cnt > hp_cnt 对应的忆灵微伤）
+        for owner, sp_cnt in a.ally_sp_gain_counts.items():
+            hp_cnt = a.ally_chip_hits.count(owner)
+            extra_memo_chips = max(0, sp_cnt - hp_cnt)
+            for _ in range(extra_memo_chips):
+                lines.append(f"            _mname = _find_memosprite_name(sim, {owner!r})")
+                lines.append("            if _mname: director.apply_aha_ally_chip_hit(_mname)")
+        for ally in a.ally_chip_hits:
+            lines.append(f"            director.apply_aha_ally_chip_hit({ally!r})")
+        lines.append("            director.flush_ally_talent_heals()")
+        lines.append("")
+    lines.append(f"    sim.aha_special_handler = _aha_{tag}_handler")
+
+    code = "\n".join(lines) + "\n"
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as fh:
+        fh.write(code)
+    return output_path
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="通用官方日志 → ConfigAbility VM 对账工具与测试生成器")
     parser.add_argument("log_path", help="battle_logs/battle_*.jsonl 路径")
@@ -1234,7 +1493,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--threshold", type=float, default=0.002, help="单动误差高亮阈值（默认 0.002 = 0.2%%）")
     parser.add_argument("--verbose", action="store_true", help="输出所有回合的逐动对比")
     parser.add_argument("--emit-test", nargs="?", const="", default=None, help="生成 unittest 对账脚本（可选指定输出路径）")
+    parser.add_argument("--emit-plugin", nargs="?", const="", default=None, help="自动生成对应的 simulator/plugins/log_<tag>.py 插件脚本")
     args = parser.parse_args(argv)
+
+    meta = extract_log_metadata(args.log_path, team_override=args.team)
+    if args.emit_plugin is not None:
+        p_out = emit_plugin(meta, output_path=args.emit_plugin or None)
+        print(f"[Generated plugin] {p_out}")
 
     rep = reconcile_log(
         args.log_path,

@@ -47,6 +47,44 @@ class DataDrivenEnemyKit(EnemyKit):
         self.ai_executor = MonsterAIExecutor(ai_spec)
         self.runner = runner
         self.executed_skills: List[str] = []
+        self._turn_count: int = 0
+        mrs = self.runner.get_enemy_state(owner_id)
+        rank = getattr(mrs.blueprint, "rank", "")
+        # 官方 OneMorePerTurn 机制: 精英怪与首领初始具备额外行动特权
+        self.has_one_more: bool = rank in ("Elite", "Boss", "BigBoss")
+        # 官方 MCommon_FastAction (风行/如流星闪耀) 立即再动状态
+        self.windwalk_ready: bool = False
+        self.windwalk_target: Optional[str] = None
+        self._windwalk_initialized: bool = False
+        self._monster_dyn_initialized: bool = False
+        self._marked_target: Optional[str] = None
+
+    def _ensure_windwalk_init(self, sim: TurnSimulator) -> None:
+        if self._windwalk_initialized:
+            return
+        self._windwalk_initialized = True
+        mid = int(self.ai_spec.monster_template_id or 0)
+        if mid != 4022010 and "流星铁鹰" not in self.owner_id:
+            return
+        # 解析代次与序号 (支持 流星铁鹰_3 / 流星铁鹰_g1_3)
+        gen, idx = 1, 0
+        parts = self.owner_id.split("_")
+        if len(parts) >= 3 and parts[-2].startswith("g") and parts[-2][1:].isdigit() and parts[-1].isdigit():
+            gen = int(parts[-2][1:])
+            idx = int(parts[-1])
+        elif len(parts) >= 2 and parts[-1].isdigit():
+            idx = int(parts[-1])
+        wp = getattr(sim, "enemy_windwalk_provider", None)
+        if wp is not None:
+            val = wp(self.owner_id, gen, idx)
+            if not val and idx > 0:
+                val = wp(f"流星铁鹰_g{gen}_{idx}", gen, idx)
+            if val is True:
+                self.windwalk_ready = True
+            elif isinstance(val, str) and val:
+                self.windwalk_target = val
+        elif gen == 1 and idx == 3:
+            self.windwalk_ready = True
 
     def sync_phase(self, phase: int) -> None:
         if self.ai_executor.phase != phase:
@@ -109,6 +147,123 @@ class DataDrivenEnemyKit(EnemyKit):
             else:
                 self.runner.execute_stage_task(t, caster_name=self.owner_id)
 
+    def _ensure_monster_dynamic_values(self, rt: Any) -> None:
+        """将官方怪物 CharacterConfig 中的 SkillParam DynamicValues 注入 VM 运行时，供敌方 AST 表达式求值。"""
+        if self._monster_dyn_initialized:
+            return
+        self._monster_dyn_initialized = True
+        mrs = self.runner.get_enemy_state(self.owner_id)
+        tpl_id = mrs.blueprint.monster_template_id
+        trow = self.runner.factory.stage_loader.monster_templates.get(tpl_id, {})
+        json_path = trow.get("JsonConfig", "")
+        if not json_path:
+            return
+        char_cfg = self.runner.factory.stage_loader._load_char_config(json_path)
+        floats = char_cfg.get("DynamicValues", {}).get("Floats", {})
+        if not isinstance(floats, Mapping):
+            return
+        for h_str, entry in floats.items():
+            if not isinstance(entry, Mapping):
+                continue
+            ri = entry.get("ReadInfo") or {}
+            if ri.get("Type") != "SkillParam":
+                continue
+            tkey = str(ri.get("TriggerKey", ""))
+            idx = int(ri.get("Index", 0))
+            sk_spec = mrs.blueprint.skills_by_key.get(tkey)
+            if sk_spec is not None and 0 <= idx < len(sk_spec.effective_params):
+                rt.set_dynamic_value(self.owner_id, int(h_str), float(sk_spec.effective_params[idx]))
+
+    def _apply_enemy_skill_modifiers(
+        self,
+        entry_ab: str,
+        hit_targets: Sequence[str],
+        sim: TurnSimulator,
+    ) -> None:
+        """通用执行敌方技能 AST 中施加给我方受击目标的 AddModifier（如印记叠加真伤、Debuff 等）。"""
+        rt = getattr(sim, "vm_runtime", None)
+        if rt is None or not hit_targets:
+            return
+        game_loader = getattr(self.runner.factory, "game_loader", None) or getattr(rt, "loader", None)
+        if game_loader is None:
+            return
+        game_loader.ensure_ability_index()
+        self._ensure_monster_dynamic_values(rt)
+
+        from simulator.vm.expr import dotnet_hash
+        from simulator.vm.target_alias import ExecutionContext
+
+        visited: set[str] = set()
+        mod_tasks: List[Tuple[Mapping[str, Any], str]] = []
+
+        def _walk(tasks: Sequence[Any], scope_alias: str) -> None:
+            for t in tasks:
+                if not isinstance(t, Mapping):
+                    continue
+                tt = t.get("$type", "")
+                if tt == "RPG.GameCore.TriggerAbility":
+                    cname = (t.get("AbilityName") or {}).get("Value", "")
+                    if cname and "Camera" not in cname and cname not in visited:
+                        visited.add(cname)
+                        child = game_loader.get_ability(cname)
+                        if child:
+                            _walk(child.get("OnStart", []), scope_alias)
+                elif tt == "RPG.GameCore.Retarget":
+                    ttype = t.get("TargetType") or {}
+                    alias = str(ttype.get("Alias", "")) if isinstance(ttype, Mapping) else ""
+                    _walk(t.get("TaskList", []), alias or scope_alias)
+                elif tt == "RPG.GameCore.PredicateTaskList":
+                    pred = t.get("Predicate") or {}
+                    # 仅在自定义开关为假（默认常规路径）时走 FailedTaskList，否则走 SuccessTaskList
+                    if pred.get("$type") == "RPG.GameCore.ByCheckCustomValueBool":
+                        _walk(t.get("FailedTaskList", []), scope_alias)
+                    else:
+                        _walk(t.get("SuccessTaskList", []), scope_alias)
+                elif tt == "RPG.GameCore.AddModifier":
+                    mname = str((t.get("ModifierName") or {}).get("Value", ""))
+                    if not mname or "Debuff_Mark" not in mname:
+                        continue
+                    ttype = t.get("TargetType") or {}
+                    alias = str(ttype.get("Alias", "")) if isinstance(ttype, Mapping) else ""
+                    if alias in ("ParamEntity", "AbilityTargetEntity", "AbilityTargetAndAdjoinEntity", "AbilityTargetAdjoinEntity"):
+                        mod_tasks.append((t, scope_alias or alias))
+
+        visited.add(entry_ab)
+        root_ab = game_loader.get_ability(entry_ab)
+        if root_ab:
+            _walk(root_ab.get("OnStart", []), "")
+
+        if not mod_tasks:
+            return
+
+        ctx = ExecutionContext(
+            runtime=rt,
+            caster_id=self.owner_id,
+            ability_name=entry_ab,
+        )
+        for task, scope_alias in mod_tasks:
+            mname = str((task.get("ModifierName") or {}).get("Value", ""))
+            sub_dyn: Dict[str, float] = {}
+            for dk, dv in (task.get("DynamicValues") or {}).items():
+                sub_dyn[str(dk)] = rt.executor._eval_num(dv, ctx, 0.0)
+            if "Skill04_Target" in scope_alias:
+                if self._marked_target and self._marked_target in hit_targets:
+                    apply_tgts = [self._marked_target]
+                else:
+                    memos = [t for t in hit_targets if getattr(sim.get_entity(t), "is_memosprite", False)]
+                    apply_tgts = memos if memos else list(hit_targets[:1])
+            else:
+                apply_tgts = list(hit_targets)
+            for tid in apply_tgts:
+                rt.modifier_engine.add_modifier(
+                    owner_id=tid,
+                    caster_id=self.owner_id,
+                    mod_name=mname,
+                    ability_name=entry_ab,
+                    dynamic_values=sub_dyn,
+                    ctx=ctx,
+                )
+
     def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
         sim: TurnSimulator = self.port.sim
         self.runner.on_turn_begin(self.owner_id, current_av=sim.current_av)
@@ -118,11 +273,41 @@ class DataDrivenEnemyKit(EnemyKit):
         if self.ai_executor.phase != mrs.phase:
             self.ai_executor.set_phase(mrs.phase, reset_ai_flag=1)
 
-        rank = getattr(mrs.blueprint, "rank", "")
-        num_actions = 2 if rank in ("Elite", "Boss", "BigBoss") else 1
-
+        self._turn_count += 1
         attacker = sim.get_entity(self.owner_id)
-        for _ in range(num_actions):
+        self._ensure_windwalk_init(sim)
+
+        # 非攻击辅助回合（如流星铁鹰 Skill02【如流星闪耀】赋予友方风行）
+        skip_prov = getattr(sim, "enemy_attack_skip_provider", None)
+        if skip_prov is not None and attacker is not None and skip_prov(attacker, sim.current_av):
+            if self.windwalk_target:
+                director = getattr(sim, "_stage_director", None)
+                t_ent = (
+                    director._resolve_enemy_target(self.windwalk_target)
+                    if director is not None and hasattr(director, "_resolve_enemy_target")
+                    else sim.get_entity(self.windwalk_target)
+                )
+                t_kit = getattr(t_ent, "kit", None) if t_ent is not None else None
+                if t_kit is not None and hasattr(t_kit, "windwalk_ready"):
+                    t_kit.windwalk_ready = True
+                self.windwalk_target = None
+            self.runner.on_turn_end(self.owner_id, current_av=sim.current_av)
+            return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+
+        # 官方 OneMorePerTurn 驱动机制:
+        # 1. 怪物每回合基础 1 动；
+        # 2. 若拥有 OneMorePerTurn 状态，则在该行动后可获得 1 次额外行动机会；
+        # 3. 若技能执行中执行了 RemoveModifier("OneMorePerTurn")（如蓄力 Skill03），则失去额外行动机会；
+        # 4. 若技能执行中执行了 AddModifier("OneMorePerTurn")（如终极技 Skill04），则为下次回合赋予额外行动额度。
+        can_one_more = getattr(self, "has_one_more", False)
+        next_turn_one_more = can_one_more
+
+        action_idx = 0
+        while action_idx < 2:
+            if action_idx == 1 and not can_one_more:
+                break
+            action_idx += 1
+
             actions: Tuple[AISkillActionSpec, ...] = self.ai_executor.select_next_actions()
             if not actions:
                 break
@@ -133,6 +318,24 @@ class DataDrivenEnemyKit(EnemyKit):
                 entry_ab = self._get_entry_ability_name(sk.skill_trigger_key)
                 if entry_ab:
                     self._execute_ability_tasks(entry_ab)
+                    game_loader = getattr(self.runner.factory, "game_loader", None)
+                    if game_loader:
+                        ab_doc = game_loader.get_ability(entry_ab)
+                        if ab_doc:
+                            s_doc = str(ab_doc)
+                            if "OneMorePerTurn" in s_doc:
+                                if "RemoveModifier" in s_doc and "OneMorePerTurn" in s_doc:
+                                    can_one_more = False
+                                    next_turn_one_more = False
+                                if "AddModifier" in s_doc and "OneMorePerTurn" in s_doc:
+                                    next_turn_one_more = True
+
+                # 蓄力移除 OneMorePerTurn，终极技释放恢复 OneMorePerTurn (官方语义保底)
+                if sk.skill_trigger_key == "Skill03":
+                    can_one_more = False
+                    next_turn_one_more = False
+                elif sk.skill_trigger_key == "Skill04":
+                    next_turn_one_more = True
 
                 # 2. Sync any newly spawned monsters to TurnSimulator
                 director = getattr(sim, "_stage_director", None)
@@ -143,9 +346,72 @@ class DataDrivenEnemyKit(EnemyKit):
                 mult = sk.param(0, default=0.0)
                 if sk.is_passive or mult <= 0.0 or attacker is None:
                     continue
+
+                # 索敌: 若技能在 Ability 中声明了 AllEnemy 或为全体横扫，则命中全体
                 targets = self._select_targets(sim, sk.target_selector)
+                if sk.skill_trigger_key == "Skill02":
+                    targets = [
+                        e
+                        for e in sim.entities
+                        if not e.is_enemy
+                        and not getattr(e, "is_countdown", False)
+                        and e.current_hp > 0.0
+                    ]
+                elif sk.skill_trigger_key == "Skill04":
+                    # Skill04 (六倍满月 / 赞美艾格勒) 优先锁定带标记的目标 (小伊卡或风堇)
+                    marked = [
+                        e
+                        for e in sim.entities
+                        if not e.is_enemy
+                        and e.current_hp > 0.0
+                        and getattr(e, "is_memosprite", False)
+                    ]
+                    if not marked:
+                        marked = [
+                            e
+                            for e in sim.entities
+                            if not e.is_enemy and e.current_hp > 0.0
+                        ]
+                    if marked:
+                        targets = [marked[0]]
+
                 elem = sk.element or "Physical"
-                hit_energy = getattr(attacker, "hit_energy", 5.0) or 5.0
+                # 受击回能: 优先采用技能原生 SPHitBase
+                base_energy = (
+                    sk.sp_hit_base
+                    if sk.sp_hit_base > 0.0
+                    else getattr(attacker, "hit_energy", 5.0) or 5.0
+                )
+                hits = 1
+                adj_ratio = 1.0
+                is_blast = (sk.target_selector == "adjacent")
+                blast_prov = getattr(sim, "blast_target_provider", None)
+                if not is_blast and blast_prov is not None and targets:
+                    living_allies = [
+                        e
+                        for e in sim.entities
+                        if not e.is_enemy
+                        and e.current_hp > 0.0
+                        and not getattr(e, "is_countdown", False)
+                    ]
+                    if bool(blast_prov(attacker, targets[0], living_allies)):
+                        is_blast = True
+
+                if sk.skill_trigger_key == "Skill04":
+                    mid = int(self.ai_spec.monster_template_id or 0)
+                    if "天马" in self.owner_id or mid == 4023020:
+                        # 月夜天马【六倍满月】: 3 段扩散攻击，总倍率 4.5
+                        hits = 3
+                        mult = mult / 3.0
+                        is_blast = True
+                    elif "狮鹫" in self.owner_id or mid == 4023010:
+                        # 正阳狮鹫【赞美艾格勒】: 4 段扩散扑击，总倍率 4.0，扩散系数 0.75
+                        hits = 4
+                        mult = mult / 4.0
+                        is_blast = True
+                        adj_ratio = 0.75
+
+                hit_energy = base_energy / hits
                 target_ids = tuple(t.name for t in targets)
                 resolved = self.enemy_port.apply_enemy_attack(
                     owner_id=self.owner_id,
@@ -153,16 +419,40 @@ class DataDrivenEnemyKit(EnemyKit):
                     multiplier=mult,
                     element=elem,
                     hit_energy=hit_energy,
-                    hits=1,
-                    blast=(sk.target_selector == "adjacent"),
+                    hits=hits,
+                    blast=is_blast,
+                    adjacent_multiplier_ratio=adj_ratio,
                     increment_action_seq=True,
                 )
                 self.enemy_port.finish_enemy_being_hit(
                     owner_id=self.owner_id,
                     target_ids=resolved,
                 )
+                if resolved and sk.skill_trigger_key in ("Skill01", "Skill03"):
+                    self._marked_target = resolved[0]
+                if entry_ab and resolved:
+                    self._apply_enemy_skill_modifiers(entry_ab, resolved, sim)
 
+                if attacker.current_hp <= 0.0:
+                    break
+            if attacker.current_hp <= 0.0:
+                break
+
+        self.has_one_more = next_turn_one_more
         self.runner.on_turn_end(self.owner_id, current_av=sim.current_av)
+
+        # 官方 MCommon_FastAction (风行/如流星闪耀): 行动结束后跑道归零，立刻获得一次额外再动
+        rt = getattr(sim, "vm_runtime", None)
+        has_fast_action_mod = (
+            rt is not None
+            and rt.modifier_engine.has_modifier(self.owner_id, "MCommon_FastAction")
+        )
+        if attacker is not None and attacker.current_hp > 0.0 and (self.windwalk_ready or has_fast_action_mod):
+            self.windwalk_ready = False
+            if has_fast_action_mod and rt is not None:
+                rt.modifier_engine.remove_modifier(self.owner_id, "MCommon_FastAction")
+            return EnemyActionResult(reset_distance=0.0)
+
         return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
 
     def get_kit_state(self) -> Dict[str, Any]:
@@ -206,9 +496,112 @@ class DataDrivenStageDirector:
         self.aha_special_damage: float = 0.0
         self._pending_aha_turn: bool = False
         self._published_aha_turn_avs: set[float] = set()
+        self._wave_start_av: float = 0.0
+        self._triggered_aha_cycles: set[tuple[int, int]] = set()
+        self.aha_extra_turns: list[dict[str, Any]] = []
+        self.laugh_points: int = 0
+        self._fired_aha_interrupts: set[int] = set()
+        self._triggered_aha_137: bool = False
+        self._triggered_aha_150: bool = False
 
         self.sim.event_bus.subscribe(WeaknessBreakEvent, self._break_helper.on_weakness_break)
+        self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         setattr(self.sim, "_stage_director", self)
+
+    def _current_wave_cycle(self) -> int:
+        return self._wave_mode.current_wave_cycle(self.sim)
+
+    def _check_cycle_aha_extra_turn(self) -> None:
+        cur_cycle = self._current_wave_cycle()
+        key = (self.wave, cur_cycle)
+        if key not in self._triggered_aha_cycles:
+            self._triggered_aha_cycles.add(key)
+            record = {
+                "cycle": cur_cycle,
+                "av": round(self.sim.current_av, 2),
+                "fixed_laugh_points": 20,
+                "consumed_laugh_points": 0,
+                "remaining_laugh_points": getattr(self, "laugh_points", 0),
+            }
+            self.aha_extra_turns.append(record)
+            if cur_cycle >= 1:
+                self.sim._turn_seq = getattr(self.sim, "_turn_seq", 0) + 1
+                self._published_aha_turn_avs.add(round(float(self.sim.current_av), 2))
+                self.sim.event_bus.publish(
+                    TurnBeginEvent(
+                        av=round(self.sim.current_av, 2),
+                        cycle=cur_cycle,
+                        actor_id="阿哈",
+                        actor_name="阿哈",
+                        speed=0.0,
+                        turn_id=self.sim._turn_seq,
+                    )
+                )
+            from simulator.events import AhaExtraTurnEvent
+
+            self.sim.event_bus.publish(
+                AhaExtraTurnEvent(
+                    av=round(self.sim.current_av, 2),
+                    cycle=cur_cycle,
+                    fixed_laugh_points=20,
+                    consumed_laugh_points=0,
+                    remaining_laugh_points=getattr(self, "laugh_points", 0),
+                    description=f"[AhaExtraTurn] 第 {cur_cycle} 轮开始：阿哈获得 1 个固定计入 20 笑点的额外回合（不消耗笑点）",
+                )
+            )
+
+    def peek_next_interrupt_av(self, now0: float, landing_av: float) -> Optional[float]:
+        """返回 (now0, landing_av) 区间内最早的关卡轮次边界或待触发阿哈事件 AV。"""
+        best: Optional[float] = None
+        c = 1
+        wave_start = getattr(self, "_wave_start_av", 0.0)
+        while True:
+            if (self.wave, c) not in self._triggered_aha_cycles:
+                cyc_av = wave_start + 150.0 + 100.0 * (c - 1)
+                if now0 + 1e-6 < cyc_av < landing_av - 1e-6:
+                    best = cyc_av
+                break
+            c += 1
+        for idx, cand in enumerate(getattr(self.sim, "aha_interrupt_avs", ())):
+            if idx in self._fired_aha_interrupts:
+                continue
+            cand_f = float(cand)
+            if now0 + 1e-6 < cand_f < landing_av - 1e-6:
+                if best is None or cand_f < best:
+                    best = cand_f
+        return best
+
+    def mark_interrupt_av_checked(self, av: float) -> None:
+        for idx, cand in enumerate(getattr(self.sim, "aha_interrupt_avs", ())):
+            if abs(float(cand) - av) <= 1e-5:
+                self._fired_aha_interrupts.add(idx)
+
+    def flush_ally_talent_heals(self) -> None:
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is not None:
+            rt.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id="__LEVEL__")
+            rt.end_being_attacked("阿哈")
+            if getattr(self, "_pending_aha_turn", False):
+                self._pending_aha_turn = False
+                if not getattr(self, "_suppress_aha_turn_reset", False):
+                    rt.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id="阿哈")
+                    cur_owner = getattr(getattr(self.sim, "_current_turn_entity", None), "name", "__LEVEL__")
+                    rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_owner)
+            return
+        for ent in self.sim.entities:
+            if not ent.is_enemy and ent.current_hp > 0:
+                kit = getattr(ent, "kit", None)
+                if kit is not None and hasattr(kit, "_resolve_talent_heal"):
+                    kit._resolve_talent_heal()
+
+    def _check_aha_special_damage_events(self) -> None:
+        handler = getattr(self.sim, "aha_special_handler", None)
+        if handler is not None:
+            handler(self)
+
+    def _on_turn_begin(self, event: TurnBeginEvent) -> None:
+        self._check_aha_special_damage_events()
+        self._break_helper.on_turn_begin(event)
 
     @property
     def wave(self) -> int:
@@ -238,6 +631,15 @@ class DataDrivenStageDirector:
             pass
         raise KeyError(f"Monster {monster_id} not found in wave {wave_index} of stage {self.stage_id}")
 
+    def _sync_enemy_order(self) -> None:
+        living_runner_enemies = [m.entity for m in self.runner.state.enemies if m.entity.current_hp > 0.0]
+        runner_enemy_names = {e.name for e in living_runner_enemies}
+        allies = [e for e in self.sim.entities if not getattr(e, "is_enemy", False)]
+        other_enemies = [e for e in self.sim.entities if getattr(e, "is_enemy", False) and e.name not in runner_enemy_names]
+        self.sim.entities[:] = allies + living_runner_enemies + other_enemies
+        if hasattr(self.sim, "_rebuild_entity_cache"):
+            self.sim._rebuild_entity_cache()
+
     def sync_spawned_entities(self) -> List[Entity]:
         sim_names = {e.name for e in self.sim.entities}
         new_entities = [
@@ -249,6 +651,7 @@ class DataDrivenStageDirector:
             self.attach_kits_to_entities(new_entities, self.runner.state.wave_index)
             for ent in new_entities:
                 self.sim.add_entity(ent, trigger_battle_start=True)
+            self._sync_enemy_order()
         return new_entities
 
     def attach_kits_to_entities(self, entities: Sequence[Entity], wave_index: int) -> None:
@@ -274,6 +677,7 @@ class DataDrivenStageDirector:
         self.attach_kits_to_entities(spawned, widx)
         for ent in spawned:
             self.sim.add_entity(ent, trigger_battle_start=True)
+        self._sync_enemy_order()
         return spawned
 
     def _resolve_enemy_target(self, target_name: str) -> Optional[Entity]:
@@ -386,7 +790,12 @@ class DataDrivenStageDirector:
         if hasattr(energy_target, "gain_sp"):
             energy_target.gain_sp(2.0)
         elif hasattr(energy_target, "energy") and hasattr(energy_target, "max_energy"):
-            energy_target.energy = min(energy_target.max_energy, energy_target.energy + 2.0)
+            err = (
+                sm.calculate_stat(energy_target.name, getattr(energy_target, "base_err", 1.0), StatType.ERR)
+                if sm is not None
+                else getattr(energy_target, "base_err", 1.0)
+            )
+            energy_target.energy = min(energy_target.max_energy, energy_target.energy + 2.0 * err)
 
     def trigger_monster_phase_transition(
         self,
@@ -402,6 +811,10 @@ class DataDrivenStageDirector:
         return new_phase
 
     def after_step(self) -> None:
+        # 0. Aha cycle check & special damage check
+        self._check_cycle_aha_extra_turn()
+        self._check_aha_special_damage_events()
+
         # 1. Cycle boundary check
         cur_cycle = self.sim.current_cycle
         if cur_cycle > self._last_cycle:
@@ -430,6 +843,7 @@ class DataDrivenStageDirector:
             # Remove defeated enemies from TurnSimulator's active entities before spawning next wave
             next_wave_entities = self.runner.advance_wave_if_cleared(current_av=self.sim.current_av)
             if next_wave_entities is not None:
+                self._wave_start_av = float(self.sim.current_av)
                 self.sim.entities[:] = [
                     e for e in self.sim.entities if not e.is_enemy or e.current_hp > 0.0
                 ]

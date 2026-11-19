@@ -125,8 +125,11 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "155925",
             "battle_20261114_155925.jsonl",
-            ["长夜月", "风堇"],
+            ["风堇", "长夜月"],
             attach_log_20261114_155925_plugin,
+            total_limit=0.0001,
+            turn_limit=0.0001,
+            ika_turn_limit=0.0001,
         )
 
     def test_vm_20261114_184651(self) -> None:
