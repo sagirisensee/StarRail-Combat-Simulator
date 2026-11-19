@@ -54,6 +54,117 @@ TYPE_MAP_SUB = {
 }
 
 
+def _infer_promotion(level: int) -> int:
+    if level <= 20:
+        return 0
+    return min(6, (level - 11) // 10)
+
+
+def _load_exact_promo_tables() -> Tuple[Dict[Tuple[int, int], Dict[str, float]], Dict[Tuple[int, int], Dict[str, float]]]:
+    """从 TurnBasedGameData 加载角色与光锥各突破阶段的精确白字公式。"""
+    avatar_promos: Dict[Tuple[int, int], Dict[str, float]] = {}
+    lc_promos: Dict[Tuple[int, int], Dict[str, float]] = {}
+
+    av_path = os.path.join(DATA_DIR, "TurnBasedGameData", "ExcelOutput", "AvatarPromotionConfig.json")
+    if os.path.exists(av_path):
+        try:
+            with open(av_path, "r", encoding="utf-8") as f:
+                for row in json.load(f):
+                    aid = int(row["AvatarID"])
+                    promo = int(row.get("Promotion", 0))
+                    avatar_promos[(aid, promo)] = {
+                        "hp_base": float(row.get("HPBase", {}).get("Value", 0.0)),
+                        "hp_add": float(row.get("HPAdd", {}).get("Value", 0.0)),
+                        "atk_base": float(row.get("AttackBase", {}).get("Value", 0.0)),
+                        "atk_add": float(row.get("AttackAdd", {}).get("Value", 0.0)),
+                        "def_base": float(row.get("DefenceBase", {}).get("Value", 0.0)),
+                        "def_add": float(row.get("DefenceAdd", {}).get("Value", 0.0)),
+                        "spd": float(row.get("SpeedBase", {}).get("Value", 100.0)),
+                    }
+        except Exception:
+            pass
+
+    lc_path = os.path.join(DATA_DIR, "TurnBasedGameData", "ExcelOutput", "EquipmentPromotionConfig.json")
+    if os.path.exists(lc_path):
+        try:
+            with open(lc_path, "r", encoding="utf-8") as f:
+                for row in json.load(f):
+                    lid = int(row["EquipmentID"])
+                    promo = int(row.get("Promotion", 0))
+                    lc_promos[(lid, promo)] = {
+                        "hp_base": float(row.get("BaseHP", {}).get("Value", 0.0)),
+                        "hp_add": float(row.get("BaseHPAdd", {}).get("Value", 0.0)),
+                        "atk_base": float(row.get("BaseAttack", {}).get("Value", 0.0)),
+                        "atk_add": float(row.get("BaseAttackAdd", {}).get("Value", 0.0)),
+                        "def_base": float(row.get("BaseDefence", {}).get("Value", 0.0)),
+                        "def_add": float(row.get("BaseDefenceAdd", {}).get("Value", 0.0)),
+                    }
+        except Exception:
+            pass
+
+    return avatar_promos, lc_promos
+
+
+def _compute_exact_base_white(
+    aid: int,
+    av_level: int,
+    lc_id: int,
+    lc_level: int,
+    avatar_promos: Dict[Tuple[int, int], Dict[str, float]],
+    lc_promos: Dict[Tuple[int, int], Dict[str, float]],
+) -> Tuple[float, float, float, float]:
+    """计算角色+光锥的精确白字 (HP, ATK, DEF, SPD)，优先 TurnBasedGameData，回退 tables.py。"""
+    av_promo = _infer_promotion(av_level)
+    av_p = avatar_promos.get((aid, av_promo))
+    if av_p:
+        av_hp = av_p["hp_base"] + (av_level - 1) * av_p["hp_add"]
+        av_atk = av_p["atk_base"] + (av_level - 1) * av_p["atk_add"]
+        av_def = av_p["def_base"] + (av_level - 1) * av_p["def_add"]
+        av_spd = av_p["spd"]
+    elif aid in AVATAR_STATS and av_level == 80:
+        st = AVATAR_STATS[aid]
+        av_hp, av_atk, av_def, av_spd = st["base_hp"], st["base_atk"], st["base_def"], st["base_spd"]
+    else:
+        return 0.0, 0.0, 0.0, 0.0
+
+    lc_hp = lc_atk = lc_def = 0.0
+    if lc_id:
+        lc_promo = _infer_promotion(lc_level)
+        lc_p = lc_promos.get((lc_id, lc_promo))
+        if lc_p:
+            lc_hp = lc_p["hp_base"] + (lc_level - 1) * lc_p["hp_add"]
+            lc_atk = lc_p["atk_base"] + (lc_level - 1) * lc_p["atk_add"]
+            lc_def = lc_p["def_base"] + (lc_level - 1) * lc_p["def_add"]
+        elif lc_id in LIGHTCONE_STATS and lc_level == 80:
+            lct = LIGHTCONE_STATS[lc_id]
+            lc_hp, lc_atk, lc_def = lct["base_hp"], lct["base_atk"], lct["base_def"]
+
+    return round(av_hp + lc_hp, 6), round(av_atk + lc_atk, 6), round(av_def + lc_def, 6), av_spd
+
+
+def _loadout_signature(ch: Dict[str, Any]) -> Any:
+    """提取角色当前配装指纹，用于判断配装是否变化（未变化时保留已校准的精算 breakdowns）。"""
+    lc = ch.get("light_cone") or {}
+    relics_sig = tuple(
+        (
+            r.get("slot"),
+            r.get("set_name"),
+            r.get("main_affix"),
+            tuple((s.get("key"), s.get("count"), s.get("value")) for s in r.get("sub_affixes", [])),
+        )
+        for r in ch.get("relic_details", [])
+    )
+    return (
+        ch.get("level"),
+        ch.get("eidolon"),
+        lc.get("item_id"),
+        lc.get("level"),
+        lc.get("superimposition"),
+        tuple(sorted(ch.get("relic_sets", []))),
+        relics_sig,
+    )
+
+
 def load_config() -> Dict[str, Any]:
     """读取配置，优先从 data/.hoyolab_config.json 或环境变量读取，绝不硬编码敏感凭证。"""
     default_cfg = {
@@ -225,10 +336,11 @@ def solve_subaffix_exact(property_type: int, display_str: str, times: int) -> Tu
     return best_val, rule['key'], is_pct, low, mid, high
 
 
-def compile_and_export_database(raw_data: Dict[str, Any]) -> Tuple[int, int]:
+def compile_and_export_database(raw_data: Dict[str, Any], overwrite: bool = False) -> Tuple[int, int]:
     """核心高精反解与本地数据库编译落盘。"""
     prop_info = raw_data.get("property_info", {})
     avatars = raw_data.get("avatar_list", [])
+    avatar_promos, lc_promos = _load_exact_promo_tables()
     records = []
 
     print(f"⚙️ 正在执行高精度浮点逆向还原与词条编译 (共 {len(avatars)} 位角色)...")
@@ -317,44 +429,53 @@ def compile_and_export_database(raw_data: Dict[str, Any]) -> Tuple[int, int]:
             
         # 官方实机面板确凿数据
         props = {p["property_type"]: p for p in a.get("properties", [])}
-        
+        lc_id = int(lc_info["item_id"]) if lc_info and lc_info.get("item_id") else 0
+        lc_level = int(lc_info["level"]) if lc_info and lc_info.get("level") else 80
+        ex_base_hp, ex_base_atk, ex_base_def, ex_base_spd = _compute_exact_base_white(
+            aid, level, lc_id, lc_level, avatar_promos, lc_promos
+        )
+
         # 速度精算
         p_spd = props.get(4, {})
         base_spd_int = int(p_spd.get("base", 100))
+        base_spd_exact = ex_base_spd if ex_base_spd > 0 else float(base_spd_int)
         add_spd_int = int(p_spd.get("add", 0))
         disp_spd = int(p_spd.get("final", 100))
-        
+
         # 严格对齐官方截断的前提下，还原真实副词条浮点数
         exact_spd = base_spd_int + add_spd_int + (sub_frac_spd - math.floor(sub_frac_spd))
         if math.floor(exact_spd) != disp_spd:
             exact_spd = disp_spd + (sub_frac_spd % 1.0)
             if exact_spd < disp_spd:
                 exact_spd = float(disp_spd)
-                
-        # 三维属性精算
+
+        # 三维属性精算（优先使用 TurnBasedGameData 精确白字修正 0.x 尾差）
         p_hp = props.get(1, {})
-        base_hp = float(p_hp.get("base", 1000))
+        base_hp_hl = float(p_hp.get("base", 1000))
+        base_hp = ex_base_hp if ex_base_hp > 0 and abs(ex_base_hp - base_hp_hl) < 2.0 else base_hp_hl
         add_hp = float(p_hp.get("add", 0))
         final_hp_disp = int(p_hp.get("final", 1000))
-        exact_hp = round(base_hp + add_hp + sub_frac_hp, 2)
+        exact_hp = round(base_hp + add_hp + sub_frac_hp, 6)
         if math.floor(exact_hp) != final_hp_disp:
-            exact_hp = float(final_hp_disp) + abs(sub_frac_hp % 1.0)
+            exact_hp = round(float(final_hp_disp) + abs((exact_hp - math.floor(exact_hp)) % 1.0), 6)
 
         p_atk = props.get(2, {})
-        base_atk = float(p_atk.get("base", 500))
+        base_atk_hl = float(p_atk.get("base", 500))
+        base_atk = ex_base_atk if ex_base_atk > 0 and abs(ex_base_atk - base_atk_hl) < 2.0 else base_atk_hl
         add_atk = float(p_atk.get("add", 0))
         final_atk_disp = int(p_atk.get("final", 500))
-        exact_atk = round(base_atk + add_atk + sub_frac_atk, 2)
+        exact_atk = round(base_atk + add_atk + sub_frac_atk, 6)
         if math.floor(exact_atk) != final_atk_disp:
-            exact_atk = float(final_atk_disp) + abs(sub_frac_atk % 1.0)
+            exact_atk = round(float(final_atk_disp) + abs((exact_atk - math.floor(exact_atk)) % 1.0), 6)
 
         p_def = props.get(3, {})
-        base_def = float(p_def.get("base", 500))
+        base_def_hl = float(p_def.get("base", 500))
+        base_def = ex_base_def if ex_base_def > 0 and abs(ex_base_def - base_def_hl) < 2.0 else base_def_hl
         add_def = float(p_def.get("add", 0))
         final_def_disp = int(p_def.get("final", 500))
-        exact_def = round(base_def + add_def + sub_frac_def, 2)
+        exact_def = round(base_def + add_def + sub_frac_def, 6)
         if math.floor(exact_def) != final_def_disp:
-            exact_def = float(final_def_disp) + abs(sub_frac_def % 1.0)
+            exact_def = round(float(final_def_disp) + abs((exact_def - math.floor(exact_def)) % 1.0), 6)
 
         # 百分比属性
         cr_disp = props.get(5, {}).get("final", "5.0%")
@@ -390,6 +511,17 @@ def compile_and_export_database(raw_data: Dict[str, Any]) -> Tuple[int, int]:
         if elation_disp != "0.0%":
             stats_summary["欢愉度 (Elation)"] = elation_disp
 
+        def _pct_float(s: str) -> float:
+            return round(float(str(s).replace("%", "").strip()) / 100.0, 6)
+
+        cr_val = _pct_float(cr_disp)
+        cd_val = _pct_float(cd_disp)
+        be_val = _pct_float(be_disp)
+        err_val = _pct_float(err_disp)
+        ehr_val = _pct_float(ehr_disp)
+        res_val = _pct_float(res_disp)
+        dmg_val = _pct_float(dmg_disp)
+
         breakdowns = {
             "hp": {
                 "base_white": base_hp,
@@ -410,10 +542,52 @@ def compile_and_export_database(raw_data: Dict[str, Any]) -> Tuple[int, int]:
                 "final_value": exact_def
             },
             "spd": {
-                "base_white": float(base_spd_int),
+                "base_white": base_spd_exact,
                 "flat_bonus": round(add_spd_int + (exact_spd - disp_spd), 3),
                 "percent_bonus": "0.00%",
                 "final_value": round(exact_spd, 3)
+            },
+            "crit_rate": {
+                "base_white": 0.05,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{max(0.0, cr_val - 0.05)*100:.4f}%",
+                "final_value": cr_val
+            },
+            "crit_dmg": {
+                "base_white": 0.5,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{max(0.0, cd_val - 0.5)*100:.4f}%",
+                "final_value": cd_val
+            },
+            "break_effect": {
+                "base_white": 0.0,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{be_val*100:.4f}%",
+                "final_value": be_val
+            },
+            "err": {
+                "base_white": 1.0,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{max(0.0, err_val - 1.0)*100:.4f}%",
+                "final_value": err_val
+            },
+            "ehr": {
+                "base_white": 0.0,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{ehr_val*100:.4f}%",
+                "final_value": ehr_val
+            },
+            "res": {
+                "base_white": 0.0,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{res_val*100:.4f}%",
+                "final_value": res_val
+            },
+            "dmg_boost": {
+                "base_white": 0.0,
+                "flat_bonus": 0.0,
+                "percent_bonus": f"{dmg_val*100:.4f}%",
+                "final_value": dmg_val
             }
         }
 
@@ -439,34 +613,64 @@ def compile_and_export_database(raw_data: Dict[str, Any]) -> Tuple[int, int]:
             "relic_details": relic_records
         })
 
-    fully_geared_cnt = sum(1 for r in records if r["relic_count"] == 6 and r["light_cone"] is not None)
+    # 备份原有文件并智能合并（保护历史快照与已校准精算数据）
+    preserved_snapshots: List[Dict[str, Any]] = []
+    if os.path.exists(EXPORT_FILE):
+        try:
+            with open(EXPORT_FILE, "r", encoding="utf-8") as f_src:
+                old_raw_text = f_src.read()
+            with open(BACKUP_FILE, "w", encoding="utf-8") as f_dst:
+                f_dst.write(old_raw_text)
+            if not overwrite:
+                old_db = json.loads(old_raw_text)
+                old_by_key = {(c.get("avatar_id"), c.get("name")): c for c in old_db.get("characters", [])}
+                new_keys = {(r.get("avatar_id"), r.get("name")) for r in records}
+
+                preserved_calibrated = []
+                for idx, r in enumerate(records):
+                    k = (r.get("avatar_id"), r.get("name"))
+                    old_c = old_by_key.get(k)
+                    if old_c and _loadout_signature(old_c) == _loadout_signature(r):
+                        if len(old_c.get("breakdowns", {})) >= len(r.get("breakdowns", {})):
+                            records[idx]["breakdowns"] = old_c["breakdowns"]
+                            records[idx]["stats_summary"] = old_c["stats_summary"]
+                            preserved_calibrated.append(r["name"])
+
+                for old_c in old_db.get("characters", []):
+                    k = (old_c.get("avatar_id"), old_c.get("name"))
+                    if k not in new_keys:
+                        preserved_snapshots.append(old_c)
+
+                if preserved_calibrated:
+                    print(f"🛡️ 配装未变，已保留 {len(preserved_calibrated)} 位角色的已校准精算面板: {', '.join(preserved_calibrated[:8])}{'...' if len(preserved_calibrated) > 8 else ''}")
+                if preserved_snapshots:
+                    snap_names = [s.get("name", str(s.get("avatar_id"))) for s in preserved_snapshots]
+                    print(f"🛡️ 已保留 {len(preserved_snapshots)} 条历史/自定义快照: {', '.join(snap_names)}")
+        except Exception as e:
+            print(f"⚠️ 智能合并旧库时出现异常（已跳过合并）: {e}")
+
+    merged_records = records + preserved_snapshots
+    fully_geared_cnt = sum(1 for r in merged_records if r["relic_count"] == 6 and r["light_cone"] is not None)
 
     compiled_database = {
         "account_uid": raw_data.get("role_id", "801961942"),
-        "total_avatars": len(records),
+        "total_avatars": len(merged_records),
         "fully_geared_count": fully_geared_cnt,
-        "characters": records
+        "characters": merged_records
     }
-
-    # 备份原有文件
-    if os.path.exists(EXPORT_FILE):
-        try:
-            with open(EXPORT_FILE, "r", encoding="utf-8") as f_src, open(BACKUP_FILE, "w", encoding="utf-8") as f_dst:
-                f_dst.write(f_src.read())
-        except Exception:
-            pass
 
     # 原子写入新数据库
     with open(EXPORT_FILE, "w", encoding="utf-8") as f:
         json.dump(compiled_database, f, ensure_ascii=False, indent=2)
 
-    return len(records), fully_geared_cnt
+    return len(merged_records), fully_geared_cnt
 
 
 def main():
     parser = argparse.ArgumentParser(description="HoYoLAB 线上战绩一键全量同步至本地高精数据库")
     parser.add_argument("--force-login", action="store_true", help="强制重新提交账密认证登录")
     parser.add_argument("--no-headless", action="store_true", help="显示 Chromium 浏览器窗口界面 (用于排障)")
+    parser.add_argument("--overwrite", action="store_true", help="强制全量覆盖现有数据库（不保留历史快照与旧校准面板）")
     args = parser.parse_args()
 
     print("==================================================================")
@@ -476,7 +680,7 @@ def main():
     config = load_config()
     raw_data = fetch_hoyolab_raw_data(config, force_login=args.force_login, headless=not args.no_headless)
     
-    total, geared = compile_and_export_database(raw_data)
+    total, geared = compile_and_export_database(raw_data, overwrite=args.overwrite)
 
     print("\n🎉 ===================== 同步完成报告 =====================")
     print(f"✅ 全量角色总数: {total} 位")

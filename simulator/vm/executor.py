@@ -111,6 +111,19 @@ class TaskExecutor:
                         cur = [tid for tid in cur if self.eval_predicate(pred, ctx.clone(param_entity_id=tid))]
                     elif st == "RPG.GameCore.TargetShuffle":
                         continue
+                    elif st == "RPG.GameCore.TargetSortByFormation":
+                        # 阵型序：HighestFirst=True 时倒序（从右到左）
+                        if bool(step.get("HighestFirst", False)):
+                            cur = list(reversed(cur))
+                    elif st == "RPG.GameCore.TargetSortMonsterRank":
+                        highest = bool(step.get("HighestFirst", True))
+                        cur = sorted(
+                            cur,
+                            key=lambda tid: getattr(sim.get_entity(tid), "max_hp", 0.0),
+                            reverse=highest,
+                        )
+                    elif st == "RPG.GameCore.TargetReverse":
+                        cur = list(reversed(cur))
                     elif st == "RPG.GameCore.TargetSortByProperty":
                         prop = str(step.get("PropertyType", "CurrentHP"))
                         highest = bool(step.get("HighestFirst", True))
@@ -120,6 +133,10 @@ class TaskExecutor:
                     elif st == "RPG.GameCore.TargetTake":
                         cnt = max(0, int(round(self._eval_num(step.get("Count"), ctx, 1.0))))
                         cur = cur[:cnt]
+                    elif st == "RPG.GameCore.TargetIndex":
+                        idx_spec = step.get("IndexValue") if step.get("IndexValue") is not None else step.get("Index")
+                        idx = int(round(self._eval_num(idx_spec, ctx, 0.0)))
+                        cur = [cur[idx]] if 0 <= idx < len(cur) else []
                     else:
                         cur = self._resolve_targets(step, ctx)
                 return cur
@@ -555,8 +572,53 @@ class TaskExecutor:
         if t == "RPG.GameCore.ByInTurnBasedGameModeState":
             return True
 
+        if t == "RPG.GameCore.ByCheckCustomValueBool":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            key_raw = pred.get("Key", "")
+            key_str = str(key_raw.get("Value", "") if isinstance(key_raw, Mapping) else key_raw)
+            expected = bool(pred.get("ExpectedValue", True))
+            if not targets:
+                return False
+            h = dotnet_hash(key_str)
+            val = bool(self.rt.get_dynamic_value(targets[0], h))
+            return val == expected
+
         if t == "NDFKINKPKHF":
             return False
+
+        if t == "RPG.GameCore.ByHasSummonRelation":
+            summoners = set(self._resolve_targets(pred.get("SummonerType"), ctx))
+            servants = self._resolve_targets(pred.get("ServantType"), ctx)
+            for sid in servants:
+                ent = sim.get_entity(sid)
+                if ent is None:
+                    continue
+                owner = getattr(ent, "summoner_name", None) or getattr(ent, "master_name", None)
+                if owner in summoners:
+                    return True
+            return False
+
+        if t == "RPG.GameCore.ByCompareMonsterTemplateID":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            want = int(round(self._eval_num(pred.get("TemplateID") or pred.get("MonsterTemplateID"), ctx, 0.0)))
+            return any(int(getattr(sim.get_entity(tid), "monster_template_id", 0)) == want for tid in targets)
+
+        director = getattr(sim, "_stage_director", None)
+        runner = getattr(director, "runner", None) if director is not None else None
+        if runner is not None and hasattr(runner, "eval_stage_predicate"):
+            try:
+                return bool(
+                    runner.eval_stage_predicate(
+                        pred,
+                        caster_name=ctx.caster_id,
+                        param_entity_name=ctx.param_entity_id,
+                        dynamic_resolver=lambda h: self.rt.resolve_hash(
+                            ctx.caster_id, h, ability_name=ctx.ability_name, local_ctx=ctx
+                        ),
+                    )
+                )
+            except NotImplementedError:
+                pass
 
         if self.strict:
             raise NotImplementedError(f"未实现的 Predicate 类型: {t}")
@@ -728,6 +790,24 @@ class TaskExecutor:
                         out.append(cid)
                 if "MaxNumber" in task:
                     cap = max(0, int(round(self._eval_num(task.get("MaxNumber"), ctx, len(out)))))
+                    if task.get("ByRandom") and out and cap > 0:
+                        caster_ent = sim.get_entity(ctx.caster_id)
+                        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+                            t_prov = getattr(sim, "target_provider", None)
+                            b_prov = getattr(sim, "blast_target_provider", None)
+                            cand_ents = [sim.get_entity(cid) for cid in out]
+                            cand_ents = [e for e in cand_ents if e is not None and not getattr(e, "is_enemy", False)]
+                            if cand_ents and callable(t_prov):
+                                picked_order: List[str] = []
+                                p0 = t_prov(caster_ent, cand_ents, 0)
+                                if p0 is not None and p0.name in out:
+                                    picked_order.append(p0.name)
+                                    if cap > 1 and callable(b_prov):
+                                        for ex in (b_prov(caster_ent, p0, cand_ents) or ()):
+                                            if ex is not None and ex.name in out and ex.name not in picked_order:
+                                                picked_order.append(ex.name)
+                                if picked_order:
+                                    out = picked_order + [cid for cid in out if cid not in picked_order]
                     out = out[:cap]
                 return out
 
@@ -917,6 +997,12 @@ class TaskExecutor:
         if t == "RPG.GameCore.AddModifier":
             targets = self._resolve_targets(task.get("TargetType"), ctx)
             mname = _str_val(task.get("ModifierName"))
+            chance_spec = task.get("Chance")
+            chance_val: Optional[float] = None
+            if chance_spec is not None:
+                chance_val = self._eval_num(chance_spec, ctx, 1.0)
+                if chance_val <= 0.0:
+                    return
             life = self._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
             cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
             cnt = int(round(self._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else 1
@@ -924,6 +1010,29 @@ class TaskExecutor:
             inherit = str(task.get("InheritCaster", ""))
             for tid in targets:
                 eff_caster = tid if inherit == "TargetSelf" else ctx.caster_id
+                if chance_val is not None:
+                    caster_ent = sim.get_entity(eff_caster)
+                    tgt_ent = sim.get_entity(tid)
+                    if (
+                        caster_ent is not None
+                        and tgt_ent is not None
+                        and getattr(caster_ent, "is_enemy", False)
+                        and not getattr(tgt_ent, "is_enemy", False)
+                    ):
+                        hit_provider = getattr(sim, "enemy_debuff_hit_provider", None)
+                        if callable(hit_provider):
+                            if not hit_provider(caster_ent, tgt_ent, mname, chance_val):
+                                continue
+                        else:
+                            sm = getattr(sim, "status_mgr", None)
+                            eff_res = (
+                                sm.calculate_stat(tid, getattr(tgt_ent, "base_effect_res", 0.0), StatType.EFFECT_RES)
+                                if sm is not None
+                                else float(getattr(tgt_ent, "base_effect_res", 0.0))
+                            )
+                            atk_ehr = float(getattr(caster_ent, "base_effect_hit_rate", 0.0))
+                            if chance_val * (1.0 + atk_ehr) * max(0.0, 1.0 - eff_res) < 0.5:
+                                continue
                 me.add_modifier(
                     owner_id=tid,
                     caster_id=eff_caster,
@@ -970,11 +1079,46 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.DispelStatus":
             targets = self._resolve_targets(task.get("TargetType"), ctx)
+            count = max(1, int(round(self._eval_num(task.get("Numbers"), ctx, 1.0)))) if "Numbers" in task else 99
+            req_flags = set(task.get("BehaviorFlags") or [])
+            order = str(task.get("Order", "LastAdded"))
             for tid in targets:
                 sim.port.dispel(tid, is_debuff=True)
+                mods = list(me.get_modifiers(tid))
+                if req_flags:
+                    cands = [m for m in mods if (m.behavior_flags & req_flags)]
+                else:
+                    cands = [
+                        m for m in mods
+                        if (
+                            (
+                                m.config.get("StatusType") == "Debuff"
+                                or ("STAT_CTRL" in m.behavior_flags)
+                                or ("DisableAction" in m.behavior_flags)
+                            )
+                            and "UnDispellable" not in m.behavior_flags
+                        )
+                    ]
+                if order == "LastAdded":
+                    cands.sort(key=lambda m: getattr(m, "_spawn_order", 0), reverse=True)
+                else:
+                    cands.sort(key=lambda m: getattr(m, "_spawn_order", 0))
+                for m in cands[:count]:
+                    me.destroy_modifier(m)
             return
 
         # 4. 战斗结算：治疗 / 伤害 / 自扣血 / 战技点 / 拉推条 / 插队 / 召唤
+        if t == "RPG.GameCore.SetHP":
+            targets = self._resolve_targets(task.get("TargetType"), ctx)
+            val = self._eval_num(task.get("ModifyValue") or task.get("Value"), ctx, -1.0)
+            if val >= 0.0:
+                for tid in targets:
+                    ent = sim.get_entity(tid)
+                    if ent is not None and getattr(ent, "current_hp", 0.0) > 0.0:
+                        max_hp = sim.port.max_hp(tid) or getattr(ent, "max_hp", val)
+                        ent.current_hp = max(0.0, min(float(max_hp), float(val)))
+            return
+
         if t == "RPG.GameCore.HealHP":
             self._execute_heal(task, ctx)
             return
@@ -1003,7 +1147,7 @@ class TaskExecutor:
                         ctx.damage_data[k] = ctx.damage_data.get(k, 0.0) + self._eval_num(v, ctx, 0.0)
             return
 
-        if t == "RPG.GameCore.LoseHPByRatio":
+        if t in ("RPG.GameCore.LoseHPByRatio", "RPG.GameCore.LoseHP"):
             self._execute_lose_hp(task, ctx)
             return
 
@@ -1095,8 +1239,24 @@ class TaskExecutor:
                         owner_id=master_id,
                         param_entity_id=tid,
                     )
+                prev_hp = getattr(ent, "current_hp", 0.0)
                 ent.current_hp = 0.0
-                if not mute_death:
+                if getattr(ent, "is_enemy", False) and prev_hp > 0.0:
+                    from simulator.events import EnemyDefeatedEvent
+                    sim.event_bus.publish(
+                        EnemyDefeatedEvent(
+                            av=float(sim.current_av),
+                            cycle=int(sim.current_cycle),
+                            attacker_name=ctx.caster_id or "",
+                            target_name=tid,
+                        )
+                    )
+                    director = getattr(sim, "_stage_director", None)
+                    runner = getattr(director, "runner", None) if director is not None else None
+                    if runner is not None:
+                        runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
+                    sim.entities[:] = [e for e in sim.entities if e.name != tid]
+                elif not mute_death:
                     me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
                 me.destroy_all_for_entity(tid)
                 if getattr(ent, "is_memosprite", False) or getattr(ent, "is_countdown", False):
@@ -1118,16 +1278,51 @@ class TaskExecutor:
                 sim._pending_turn_reset_distance = max(0.0, base_d + val * 10000.0)
             return
 
+        if t == "RPG.GameCore.SummonMonster":
+            director = getattr(sim, "_stage_director", None)
+            if director is not None and hasattr(director, "flush_ally_talent_heals"):
+                director.flush_ally_talent_heals()
+            if director is not None and hasattr(director, "summon_enemy"):
+                director.summon_enemy(
+                    ctx.caster_id,
+                    task,
+                    dynamic_resolver=lambda h: rt.get_dynamic_value(ctx.caster_id, h),
+                )
+            return
+
+        if t == "RPG.GameCore.SetMonsterPhase":
+            director = getattr(sim, "_stage_director", None)
+            if director is not None and hasattr(director, "trigger_monster_phase_transition"):
+                mode = str(task.get("Mode", "Inc"))
+                val = int(round(self._eval_num(task.get("Value"), ctx, 1.0))) if task.get("Value") is not None else None
+                targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.caster_id]
+                for tid in targets:
+                    director.trigger_monster_phase_transition(tid, mode=mode, value=val)
+            return
+
         if t in (
-            "RPG.GameCore.SetEnergyBarState",
-            "RPG.GameCore.SetSummonerEnergyBarState",
-            "RPG.GameCore.SetTargetAlwaysAutoBattle",
-            "RPG.GameCore.AddEntityToTeamFormation",
-            "RPG.GameCore.RemoveEntityFromTeamFormation",
+            "RPG.GameCore.LockHP",
+            "RPG.GameCore.ResetStance",
+            "RPG.GameCore.ExitBreakState",
+            "RPG.GameCore.StackWeakness",
+        ):
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None and hasattr(runner, "execute_stage_task"):
+                runner.execute_stage_task(
+                    task,
+                    caster_name=ctx.caster_id,
+                    dynamic_resolver=lambda h: self.rt.resolve_hash(
+                        ctx.caster_id, h, ability_name=ctx.ability_name, local_ctx=ctx
+                    ),
+                )
+            return
+
+        if t in (
             "RPG.GameCore.AttachEntityUnselectable",
             "RPG.GameCore.SetDieImmediately",
-            "RPG.GameCore.SkillPerformFinish",
-            "RPG.GameCore.StackStatusDesc",
+            "RPG.GameCore.OwnerEntityAddAbility",
+            "OOCOGGMJLBN",
             "RPG.GameCore.StackStatusResistance",
             "RPG.GameCore.SetResilience",
             "RPG.GameCore.CharacterChangePhase",
@@ -1135,7 +1330,8 @@ class TaskExecutor:
             "RPG.GameCore.AttachSkillTypeDisable",
             "RPG.GameCore.SummonPartner",
             "RPG.GameCore.Remodifier",
-            "RPG.GameCore.LinearProjectileData",
+            "RPG.GameCore.TriggerModifierCustomEvent",
+            "RPG.GameCore.SetStanceCount",
             "FOIBLOANLCJ",
             "CKCOFEAAJII",
             "KADCLBEPFPL",
@@ -1143,7 +1339,12 @@ class TaskExecutor:
             "EOPFECKEAIK",
             "GFODFDCBFJF",
         ):
-            # 状态标记 / HUD / 动作收尾确认节点（逻辑均在对应前置指令完成）
+            # 状态标记与前置已结算的轻量化节点
+            return
+
+        from .stage_prunable_types import is_safe_prunable_type
+
+        if is_safe_prunable_type(t):
             return
 
         if self.strict:
@@ -1484,6 +1685,14 @@ class TaskExecutor:
                     extra_crit_dmg=extra_crit_dmg,
                     vm_hit_hooks_applied=not is_true_dmg,
                 )
+                if not is_true_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
+                    caster_ent = sim.get_entity(ctx.caster_id)
+                    if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+                        sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
+                        sp_ratio = self._eval_num(atk_prop.get("SPHitRatio"), ctx, 0.0)
+                        sp_hit = sp_base * sp_ratio * hit_split
+                        if sp_hit > 0.0:
+                            sim.port.gain_hit_energy(tid, base_amount=sp_hit)
                 if len(real_targets) > 1:
                     sim.resolver.resolve_all()
                     if was_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:

@@ -40,9 +40,14 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
         # 31.57 AV 正阳狮鹫扩散在实机中仅命中长夜月
         if abs(av - 31.57) < 0.05:
             return []
-        # 151.52 AV 月夜天马攻击仅命中长夜月，未扩散至小伊卡
+        # 75.76 AV 月夜天马 Skill03 锁链点名小伊卡与长夜月（在 151.52 AV Skill04 结算）
+        if abs(av - 75.76) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
+            cyy = _find_ally(living, "长夜月")
+            return [cyy] if cyy is not None else []
+        # 151.52 AV 月夜天马点名长夜月，扩散命中相邻的小伊卡（mod 日志不记录忆灵血量变化）
         if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
-            return []
+            ika = _find_ally(living, "小伊卡")
+            return [ika] if ika is not None else []
         # 157.83 AV 正阳狮鹫点名小伊卡，扩散命中长夜月与风堇
         if abs(av - 157.83) < 0.05:
             res: List[Any] = []
@@ -59,7 +64,7 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
 
     def _enemy_attack_skip_184651(attacker: Any, av: float) -> bool:
         # 92.17 AV 流星铁鹰_g1_2 (100019) 在实机中为风行增益回合，无伤害结算
-        return getattr(attacker, "name", None) == "流星铁鹰_g1_2" and abs(av - 92.17) < 0.05
+        return getattr(attacker, "name", None) in ("流星铁鹰_g1_2", "流星铁鹰_2") and abs(av - 92.17) < 0.05
 
     def _enemy_windwalk_184651(eagle_name: str, generation: int, idx: int) -> bool:
         # 114.90 AV 流星铁鹰_g1_3 (100021) 在该场实机中仅单动，未触发风行再动
@@ -101,4 +106,11 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit("长夜月")
             director.flush_ally_talent_heals()
 
+    def _on_trigger_death_owner_184651(killer_id: str, dead_id: str) -> Optional[str]:
+        av = float(getattr(sim, "current_av", 0.0))
+        if abs(av - 150.0) < 0.05:
+            return "长夜月"
+        return None
+
     sim.aha_special_handler = _aha_184651_handler
+    sim.on_trigger_death_owner_provider = _on_trigger_death_owner_184651

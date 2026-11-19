@@ -172,6 +172,14 @@ class ModifierEngine:
         stacking = str(cfg.get("Stacking", "Unique"))
 
         # 确定 MaxLayer / LifeTime
+        # 官方免控机制：拥有 EnduranceLogicOnly / Endurance 标记时免疫控制类 Debuff (STAT_CTRL / DisableAction)
+        incoming_flags = set(cfg.get("BehaviorFlagList", []))
+        if (
+            ("STAT_CTRL" in incoming_flags or "DisableAction" in incoming_flags or mod_name == "MCommon_Entangle")
+            and (self.has_behavior_flag(owner_id, "EnduranceLogicOnly") or self.has_behavior_flag(owner_id, "Endurance"))
+        ):
+            return None
+
         cfg_max_layer = cfg.get("MaxLayer")
         eff_max_layer = max_layer
         if eff_max_layer is None and cfg_max_layer is not None:

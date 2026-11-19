@@ -30,6 +30,7 @@ from simulator.plugins.non_crit_ledgers import (
 from simulator.stage_30126122 import build_stage_30126122
 from simulator.vm.factory import build_vm_team
 from simulator.vm.loader import GameDataLoader
+from simulator.vm.stage_sim_adapter import build_data_driven_stage
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -52,11 +53,18 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         non_crits: Optional[Set] = None,
         av_budget: Optional[float] = None,
         max_tl_av: Optional[float] = None,
+        data_driven: bool = False,
+        total_limit: float = 0.002,
+        turn_limit: float = 0.002,
+        ika_turn_limit: float = 0.02,
     ) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", filename)
         g = parse_golden_jsonl(log_path)
         team = build_vm_team(names, db=self.db, loader=self.loader)
-        sim, director = build_stage_30126122(team, technique_users=list(names))
+        if data_driven:
+            sim, director = build_data_driven_stage(30126122, team, technique_users=list(names))
+        else:
+            sim, director = build_stage_30126122(team, technique_users=list(names))
 
         attach_exact_crit_oracle(sim, log_path=log_path, non_crits=non_crits or set())
         plugin_fn(sim)
@@ -81,10 +89,12 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self.assertTrue(all(r.mode not in ("forced", "failed") for r in traj.records))
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
-        self.assertLess(err, 0.002, f"{tag} VM 总伤偏差过大: {err:.2%}")
-        self._assert_per_turn_sub_0_2_pct(tag, g, traj)
+        self.assertLess(err, total_limit, f"{tag} VM 总伤偏差过大: {err:.4%} (limit={total_limit:.2%})")
+        self._assert_per_turn_sub_0_2_pct(tag, g, traj, turn_limit=turn_limit, ika_turn_limit=ika_turn_limit)
 
-    def _assert_per_turn_sub_0_2_pct(self, tag: str, g: object, traj: object) -> None:
+    def _assert_per_turn_sub_0_2_pct(
+        self, tag: str, g: object, traj: object, *, turn_limit: float = 0.002, ika_turn_limit: float = 0.002
+    ) -> None:
         gt_by_av: dict[float, float] = {}
         ika_avs: set[float] = set()
         for t in g.turns:
@@ -104,15 +114,20 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         for av, gt_dmg in sorted(gt_by_av.items()):
             sim_dmg = sim_by_av[av]
             turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
-            limit = 0.02 if av in ika_avs else 0.002
+            limit = ika_turn_limit if av in ika_avs else turn_limit
             self.assertLess(
                 turn_err,
                 limit,
-                f"{tag} VM AV={av:.2f} 单动伤害偏差过大: {turn_err:.3%} (limit={limit:.1%}, GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+                f"{tag} VM AV={av:.2f} 单动伤害偏差过大: {turn_err:.4%} (limit={limit:.2%}, GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
             )
 
     def test_vm_20261114_155925(self) -> None:
-        self._run_vm_case("155925", "battle_20261114_155925.jsonl", ["长夜月", "风堇"], attach_log_20261114_155925_plugin)
+        self._run_vm_case(
+            "155925",
+            "battle_20261114_155925.jsonl",
+            ["长夜月", "风堇"],
+            attach_log_20261114_155925_plugin,
+        )
 
     def test_vm_20261114_184651(self) -> None:
         self._run_vm_case(
@@ -125,7 +140,12 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         )
 
     def test_vm_20261114_184845(self) -> None:
-        self._run_vm_case("184845", "battle_20261114_184845.jsonl", ["缇宝", "风堇"], attach_log_20261114_184845_plugin)
+        self._run_vm_case(
+            "184845",
+            "battle_20261114_184845.jsonl",
+            ["缇宝", "风堇"],
+            attach_log_20261114_184845_plugin,
+        )
 
     def test_vm_20261114_204943(self) -> None:
         self._run_vm_case(

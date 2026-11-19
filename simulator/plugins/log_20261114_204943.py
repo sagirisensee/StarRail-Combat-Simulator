@@ -101,9 +101,9 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
 
     sim.aha_special_handler = _aha_204943_handler
 
-    # 157.83 AV 正阳狮鹫在实机中于 4 段弹射后立即拉条再动，献祭 g1 并召唤 g2 流星铁鹰
+    # 157.83 AV 正阳狮鹫在实机中于 4 段弹射后立即拉条再动，献祭 g1 并召唤 g2 流星铁鹰（仅老脚本关卡需要）
     griffin = sim.get_entity("正阳狮鹫")
-    if griffin is not None and getattr(griffin, "kit", None) is not None:
+    if griffin is not None and getattr(griffin, "kit", None) is not None and getattr(griffin.kit, "ai_executor", None) is None:
         _orig_griffin_exec = griffin.kit.execute_turn
 
         def _griffin_204943_exec(*args: Any, **kwargs: Any) -> Any:
@@ -190,9 +190,9 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
 
         griffin.kit.execute_turn = _griffin_204943_exec
 
-    # 227.27 AV (事件 1185): 月夜天马 Turn 3 全体 2.6x 攻击在实机日志同样命中了场上小伊卡 (1409 SP +11.94)
+    # 227.27 AV (事件 1185): 月夜天马 Turn 3 全体 2.6x 攻击在实机日志同样命中了场上小伊卡 (1409 SP +11.94)（仅老脚本关卡需要）
     pegasus = sim.get_entity("月夜天马")
-    if pegasus is not None and hasattr(pegasus.kit, "execute_turn"):
+    if pegasus is not None and hasattr(pegasus.kit, "execute_turn") and getattr(pegasus.kit, "ai_executor", None) is None:
         _orig_pegasus_exec = pegasus.kit.execute_turn
 
         def _pegasus_204943_exec(*args: Any, **kwargs: Any) -> Any:

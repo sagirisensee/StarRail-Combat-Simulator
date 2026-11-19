@@ -254,7 +254,7 @@ class StatusManager:
                 target.current_hp = min(cap, target.current_hp * (new_max / old_max))
             elif hp_delta < 0:
                 if (
-                    getattr(target, "is_memosprite", False)
+                    not getattr(target, "is_enemy", False)
                     and old_max > 0
                     and getattr(target, "current_hp", 0.0) > 0
                 ):

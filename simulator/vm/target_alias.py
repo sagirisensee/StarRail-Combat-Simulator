@@ -186,6 +186,14 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = _summoner_of(ctx.caster_id) if ctx.caster_id else []
     elif base == "CasterServant":
         cur = _servants_of(ctx.caster_id) if ctx.caster_id else []
+    elif base in ("CasterSummonedMinions", "CasterSummonMonster"):
+        cur = [
+            e.name
+            for e in sim.entities
+            if getattr(e, "is_enemy", False)
+            and getattr(e, "summoner_name", None) == ctx.caster_id
+            and _is_alive_entity(sim, e)
+        ]
     elif base == "ParamEntity":
         cur = [ctx.param_entity_id] if ctx.param_entity_id else []
     elif base == "ParamEntity2":
@@ -203,17 +211,45 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             if primary is None:
                 cur = []
             else:
-                pool = _alive_enemies(spatial_order=True) if primary.is_enemy else _alive_allies(include_countdown=False)
-                if primary.name in pool:
-                    idx = pool.index(primary.name)
-                    adj = []
-                    if idx - 1 >= 0:
-                        adj.append(pool[idx - 1])
-                    if idx + 1 < len(pool):
-                        adj.append(pool[idx + 1])
-                    cur = adj
+                blast_fn = getattr(sim, "blast_target_provider", None)
+                caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
+                if (
+                    not primary.is_enemy
+                    and caster_ent is not None
+                    and getattr(caster_ent, "is_enemy", False)
+                    and callable(blast_fn)
+                ):
+                    living_allies = [
+                        e for e in sim.entities
+                        if not e.is_enemy and not getattr(e, "is_countdown", False) and getattr(e, "current_hp", 0.0) > 0.0
+                    ]
+                    provided = blast_fn(caster_ent, primary, living_allies)
+                    if provided is not None:
+                        cur = [e.name for e in provided if e is not None and getattr(e, "current_hp", 0.0) > 0.0]
+                    else:
+                        pool = _alive_allies(include_countdown=False)
+                        if primary.name in pool:
+                            idx = pool.index(primary.name)
+                            adj = []
+                            if idx - 1 >= 0:
+                                adj.append(pool[idx - 1])
+                            if idx + 1 < len(pool):
+                                adj.append(pool[idx + 1])
+                            cur = adj
+                        else:
+                            cur = []
                 else:
-                    cur = []
+                    pool = _alive_enemies(spatial_order=True) if primary.is_enemy else _alive_allies(include_countdown=False)
+                    if primary.name in pool:
+                        idx = pool.index(primary.name)
+                        adj = []
+                        if idx - 1 >= 0:
+                            adj.append(pool[idx - 1])
+                        if idx + 1 < len(pool):
+                            adj.append(pool[idx + 1])
+                        cur = adj
+                    else:
+                        cur = []
     elif base in ("SkillTargetEntityList",):
         cur = list(ctx.skill_target_ids or ctx.ability_target_ids)
     elif base == "ParamEntitySkillTargetEntityList":
@@ -230,8 +266,35 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = [t.name] if t is not None else []
     elif base == "CurrentAimAtTarget":
         cur = list(ctx.ability_target_ids[:1])
-    elif base in ("AllLightTeam", "AllTeamMember", "LeftToRightLightTeamTarget"):
+    elif base in ("AllLightTeam", "AllTeamMember"):
         cur = _alive_allies(include_unselectable=False, include_countdown=False)
+    elif base == "LeftToRightLightTeamTarget":
+        allies = _alive_allies(include_unselectable=False, include_countdown=False)
+        avatars = [n for n in allies if not getattr(sim.get_entity(n), "is_memosprite", False)]
+        memos = [n for n in allies if getattr(sim.get_entity(n), "is_memosprite", False)]
+        # 崩铁阵型：第1个忆灵站最右，第2个忆灵站最左（后续交替左右）
+        ordered = list(avatars)
+        for idx, m in enumerate(memos):
+            if idx % 2 == 0:
+                ordered.append(m)
+            else:
+                ordered.insert(0, m)
+        cur = ordered
+    elif base == "RightToLeftLightTeamTarget":
+        allies = _alive_allies(include_unselectable=False, include_countdown=False)
+        avatars = [n for n in allies if not getattr(sim.get_entity(n), "is_memosprite", False)]
+        memos = [n for n in allies if getattr(sim.get_entity(n), "is_memosprite", False)]
+        ordered = list(avatars)
+        for idx, m in enumerate(memos):
+            if idx % 2 == 0:
+                ordered.append(m)
+            else:
+                ordered.insert(0, m)
+        cur = list(reversed(ordered))
+    elif base == "LeftToRightDarkTeamTarget":
+        cur = _alive_enemies(include_unselectable=False, include_countdown=False, spatial_order=True)
+    elif base == "RightToLeftDarkTeamTarget":
+        cur = list(reversed(_alive_enemies(include_unselectable=False, include_countdown=False, spatial_order=True)))
     elif base in (
         "AllLightTeamWithAllLightTeamUnselectable",
         "AllLightTeamWithAllUnselectableLightTeam",
@@ -279,6 +342,10 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             cur = _dedup_preserve(nxt)
         elif mod == "RemoveBattleEvent":
             cur = [eid for eid in cur if eid != "__LEVEL__" and not _is_battle_event(sim.get_entity(eid))]
+        elif mod == "RemoveUnselectable":
+            cur = [eid for eid in cur if not getattr(sim.get_entity(eid), "unselectable", False)]
+        elif mod == "GetAliveOnly":
+            cur = [eid for eid in cur if (e := sim.get_entity(eid)) is not None and e.current_hp > 0.0]
         elif mod == "RemoveServant":
             cur = [eid for eid in cur if not getattr(sim.get_entity(eid), "is_memosprite", False)]
         elif mod == "WithBattleEvent":

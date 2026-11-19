@@ -151,6 +151,35 @@ class StageRunner:
         for idx, sid in enumerate(blueprint.summon_ids, start=1):
             hashed_cv.setdefault(dotnet_hash(f"SummonID{idx:02d}"), sid)
 
+        tpl_id = getattr(blueprint, "monster_template_id", 0)
+        loader = getattr(self.factory, "stage_loader", None)
+        if loader is not None and tpl_id:
+            trow = loader.monster_templates.get(tpl_id, {})
+            json_cfg = trow.get("JsonConfig", "")
+            if json_cfg:
+                char_cfg = loader._load_char_config(json_cfg)
+                dyn_floats = char_cfg.get("DynamicValues", {}).get("Floats", {})
+                mid = blueprint.monster_id
+                ms_list = [
+                    s for s in loader.monster_skills.values()
+                    if s.get("SkillID", 0) // 100 == mid // 100
+                ]
+                skills_by_key = {s.get("SkillTriggerKey"): s for s in ms_list}
+                for h_str, rinfo in dyn_floats.items():
+                    try:
+                        h = int(h_str)
+                    except ValueError:
+                        continue
+                    read_info = rinfo.get("ReadInfo", {})
+                    if read_info.get("Type") == "SkillParam":
+                        tkey = read_info.get("TriggerKey")
+                        idx = read_info.get("Index", 0)
+                        sk = skills_by_key.get(tkey)
+                        if sk:
+                            param_list = sk.get("ParamList", [])
+                            if 0 <= idx < len(param_list):
+                                hashed_cv.setdefault(h, param_list[idx].get("Value", 0.0))
+
         mrs = MonsterRuntimeState(
             entity=entity,
             blueprint=blueprint,
@@ -481,6 +510,7 @@ class StageRunner:
                 init_dist = bp.initial_distance
 
             ent = bp.to_entity(name=summon_name, initial_distance=init_dist)
+            setattr(ent, "summoner_name", caster_name)
             loc_type = str(entry.get("LocationType", ""))
 
             if loc_type == "KeepOnEdge":
@@ -492,6 +522,21 @@ class StageRunner:
                 mrs = self._register_enemy(ent, bp)
                 self.state.enemies.pop()
                 insert_idx = max(0, caster_idx) if insert_left else min(len(self.state.enemies), caster_idx + 1)
+                self.state.enemies.insert(insert_idx, mrs)
+            elif loc_type == "AroundCaster":
+                caster_idx = next(
+                    (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_name),
+                    len(self.state.enemies),
+                )
+                mrs = self._register_enemy(ent, bp)
+                self.state.enemies.pop()
+                seq_in_batch = (caster_mrs.summon_seq - 1) % 3 + 1
+                if seq_in_batch == 1:
+                    insert_idx = 0
+                elif seq_in_batch == 2:
+                    insert_idx = min(len(self.state.enemies), caster_idx + 1)
+                else:
+                    insert_idx = max(0, caster_idx)
                 self.state.enemies.insert(insert_idx, mrs)
             else:
                 self._register_enemy(ent, bp)

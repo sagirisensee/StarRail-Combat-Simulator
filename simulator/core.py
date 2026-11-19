@@ -184,6 +184,16 @@ class TurnSimulator:
         for e in self.entities:
             if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
                 return e
+        if "_g1_" in name_or_id:
+            alt = name_or_id.replace("_g1_", "_")
+            for e in self.entities:
+                if e.name == alt:
+                    return e
+        elif "_g2_" in name_or_id:
+            alt = name_or_id.replace("_g2_", "_")
+            for e in self.entities:
+                if e.name == alt:
+                    return e
         return None
 
     def _get_entity(self, name_or_id: str) -> Optional[Entity]:

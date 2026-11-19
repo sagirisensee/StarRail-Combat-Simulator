@@ -15,6 +15,7 @@ from ..entity import Entity
 from ..events import (
     ActionEndEvent,
     ActionExecuteEvent,
+    EnemyDefeatedEvent,
     HPLostEvent,
     SpiritDespawnEvent,
     SpiritSummonedEvent,
@@ -64,6 +65,7 @@ class VMRuntime:
         self.sim.event_bus.subscribe(ActionEndEvent, self._on_action_end)
         self.sim.event_bus.subscribe(HPLostEvent, self._on_hp_lost)
         self.sim.event_bus.subscribe(SpiritDespawnEvent, self._on_spirit_despawn)
+        self.sim.event_bus.subscribe(EnemyDefeatedEvent, self._on_enemy_defeated)
 
     def resolve_global_target_alias(self, alias_name: str) -> Optional[Dict[str, Any]]:
         if not self._global_aliases_loaded:
@@ -502,6 +504,30 @@ class VMRuntime:
     def _on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
         self.modifier_engine.destroy_all_for_entity(evt.spirit_name)
 
+    def _on_enemy_defeated(self, evt: EnemyDefeatedEvent) -> None:
+        killer_id = str(getattr(evt, "attacker_name", ""))
+        dead_id = str(getattr(evt, "target_name", ""))
+        if (
+            killer_id
+            and self.sim.get_entity(killer_id) is not None
+            and self.modifier_engine.has_modifier(killer_id, "MMonster_W4_Griffin_00_Debuff_Avatar_Status")
+        ):
+            self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=killer_id, param_entity_id=dead_id)
+        else:
+            if killer_id and self.sim.get_entity(killer_id) is not None:
+                self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=killer_id, param_entity_id=dead_id)
+            owner_prov = getattr(self.sim, "on_trigger_death_owner_provider", None)
+            picked_owner = owner_prov(killer_id, dead_id) if callable(owner_prov) else None
+            if picked_owner and self.modifier_engine.has_modifier(picked_owner, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
+                self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=picked_owner, param_entity_id=dead_id)
+            else:
+                for e in getattr(self.sim, "entities", ()):
+                    if not getattr(e, "is_enemy", False) and getattr(e, "current_hp", 0.0) > 0.0:
+                        if self.modifier_engine.has_modifier(e.name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
+                            self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=e.name, param_entity_id=dead_id)
+                            break
+        self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+
 
 def ensure_vm_runtime(sim: Any, *, loader: Optional[GameDataLoader] = None, strict: bool = True) -> VMRuntime:
     rt = getattr(sim, "vm_runtime", None)
@@ -791,7 +817,23 @@ class ConfigAbilityKitAdapter(KitHandler):
             if chosen_ent is not None and chosen_ent in picked_ents:
                 eff_targets = (chosen_ent.name,)
             elif ctx.target_ids:
-                eff_targets = ctx.target_ids[:1]
+                if str(t_info.get("SubTargetType", "")) == "TargetAdjoinEntity" and len(ctx.target_ids) >= 2:
+                    pos_map = {e.name: idx for idx, e in enumerate(picked_ents)}
+                    valid_tids = [tid for tid in ctx.target_ids if tid in pos_map]
+                    valid_tids.sort(key=lambda tid: pos_map[tid])
+                    if len(valid_tids) == 3:
+                        eff_targets = (valid_tids[1],)
+                    elif len(valid_tids) == 2:
+                        if pos_map[valid_tids[0]] == 0:
+                            eff_targets = (valid_tids[0],)
+                        elif pos_map[valid_tids[1]] == len(picked_ents) - 1:
+                            eff_targets = (valid_tids[1],)
+                        else:
+                            eff_targets = (ctx.target_ids[0],)
+                    else:
+                        eff_targets = ctx.target_ids[:1]
+                else:
+                    eff_targets = ctx.target_ids[:1]
             else:
                 chosen_ent = max(
                     picked_ents,

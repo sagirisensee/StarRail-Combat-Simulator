@@ -178,6 +178,7 @@ class EnemyEntityBlueprint:
         ent.phase_max_hps = self.phase_max_hps  # type: ignore[attr-defined]
         ent.debuff_resist = dict(self.debuff_resist)  # type: ignore[attr-defined]
         ent.status_probability = self.status_probability  # type: ignore[attr-defined]
+        ent.monster_rank = self.rank  # type: ignore[attr-defined]
         return ent
 
 

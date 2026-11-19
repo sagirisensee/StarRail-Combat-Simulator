@@ -53,17 +53,18 @@ class TestStageSimAdapter(unittest.TestCase):
         assert isinstance(griffin_kit, DataDrivenEnemyKit)
         self.assertGreater(len(griffin_kit.executed_skills), 0)
 
-        # Clear Wave 1 -> MoC wave transition spawns Wave 2 (ApoliBoss) & resets ally runway
-        for e in wave1_enemies:
-            e.current_hp = 0.0
+        # Clear Wave 1 (including summoned enemies) -> MoC wave transition spawns Wave 2 (ApoliBoss)
+        for e in list(sim.entities):
+            if e.is_enemy:
+                e.current_hp = 0.0
         ally.distance_remaining = 3210.0
         director.after_step()
 
         self.assertEqual(director.wave, 2)
         self.assertTrue(math.isclose(ally.distance_remaining, 10000.0, rel_tol=1e-9))
-        wave2_enemies = [e for e in sim.entities if e.is_enemy]
-        self.assertEqual([e.name for e in wave2_enemies], ["堕神之血•亚婆离"])
-        apoli = wave2_enemies[0]
+        wave2_enemies = [e for e in sim.entities if e.is_enemy and e.current_hp > 0.0]
+        self.assertIn("堕神之血•亚婆离", [e.name for e in wave2_enemies])
+        apoli = next(e for e in wave2_enemies if e.name == "堕神之血•亚婆离")
         self.assertTrue(math.isclose(apoli.max_hp, APOLI_PHASE1_HP, rel_tol=1e-7))
 
         # Trigger Phase 1 -> Phase 2 via DataDrivenStageDirector & verify AI phase sync

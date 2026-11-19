@@ -4,6 +4,364 @@
   "fully_geared_count": 31,
   "characters": [
     {
+      "avatar_id": 1511,
+      "name": "星神★阿哈",
+      "element": "Quantum",
+      "path": 9,
+      "level": 80,
+      "eidolon": "E2",
+      "light_cone": {
+        "item_id": 21064,
+        "name": "菇菇嘎嘎历险记",
+        "superimposition": "S5",
+        "level": 80
+      },
+      "relic_count": 6,
+      "relic_sets": [
+        "戏梦点星的伶人 (ID 133)",
+        "套装329 (ID 329)"
+      ],
+      "stats_summary": {
+        "生命值 (HP)": 3639,
+        "攻击力 (ATK)": 1820,
+        "防御力 (DEF)": 1077,
+        "速度 (SPD)": 160,
+        "速度面板显示": "160 (白字 94 + 绿字 +66)",
+        "速度实战精算": 160.752,
+        "暴击率 (CR)": "61.3%",
+        "暴击伤害 (CD)": "143.0%",
+        "击破特攻 (BE)": "36.2%",
+        "能量恢复效率 (ERR)": "100.0%",
+        "效果命中 (EHR)": "0.0%",
+        "效果抵抗 (RES)": "3.4%",
+        "属性伤害加成 (DMG%)": "38.8%",
+        "欢愉度 (Elation)": "20.0%"
+      },
+      "breakdowns": {
+        "hp": {
+          "base_white": 1894.0,
+          "flat_bonus": 1745.0,
+          "percent_bonus": "92.13%",
+          "final_value": 3639.0
+        },
+        "atk": {
+          "base_white": 1155.0,
+          "flat_bonus": 664.0,
+          "percent_bonus": "57.49%",
+          "final_value": 1820.337546
+        },
+        "def": {
+          "base_white": 906.0,
+          "flat_bonus": 171.0,
+          "percent_bonus": "18.87%",
+          "final_value": 1077.35
+        },
+        "spd": {
+          "base_white": 94.0,
+          "flat_bonus": 66.752,
+          "percent_bonus": "0.00%",
+          "final_value": 160.752
+        }
+      },
+      "substat_roll_stats": {
+        "total_rolls": 51,
+        "low_rolls": 16,
+        "mid_rolls": 18,
+        "high_rolls": 17,
+        "overall_quality_pct": 51.0
+      },
+      "relic_details": [
+        {
+          "slot": 1,
+          "slot_name": "部件 1",
+          "set_name": "戏梦点星的伶人",
+          "main_affix": "生命值 +705",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.0346,
+              "count": 1,
+              "low_rolls": 1,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 4.032,
+              "count": 2,
+              "low_rolls": 2,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.2592,
+              "count": 4,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 4,
+              "is_pct": true
+            },
+            {
+              "name": "生命值",
+              "key": "hp_pct",
+              "value": 0.0346,
+              "count": 1,
+              "low_rolls": 1,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 2,
+          "slot_name": "部件 2",
+          "set_name": "戏梦点星的伶人",
+          "main_affix": "攻击力 +352",
+          "sub_affixes": [
+            {
+              "name": "防御力",
+              "key": "flat_def",
+              "value": 21.169,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": false
+            },
+            {
+              "name": "暴击率",
+              "key": "crit_rate",
+              "value": 0.0616,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 1,
+              "is_pct": true
+            },
+            {
+              "name": "击破特攻",
+              "key": "break_effect",
+              "value": 0.1685,
+              "count": 3,
+              "low_rolls": 1,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 4.032,
+              "count": 2,
+              "low_rolls": 2,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": false
+            }
+          ]
+        },
+        {
+          "slot": 3,
+          "slot_name": "部件 3",
+          "set_name": "戏梦点星的伶人",
+          "main_affix": "暴击率 +32.4%",
+          "sub_affixes": [
+            {
+              "name": "生命值",
+              "key": "hp_pct",
+              "value": 0.0389,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.1296,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 2,
+              "is_pct": true
+            },
+            {
+              "name": "击破特攻",
+              "key": "break_effect",
+              "value": 0.1944,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 3,
+              "is_pct": true
+            },
+            {
+              "name": "防御力",
+              "key": "flat_def",
+              "value": 33.87,
+              "count": 2,
+              "low_rolls": 2,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": false
+            }
+          ]
+        },
+        {
+          "slot": 4,
+          "slot_name": "部件 4",
+          "set_name": "戏梦点星的伶人",
+          "main_affix": "速度 +25",
+          "sub_affixes": [
+            {
+              "name": "攻击力",
+              "key": "flat_atk",
+              "value": 42.338,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 2,
+              "is_pct": false
+            },
+            {
+              "name": "防御力",
+              "key": "flat_def",
+              "value": 59.273,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 1,
+              "is_pct": false
+            },
+            {
+              "name": "暴击率",
+              "key": "crit_rate",
+              "value": 0.0583,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.1102,
+              "count": 2,
+              "low_rolls": 1,
+              "mid_rolls": 1,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 5,
+          "slot_name": "部件 5",
+          "set_name": "套装329",
+          "main_affix": "量子属性伤害提高 +38.8%",
+          "sub_affixes": [
+            {
+              "name": "生命值",
+              "key": "hp_pct",
+              "value": 0.0432,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": true
+            },
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.0778,
+              "count": 2,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 10.656,
+              "count": 5,
+              "low_rolls": 3,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "效果抵抗",
+              "key": "unknown",
+              "value": 0.034,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 0,
+              "high_rolls": 1,
+              "is_pct": true
+            }
+          ]
+        },
+        {
+          "slot": 6,
+          "slot_name": "部件 6",
+          "set_name": "套装329",
+          "main_affix": "生命值 +43.2%",
+          "sub_affixes": [
+            {
+              "name": "防御力",
+              "key": "flat_def",
+              "value": 55.039,
+              "count": 3,
+              "low_rolls": 1,
+              "mid_rolls": 2,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "攻击力",
+              "key": "atk_pct",
+              "value": 0.121,
+              "count": 3,
+              "low_rolls": 0,
+              "mid_rolls": 2,
+              "high_rolls": 1,
+              "is_pct": true
+            },
+            {
+              "name": "速度",
+              "key": "spd",
+              "value": 4.032,
+              "count": 2,
+              "low_rolls": 2,
+              "mid_rolls": 0,
+              "high_rolls": 0,
+              "is_pct": false
+            },
+            {
+              "name": "暴击伤害",
+              "key": "crit_dmg",
+              "value": 0.0583,
+              "count": 1,
+              "low_rolls": 0,
+              "mid_rolls": 1,
+              "high_rolls": 0,
+              "is_pct": true
+            }
+          ]
+        }
+      ]
+    },
+    {
       "avatar_id": 8006,
       "name": "开拓者",
       "element": "Imaginary",

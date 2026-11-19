@@ -46,8 +46,12 @@ TEAM_VM_LOADOUT: Dict[int, Tuple[int, int, int, int, List[Tuple[int, int]]]] = {
 }
 
 
-def resolve_vm_uid(uid_or_name: Union[int, str]) -> int:
-    """将角色 UID 或名称解析为标准 avatar_id。"""
+def resolve_vm_uid(
+    uid_or_name: Union[int, str],
+    *,
+    db: Optional[CharacterDB] = None,
+) -> int:
+    """将角色 UID 或名称解析为标准 avatar_id（支持 CharacterDB 内任意角色）。"""
     if isinstance(uid_or_name, int):
         return uid_or_name
     text = str(uid_or_name).strip()
@@ -55,7 +59,32 @@ def resolve_vm_uid(uid_or_name: Union[int, str]) -> int:
         return int(text)
     if text in NAME_TO_UID:
         return NAME_TO_UID[text]
+    if db is not None:
+        rp = db.get_by_name(text)
+        if rp is not None:
+            return int(rp.avatar_id)
     raise KeyError(f"未知 VM 角色标识: {uid_or_name!r}")
+
+
+def _infer_loadout_from_profile(rp: object) -> Tuple[int, int, Optional[int], int, List[Tuple[int, int]]]:
+    """从 CharacterDB 档案动态推导 (avatar_id, eidolon, lc_id, lc_s, relic_sets)。"""
+    aid = int(getattr(rp, "avatar_id"))
+    eid = int(getattr(rp, "eidolon", 0))
+    lc = getattr(rp, "light_cone", None)
+    lc_id = int(lc.item_id) if lc is not None and getattr(lc, "item_id", 0) else None
+    lc_s = int(getattr(lc, "superimposition", 1)) if lc is not None else 1
+    counts: Dict[int, int] = {}
+    for rel in getattr(rp, "relics", []) or []:
+        sid = int(getattr(rel, "relic_set_id", 0))
+        if sid:
+            counts[sid] = counts.get(sid, 0) + 1
+    relic_sets: List[Tuple[int, int]] = []
+    for sid, cnt in sorted(counts.items()):
+        if cnt >= 4:
+            relic_sets.append((sid, 4))
+        elif cnt >= 2:
+            relic_sets.append((sid, 2))
+    return aid, eid, lc_id, lc_s, relic_sets
 
 
 def build_vm_entity(
@@ -67,24 +96,35 @@ def build_vm_entity(
     db_path: str = DEFAULT_CHAR_DB_PATH,
 ) -> Entity:
     """构建单个挂载官方 VM 适配器 (`Kit`/`LightCone`/`Relic`) 的战斗实体。"""
-    uid = resolve_vm_uid(uid_or_name)
-    name = UID_TO_NAME[uid]
     char_db = db if db is not None else CharacterDB().load(db_path)
     vm_loader = loader if loader is not None else GameDataLoader()
+    uid = resolve_vm_uid(uid_or_name, db=char_db)
+    known_name = UID_TO_NAME.get(uid)
 
-    if name == "知更鸟•晴歌":
-        rp = char_db.get_by_name("知更鸟•晴歌_爱如此刻永恒") or char_db.get_by_name(name)
+    if known_name == "知更鸟•晴歌":
+        rp = char_db.get_by_name("知更鸟•晴歌_爱如此刻永恒") or char_db.get_by_name(known_name)
         if rp is not None:
             rp.name = "知更鸟•晴歌"
+    elif known_name is not None:
+        rp = char_db.get_by_name(known_name)
     else:
-        rp = char_db.get_by_name(name)
+        rp = char_db.get(uid) or (
+            char_db.get_by_name(str(uid_or_name).strip()) if isinstance(uid_or_name, str) else None
+        )
     if rp is None:
-        raise KeyError(f"CharacterDB 中未找到角色档案: {name!r} (uid={uid})")
+        raise KeyError(f"CharacterDB 中未找到角色档案: {uid_or_name!r} (uid={uid})")
 
+    name = known_name or rp.name
     ent = char_db.to_combat_entity(rp)
     ent.name = name
 
-    aid, eid, lc_id, lc_s, relics = loadout if loadout is not None else TEAM_VM_LOADOUT[uid]
+    if loadout is not None:
+        aid, eid, lc_id, lc_s, relics = loadout
+    elif uid in TEAM_VM_LOADOUT:
+        aid, eid, lc_id, lc_s, relics = TEAM_VM_LOADOUT[uid]
+    else:
+        aid, eid, lc_id, lc_s, relics = _infer_loadout_from_profile(rp)
+
     # 扣除 character_db_export 中已预烘焙、但官方 VM 会主动添加的局内被动：
     # 1409: PointB1 (+1.00 CR), Relic 320 (+0.20 OH)
     # 1403 / 1413: Relic 319 拾骨地 (+0.28 CD)
@@ -97,7 +137,8 @@ def build_vm_entity(
     # 1413: PointB3 / 行迹已含暴击，Relic 319 仅在局内加暴伤(未进面板)
 
     ent.kit = ConfigAbilityKitAdapter(name, aid, eidolon=eid, loader=vm_loader)
-    ent.light_cone = ConfigAbilityLightConeAdapter(name, lc_id, superimposition=lc_s)
+    if lc_id is not None:
+        ent.light_cone = ConfigAbilityLightConeAdapter(name, lc_id, superimposition=lc_s)
     ent.relic_handlers = [ConfigAbilityRelicAdapter(name, sid, pieces=pc) for sid, pc in relics]
     return ent
 
@@ -115,7 +156,7 @@ def build_vm_team(
     vm_loader = loader if loader is not None else GameDataLoader()
     team: List[Entity] = []
     for item in uids_or_names:
-        uid = resolve_vm_uid(item)
+        uid = resolve_vm_uid(item, db=char_db)
         ov = loadouts.get(uid) if loadouts is not None else None
         team.append(build_vm_entity(uid, db=char_db, loader=vm_loader, loadout=ov, db_path=db_path))
     return team

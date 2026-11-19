@@ -42,8 +42,8 @@ class TestStagePrunableTypes(unittest.TestCase):
 
         self.assertEqual(classify_node_type("RPG.GameCore.AnimSetParameter"), "prunable_presentation")
         self.assertEqual(classify_node_type("RPG.GameCore.ShowBossInfoBar"), "prunable_presentation")
-        self.assertEqual(classify_node_type("RPG.GameCore.SetBattleAchievement"), "prunable_meta_scoring")
-        self.assertEqual(classify_node_type("RPG.GameCore.SetBattleScoringItem"), "prunable_meta_scoring")
+        self.assertEqual(classify_node_type("RPG.GameCore.SetBattleAchievement"), "prunable_presentation")
+        self.assertEqual(classify_node_type("RPG.GameCore.SetBattleScoringItem"), "prunable_presentation")
         self.assertEqual(classify_node_type("RPG.GameCore.SummonMonster"), "mechanical_task")
         self.assertEqual(classify_node_type("RPG.GameCore.ByCompareMonsterPhase"), "mechanical_predicate")
         self.assertTrue(is_safe_prunable_type("RPG.GameCore.SkillExecutionStart"))

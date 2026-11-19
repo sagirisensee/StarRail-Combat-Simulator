@@ -1975,6 +1975,17 @@ def run_trajectory_replay(
             u_ent = sim.get_entity(u_item.actor)
             return u_ent is not None and float(u_ent.energy) >= float(u_ent.max_energy) - 1e-6
 
+        def _on_sub_action_end() -> None:
+            if not ult_queue:
+                return
+            u_item = ult_queue[0][1]
+            if u_item.av > float(getattr(sim, "current_av", 0.0)) + 1e-4:
+                return
+            u_ent = sim.get_entity(u_item.actor)
+            if u_ent is not None and float(u_ent.energy) >= float(u_ent.max_energy) - 1e-6:
+                _fire_due_ults(allow_cur_enemy=True)
+
+        sim.on_enemy_sub_action_end = _on_sub_action_end
         _pre_boss_ult = _ult_ready_before_enemy_step()
         if (
             float(getattr(sim, "current_av", 0.0)) < 1e-4
@@ -2015,13 +2026,39 @@ def run_trajectory_replay(
                 uid_override_map = getattr(sim, "enemy_uid_map", None)
                 h_uids = getattr(head, "target_uids", None)
                 if uid_override_map and h_uids:
-                    mapped = tuple(uid_override_map[u] for u in h_uids if u in uid_override_map)
-                    if mapped:
-                        target_ids = mapped
+                    mapped_list = []
+                    for u in h_uids:
+                        if u not in uid_override_map:
+                            continue
+                        ename = uid_override_map[u]
+                        if sim.get_entity(ename) is None:
+                            import re as _re
+                            m_eg = _re.match(r"^(.+)_g(\d+)_(\d+)$", ename)
+                            if m_eg:
+                                alt = f"{m_eg.group(1)}_{(int(m_eg.group(2)) - 1) * 3 + int(m_eg.group(3))}"
+                                if sim.get_entity(alt) is not None:
+                                    ename = alt
+                        mapped_list.append(ename)
+                    if mapped_list:
+                        target_ids = tuple(mapped_list)
                 if target_ids is None:
                     raw_tids = getattr(head, "target_ids", None)
-                    if raw_tids and all(sim.get_entity(tid) is not None for tid in raw_tids):
-                        target_ids = raw_tids
+                    if raw_tids:
+                        import re as _re
+                        mapped_raw = []
+                        for tid in raw_tids:
+                            if sim.get_entity(tid) is not None:
+                                mapped_raw.append(tid)
+                            elif tid == "「灯塔」" and sim.get_entity("正阳狮鹫") is not None:
+                                mapped_raw.append("正阳狮鹫")
+                            else:
+                                m_eg = _re.match(r"^(.+)_g(\d+)_(\d+)$", tid)
+                                if m_eg:
+                                    alt = f"{m_eg.group(1)}_{(int(m_eg.group(2)) - 1) * 3 + int(m_eg.group(3))}"
+                                    if sim.get_entity(alt) is not None:
+                                        mapped_raw.append(alt)
+                        if len(mapped_raw) == len(raw_tids):
+                            target_ids = tuple(mapped_raw)
                 replay.turn_matched += 1
         if actor_ent.name == "长夜":
             q01 = spirit_queues.get(1141301)

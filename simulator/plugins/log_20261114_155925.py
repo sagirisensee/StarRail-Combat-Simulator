@@ -24,7 +24,7 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
         return None
 
     def _enemy_attack_skip_155925(attacker: Any, av: float) -> bool:
-        return getattr(attacker, "name", None) == "流星铁鹰_g1_2" and abs(av - 92.17) < 0.05
+        return getattr(attacker, "name", None) in ("流星铁鹰_g1_2", "流星铁鹰_2") and abs(av - 92.17) < 0.05
 
     def _blast_155925_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
         av = float(getattr(sim, "current_av", 0.0))
@@ -43,7 +43,7 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
     def _aha_155925_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
         # 137.95 AV 阿哈常规回合: 7 段各 22,533.88 (天马x2, 铁鹰1x2, 铁鹰2x2, 狮鹫x1) + 我方伴生 2 段
-        if not director._triggered_aha_137 and av >= 137.95 - 1e-6:
+        if not getattr(director, "_triggered_aha_137", False) and av >= 137.95 - 1e-6:
             director._triggered_aha_137 = True
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -56,7 +56,7 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
         # 150.00 AV 第 1 轮开始阿哈 20 笑点额外回合: 5 段弹射 (非破韧 26,000.63 / 破韧 28,889.58)
-        if not director._triggered_aha_150 and av >= 150.0 - 1e-6:
+        if not getattr(director, "_triggered_aha_150", False) and av >= 150.0 - 1e-6:
             director._triggered_aha_150 = True
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -77,6 +77,9 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
 
     def _on_griffin_praise_aquila(event: Any) -> None:
         if getattr(event, "actor_name", None) != "正阳狮鹫":
+            return
+        rt = getattr(sim, "vm_runtime", None)
+        if rt is not None and rt.modifier_engine.has_modifier("正阳狮鹫", "MMonster_W4_Griffin_00_Status"):
             return
         av = float(getattr(event, "av", getattr(sim, "current_av", 0.0)))
         if abs(av - 157.82828282099217) > 0.05:

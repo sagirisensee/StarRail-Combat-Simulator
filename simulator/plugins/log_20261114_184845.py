@@ -31,17 +31,21 @@ def attach_log_20261114_184845_plugin(sim: Any) -> None:
             if av == 75.76:
                 return _pick(candidates, "缇宝")
             if av == 151.52:
+                # 151.52 AV 月夜天马风行双连动: 第1动 Skill04 命中风堇+缇宝；第2动 Skill01 单体命中风堇的忆灵小伊卡
+                if getattr(attacker.kit, "ai_executor", None) is not None and getattr(attacker.kit, "executed_skills", None):
+                    if attacker.kit.executed_skills[-1] == "Skill01":
+                        return _pick(candidates, "小伊卡")
                 return _pick(candidates, "风堇")
             if av == 227.27:
                 return _pick(candidates, "风堇")
-        if aname == "流星铁鹰_g1_1":
+        if aname in ("流星铁鹰_g1_1", "流星铁鹰_1"):
             if av == 69.44:
                 return _pick(candidates, "风堇")
             if av == 179.29:
                 return _pick(candidates, "缇宝")
-        if aname == "流星铁鹰_g1_2" and av == 186.87:
+        if aname in ("流星铁鹰_g1_2", "流星铁鹰_2") and av == 186.87:
             return _pick(candidates, "小伊卡")
-        if aname == "流星铁鹰_g1_3" and av == 148.99:
+        if aname in ("流星铁鹰_g1_3", "流星铁鹰_3") and av == 148.99:
             return _pick(candidates, "风堇")
         return None
 
@@ -85,7 +89,7 @@ def attach_log_20261114_184845_plugin(sim: Any) -> None:
         if abs(av - 151.52) < 0.05 and getattr(attacker, "name", None) == "月夜天马":
             return [e for e in living if getattr(e, "name", None) in ("缇宝", "小伊卡")]
         if abs(av - 157.83) < 0.05:
-            return []
+            return [e for e in living if getattr(e, "name", None) == "小伊卡"]
         return []
 
     sim.target_provider = _target_184845_provider

@@ -244,10 +244,15 @@ AVATAR_STATS: Dict[int, Dict[str, Any]] = {
         "base_hp": 1047.8, "base_atk": 640.33, "base_def": 460.85, "base_spd": 107.0, "max_sp": 160,
         "traces": {"crit_rate": 0.12, "quantum_dmg": 0.144, "atk_pct": 0.28}
     },
+    1510: {
+        "name": "姬子•启行", "element": "Fire", "path": "Mage",
+        "base_hp": 1125.432, "base_atk": 756.756, "base_def": 485.1, "base_spd": 98.0, "max_sp": 140,
+        "traces": {}
+    },
     1511: {
-        "name": "姬子·新星 (Himeko Nova)", "element": "Fire", "path": "Mage",
-        "base_hp": 1023.1, "base_atk": 756.76, "base_def": 436.59, "base_spd": 96.0, "max_sp": 8,
-        "traces": {"crit_rate": 0.12, "fire_dmg": 0.224, "atk_pct": 0.18}
+        "name": "星神★阿哈", "element": "Quantum", "path": "Elation",
+        "base_hp": 1047.816, "base_atk": 679.14, "base_def": 509.355, "base_spd": 94.0, "max_sp": 8,
+        "traces": {"crit_dmg": 0.373, "crit_rate": 0.12, "spd": 5.0}
     },
     1512: {
         "name": "知更鸟·晴歌", "element": "Wind", "path": "Memory",
@@ -332,7 +337,7 @@ LIGHTCONE_STATS: Dict[int, Dict[str, Any]] = {
     21024: {"name": "论剑", "path": "Rogue", "base_hp": 952.6, "base_atk": 476.3, "base_def": 330.8, "passive_stats": {}},
     21034: {"name": "今日亦是和平的一日", "path": "Mage", "base_hp": 846.72, "base_atk": 529.2, "base_def": 330.75, "passive_stats": {}},
     21056: {"name": "追逐风的时候", "path": "Shaman", "base_hp": 1058.4, "base_atk": 476.28, "base_def": 396.9, "passive_stats": {}},
-    21064: {"name": "新4星光锥", "path": "Remembrance", "base_hp": 952.6, "base_atk": 476.3, "base_def": 330.8, "passive_stats": {"crit_dmg": 0.32}},
+    21064: {"name": "菇菇嘎嘎历险记", "path": "Elation", "base_hp": 846.72, "base_atk": 476.28, "base_def": 396.9, "passive_stats": {}},
 }
 
 DEFAULT_5STAR_LC = {
