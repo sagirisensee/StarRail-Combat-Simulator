@@ -108,6 +108,8 @@ class LogMetadata:
     enemy_uid_map: Dict[int, str] = field(default_factory=dict)
     ally_ult_targets: Dict[str, List[str]] = field(default_factory=dict)  # caster_name -> [target_name, ...]
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)  # (av, caster_name) -> [enemy_name, ...]
+    # (av, master_name) -> 按该 AV 内忆灵技施放顺序排列的单体忆灵技主目标名
+    servant_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)
     aha_turns: List[AhaTurnRecord] = field(default_factory=list)
     windwalk_enemy_uids: Set[int] = field(default_factory=set)
     slow_hits: Set[Tuple[float, str]] = field(default_factory=set)  # (av, target_name) 敌方回合内发生减速的命中记录
@@ -216,17 +218,40 @@ def extract_log_metadata(
     pending_player_atk: Optional[Tuple[float, str]] = None
     pending_player_hit_euids: List[int] = []
     pending_player_primary_dmg_hits = 0
+    pending_player_is_servant = False
     player_enemy_targets_raw: Dict[Tuple[float, str], List[int]] = {}
+    servant_targets_raw: Dict[Tuple[float, str], List[int]] = {}
     in_aoe_heal_window = False
     aoe_heal_slot_uids: List[int] = []
     inferred_slot_uids: List[int] = []
 
+    def _servant_primary_euid() -> Optional[int]:
+        """忆灵技主目标：只认“全段命中同一个敌方”的单体忆灵技，群攻一律沿用官方默认主目标。
+
+        群攻忆灵技（Skill11 等）的主目标由官方目标范围与默认选敌决定，从日志里反推容易误判，
+        因此这里只在证据无歧义时落盘，宁可不写也不写错。
+        """
+        ordered: List[int] = []
+        for u in pending_player_hit_euids:
+            if u not in ordered:
+                ordered.append(u)
+        if len(ordered) == 1:
+            return ordered[0]
+        return None
+
     def _flush_pending_player_atk() -> None:
         nonlocal pending_player_atk, pending_player_hit_euids, pending_player_primary_dmg_hits
+        nonlocal pending_player_is_servant
         if pending_player_atk is not None:
+            if pending_player_is_servant:
+                # 忆灵技按“施放顺序”逐个登记单体主目标：同 AV 可能连放单体技与群攻技，
+                # 必须用游标区分；群攻技不登记（沿用官方默认主目标），游标耗尽后自然回退默认。
+                _servant_euid = _servant_primary_euid()
+                if _servant_euid is not None:
+                    servant_targets_raw.setdefault(pending_player_atk, []).append(_servant_euid)
             # 仅对纯单体技能（主技能 OnDamage 命中数 == 1，如风堇普攻）记录首个扣血敌方为主目标；
             # 扩散/群攻（主技能 OnDamage 命中数 > 1，如缇宝普攻）由默认居中逻辑处理
-            if (
+            elif (
                 pending_player_primary_dmg_hits == 1
                 or (
                     pending_player_atk[1].startswith("UID_")
@@ -238,6 +263,7 @@ def extract_log_metadata(
         pending_player_atk = None
         pending_player_hit_euids = []
         pending_player_primary_dmg_hits = 0
+        pending_player_is_servant = False
 
     last_player_hp: Dict[int, float] = {}
     last_player_spd: Dict[int, float] = {}
@@ -376,8 +402,10 @@ def extract_log_metadata(
                         in_aoe_heal_window = False
                     if sk_type == "Ultra":
                         pending_ally_ult_caster = cname
-                    if sk_type in ("Normal", "BPSkill", "Ultra"):
+                    if sk_type in ("Normal", "BPSkill", "Ultra", "Servant"):
+                        # 忆灵技（Servant）的施法者 UID 是召唤师本体，主目标仍需按官方日志锁定
                         pending_player_atk = (round(cur_av, 2), cname)
+                        pending_player_is_servant = sk_type == "Servant"
             elif ev == "OnDamage":
                 if pending_player_atk is not None:
                     dtype = str(data.get("type") or "")
@@ -534,6 +562,12 @@ def extract_log_metadata(
         if names:
             player_enemy_targets[k_pt] = names
 
+    servant_targets: Dict[Tuple[float, str], List[str]] = {}
+    for k_pt, euids in servant_targets_raw.items():
+        seq = [enemy_uid_map[u] for u in euids if u in enemy_uid_map]
+        if seq:
+            servant_targets[k_pt] = seq
+
     if team_override:
         team_names = list(team_override)
         team_uids = []
@@ -568,6 +602,7 @@ def extract_log_metadata(
         enemy_uid_map=enemy_uid_map,
         ally_ult_targets=ally_ult_targets,
         player_enemy_targets=player_enemy_targets,
+        servant_targets=servant_targets,
         aha_turns=aha_turns,
         windwalk_enemy_uids=windwalk_enemy_uids,
         slow_hits=slow_hits,
@@ -684,6 +719,7 @@ def attach_auto_rng_plugin(
     cursor_by_av: Dict[float, int] = {}
     active_rec_by_av: Dict[float, EnemyHitRecord] = {}
     ally_ult_cursor: Dict[str, int] = {}
+    servant_cursor: Dict[Tuple[float, str], int] = {}
     recorded_ambig_keys: Set[Tuple[float, int, str]] = set()
     recorded_inf_keys: Set[Tuple[float, int, str]] = set()
 
@@ -786,6 +822,20 @@ def attach_auto_rng_plugin(
         # 我方攻击敌方时的单体/主目标选择（如风堇普攻点狂兽的胚芽而非亚婆离）
         if not getattr(attacker, "is_enemy", False) and living and all(getattr(e, "is_enemy", False) for e in living):
             key_av = round(av, 2)
+            # 忆灵技：日志里施法者 UID 是召唤师本体，需按 master_name 归属并沿施放顺序消费游标
+            if getattr(attacker, "is_memosprite", False):
+                master_name = str(getattr(attacker, "master_name", "") or "")
+                for (p_av, p_name), seq in meta.servant_targets.items():
+                    if p_name == master_name and abs(p_av - key_av) <= 0.05 and seq:
+                        idx = servant_cursor.get((p_av, p_name), 0)
+                        servant_cursor[(p_av, p_name)] = idx + 1
+                        if idx >= len(seq):
+                            return None
+                        target_ename = seq[idx]
+                        found = _find_ally(living, target_ename)
+                        if found is not None:
+                            return found
+                return None
             for (p_av, p_name), enames in meta.player_enemy_targets.items():
                 if p_name == att_name and abs(p_av - key_av) <= 0.05 and enames:
                     target_ename = enames[min(hit_idx, len(enames) - 1)]
@@ -1403,7 +1453,7 @@ def emit_plugin(
         "# coding: utf-8",
         f'"""实机日志 battle_{tag}.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""',
         "",
-        "from typing import Any, List, Optional",
+        "from typing import Any, Dict, List, Optional, Tuple",
         "from simulator.plugins._helpers import (",
         "    find_ally as _find_ally,",
         "    find_memosprite_name as _find_memosprite_name,",
@@ -1429,6 +1479,24 @@ def emit_plugin(
             lines.append(f"            if abs(av - {p_av:.2f}) < 0.05 and att_name == {p_name!r}:")
             lines.append(f"                tgts = {enames!r}")
             lines.append(f"                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])")
+        lines.append("")
+
+    # 1b. 我方忆灵技主目标（按召唤师归属 + 同 AV 施放顺序游标，避免单体技与群攻技串号）
+    if meta.servant_targets:
+        lines.append("        # 1b. 我方忆灵技主目标（按召唤师归属 + 施放顺序游标）")
+        lines.append(
+            "        if (not is_enemy and getattr(attacker, 'is_memosprite', False) and living"
+            " and all(getattr(e, 'is_enemy', False) for e in living)):"
+        )
+        lines.append('            _master = str(getattr(attacker, "master_name", "") or "")')
+        for (p_av, p_name), seq in sorted(meta.servant_targets.items()):
+            lines.append(f"            if abs(av - {p_av:.2f}) < 0.05 and _master == {p_name!r}:")
+            lines.append(f"                _seq = {seq!r}")
+            lines.append(f"                _key = ({p_av:.2f}, {p_name!r})")
+            lines.append("                _idx = _servant_cursor.get(_key, 0)")
+            lines.append("                _servant_cursor[_key] = _idx + 1")
+            lines.append("                if _idx >= len(_seq): return None")
+            lines.append("                return _find_ally(living, _seq[_idx])")
         lines.append("")
 
     # 2. 我方辅助单点技能目标
@@ -1464,10 +1532,12 @@ def emit_plugin(
             lines.index(f"    def _target_{tag}_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:"),
             "    _same_av_turn_slots: Dict[Tuple[str, str], List[int]] = {}",
         )
-        lines.insert(
-            lines.index("    _same_av_turn_slots: Dict[Tuple[str, str], List[int]] = {}"),
-            "    from typing import Dict, Tuple",
+    if meta.servant_targets:
+        _provider_def = lines.index(
+            f"    def _target_{tag}_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:"
         )
+        lines.insert(_provider_def, "")
+        lines.insert(_provider_def, "    _servant_cursor: Dict[Tuple[float, str], int] = {}")
     for (hav, ename), hlist in hits_by_key.items():
         if len(hlist) == 1:
             lines.append(f"        if abs(av - {hav:.2f}) < 0.05 and att_name == {ename!r}:")

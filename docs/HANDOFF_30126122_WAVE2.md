@@ -312,3 +312,81 @@ pytest simulator/vm/test_vm_30126122_alignment.py -k "155925 or 184651 or 184845
   - SIM 同期为 `5.6052`（`+0.865`，即 `0.40 + 31 * 0.015`，少 1 层 `知更鸟•晴歌` `Point02` 计数），且 `L1406` 追击比 SIM 高 `1.00590x`（其中 `6.6202 / 6.6052 = 1.00227x` 来自暴伤，其余 `~1.00362x` 来自同期增益/面板差）。
 - **建议查法**：
   - 对比 `AV=157.83` `L1397..L1406` 之间 `知更鸟•晴歌` `MAvatar_RobinS_00_SkillTree_Point02` 的层数增长时机（SIM 在 `AV=158.0` 时该动态值 `1711336185` 已到 `33.0`，说明 `L1401` 刷新时滞后了 1 层）及 `L1395..L1405` 全队 `OnStatChange`。
+
+---
+
+## 10. 本轮进展（2026-11-20 18:5x，接手模型追加）
+
+### 10.1 已落盘：生成器通用「单体忆灵技主目标」提取（`reconcile_generator.py`）
+
+- `LogMetadata` 新增 `servant_targets: Dict[(av, master_name), List[str]]`。
+- 抽取规则（纯日志事实，无角色/怪物特判）：
+  1. `OnUseSkill` 中 `skill.type == "Servant"` 也登记为一次「我方攻击」，施法者取召唤师 `uid` 对应名；
+  2. 该次施放若**全段只打同一个敌方**（`len(set(hit_euids)) == 1`）才登记主目标；
+     群攻忆灵技一律不登记，沿用官方默认选敌（避免从日志反推群攻主目标时误判）；
+  3. `_target_provider` 与自动生成的插件都用 `attacker.master_name` 归属，并按 `(av, master)` **施放顺序游标**消费；
+     游标耗尽后自然回退官方默认（这正是 `1141301` 打 `流星铁鹰_1`、随后 `1141307` 仍回落到 `正阳狮鹫` 的关键）。
+- 已重新 `--emit-plugin` 生成 `log_20261114_221208.py` / `log_20261114_220255.py`。
+
+### 10.2 当前基线（务必以此为准，旧数字已过时）
+
+| 用例 | 总伤误差 | 第一分叉 | 说明 |
+| :--- | :---: | :---: | :--- |
+| `221208` | `5.1327%` | `AV=206.75`（`-0.383%`） | Wave 1 `AV=0.00~189.12` **全部 `0.000%`**；此前 `AV=160.02` 的 `-43.13%` 已消失 |
+| `220255` | `5.9078%` | `AV=157.83`（`-0.216%`） | Wave 1 8/8 仍全绿；**旧文档的 `1.2293%` 是过时数字**，已用 `git stash` 回退生成器改动复跑确认为同一基线 |
+
+门禁现状：`pytest simulator/vm/test_vm_30126122_alignment.py -q` → **6 passed / 2 failed**（仅 `220255`、`221208` 红灯）。
+
+### 10.3 新定位的共因：知更鸟 `Point01` 转换在忆灵身上滞后 + 气氛值少 1 层
+
+`221208` 的 `AV=206.75` 有两次 `1141307`：第一次（打死 `月夜天马`）精确，第二次（打 `亚婆离` + 2 胚芽）**三个目标同比偏低 `0.6577%`**；同 AV 的 `141303` 终结技 `594,683.34` 对 GT `594,683.35`，说明长夜月本体面板正确。分解字段（`DamageAppliedEvent.breakdown`）：
+
+```text
+SIM: base_stat=6000.97 mult=3.5250 crit=7.2067 def_ignore=0.61 def=0.690369 res=0.8 vuln=1.46 red=0.9
+GT/SIM = 1.006577（三个目标完全一致，属于全局乘区差异）
+```
+
+用 VM 动态值探针（同一 AV）得到：
+
+| 时点 | 气氛值 `1711336185` | `Point01_CritDmg.MDF(2128130574)` 长夜月 | 长夜（忆灵） |
+| :--- | :---: | :---: | :---: |
+| Robin 终结技（`L1529`）后 | `27.0` | `0.79` | `0.79` |
+| 第二次 `1141307` 出手时 | `29.0` | `0.82` | **`0.79`（未刷新）** |
+
+GT 同期 `CriticalDamage` 由 `3.7338 → 4.5688`（`+0.835`），换算 `0.40 + 0.015n` 即 **`n=29`**，
+而 SIM 本体只有 `0.82`（`n=28`）——**本体少 1 层、忆灵再额外滞后 1 层**。
+这与第 9 节 `220255` 的 `0.865 vs 0.880` 是**同一根因族**。
+
+`MAvatar_RobinS_00_Fever_DefIgnore` 的动态值 `48558309` 也同步走 `0.285 → 0.295`，缺失的层数会同时抬高暴伤与无视防御，正好解释 `0.6577%` 的全局同比差。
+
+> 结论：下一步应修 **VM 层**（`OnAttackerPrepareAttackData` → `TplHyperCharge_AddValue_NoTurnLimit` → `Point01` 重算链）：
+> 1. 我方任意一次攻击产生的气氛值增量，必须在**本次伤害结算前**生效；
+> 2. `Point01` 重算必须覆盖忆灵（`master_name` 归属 / `CasterServant` 别名），当前本体刷新了而忆灵仍是旧值。
+> 修好后 `220255` 的 `AV=157.83` 与 `221208` 的 `AV=206.75` 预计同时归零。
+
+### 10.4 本轮用到的探针手法（临时脚本已清理，按此重建即可）
+
+```python
+# 1) 生成器抽取结果
+from simulator.vm.reconcile_generator import extract_log_metadata
+meta = extract_log_metadata("battle_logs/battle_20261114_221208.jsonl")
+print(meta.player_enemy_targets, meta.servant_targets)
+
+# 2) 单次命中的全量乘区分解（base_stat / crit_mult / def_ignore / vuln / red / dmg_boost）
+def on_dmg(ev):
+    b = ev.breakdown
+    print(ev.attacker_name, ev.damage_tag, ev.target_name, ev.damage,
+          b.base_stat, b.skill_multiplier, b.crit_mult, b.def_mult,
+          getattr(b, "attacker_def_ignore", None), b.vuln_mult, b.reduction_mult, b.dmg_boost_mult)
+sim.event_bus.subscribe(DamageAppliedEvent, on_dmg)
+
+# 3) 知更鸟气氛值与 Point01 / Fever_DefIgnore 动态值（务必在 ActionExecuteEvent 里读）
+rt = sim.vm_runtime
+print(rt.get_dynamic_value("知更鸟•晴歌", 1711336185))     # 气氛值
+for m in rt.modifier_engine.get_modifiers("长夜月"):
+    if "Point01" in m.name or "Fever" in m.name:
+        print(m.name, getattr(m, "dynamic_values", None))  # 2128130574=Point01 转换值, 48558309=Fever 无视防御
+```
+
+> 注意：`sim.get_entity("长夜")` 才是 Data-Driven 下长夜月忆灵的真实实体名（`is_memosprite=True`、`master_name="长夜月"`），
+> 报表里的 `长夜月 (忆灵)` 只是伤害归属显示名，`target_provider` 收到的是 `长夜`。
