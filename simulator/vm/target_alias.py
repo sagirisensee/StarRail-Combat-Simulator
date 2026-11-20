@@ -82,7 +82,9 @@ def _dedup_preserve(items: Sequence[str]) -> List[str]:
 
 
 def _is_alive_entity(sim: Any, ent: Any) -> bool:
-    return bool(ent is not None and (getattr(ent, "current_hp", 0.0) > 0 or getattr(ent, "is_infinite_hp", False)))
+    if ent is None or getattr(ent, "_vm_limbo_pending", False):
+        return False
+    return bool(getattr(ent, "current_hp", 0.0) > 0 or getattr(ent, "is_infinite_hp", False))
 
 
 def _is_battle_event(ent: Any) -> bool:

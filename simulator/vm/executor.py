@@ -48,7 +48,9 @@ def _is_alive(sim: Any, eid: str) -> bool:
     if eid == "__LEVEL__":
         return True
     e = sim.get_entity(eid)
-    return bool(e is not None and (getattr(e, "current_hp", 0.0) > 0 or getattr(e, "is_infinite_hp", False)))
+    if e is None or getattr(e, "_vm_limbo_pending", False):
+        return False
+    return bool(getattr(e, "current_hp", 0.0) > 0 or getattr(e, "is_infinite_hp", False))
 
 
 class TaskExecutor:
@@ -1164,6 +1166,7 @@ class TaskExecutor:
                                 m.config.get("StatusType") == "Debuff"
                                 or ("STAT_CTRL" in m.behavior_flags)
                                 or ("DisableAction" in m.behavior_flags)
+                                or (float(m.properties.get("AllDamageTypeTakenRatio", 0.0)) > 0.0)
                             )
                             and "UnDispellable" not in m.behavior_flags
                             and m.halo_parent_uid is None
@@ -1422,7 +1425,8 @@ class TaskExecutor:
                     if runner is not None:
                         try:
                             if runner.get_enemy_state(mod.owner_id).phase >= 2:
-                                setattr(mod, "_saved_toughness_dmg_reduction", getattr(owner_ent, "toughness_dmg_reduction", 0.10))
+                                saved_tdr = getattr(owner_ent, "_phase_saved_toughness_dmg_reduction", getattr(owner_ent, "toughness_dmg_reduction", 0.10))
+                                setattr(mod, "_saved_toughness_dmg_reduction", saved_tdr)
                                 owner_ent.toughness_dmg_reduction = 0.0
                         except KeyError:
                             pass
@@ -1786,8 +1790,9 @@ class TaskExecutor:
             ):
                 rt.begin_being_attacked(ctx.caster_id, real_targets)
             any_died_mid_aoe = False
+            pending_limbo: List[str] = []
             for idx, tid in enumerate(real_targets):
-                if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type == "Servant":
+                if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type in ("Servant", "Pursued"):
                     any_died_mid_aoe = False
                     dmg_data = dict(base_before_hit_all)
                     me.dispatch_event(
@@ -1877,7 +1882,9 @@ class TaskExecutor:
                             mrs = runner.get_enemy_state(tid)
                             if getattr(mrs, "_limbo_pending", False):
                                 setattr(mrs, "_limbo_pending", False)
-                                me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=ctx.caster_id)
+                                any_died_mid_aoe = True
+                                if tid not in pending_limbo:
+                                    pending_limbo.append(tid)
                         except KeyError:
                             pass
                     if was_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
@@ -1889,6 +1896,8 @@ class TaskExecutor:
                         if tid not in pending_dead:
                             pending_dead.append(tid)
             sim.resolver.resolve_all()
+            for l_tid in pending_limbo:
+                me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=ctx.caster_id)
         finally:
             sim.resolver.end_aoe()
             self._damage_capture_stack.pop()
@@ -1997,6 +2006,7 @@ class TaskExecutor:
                                 raw_loss = max(0.0, cur_hp - fl)
                         if mrs.phase < mrs.max_phase and cur_hp - raw_loss <= 0.0:
                             setattr(mrs, "_limbo_pending", True)
+                            setattr(mrs.entity, "_vm_limbo_pending", True)
                             raw_loss = max(0.0, cur_hp - 1.0)
                     except Exception:
                         pass

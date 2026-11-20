@@ -341,7 +341,7 @@ class StatusManager:
                 and not getattr(tgt, "is_countdown", False)
                 and (self.simulator and self.simulator.get_entity(getattr(tgt, "name", "")) is not None)
             )
-            if reason == "EXPIRED" and is_valid_ally and 0 < new_max < old_max and old_hp > 1.0:
+            if reason in ("EXPIRED", "EXPLICIT") and is_valid_ally and 0 < new_max < old_max and old_hp > 1.0:
                 scaled_hp = old_hp * (new_max / old_max)
                 tgt.current_hp = max(1.0, min(cap, scaled_hp))
             elif 0 < cap != float("inf") and getattr(tgt, "current_hp", 0.0) > cap:

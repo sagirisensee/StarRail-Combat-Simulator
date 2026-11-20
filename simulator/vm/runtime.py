@@ -455,6 +455,18 @@ class VMRuntime:
             self.modifier_engine.tick_life_step("TurnEnd", evt.actor_name)
         finally:
             self._in_turn_phase1_end = False
+        ent = self.sim.get_entity(evt.actor_name)
+        if ent is not None and getattr(ent, "is_enemy", False) and getattr(ent, "current_hp", 0.0) > 0.0:
+            self.modifier_engine.dispatch_event("OnPhase2", owner_id=evt.actor_name, param_entity_id=evt.actor_name)
+            sched_p2 = getattr(self.sim, "scheduler", None)
+            if sched_p2 is not None and sched_p2.has_pending():
+                prev_d2 = getattr(sched_p2, "_action_frame_depth", 0)
+                sched_p2._action_frame_depth = 0
+                try:
+                    sched_p2.drain()
+                finally:
+                    sched_p2._action_frame_depth = prev_d2
+            self.end_being_attacked()
 
     @staticmethod
     def _normalize_skill_type(evt: Any) -> str:

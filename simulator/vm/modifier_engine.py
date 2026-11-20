@@ -224,7 +224,12 @@ class ModifierEngine:
                     break
         elif stacking == "Unique":
             if existing_list:
-                return existing_list[0]
+                add_cfg = cfg.get("AdditionConfig")
+                if isinstance(add_cfg, dict) and add_cfg.get("SubModifierList") and "Stacking" not in cfg:
+                    # 实机中未显式声明 Stacking 的光环父 Modifier（如 MRelic_127_Sub1）重复挂载会先卸载旧实例（含子光环并按比例缩放 HP / 刷新 APC）再重建
+                    self.destroy_modifier(existing_list[0], reason="EXPIRED")
+                else:
+                    return existing_list[0]
         elif stacking in ("Replace", "Refresh"):
             if existing_list:
                 target_existing = existing_list[0]
@@ -314,9 +319,6 @@ class ModifierEngine:
             self.dispatch_modifier_callbacks(mod, "OnStack", mod_ctx)
             self._sync_modifier_to_status_mgr(mod)
 
-            # 处理 AdditionConfig.SubModifierList (如光环下发/刷新)
-            self._attach_sub_modifiers(mod, mod_ctx)
-
             # 触发全局 OnModifierAdd / OnListenModifierAdd
             if is_new:
                 self.dispatch_event(
@@ -338,6 +340,8 @@ class ModifierEngine:
 
         if self._apc_defer_depth == 0:
             self._flush_dirty_apc()
+        # 处理 AdditionConfig.SubModifierList (如光环下发/刷新): 在本体 APC 刷新后逐目标按站位序结算，与实机 L2745-2767 一致
+        self._attach_sub_modifiers(mod, mod_ctx)
         if is_new:
             self._init_dynamic_value_ranges(mod, mod_ctx)
         return mod
@@ -604,7 +608,7 @@ class ModifierEngine:
 
     def _recompute_dirty_hp_ratio(self, owner_id: str) -> None:
         ent = self.rt.sim.get_entity(owner_id)
-        if ent is None or getattr(ent, "is_enemy", False):
+        if ent is None or getattr(ent, "is_enemy", False) or getattr(ent, "is_memosprite", False):
             return
         total_dirty = sum(
             float(m.properties.get("DirtyHPRatio", 0.0))

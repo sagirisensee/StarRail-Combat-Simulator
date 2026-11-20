@@ -414,11 +414,16 @@ class StageRunner:
         new_phase = max(1, min(mrs.max_phase, new_phase))
         mrs.phase = new_phase
         mrs.lock_hp_ratio = None
+        setattr(mrs.entity, "_vm_limbo_pending", False)
 
         new_hp = mrs.blueprint.phase_max_hps[new_phase - 1]
         mrs.entity.max_hp = new_hp
         mrs.entity.current_hp = new_hp
         self.execute_reset_stance(monster_name, forbid_when_empty=False)
+        if new_phase >= 2:
+            if not hasattr(mrs.entity, "_phase_saved_toughness_dmg_reduction"):
+                setattr(mrs.entity, "_phase_saved_toughness_dmg_reduction", getattr(mrs.entity, "toughness_dmg_reduction", 0.10))
+            mrs.entity.toughness_dmg_reduction = 0.0
         return new_phase
 
     # ------------------------------------------------------------------
@@ -507,6 +512,8 @@ class StageRunner:
 
             ent = bp.to_entity(name=summon_name, initial_distance=init_dist)
             setattr(ent, "summoner_name", caster_name)
+            self._spawn_counter = getattr(self, "_spawn_counter", 0) + 1
+            setattr(ent, "_runner_spawn_order", self._spawn_counter)
             loc_type = str(entry.get("LocationType", ""))
 
             if loc_type == "KeepOnEdge":

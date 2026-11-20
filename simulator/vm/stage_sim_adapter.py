@@ -133,6 +133,7 @@ class DataDrivenEnemyKit(EnemyKit):
 
         if mrs.phase < mrs.max_phase and cur_hp - raw_damage <= 0.0:
             setattr(mrs, "_limbo_pending", True)
+            setattr(mrs.entity, "_vm_limbo_pending", True)
             raw_damage = max(0.0, cur_hp - 1.0)
 
         return raw_damage
@@ -716,15 +717,6 @@ class DataDrivenEnemyKit(EnemyKit):
         rt = getattr(sim, "vm_runtime", None)
         if rt is not None and attacker is not None and attacker.current_hp > 0.0:
             rt.end_being_attacked()
-            rt.modifier_engine.dispatch_event("OnPhase2", owner_id=self.owner_id, param_entity_id=self.owner_id)
-            sched_p2 = getattr(sim, "scheduler", None)
-            if sched_p2 is not None and sched_p2.has_pending():
-                prev_d2 = getattr(sched_p2, "_action_frame_depth", 0)
-                sched_p2._action_frame_depth = 0
-                try:
-                    sched_p2.drain()
-                finally:
-                    sched_p2._action_frame_depth = prev_d2
         self.runner.on_turn_end(self.owner_id, current_av=sim.current_av)
 
         # 官方 MCommon_FastAction (风行/如流星闪耀): 行动结束后跑道归零，立刻获得一次额外再动
@@ -1003,6 +995,7 @@ class DataDrivenStageDirector:
             if mrs.entity.name not in sim_names and mrs.entity.current_hp > 0.0
         ]
         if new_entities:
+            new_entities.sort(key=lambda e: getattr(e, "_runner_spawn_order", 0))
             self.attach_kits_to_entities(new_entities, self.runner.state.wave_index)
             rt = getattr(self.sim, "vm_runtime", None)
             for ent in new_entities:
