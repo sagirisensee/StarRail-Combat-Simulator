@@ -108,8 +108,11 @@ with open("battle_logs/battle_20261114_184651.jsonl") as f:
         if 150.0 <= cur_av <= 160.0:
             if et == "OnStatChange":
                 p = d.get("property", {})
-                if p.get("type") in ("CurrentHP", "CurrentSP", "MaxHP"):
-                    print(f"L{i+1:4d} AV={cur_av:6.2f} Stat {d.get(\"entity\")} {p[\"type\"]}={p[\"value\"]:.2f}")
+                ptype = p.get("type")
+                if ptype in ("CurrentHP", "CurrentSP", "MaxHP"):
+                    ent = d.get("entity")
+                    pval = p.get("value", 0.0)
+                    print(f"L{i+1:4d} AV={cur_av:6.2f} Stat {ent} {ptype}={pval:.2f}")
             elif et in ("OnTurnBegin", "OnUseSkill", "OnDamage"):
                 print(f"L{i+1:4d} AV={cur_av:6.2f} {et:12s} {str(d)[:160]}")
 '
@@ -178,3 +181,40 @@ run_trajectory_replay(sim, director, tl, av_budget=240.0)
 - 修改生成器后，对当前用例与已绿代表用例重新执行 `--emit-plugin`；
 - 跑 `pytest simulator/vm/test_vm_30126122_alignment.py -k "<已绿用例> or <当前用例>" -v`，确认全部压进 `< 0.01%` 门禁无回归；
 - 同步更新 `docs/STAGE_30126122_ALIGNMENT_STATUS.md`。
+
+---
+
+## 四、高频调用踩坑与正确写法对照表（实战血泪沉淀）
+
+> 写一次性诊断命令或探针前先扫一眼下表，避免把轮次浪费在 `ImportError` / `AttributeError` / `SyntaxError` 上。
+
+### 1. Shell 与单行 Python 语法坑
+
+| 错误写法 | 报错现象 | 正确写法 |
+| :--- | :--- | :--- |
+| `python3 -c 'print(f"{d.get(\"key\")}")'` | `SyntaxError: unexpected character after line continuation character` | **禁止在 f-string `{...}` 内使用 `\"`**；先把值赋给局部变量（`v = d.get("key"); print(f"{v}")`）或直接用逗号分隔 `print("...", d.get("key"))` |
+| `timeout 30 pytest ...` | `zsh: command not found: timeout`（macOS 默认无 GNU `timeout`） | 直接执行命令，无需加 `timeout` 前缀 |
+
+### 2. 模块导出与方法名坑
+
+| 错误写法 | 正确写法 |
+| :--- | :--- |
+| `from simulator.kits.enemies.sim_port import SimEnemyPort` | `from simulator.kits.enemies.sim_port import BaseEnemyCombatPortImpl` |
+| `from simulator.golden_diff import run_reconcile` | `from simulator.vm.reconcile_generator import reconcile_log`（或直接跑 CLI `python3 gen_reconcile.py <log> --data-driven --verbose`） |
+| `from simulator.vm.test_vm_30126122_alignment import _run_vm_case` | `_run_vm_case` 是 `TestVMStage30126122Alignment` 实例方法；直接跑 `python3 -m pytest simulator/vm/test_vm_30126122_alignment.py -k "<tag>" -v` |
+| `StageDataLoader().compile_stage(30126122)` | `StageDataLoader().load_stage(30126122)` |
+| `StageDataLoader()._read_json("Config/...")` | `GameDataLoader()._read_json("Config/...")`（`StageDataLoader` 无 `_read_json`） |
+| `StageAILoader().load_monster_ai(...)` | `StageAILoader().compile_monster_ai(...)` |
+| `from simulator.events import HealEvent` | `from simulator.events import HealAppliedEvent` |
+
+### 3. 对象真实属性名坑
+
+| 对象 | 错误属性名 | 正确属性 / 读取方式 |
+| :--- | :--- | :--- |
+| `VMRuntime` | `rt.dynamic_values` | `rt.entity_dynamics` 或 `rt.get_dynamic_value(entity_id, dotnet_hash("Key"))` |
+| `HealAppliedEvent` | `e.healer_name` | `e.source_name`（配合 `e.target_name`, `e.amount`） |
+| `Entity` | `e.damage_reduction`（直接访问） | `getattr(e, "damage_reduction", 0.0)`（非所有实体默认挂载该字段）；变身/克隆实体时务必同时拷贝白值 `base_white_hp/atk/def/speed` |
+| `DamageHit`（`golden_diff.py`） | `d.target` | 仅含 `d.attacker`, `d.damage_type`, `d.damage`（无 `target` 字段） |
+| `CompiledMonsterSpec` | `m.ai_spec` | 通过 `StageAILoader` 编译，或运行时从 `ent.kit.ai_spec` 获取 |
+| `CompiledStageSpec` | `st.stage_ability_list` / `st.stage_abilities` | 关卡能力配置在 `st.stage_config_data` 与 `st.battle_events` 中 |
+| `battle_*.jsonl` `OnDamage` | `data["damage_type"]`、`data["attacker"]["name"]` | 伤害类型字段是 **`data["type"]`**；`attacker` / `turn_owner` 仅含 `{"team", "uid"}`（无 `name`，敌方 `name` 需从 `OnInitializeEnemy` 建映射） |

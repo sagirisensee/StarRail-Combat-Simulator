@@ -1807,6 +1807,9 @@ def run_trajectory_replay(
                 return True
         if u_owner.startswith("UID_") and now_av < u_item.av - 1e-4:
             return True
+        actor_ent = sim.get_entity(u_item.actor) if getattr(u_item, "actor", None) else None
+        if actor_ent is not None and getattr(actor_ent, "_avatar_change_target_id", None) is not None:
+            return True
         u_turn_seq = getattr(u_item, "turn_seq", 0)
         if (
             u_owner in _sim_player_actors(sim)

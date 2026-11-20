@@ -1058,7 +1058,7 @@ class TaskExecutor:
                             m.layer = max(0, int(round(m.layer - val)))
                         else:
                             m.layer = max(0, int(round(val)))
-                    if vtype == "Layer" and m.layer <= 0:
+                    if vtype == "Layer" and m.layer <= 0 and "RetainCountZero" not in m.behavior_flags:
                         me.destroy_modifier(m)
             return
 
@@ -1402,7 +1402,7 @@ class TaskExecutor:
             port = getattr(director, "port", None) if director is not None else None
             for tid in targets:
                 if port is not None and hasattr(port, "break_entity_toughness_and_deduct_hp"):
-                    port.break_entity_toughness_and_deduct_hp(tid, hp_deduct=0.0)
+                    port.break_entity_toughness_and_deduct_hp(tid, hp_deduct=0.0, break_delay=2500.0)
             return
 
         if t == "OOCOGGMJLBN":
@@ -1417,6 +1417,15 @@ class TaskExecutor:
                 owner_ent = sim.get_entity(mod.owner_id)
                 if owner_ent is not None:
                     owner_ent.barrier_guarded = True
+                    director = getattr(sim, "_stage_director", None)
+                    runner = getattr(director, "runner", None) if director is not None else None
+                    if runner is not None:
+                        try:
+                            if runner.get_enemy_state(mod.owner_id).phase >= 2:
+                                setattr(mod, "_saved_toughness_dmg_reduction", getattr(owner_ent, "toughness_dmg_reduction", 0.10))
+                                owner_ent.toughness_dmg_reduction = 0.0
+                        except KeyError:
+                            pass
             return
 
         if t == "PGFAJJBCMDK":
@@ -1767,6 +1776,15 @@ class TaskExecutor:
         sim.resolver.begin_aoe()
         try:
             real_targets = [tid for tid in targets if tid != "__LEVEL__"]
+            caster_ent_pre = sim.get_entity(ctx.caster_id)
+            if (
+                not is_nested_sub
+                and caster_ent_pre is not None
+                and getattr(caster_ent_pre, "is_enemy", False)
+                and real_targets
+                and getattr(rt, "_open_enemy_attack", None) is None
+            ):
+                rt.begin_being_attacked(ctx.caster_id, real_targets)
             any_died_mid_aoe = False
             for idx, tid in enumerate(real_targets):
                 if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type == "Servant":
@@ -1968,7 +1986,7 @@ class TaskExecutor:
             if getattr(ent, "is_enemy", False):
                 kit = getattr(ent, "kit", None)
                 if consume_shield and kit is not None and hasattr(kit, "intercept_incoming_damage"):
-                    raw_loss = kit.intercept_incoming_damage(tid, raw_loss)
+                    raw_loss = kit.intercept_incoming_damage(tid, raw_loss, allow_overflow=False)
                 elif not consume_shield and kit is not None:
                     try:
                         mrs = kit.runner.get_enemy_state(tid)
@@ -2353,9 +2371,13 @@ class TaskExecutor:
             avatar_id=new_avatar_id,
             level=source.level,
             base_max_hp=source.base_max_hp,
+            base_white_hp=source.base_white_hp,
             base_atk=source.base_atk,
+            base_white_atk=source.base_white_atk,
             base_def=source.base_def,
+            base_white_def=source.base_white_def,
             base_speed=source.base_speed,
+            base_white_speed=source.base_white_speed,
             base_crit_rate=source.base_crit_rate,
             base_crit_dmg=source.base_crit_dmg,
             base_err=source.base_err,
@@ -2470,16 +2492,23 @@ class TaskExecutor:
                             chosen = te.name
                             break
                 if chosen is None:
-                    # 优先锁定 Rank < 3 的召唤小怪（如狂兽的胚芽），否则选第一个存活敌方
                     living_enemies = [
                         e for e in sim.entities
                         if e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
                     ]
-                    minions = [e for e in living_enemies if not getattr(e, "is_boss", False)]
-                    if minions:
-                        chosen = minions[0].name
-                    elif living_enemies:
-                        chosen = living_enemies[0].name
+                    tprov = getattr(sim, "target_provider", None)
+                    owner_ent = sim.get_entity(self.owner_id)
+                    if callable(tprov) and owner_ent is not None and living_enemies:
+                        picked = tprov(owner_ent, living_enemies, 0)
+                        if picked is not None and getattr(picked, "current_hp", 0.0) > 0.0:
+                            chosen = picked.name
+                    if chosen is None:
+                        # 优先锁定 Rank < 3 的召唤小怪（如狂兽的胚芽），否则选第一个存活敌方
+                        minions = [e for e in living_enemies if not getattr(e, "is_boss", False)]
+                        if minions:
+                            chosen = minions[0].name
+                        elif living_enemies:
+                            chosen = living_enemies[0].name
                 if chosen is not None:
                     rt.trigger_ability(
                         caster_id=self.owner_id,
@@ -2490,15 +2519,8 @@ class TaskExecutor:
 
         new_ent.kit = _AvatarChangeKit(new_name, skill01_ab)
 
-        # 插入原角色站位并注册到 TurnSimulator & VMRuntime
+        # 追加到实体表末尾并注册到 TurnSimulator & VMRuntime（与实机 L2745-2767 群体 Buff 结算序一致）
         sim.add_entity(new_ent, trigger_battle_start=False)
-        try:
-            sim.entities.remove(new_ent)
-            src_idx = sim.entities.index(source)
-            sim.entities.insert(src_idx + 1, new_ent)
-        except ValueError:
-            if new_ent not in sim.entities:
-                sim.entities.append(new_ent)
         if hasattr(sim, "_rebuild_entity_cache"):
             sim._rebuild_entity_cache()
 
@@ -2574,3 +2596,5 @@ class TaskExecutor:
                 sim.entities.remove(new_ent)
             if hasattr(sim, "_rebuild_entity_cache"):
                 sim._rebuild_entity_cache()
+            me.destroy_all_for_entity(new_ent.name)
+            me.dispatch_event("OnListenCharacterDie", param_entity_id=new_ent.name)

@@ -64,13 +64,13 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
         if abs(av - 600.81) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 628.87) < 0.05 and att_name == '堕神之血•亚婆离':
-            return _find_ally(living, '风堇')
+            return _find_ally(living, '知更鸟•晴歌')
         if abs(av - 656.93) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 684.98) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '知更鸟•晴歌')
         if abs(av - 713.04) < 0.05 and att_name == '堕神之血•亚婆离':
-            return _find_ally(living, '风堇')
+            return _find_ally(living, '知更鸟•晴歌')
         if abs(av - 741.10) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 751.84) < 0.05 and att_name == '狂兽的胚芽_15':
@@ -78,7 +78,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
         if abs(av - 769.16) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 797.22) < 0.05 and att_name == '堕神之血•亚婆离':
-            return _find_ally(living, '风堇')
+            return _find_ally(living, '知更鸟•晴歌')
         if abs(av - 827.60) < 0.05 and att_name == '狂兽的胚芽_17':
             return _find_ally(living, '长夜月')
         if abs(av - 888.29) < 0.05 and att_name == '堕神之血•亚婆离':
@@ -128,7 +128,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             return out
         if abs(av - 628.87) < 0.05 and att_name == '堕神之血•亚婆离':
             out: List[Any] = []
-            for n in ['知更鸟•晴歌', '长夜月']:
+            for n in ['风堇', '长夜月']:
                 ent = _find_ally(living, n)
                 if ent is not None and ent not in out: out.append(ent)
             for ow in ['风堇']:
@@ -155,7 +155,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             return out
         if abs(av - 713.04) < 0.05 and att_name == '堕神之血•亚婆离':
             out: List[Any] = []
-            for n in ['知更鸟•晴歌', '长夜月']:
+            for n in ['风堇', '长夜月']:
                 ent = _find_ally(living, n)
                 if ent is not None and ent not in out: out.append(ent)
             for ow in ['风堇']:
@@ -182,7 +182,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             return out
         if abs(av - 797.22) < 0.05 and att_name == '堕神之血•亚婆离':
             out: List[Any] = []
-            for n in ['知更鸟•晴歌', '长夜月']:
+            for n in ['风堇', '长夜月']:
                 ent = _find_ally(living, n)
                 if ent is not None and ent not in out: out.append(ent)
             for ow in ['风堇']:
@@ -255,6 +255,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             setattr(director, '_triggered_aha_3_35675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 76830.67921370)
             director.apply_aha_hp_damage('狂兽的胚芽_4', 76830.67921370)
             director.apply_aha_hp_damage('狂兽的胚芽_3', 25610.22640457)
             director.apply_aha_ally_chip_hit('长夜月')
@@ -289,6 +290,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_9', 46098.40750437)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 23049.20375219)
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
@@ -300,6 +302,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_11', 25894.79905831)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 103579.19623323)
             director.apply_aha_hp_damage('狂兽的胚芽_12', 25894.79905831)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
@@ -311,6 +314,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             setattr(director, '_triggered_aha_8_65675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 41038.82619004)
             director.apply_aha_hp_damage('狂兽的胚芽_13', 41038.82619004)
             director.apply_aha_hp_damage('狂兽的胚芽_14', 20519.41309502)
             _mname = _find_memosprite_name(sim, '风堇')
@@ -323,6 +327,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             setattr(director, '_triggered_aha_9_70719', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 0.00000000)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
@@ -331,6 +336,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             setattr(director, '_triggered_aha_10_75675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 138295.22251311)
             director.apply_aha_hp_damage('狂兽的胚芽_15', 23049.20375219)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
@@ -381,3 +387,4 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_20261114_221208_handler
+    sim.aha_interrupt_avs = [137.95, 150.0, 256.38, 356.75, 419.82, 456.75, 556.75, 594.92, 656.75, 707.19, 756.75, 813.57, 856.75, 920.78]

@@ -266,8 +266,21 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = [t.name] if t is not None else []
     elif base == "CurrentAimAtTarget":
         cur = list(ctx.ability_target_ids[:1])
-    elif base in ("AllLightTeam", "AllTeamMember"):
+    elif base == "AllLightTeam":
         cur = _alive_allies(include_unselectable=False, include_countdown=False)
+    elif base == "AllTeamMember":
+        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
+        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+            cur = _alive_enemies(include_unselectable=False, include_countdown=False)
+        else:
+            cur = _alive_allies(include_unselectable=False, include_countdown=False)
+    elif base == "AllTeammate":
+        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
+        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+            team_list = _alive_enemies(include_unselectable=False, include_countdown=False)
+        else:
+            team_list = _alive_allies(include_unselectable=False, include_countdown=False)
+        cur = [eid for eid in team_list if eid != ctx.caster_id]
     elif base == "LeftToRightLightTeamTarget":
         allies = _alive_allies(include_unselectable=False, include_countdown=False)
         avatars = [n for n in allies if not getattr(sim.get_entity(n), "is_memosprite", False)]

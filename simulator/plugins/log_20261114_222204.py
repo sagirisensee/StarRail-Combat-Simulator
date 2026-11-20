@@ -17,6 +17,12 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
         att_name = str(getattr(attacker, "name", "") or "")
         is_enemy = getattr(attacker, "is_enemy", False)
 
+        # 1. 我方攻击敌方单体锁定
+        if not is_enemy and living and all(getattr(e, 'is_enemy', False) for e in living):
+            if abs(av - 458.93) < 0.05 and att_name == 'UID_6025':
+                tgts = ['堕神之血•亚婆离']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+
         # 3. 敌方回合主受击目标
         if abs(av - 31.57) < 0.05 and att_name == '正阳狮鹫':
             return _find_ally(living, '长夜月')
@@ -47,7 +53,7 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
         if abs(av - 453.51) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 481.57) < 0.05 and att_name == '堕神之血•亚婆离':
-            return _find_ally(living, '风堇')
+            return _find_ally(living, '长夜月')
         if abs(av - 509.63) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 537.69) < 0.05 and att_name == '堕神之血•亚婆离':
@@ -102,7 +108,7 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
             return out
         if abs(av - 481.57) < 0.05 and att_name == '堕神之血•亚婆离':
             out: List[Any] = []
-            for n in ['缇宝', '长夜月']:
+            for n in ['风堇', '缇宝']:
                 ent = _find_ally(living, n)
                 if ent is not None and ent not in out: out.append(ent)
             for ow in ['风堇']:

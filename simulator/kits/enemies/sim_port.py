@@ -31,7 +31,12 @@ class BaseEnemyCombatPortImpl:
     def get_living_allies(self, include_memosprites: bool = False) -> Tuple[str, ...]:
         allies: List[str] = []
         for e in self.sim.entities:
-            if e.is_enemy or getattr(e, "current_hp", 0.0) <= 0 or getattr(e, "is_countdown", False):
+            if (
+                e.is_enemy
+                or getattr(e, "current_hp", 0.0) <= 0
+                or getattr(e, "is_countdown", False)
+                or getattr(e, "is_unselectable", False)
+            ):
                 continue
             if not include_memosprites and getattr(e, "is_memosprite", False):
                 continue
@@ -85,6 +90,7 @@ class BaseEnemyCombatPortImpl:
                 if not e.is_enemy
                 and e.current_hp > 0
                 and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
             ]
             if living:
                 chosen = target_provider(attacker, living, 0)
@@ -100,6 +106,7 @@ class BaseEnemyCombatPortImpl:
                 if not e.is_enemy
                 and e.current_hp > 0
                 and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
             ]
             blast_provider = getattr(self.sim, "blast_target_provider", None)
             if blast_provider is not None:
@@ -522,6 +529,7 @@ class BaseEnemyCombatPortImpl:
         entity_id: str,
         *,
         hp_deduct: float,
+        break_delay: float = 12500.0,
     ) -> None:
         ent = self.sim.get_entity(entity_id)
         if ent is None or ent.current_hp <= 0.0:
@@ -553,7 +561,7 @@ class BaseEnemyCombatPortImpl:
             break_dmg = base_break * 0.5 * (0.5 + max_t / 120.0) * def_mult * res_mult * vuln_mult * 0.9
         ent.current_hp = max(0.0, float(ent.current_hp) - hp_deduct - break_dmg)
         if ent.distance_remaining < 1e9:
-            ent.distance_remaining += 12500.0
+            ent.distance_remaining += float(break_delay)
 
     def is_broken(self, entity_id: str) -> bool:
         ent = self.sim.get_entity(entity_id)

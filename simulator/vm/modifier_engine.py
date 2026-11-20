@@ -249,6 +249,13 @@ class ModifierEngine:
             mod.dynamic_values.update(parsed_dyn)
             if ability_name:
                 mod.ability_name = ability_name
+            if "HPAddedRatio" in mod.properties or "HPDelta" in mod.properties:
+                for m_a in self.get_modifiers(owner_id):
+                    apcs = m_a.config.get("OnAbilityPropertyChange")
+                    if isinstance(apcs, list):
+                        for idx_apc, apc in enumerate(apcs):
+                            if apc.get("Property") in ("HPAddedRatio", "HPDelta"):
+                                self._last_apc_val.pop((m_a.uid, idx_apc), None)
         else:
             uid = self._next_uid
             self._next_uid += 1
@@ -450,6 +457,8 @@ class ModifierEngine:
         owner_ent = self.rt.sim.get_entity(mod.owner_id) if mod.owner_id != "__LEVEL__" else None
         if owner_ent is not None and "SingleBlock" in mod.behavior_flags:
             owner_ent.barrier_guarded = False
+            if hasattr(mod, "_saved_toughness_dmg_reduction"):
+                owner_ent.toughness_dmg_reduction = float(getattr(mod, "_saved_toughness_dmg_reduction"))
         if getattr(mod, "_applied_lock_hp", False):
             director = getattr(self.rt.sim, "_stage_director", None)
             runner = getattr(director, "runner", None) if director is not None else None

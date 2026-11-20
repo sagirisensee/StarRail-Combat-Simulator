@@ -195,6 +195,8 @@ def extract_log_metadata(
     cur_hit_order: List[str] = []
     cur_hit_set: Set[str] = set()
     cur_hit_counts: Dict[str, int] = {}
+    cur_sub_hits: List[str] = []
+    cur_sub_actions: List[List[str]] = []
     cur_small_heal_uids: Set[int] = set()
     cur_sp_gain_counts: Dict[str, int] = {}
     cur_first_memo_owner: Optional[str] = None
@@ -224,7 +226,14 @@ def extract_log_metadata(
         if pending_player_atk is not None:
             # 仅对纯单体技能（主技能 OnDamage 命中数 == 1，如风堇普攻）记录首个扣血敌方为主目标；
             # 扩散/群攻（主技能 OnDamage 命中数 > 1，如缇宝普攻）由默认居中逻辑处理
-            if pending_player_primary_dmg_hits == 1 and pending_player_hit_euids:
+            if (
+                pending_player_primary_dmg_hits == 1
+                or (
+                    pending_player_atk[1].startswith("UID_")
+                    and pending_player_primary_dmg_hits == 0
+                    and len(pending_player_hit_euids) == 1
+                )
+            ) and pending_player_hit_euids:
                 player_enemy_targets_raw.setdefault(pending_player_atk, []).append(pending_player_hit_euids[0])
         pending_player_atk = None
         pending_player_hit_euids = []
@@ -238,14 +247,27 @@ def extract_log_metadata(
     aha_turns: List[AhaTurnRecord] = []
 
     def _flush_turn() -> None:
-        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, last_enemy_hit_sp
+        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_sub_hits, cur_sub_actions, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, last_enemy_hit_sp
         nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts
         if cur_enemy_uid is not None:
+            if cur_sub_hits:
+                cur_sub_actions.append(list(cur_sub_hits))
+            eff_hit_order = list(cur_hit_order)
+            # 敌方两动中若先放全体 AoE 再放单体点名（如 Skill02 + Skill01），单体目标放在首位供 target_provider 精准锁定
+            if (
+                len(cur_sub_actions) >= 2
+                and len(set(cur_sub_actions[0])) >= 2
+                and len(set(cur_sub_actions[-1])) == 1
+            ):
+                st_tgt = cur_sub_actions[-1][0]
+                if st_tgt in eff_hit_order:
+                    eff_hit_order.remove(st_tgt)
+                eff_hit_order.insert(0, st_tgt)
             enemy_hits.append(
                 EnemyHitRecord(
                     av=round(cur_av, 2),
                     enemy_uid=cur_enemy_uid,
-                    hit_allies=list(cur_hit_order),
+                    hit_allies=eff_hit_order,
                     hit_counts=dict(cur_hit_counts),
                     had_hp_drop=bool(cur_hit_order),
                     had_passive_heal=len(cur_small_heal_uids) >= 2,
@@ -273,6 +295,8 @@ def extract_log_metadata(
         cur_hit_order = []
         cur_hit_set = set()
         cur_hit_counts = {}
+        cur_sub_hits = []
+        cur_sub_actions = []
         cur_small_heal_uids = set()
         cur_sp_gain_counts = {}
         cur_first_memo_owner = None
@@ -372,6 +396,9 @@ def extract_log_metadata(
                         seen_init_enemy_uids.add(uid)
                         initial_enemy_uids.append(uid)
                     if ptype == "CurrentSP":
+                        if cur_enemy_uid is not None and uid == cur_enemy_uid and val <= 1e-6 and cur_sub_hits:
+                            cur_sub_actions.append(list(cur_sub_hits))
+                            cur_sub_hits = []
                         last_enemy_hit_sp = val if val > 0.0 else 0.0
                     elif ptype == "CurrentHP":
                         prev = last_enemy_hp.get(uid)
@@ -382,7 +409,11 @@ def extract_log_metadata(
                                     cur_none_lethal_euids.add(uid)
                             elif abs(val - prev) <= 1.0 and val > 1e-3:
                                 cur_none_enemy_dmgs.append((uid, 0.0))
-                        elif pending_player_atk is not None and (prev is None or val < prev - 1.0):
+                        elif pending_player_atk is not None and (
+                            prev is None
+                            or val < prev - 1.0
+                            or (pending_player_atk[1].startswith("UID_") and abs(val - prev) <= 1.0 and val > 1e-3)
+                        ):
                             pending_player_hit_euids.append(uid)
                         last_enemy_hp[uid] = val
                 elif team_tag == "Player" and uid:
@@ -437,6 +468,7 @@ def extract_log_metadata(
                                     if name not in cur_hit_set:
                                         cur_hit_set.add(name)
                                         cur_hit_order.append(name)
+                                    cur_sub_hits.append(name)
                                     cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
                             elif 120.0 <= val <= 550.0 and val < prev * 0.35:
                                 cur_small_heal_uids.add(uid)
@@ -448,6 +480,7 @@ def extract_log_metadata(
                                     if name not in cur_hit_set:
                                         cur_hit_set.add(name)
                                         cur_hit_order.append(name)
+                                    cur_sub_hits.append(name)
                                     cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
                         elif cur_turn_owner_team is None and not cur_none_had_skill and prev is not None:
                             # 阿哈回合我方伴生微伤（通常 0.1~5.0 点 HP）

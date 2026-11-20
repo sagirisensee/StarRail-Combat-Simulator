@@ -265,6 +265,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_4', 52157.41231227)
             director.apply_aha_hp_damage('狂兽的胚芽_3', 26078.70615614)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 26078.70615614)
             _mname = _find_memosprite_name(sim, '风堇')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
@@ -319,6 +320,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             setattr(director, '_triggered_aha_7_50783', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 70412.50658514)
             director.apply_aha_hp_damage('狂兽的胚芽_11', 70412.50658514)
             director.apply_aha_ally_chip_hit('缇宝')
             director.apply_aha_ally_chip_hit('风堇')
@@ -329,6 +331,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             setattr(director, '_triggered_aha_8_60783', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 0.00000000)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('缇宝')
@@ -342,6 +345,7 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_16', 103708.07786348)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 25927.01946587)
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
@@ -368,3 +372,4 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_20261114_220255_handler
+    sim.aha_interrupt_avs = [137.95, 150.0, 264.21, 307.83, 380.6, 407.83, 496.99, 507.83, 607.83, 631.27, 707.83, 737.65]

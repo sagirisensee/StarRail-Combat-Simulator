@@ -96,7 +96,7 @@ class DataDrivenEnemyKit(EnemyKit):
         if self.ai_executor.phase != phase:
             self.ai_executor.set_phase(phase, reset_ai_flag=1)
 
-    def intercept_incoming_damage(self, target_id: str, raw_damage: float) -> float:
+    def intercept_incoming_damage(self, target_id: str, raw_damage: float, *, allow_overflow: bool = True) -> float:
         if target_id != self.owner_id or raw_damage <= 0.0:
             return raw_damage
         sim = getattr(self.enemy_port, "sim", None)
@@ -114,7 +114,7 @@ class DataDrivenEnemyKit(EnemyKit):
                         owner_id=self.owner_id,
                         param_entity_id=self.owner_id,
                     )
-                    overflow = raw_damage - absorbed
+                    overflow = (raw_damage - absorbed) if allow_overflow else 0.0
                     if new_shld <= 0.0:
                         rt.modifier_engine.destroy_modifier(mod)
                     return overflow
@@ -256,6 +256,7 @@ class DataDrivenEnemyKit(EnemyKit):
 
         visited: set[str] = set()
         mod_tasks: List[Tuple[Mapping[str, Any], str]] = []
+        dyn_tasks: List[Mapping[str, Any]] = []
 
         def _walk_ab(ab_doc: Mapping[str, Any], scope_alias: str) -> None:
             _walk(ab_doc.get("OnStart", []), scope_alias)
@@ -268,7 +269,12 @@ class DataDrivenEnemyKit(EnemyKit):
                 if not isinstance(t, Mapping):
                     continue
                 tt = t.get("$type", "")
-                if tt == "RPG.GameCore.TriggerAbility":
+                if tt == "RPG.GameCore.SetDynamicValue":
+                    dk = t.get("DynamicKey")
+                    dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
+                    if dk_name and dk_name != "AIFlag":
+                        dyn_tasks.append(t)
+                elif tt == "RPG.GameCore.TriggerAbility":
                     cname = (t.get("AbilityName") or {}).get("Value", "")
                     if cname and "Camera" not in cname and cname not in visited:
                         visited.add(cname)
@@ -315,14 +321,18 @@ class DataDrivenEnemyKit(EnemyKit):
         if root_ab:
             _walk_ab(root_ab, "")
 
-        if not mod_tasks:
+        if not mod_tasks and not dyn_tasks:
             return
 
         ctx = ExecutionContext(
             runtime=rt,
             caster_id=self.owner_id,
             ability_name=entry_ab,
+            ability_target_ids=(self.owner_id,),
+            modifier_owner_id=self.owner_id,
         )
+        if dyn_tasks:
+            rt.executor.execute_tasks(dyn_tasks, ctx)
         for task, scope_alias in mod_tasks:
             mname = str((task.get("ModifierName") or {}).get("Value", ""))
             life = rt.executor._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
@@ -575,6 +585,7 @@ class DataDrivenEnemyKit(EnemyKit):
                         for e in sim.entities
                         if not e.is_enemy
                         and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
                         and e.current_hp > 0.0
                     ]
                     # 按官方编队站位排序（本体按进场站位序，忆灵按其召唤者站位序排在本体之后）
@@ -702,10 +713,21 @@ class DataDrivenEnemyKit(EnemyKit):
                 break
 
         self.has_one_more = next_turn_one_more
+        rt = getattr(sim, "vm_runtime", None)
+        if rt is not None and attacker is not None and attacker.current_hp > 0.0:
+            rt.end_being_attacked()
+            rt.modifier_engine.dispatch_event("OnPhase2", owner_id=self.owner_id, param_entity_id=self.owner_id)
+            sched_p2 = getattr(sim, "scheduler", None)
+            if sched_p2 is not None and sched_p2.has_pending():
+                prev_d2 = getattr(sched_p2, "_action_frame_depth", 0)
+                sched_p2._action_frame_depth = 0
+                try:
+                    sched_p2.drain()
+                finally:
+                    sched_p2._action_frame_depth = prev_d2
         self.runner.on_turn_end(self.owner_id, current_av=sim.current_av)
 
         # 官方 MCommon_FastAction (风行/如流星闪耀): 行动结束后跑道归零，立刻获得一次额外再动
-        rt = getattr(sim, "vm_runtime", None)
         has_fast_action_mod = (
             rt is not None
             and rt.modifier_engine.has_modifier(self.owner_id, "MCommon_FastAction")
