@@ -1,7 +1,7 @@
 # coding: utf-8
 """实机日志 battle_20261114_205144.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from simulator.plugins._helpers import (
     find_ally as _find_ally,
     find_memosprite_name as _find_memosprite_name,
@@ -94,3 +94,4 @@ def attach_log_20261114_205144_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_20261114_205144_handler
+    sim.aha_interrupt_avs = [137.95, 150.0]

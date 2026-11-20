@@ -1,7 +1,7 @@
 # coding: utf-8
 """实机日志 battle_20261114_184651.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from simulator.plugins._helpers import (
     find_ally as _find_ally,
     find_memosprite_name as _find_memosprite_name,
@@ -12,10 +12,23 @@ from simulator.plugins._helpers import (
 def attach_log_20261114_184651_plugin(sim: Any) -> None:
     """挂载 battle_20261114_184651.jsonl 专属的单局随机性插件（受击目标、非攻击回合、风行再动、阿哈弹射）。"""
 
+    _servant_cursor: Dict[Tuple[float, str], int] = {}
+
     def _target_20261114_184651_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         att_name = str(getattr(attacker, "name", "") or "")
         is_enemy = getattr(attacker, "is_enemy", False)
+
+        # 1b. 我方忆灵技主目标（按召唤师归属 + 施放顺序游标）
+        if (not is_enemy and getattr(attacker, 'is_memosprite', False) and living and all(getattr(e, 'is_enemy', False) for e in living)):
+            _master = str(getattr(attacker, "master_name", "") or "")
+            if abs(av - 0.00) < 0.05 and _master == '长夜月':
+                _seq = ['正阳狮鹫']
+                _key = (0.00, '长夜月')
+                _idx = _servant_cursor.get(_key, 0)
+                _servant_cursor[_key] = _idx + 1
+                if _idx >= len(_seq): return None
+                return _find_ally(living, _seq[_idx])
 
         # 3. 敌方回合主受击目标
         if abs(av - 31.57) < 0.05 and att_name == '正阳狮鹫':
@@ -114,3 +127,4 @@ def attach_log_20261114_184651_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_20261114_184651_handler
+    sim.aha_interrupt_avs = [137.95, 150.0]

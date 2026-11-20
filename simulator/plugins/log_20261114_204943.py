@@ -1,7 +1,7 @@
 # coding: utf-8
 """实机日志 battle_20261114_204943.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from simulator.plugins._helpers import (
     find_ally as _find_ally,
     find_memosprite_name as _find_memosprite_name,
@@ -12,7 +12,6 @@ from simulator.plugins._helpers import (
 def attach_log_20261114_204943_plugin(sim: Any) -> None:
     """挂载 battle_20261114_204943.jsonl 专属的单局随机性插件（受击目标、非攻击回合、风行再动、阿哈弹射）。"""
 
-    from typing import Dict, Tuple
     _same_av_turn_slots: Dict[Tuple[str, str], List[int]] = {}
     def _target_20261114_204943_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
@@ -138,3 +137,4 @@ def attach_log_20261114_204943_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_20261114_204943_handler
+    sim.aha_interrupt_avs = [150.0, 150.02]
