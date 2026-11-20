@@ -532,14 +532,25 @@ class BaseEnemyCombatPortImpl:
         max_t = float(getattr(ent, "max_toughness", 0.0) or 0.0)
         if max_t > 0.0 and hasattr(self.sim, "status_mgr"):
             sm = self.sim.status_mgr
-            tgt_lvl = float(getattr(ent, "level", 95) or 95)
-            atk_lvl = 80.0
+            tgt_lvl = int(getattr(ent, "level", 95) or 95)
+            atk_lvl = float(tgt_lvl)
+            base_break = 3767.5535
+            vm_rt = getattr(self.sim, "vm_runtime", None)
+            if vm_rt is not None and hasattr(vm_rt, "loader"):
+                try:
+                    for row in vm_rt.loader._read_excel("AvatarBreakDamage.json"):
+                        if int(row.get("Level", 0) or 0) == tgt_lvl:
+                            bv = row.get("BreakBaseDamage", {})
+                            base_break = float(bv.get("Value", base_break) if isinstance(bv, dict) else bv)
+                            break
+                except Exception:
+                    pass
             def_shred = sm.calculate_stat(ent.name, 0.0, StatType.DEF_SHRED)
-            def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred) + (atk_lvl + 20.0))
+            def_mult = (atk_lvl + 20.0) / ((float(tgt_lvl) + 20.0) * max(0.0, 1.0 - def_shred) + (atk_lvl + 20.0))
             base_res = ent.damage_res.get("Quantum", 0.0) if isinstance(getattr(ent, "damage_res", None), dict) else 0.0
             res_mult = max(0.0, 1.0 - base_res)
             vuln_mult = 1.0 + sm.calculate_stat(ent.name, 0.0, StatType.VULNERABILITY)
-            break_dmg = 3767.5533 * 0.5 * (0.5 + max_t / 120.0) * def_mult * res_mult * vuln_mult * 1.15
+            break_dmg = base_break * 0.5 * (0.5 + max_t / 120.0) * def_mult * res_mult * vuln_mult * 0.9
         ent.current_hp = max(0.0, float(ent.current_hp) - hp_deduct - break_dmg)
         if ent.distance_remaining < 1e9:
             ent.distance_remaining += 12500.0

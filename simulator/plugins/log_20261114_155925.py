@@ -12,6 +12,8 @@ from simulator.plugins._helpers import (
 def attach_log_20261114_155925_plugin(sim: Any) -> None:
     """挂载 battle_20261114_155925.jsonl 专属的单局随机性插件（受击目标、非攻击回合、风行再动、阿哈弹射）。"""
 
+    from typing import Dict, Tuple
+    _same_av_turn_slots: Dict[Tuple[str, str], List[int]] = {}
     def _target_20261114_155925_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         att_name = str(getattr(attacker, "name", "") or "")
@@ -27,9 +29,14 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
         if abs(av - 94.70) < 0.05 and att_name == '正阳狮鹫':
             return _find_ally(living, '长夜月')
         if abs(av - 114.90) < 0.05 and att_name == '流星铁鹰_3':
+            _tid = int(getattr(sim, '_turn_id', 0))
+            _slots = _same_av_turn_slots.setdefault(('114.90', '流星铁鹰_3'), [])
+            if _tid not in _slots: _slots.append(_tid)
+            _slot_idx = _slots.index(_tid)
+            if _slot_idx == 0: return _find_memosprite_of(living, '风堇')
             return _find_memosprite_of(living, '风堇')
         if abs(av - 151.52) < 0.05 and att_name == '月夜天马':
-            return _find_ally(living, '风堇')
+            return _find_memosprite_of(living, '风堇')
         if abs(av - 157.83) < 0.05 and att_name == '正阳狮鹫':
             return _find_ally(living, '风堇')
         if abs(av - 220.96) < 0.05 and att_name == '正阳狮鹫':
@@ -41,11 +48,17 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
     def _blast_20261114_155925_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         att_name = str(getattr(attacker, "name", "") or "")
+        if abs(av - 31.57) < 0.05 and att_name == '正阳狮鹫':
+            out: List[Any] = []
+            for n in ['风堇']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            return out
         if abs(av - 151.52) < 0.05 and att_name == '月夜天马':
             out: List[Any] = []
-            for ow in ['风堇']:
-                m_ent = _find_memosprite_of(living, ow)
-                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            for n in ['风堇']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
             return out
         if abs(av - 157.83) < 0.05 and att_name == '正阳狮鹫':
             out: List[Any] = []
@@ -84,8 +97,8 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
 
     def _aha_20261114_155925_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
-        if not getattr(director, '_triggered_aha_137', False) and av >= 137.95 - 1e-6:
-            setattr(director, '_triggered_aha_137', True)
+        if not getattr(director, '_triggered_aha_0_13795', False) and av >= 137.95 - 1e-6:
+            setattr(director, '_triggered_aha_0_13795', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('月夜天马', 45067.76457985)
@@ -96,8 +109,8 @@ def attach_log_20261114_155925_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit('长夜月')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_150', False) and av >= 150.00 - 1e-6:
-            setattr(director, '_triggered_aha_150', True)
+        if not getattr(director, '_triggered_aha_1_15000', False) and av >= 150.00 - 1e-6:
+            setattr(director, '_triggered_aha_1_15000', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('流星铁鹰_2', 10897.06499171)

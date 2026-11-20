@@ -361,8 +361,16 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.ByCompareCharacterNumber":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
-            lhs = float(len([tid for tid in targets if _is_alive(sim, tid)]))
-            rhs = self._eval_num(pred.get("Number") or pred.get("CompareValue"), ctx, 0.0)
+            if pred.get("AliveOnly", True):
+                targets = [tid for tid in targets if _is_alive(sim, tid)]
+            sub_pred = pred.get("Predicate")
+            if sub_pred:
+                targets = [tid for tid in targets if self.eval_predicate(sub_pred, ctx.clone(param_entity_id=tid))]
+            lhs = float(len(targets))
+            rhs_spec = pred.get("CompareNumber")
+            if rhs_spec is None:
+                rhs_spec = pred.get("Number") if "Number" in pred else pred.get("CompareValue")
+            rhs = self._eval_num(rhs_spec, ctx, 0.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
         if t == "RPG.GameCore.ByCompareWaveCount":
@@ -514,11 +522,62 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.ByCompareMonsterRank":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            rank_to_num = {
+                "Minion": 1,
+                "MinionLv2": 2,
+                "Elite": 3,
+                "LittleBoss": 4,
+                "BigBoss": 5,
+                "Boss": 5,
+            }
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            cmp_val = pred.get("CompareValue")
+            cmp_type = str(pred.get("CompareType", "Equal"))
             for tid in targets:
                 ent = sim.get_entity(tid)
-                if ent is not None and getattr(ent, "is_boss", False) and pred.get("Rank") in ("Boss", "LittleBoss"):
+                if ent is None:
+                    continue
+                if cmp_val is not None:
+                    ent_rank_str = ""
+                    if runner is not None:
+                        try:
+                            ent_rank_str = str(runner.get_enemy_state(tid).blueprint.rank)
+                        except KeyError:
+                            pass
+                    if not ent_rank_str:
+                        ent_rank_str = "LittleBoss" if getattr(ent, "is_boss", False) else "MinionLv2"
+                    lhs = float(rank_to_num.get(ent_rank_str, 0))
+                    rhs = float(cmp_val) if isinstance(cmp_val, (int, float)) else self._eval_num(cmp_val, ctx, 0.0)
+                    if _compare_values(lhs, rhs, cmp_type):
+                        return True
+                elif getattr(ent, "is_boss", False) and pred.get("Rank") in ("Boss", "LittleBoss"):
                     return True
             return False
+
+        if t == "RPG.GameCore.ByCompareMonsterPhase":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx) or ([ctx.caster_id] if ctx.caster_id else [])
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 1.0)
+            cmp_type = str(pred.get("CompareType", "Equal"))
+            for tid in targets:
+                phase = 1.0
+                if runner is not None:
+                    try:
+                        phase = float(runner.get_enemy_state(tid).phase)
+                    except KeyError:
+                        pass
+                if _compare_values(phase, rhs, cmp_type):
+                    return True
+            return False
+
+        if t == "RPG.GameCore.ByCompareStageType":
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            cur_st = str(getattr(getattr(runner, "built_stage", None), "stage_type", "")) if runner is not None else ""
+            want_st = str(pred.get("StageType", ""))
+            return bool(cur_st and want_st and cur_st == want_st)
 
         if t == "RPG.GameCore.ByCompareMonsterID":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
@@ -602,6 +661,10 @@ class TaskExecutor:
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             want = int(round(self._eval_num(pred.get("TemplateID") or pred.get("MonsterTemplateID"), ctx, 0.0)))
             return any(int(getattr(sim.get_entity(tid), "monster_template_id", 0)) == want for tid in targets)
+
+        if t == "RPG.GameCore.ByIsCharacterChangeTarget":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            return any(bool(getattr(sim.get_entity(tid), "_is_avatar_change_target", False)) for tid in targets)
 
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None
@@ -745,10 +808,15 @@ class TaskExecutor:
                         current_attack_type=ctx.current_attack_type,
                     )
             else:
+                child_targets = (
+                    ctx.ability_target_ids
+                    if bool(task.get("IsSkillPerform")) and ctx.ability_target_ids
+                    else tuple(targets)
+                )
                 rt.trigger_ability(
                     caster_id=ctx.caster_id,
                     ability_name=ab_name,
-                    target_ids=tuple(targets),
+                    target_ids=child_targets,
                     skill_target_ids=ctx.skill_target_ids,
                     current_skill_type=ctx.current_skill_type,
                     current_attack_type=ctx.current_attack_type,
@@ -830,9 +898,10 @@ class TaskExecutor:
 
         # 2. DynamicValues 操作
         if t == "RPG.GameCore.DefineDynamicValue":
-            if "Value" in task:
+            val_spec = task.get("Value") if "Value" in task else task.get("ResetValue")
+            if val_spec is not None:
                 key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
-                val = self._eval_num(task.get("Value"), ctx, 0.0)
+                val = self._eval_num(val_spec, ctx, 0.0)
                 self._write_dyn(task, ctx, key_h, val)
             return
 
@@ -1086,7 +1155,7 @@ class TaskExecutor:
                 sim.port.dispel(tid, is_debuff=True)
                 mods = list(me.get_modifiers(tid))
                 if req_flags:
-                    cands = [m for m in mods if (m.behavior_flags & req_flags)]
+                    cands = [m for m in mods if (m.behavior_flags & req_flags) and m.halo_parent_uid is None]
                 else:
                     cands = [
                         m for m in mods
@@ -1097,6 +1166,7 @@ class TaskExecutor:
                                 or ("DisableAction" in m.behavior_flags)
                             )
                             and "UnDispellable" not in m.behavior_flags
+                            and m.halo_parent_uid is None
                         )
                     ]
                 if order == "LastAdded":
@@ -1105,6 +1175,8 @@ class TaskExecutor:
                     cands.sort(key=lambda m: getattr(m, "_spawn_order", 0))
                 for m in cands[:count]:
                     me.destroy_modifier(m)
+                for m in list(me.get_modifiers(tid)):
+                    me._sync_modifier_to_status_mgr(m)
             return
 
         # 4. 战斗结算：治疗 / 伤害 / 自扣血 / 战技点 / 拉推条 / 插队 / 召唤
@@ -1186,7 +1258,10 @@ class TaskExecutor:
 
         if t == "RPG.GameCore.SetActionDelay":
             targets = self._resolve_targets(task.get("TargetType"), ctx)
-            val = self._eval_num(task.get("DelayValue") or task.get("Value"), ctx, 1.0)
+            val_spec = task.get("NormalizedValue")
+            if val_spec is None:
+                val_spec = task.get("DelayValue") if "DelayValue" in task else task.get("Value")
+            val = self._eval_num(val_spec, ctx, 1.0)
             for tid in targets:
                 sim.port.set_distance(tid, max(0.0, val * 10000.0))
             return
@@ -1293,8 +1368,9 @@ class TaskExecutor:
         if t == "RPG.GameCore.SetMonsterPhase":
             director = getattr(sim, "_stage_director", None)
             if director is not None and hasattr(director, "trigger_monster_phase_transition"):
-                mode = str(task.get("Mode", "Inc"))
-                val = int(round(self._eval_num(task.get("Value"), ctx, 1.0))) if task.get("Value") is not None else None
+                mode = str(task.get("SetMode") or task.get("Mode") or "Inc")
+                val_spec = task.get("PhaseValue") if "PhaseValue" in task else task.get("Value")
+                val = int(round(self._eval_num(val_spec, ctx, 1.0))) if val_spec is not None else None
                 targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.caster_id]
                 for tid in targets:
                     director.trigger_monster_phase_transition(tid, mode=mode, value=val)
@@ -1306,6 +1382,8 @@ class TaskExecutor:
             "RPG.GameCore.ExitBreakState",
             "RPG.GameCore.StackWeakness",
         ):
+            if t == "RPG.GameCore.LockHP" and ctx.modifier_instance is not None:
+                setattr(ctx.modifier_instance, "_applied_lock_hp", True)
             director = getattr(sim, "_stage_director", None)
             runner = getattr(director, "runner", None) if director is not None else None
             if runner is not None and hasattr(runner, "execute_stage_task"):
@@ -1318,8 +1396,55 @@ class TaskExecutor:
                 )
             return
 
+        if t == "RPG.GameCore.TriggerStanceCountDown":
+            targets = self._resolve_targets(task.get("TargetType"), ctx)
+            director = getattr(sim, "_stage_director", None)
+            port = getattr(director, "port", None) if director is not None else None
+            for tid in targets:
+                if port is not None and hasattr(port, "break_entity_toughness_and_deduct_hp"):
+                    port.break_entity_toughness_and_deduct_hp(tid, hp_deduct=0.0)
+            return
+
+        if t == "OOCOGGMJLBN":
+            # 官方 4.x SingleBlock 屏障初始化 (MCNPMDPMCKM = 初始护盾值)
+            val = max(0.0, self._eval_num(task.get("MCNPMDPMCKM"), ctx, 0.0))
+            mod = ctx.modifier_instance
+            if mod is not None and val > 0.0:
+                setattr(mod, "single_block_max", val)
+                setattr(mod, "single_block_cur", val)
+                mod.dynamic_values[2124040366] = val
+                mod.dynamic_values[-276442507] = val
+                owner_ent = sim.get_entity(mod.owner_id)
+                if owner_ent is not None:
+                    owner_ent.barrier_guarded = True
+            return
+
+        if t == "PGFAJJBCMDK":
+            # SingleBlock 受击护盾锁韧标记
+            owner_id = ctx.modifier_owner_id or ctx.caster_id
+            owner_ent = sim.get_entity(owner_id) if owner_id else None
+            if owner_ent is not None:
+                owner_ent.barrier_guarded = True
+            return
+
+        if t == "RPG.GameCore.AttachAvatarChange":
+            self._execute_attach_avatar_change(task, ctx)
+            return
+
+        if t == "RPG.GameCore.DetachAvatarChange":
+            self._execute_detach_avatar_change(task, ctx)
+            return
+
         if t in (
             "RPG.GameCore.AttachEntityUnselectable",
+            "RPG.GameCore.SetMonsterEnergyBarState",
+            "RPG.GameCore.TriggerCustomString",
+            "RPG.GameCore.AttachEntityDeparted",
+            "RPG.GameCore.ChangeCharacterRowData",
+            "RPG.GameCore.RemoveEntityFromTeamFormation",
+            "RPG.GameCore.SetTeamFormation",
+            "RPG.GameCore.SetEntityForbidCameraDither",
+            "RPG.GameCore.SetEntityVisible",
             "RPG.GameCore.SetDieImmediately",
             "RPG.GameCore.OwnerEntityAddAbility",
             "OOCOGGMJLBN",
@@ -1430,6 +1555,8 @@ class TaskExecutor:
         for tid in targets:
             tgt = sim.get_entity(tid)
             if tgt is None or tgt.current_hp <= 0:
+                continue
+            if any("DisableHealHP" in m.behavior_flags for m in me.get_modifiers(tid)):
                 continue
             if ftype == "HealByHealerMaxHP":
                 base_heal = snap_healer_max_hp * pct + flat
@@ -1642,7 +1769,7 @@ class TaskExecutor:
             real_targets = [tid for tid in targets if tid != "__LEVEL__"]
             any_died_mid_aoe = False
             for idx, tid in enumerate(real_targets):
-                if idx > 0 and any_died_mid_aoe and not is_true_dmg:
+                if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type == "Servant":
                     any_died_mid_aoe = False
                     dmg_data = dict(base_before_hit_all)
                     me.dispatch_event(
@@ -1666,6 +1793,22 @@ class TaskExecutor:
                         eff_flat = (flat * base_mult_ratio if base_mult_ratio > 0 else flat) * hit_split
                 tgt_ent = sim.get_entity(tid)
                 was_alive = bool(tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) > 0.0)
+                prev_tgt_hp = float(getattr(tgt_ent, "current_hp", 0.0)) if tgt_ent is not None else 0.0
+                prev_dmg_red = getattr(tgt_ent, "damage_reduction", 0.0) if tgt_ent is not None else 0.0
+                applied_def_red = False
+                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and was_alive and not is_true_dmg:
+                    tgt_hit_data: Dict[str, Any] = {}
+                    me.dispatch_event(
+                        "OnBeforeBeingHitAll",
+                        owner_id=tid,
+                        param_entity_id=ctx.caster_id,
+                        damage_data=tgt_hit_data,
+                        current_attack_type=atk_type,
+                    )
+                    def_red = float(tgt_hit_data.get("Defender_AllDamageReduce", 0.0))
+                    if def_red > 0.0:
+                        tgt_ent.damage_reduction = def_red
+                        applied_def_red = True
                 if not is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
@@ -1699,10 +1842,34 @@ class TaskExecutor:
                         sp_hit = sp_base * sp_ratio * hit_split
                         if sp_hit > 0.0:
                             sim.port.gain_hit_energy(tid, base_amount=sp_hit)
-                if len(real_targets) > 1:
+                if len(real_targets) > 1 or applied_def_red:
                     sim.resolver.resolve_all()
+                    if applied_def_red and tgt_ent is not None:
+                        tgt_ent.damage_reduction = prev_dmg_red
                     if was_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
                         any_died_mid_aoe = True
+                else:
+                    sim.resolver.resolve_all()
+                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and float(getattr(tgt_ent, "current_hp", 0.0)) < prev_tgt_hp:
+                    me.dispatch_event("OnHPChange", owner_id=tid, param_entity_id=ctx.caster_id)
+                    director = getattr(sim, "_stage_director", None)
+                    runner = getattr(director, "runner", None) if director is not None else None
+                    if runner is not None:
+                        try:
+                            mrs = runner.get_enemy_state(tid)
+                            if getattr(mrs, "_limbo_pending", False):
+                                setattr(mrs, "_limbo_pending", False)
+                                me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=ctx.caster_id)
+                        except KeyError:
+                            pass
+                    if was_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
+                        me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
+                        pending_dead = getattr(rt, "_pending_dead_enemies", None)
+                        if pending_dead is None:
+                            pending_dead = []
+                            rt._pending_dead_enemies = pending_dead
+                        if tid not in pending_dead:
+                            pending_dead.append(tid)
             sim.resolver.resolve_all()
         finally:
             sim.resolver.end_aoe()
@@ -1754,16 +1921,32 @@ class TaskExecutor:
                             damage_data=dmg_data,
                             current_attack_type=atk_type,
                         )
+                        for tid in all_tgts:
+                            me.dispatch_event(
+                                "OnAfterBeingAttacked",
+                                owner_id=tid,
+                                param_entity_id=ctx.caster_id,
+                                damage_data=dmg_data,
+                                current_attack_type=atk_type,
+                            )
                     finally:
                         rt._in_after_attack = False
+                    pending_dead = getattr(rt, "_pending_dead_enemies", None)
+                    if pending_dead:
+                        for dead_tid in list(pending_dead):
+                            me.destroy_all_for_entity(dead_tid)
+                        pending_dead.clear()
 
     def _execute_lose_hp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
         sim = rt.sim
+        me = rt.modifier_engine
 
         targets = self._resolve_targets(task.get("TargetType"), ctx)
         ratio_type = str(task.get("RatioType", "CurrentHP"))
-        ratio = self._eval_num(task.get("Ratio"), ctx, 0.0)
+        ratio = self._eval_num(task.get("Ratio"), ctx, 0.0) if "Ratio" in task else 0.0
+        dmg_val = self._eval_num(task.get("DamageValue"), ctx, 0.0) if "DamageValue" in task else 0.0
+        consume_shield = bool(task.get("ConsumeShield", False))
         hp_floor = self._eval_num(task.get("Floor"), ctx, 1.0) if "Floor" in task else 1.0
         dyn_set = str(task.get("DynamicFloatSet", ""))
 
@@ -1776,9 +1959,34 @@ class TaskExecutor:
             if ent is None or ent.current_hp <= 0:
                 continue
             max_hp = float(sim.port.max_hp(tid))
-            base = float(ent.current_hp) if ratio_type == "CurrentHP" else max_hp
-            raw_loss = base * ratio
-            actual_loss = max(0.0, min(ent.current_hp - hp_floor, raw_loss))
+            if "DamageValue" in task and "Ratio" not in task:
+                raw_loss = dmg_val
+            else:
+                base = float(ent.current_hp) if ratio_type == "CurrentHP" else max_hp
+                raw_loss = base * ratio
+
+            if getattr(ent, "is_enemy", False):
+                kit = getattr(ent, "kit", None)
+                if consume_shield and kit is not None and hasattr(kit, "intercept_incoming_damage"):
+                    raw_loss = kit.intercept_incoming_damage(tid, raw_loss)
+                elif not consume_shield and kit is not None:
+                    try:
+                        mrs = kit.runner.get_enemy_state(tid)
+                        cur_hp = float(mrs.entity.current_hp)
+                        if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:
+                            fl = max_hp * float(mrs.lock_hp_ratio)
+                            if cur_hp > fl and cur_hp - raw_loss < fl:
+                                raw_loss = max(0.0, cur_hp - fl)
+                        if mrs.phase < mrs.max_phase and cur_hp - raw_loss <= 0.0:
+                            setattr(mrs, "_limbo_pending", True)
+                            raw_loss = max(0.0, cur_hp - 1.0)
+                    except Exception:
+                        pass
+                eff_floor = self._eval_num(task.get("Floor"), ctx, 0.0) if "Floor" in task else 0.0
+            else:
+                eff_floor = hp_floor
+
+            actual_loss = max(0.0, min(ent.current_hp - eff_floor, raw_loss))
             if actual_loss > 0:
                 ent.current_hp -= actual_loss
                 sim.event_bus.publish(HPLostEvent(
@@ -1791,6 +1999,32 @@ class TaskExecutor:
                 ))
                 if dyn_set and max_hp > 0:
                     rt.set_dynamic_value(ctx.caster_id, dotnet_hash(dyn_set), actual_loss / max_hp)
+                if getattr(ent, "is_enemy", False):
+                    director = getattr(sim, "_stage_director", None)
+                    runner = getattr(director, "runner", None) if director is not None else None
+                    if runner is not None:
+                        try:
+                            mrs = runner.get_enemy_state(tid)
+                            if getattr(mrs, "_limbo_pending", False):
+                                setattr(mrs, "_limbo_pending", False)
+                                me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=ctx.caster_id)
+                        except KeyError:
+                            pass
+                    if ent.current_hp <= 0.0:
+                        me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
+                        from simulator.events import EnemyDefeatedEvent
+                        sim.event_bus.publish(
+                            EnemyDefeatedEvent(
+                                av=float(sim.current_av),
+                                cycle=int(sim.current_cycle),
+                                attacker_name=ctx.caster_id or "",
+                                target_name=tid,
+                            )
+                        )
+                        me.destroy_all_for_entity(tid)
+                        if runner is not None:
+                            runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
+                        sim.entities[:] = [e for e in sim.entities if e.name != tid]
 
     def _resolve_insert_skill_meta(self, actor_id: str, ab_name: str) -> Tuple[int, float]:
         spec = self.rt.entity_specs.get(actor_id)
@@ -1839,14 +2073,18 @@ class TaskExecutor:
                 if proxy_id:
                     tid = proxy_id
             ent = sim.get_entity(tid)
-            if ent is None or ent.current_hp <= 0:
+            allow_limbo = "Limbo" in str(task.get("OwnerAliveState", ""))
+            if ent is None or (ent.current_hp <= 0 and not allow_limbo):
                 continue
-            if not sim.port.enemies(tid):
+            if getattr(ent, "_avatar_change_target_id", None) is not None and not getattr(ent, "is_enemy", False):
+                continue
+            is_enemy_caster = bool(getattr(ent, "is_enemy", False))
+            if not is_enemy_caster and not sim.port.enemies(tid):
                 continue
             if ab_name:
                 cat = (
                     ActionScheduleCategory.FOLLOW_UP
-                    if prio in ("Character_ChainSkill", "AvatarInsertAttackSelf")
+                    if prio in ("Character_ChainSkill", "AvatarInsertAttackSelf", "MonsterBuffOthers")
                     else ActionScheduleCategory.IMMEDIATE_EXTRA_TURN
                 )
                 act_kind = ActionKind.FOLLOW_UP if cat == ActionScheduleCategory.FOLLOW_UP else ActionKind.TALENT
@@ -1859,11 +2097,20 @@ class TaskExecutor:
                     _c: ActionScheduleCategory = cat,
                     _tgts: Tuple[str, ...] = preset_targets,
                     _sp: float = ins_sp_base,
+                    _is_en: bool = is_enemy_caster,
                 ) -> None:
                     sim._action_seq += 1
                     sk_t = "Insert" if _c == ActionScheduleCategory.FOLLOW_UP else "Talent"
                     me = rt.modifier_engine
-                    eff_tgts = _tgts if _tgts else tuple(e.name for e in sim.entities if e.is_enemy and e.current_hp > 0)
+                    if _tgts:
+                        eff_tgts = _tgts
+                    elif _is_en:
+                        eff_tgts = tuple(
+                            e.name for e in sim.entities
+                            if not e.is_enemy and not getattr(e, "is_countdown", False) and e.current_hp > 0
+                        )
+                    else:
+                        eff_tgts = tuple(e.name for e in sim.entities if e.is_enemy and e.current_hp > 0)
                     me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, current_skill_type=sk_t)
                     me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
                     prev_sp_base = rt._active_skill_sp_base
@@ -1970,7 +2217,37 @@ class TaskExecutor:
 
         default_names = {11512: "晴空乐手•倒计时"}
         be_name = default_names.get(event_id, f"BattleEvent_{event_id}")
-        spd = float(init_dyn.get(dotnet_hash("BattleEvent_RobinS_00_BaseSpeed"), 140.0) or 140.0)
+
+        # 查找 StageDataLoader 中预编译的 CompiledBattleEventSpec (含真实有效速度与 ParamList)
+        compiled_be = None
+        director = getattr(sim, "_stage_director", None)
+        runner = getattr(director, "runner", None) if director is not None else None
+        if runner is not None:
+            src_spec = getattr(getattr(runner, "built_stage", None), "source_spec", None)
+            if src_spec is not None:
+                for be in getattr(src_spec, "battle_events", ()):
+                    if int(getattr(be, "battle_event_id", 0)) == event_id:
+                        compiled_be = be
+                        break
+                if compiled_be is None:
+                    widx = int(getattr(runner.state, "wave_index", 0))
+                    waves = getattr(src_spec, "waves", ())
+                    if 0 <= widx < len(waves):
+                        for m in getattr(waves[widx], "monsters", ()):
+                            for be in getattr(m, "battle_events", ()):
+                                if int(getattr(be, "battle_event_id", 0)) == event_id:
+                                    compiled_be = be
+                                    break
+                            if compiled_be is not None:
+                                break
+
+        robin_spd = float(init_dyn.get(dotnet_hash("BattleEvent_RobinS_00_BaseSpeed"), 0.0) or 0.0)
+        if robin_spd > 0.0:
+            spd = robin_spd
+        elif compiled_be is not None and float(getattr(compiled_be, "effective_speed", 0.0) or 0.0) > 0.0:
+            spd = float(compiled_be.effective_speed)
+        else:
+            spd = 140.0
 
         be_ent = sim.get_entity(be_name)
         if be_ent is None:
@@ -1994,11 +2271,45 @@ class TaskExecutor:
             be_ent.master_name = ctx.caster_id
 
         rt.loader.ensure_ability_index()
+        ab_names: List[str] = []
+        param_list: List[float] = []
+        if compiled_be is not None:
+            ab_names = list(getattr(compiled_be, "ability_list", ()))
+            param_list = [float(p) for p in getattr(compiled_be, "param_list", ())]
+        if not ab_names:
+            try:
+                rows = rt.loader._read_excel("BattleEventConfig.json")
+            except Exception:
+                rows = []
+            for row in rows:
+                if int(row.get("BattleEventID", 0) or 0) == event_id:
+                    ab_names = [str(a) for a in row.get("AbilityList", [])]
+                    for p in row.get("ParamList", []):
+                        val = p.get("Value", 0.0) if isinstance(p, Mapping) else p
+                        param_list.append(float(val or 0.0))
+                    break
+
+        be_abilities: Dict[str, Dict[str, Any]] = {}
+        for ab_name in ab_names:
+            ab_doc = rt.loader.get_ability(ab_name)
+            if ab_doc is not None:
+                be_abilities[ab_name] = ab_doc
+                floats = (ab_doc.get("DynamicValues") or {}).get("Floats") or {}
+                if isinstance(floats, Mapping):
+                    for h_str, entry in floats.items():
+                        if not isinstance(entry, Mapping):
+                            continue
+                        ri = entry.get("ReadInfo") or {}
+                        if ri.get("Type") == "BattleEvent":
+                            idx = int(ri.get("Index", 0) or 0)
+                            if 0 <= idx < len(param_list):
+                                init_dyn[int(h_str)] = float(param_list[idx])
+
         be_spec = CompiledCharacterSpec(
             unit_id=event_id,
             is_servant=False,
             config={},
-            abilities={},
+            abilities=be_abilities,
             global_modifiers=rt.loader._global_mod_by_name,
             global_templates=rt.loader._global_tpl_by_name,
             dynamic_floats=init_dyn,
@@ -2006,15 +2317,260 @@ class TaskExecutor:
         )
         rt.register_character(be_name, be_spec)
         rt.named_targets["BattleEventCaster"] = [ctx.caster_id]
-        rt.named_targets["BattleEventEntityList"] = [be_name]
+        be_list = rt.named_targets.setdefault("BattleEventEntityList", [])
+        if be_name not in be_list:
+            be_list.append(be_name)
 
-        # 从 BattleEventConfig.json 查找并挂载 AbilityList (如 BattleEventAbility_RobinS_00_BE)
+        for ab_name in ab_names:
+            rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
+
+    def _execute_attach_avatar_change(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        rt = self.rt
+        sim = rt.sim
+        me = rt.modifier_engine
+
+        src_id = ctx.modifier_owner_id or ctx.caster_id
+        source = sim.get_entity(src_id)
+        if source is None:
+            return
+        if getattr(source, "_avatar_change_target_id", None) is not None:
+            return
+
+        new_avatar_id = int(round(self._eval_num(task.get("NewAvatarID"), ctx, 0.0)))
+        if new_avatar_id <= 0:
+            return
+        new_name = f"UID_{new_avatar_id}"
+        existing = sim.get_entity(new_name)
+        if existing is not None:
+            try:
+                sim.entities.remove(existing)
+            except ValueError:
+                pass
+
+        # 构造临时变身角色实体（继承原角色基础面板与未减速速度）
+        new_ent = Entity(
+            name=new_name,
+            avatar_id=new_avatar_id,
+            level=source.level,
+            base_max_hp=source.base_max_hp,
+            base_atk=source.base_atk,
+            base_def=source.base_def,
+            base_speed=source.base_speed,
+            base_crit_rate=source.base_crit_rate,
+            base_crit_dmg=source.base_crit_dmg,
+            base_err=source.base_err,
+            max_energy=source.max_energy,
+            is_enemy=False,
+        )
+        new_ent._is_avatar_change_target = True
+        new_ent._avatar_change_source_id = source.name
+        new_ent._avatar_change_group = str(task.get("ConfigGroupName", ""))
+        source._avatar_change_target_id = new_name
+        source._saved_unselectable = getattr(source, "is_unselectable", False)
+        source._saved_distance_remaining = float(source.distance_remaining)
+        source.is_unselectable = True
+        source.distance_remaining = 1e12
+
+        # 从官方 ActivityAvatarConfig + ActivityAvatarSkillConfig 动态加载变身角色配置、技能与 SkillParam
+        if hasattr(rt.loader, "ensure_ability_index"):
+            rt.loader.ensure_ability_index()
+        ac_char_cfg: Dict[str, Any] = {}
+        ac_skill_ids: List[int] = []
         try:
-            rows = rt.loader._read_excel("BattleEventConfig.json")
+            for row in rt.loader._read_excel("ActivityAvatarConfig.json"):
+                if int(row.get("AvatarID", 0) or 0) == new_avatar_id:
+                    jp = str(row.get("JsonPath", ""))
+                    if jp:
+                        ac_char_cfg = rt.loader._read_json(jp)
+                    ac_skill_ids = [int(s) for s in row.get("SkillList", []) if isinstance(s, int)]
+                    break
         except Exception:
-            rows = []
-        for row in rows:
-            if int(row.get("BattleEventID", 0) or 0) == event_id:
-                for ab_name in row.get("AbilityList", []):
-                    rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
-                break
+            pass
+
+        ac_skill_params: Dict[str, List[float]] = {}
+        try:
+            for row in rt.loader._read_excel("ActivityAvatarSkillConfig.json"):
+                sid = int(row.get("SkillID", 0) or 0)
+                if (ac_skill_ids and sid in ac_skill_ids) or (not ac_skill_ids and sid // 100 == new_avatar_id):
+                    tkey = str(row.get("SkillTriggerKey", ""))
+                    if tkey and tkey not in ac_skill_params:
+                        ac_skill_params[tkey] = [
+                            float(p.get("Value", 0.0) if isinstance(p, Mapping) else (p or 0.0))
+                            for p in row.get("ParamList", [])
+                        ]
+        except Exception:
+            pass
+
+        ac_dyn_floats: Dict[int, float] = {}
+        for h_str, entry in (ac_char_cfg.get("DynamicValues") or {}).get("Floats", {}).items():
+            if not isinstance(entry, Mapping):
+                continue
+            ri = entry.get("ReadInfo") or {}
+            if ri.get("Type") == "SkillParam":
+                tkey = str(ri.get("TriggerKey", ""))
+                idx = int(ri.get("Index", 0) or 0)
+                plist = ac_skill_params.get(tkey, [])
+                if 0 <= idx < len(plist):
+                    ac_dyn_floats[int(h_str)] = float(plist[idx])
+
+        skill01_ab = ""
+        passive_ab = ""
+        ac_ab_names: List[str] = []
+        for sk_entry in ac_char_cfg.get("SkillList", []):
+            if not isinstance(sk_entry, Mapping):
+                continue
+            sn = str(sk_entry.get("Name", ""))
+            ea = str(sk_entry.get("EntryAbility", ""))
+            if ea:
+                ac_ab_names.append(ea)
+                if sn == "Skill01" and not skill01_ab:
+                    skill01_ab = ea
+                elif sn in ("SkillP01", "PassiveSkill01") and not passive_ab:
+                    passive_ab = ea
+        if not skill01_ab:
+            skill01_ab = "Avatar_AvatarChange_W5_Witch_00_Skill01_Phase01"
+        if not passive_ab:
+            passive_ab = "MAvatar_AvatarChange_W5_Witch_00_PassiveSkill"
+        for extra_ab in (
+            skill01_ab,
+            skill01_ab.replace("_Phase01", "_Phase02"),
+            passive_ab,
+        ):
+            if extra_ab and extra_ab not in ac_ab_names:
+                ac_ab_names.append(extra_ab)
+
+        class _AvatarChangeKit:
+            def __init__(self, owner_id: str, ab_skill: str) -> None:
+                self.owner_id = owner_id
+                self.ab_skill = ab_skill
+                self.port = sim.port
+
+            def definition(self, kind: Any) -> Any:
+                from ..actions import AbilityDefinition, TargetMode
+                return AbilityDefinition(
+                    kind=ActionKind.BASIC,
+                    target_mode=TargetMode.SINGLE_ENEMY,
+                    name="狂躁的铃音",
+                    skill_id=new_avatar_id * 100 + 1,
+                )
+
+            def decide_action(self, act_ctx: Any) -> Any:
+                return ActionKind.BASIC
+
+            def choose_action(self, act_ctx: Any) -> Any:
+                return ActionKind.BASIC
+
+            def execute(self, act_ctx: Any) -> None:
+                tgt_ids = getattr(act_ctx, "target_ids", None)
+                chosen: Optional[str] = None
+                if tgt_ids:
+                    for tid in tgt_ids:
+                        te = sim.get_entity(tid)
+                        if te is not None and te.is_enemy and te.current_hp > 0:
+                            chosen = te.name
+                            break
+                if chosen is None:
+                    # 优先锁定 Rank < 3 的召唤小怪（如狂兽的胚芽），否则选第一个存活敌方
+                    living_enemies = [
+                        e for e in sim.entities
+                        if e.is_enemy and e.current_hp > 0 and not getattr(e, "is_countdown", False)
+                    ]
+                    minions = [e for e in living_enemies if not getattr(e, "is_boss", False)]
+                    if minions:
+                        chosen = minions[0].name
+                    elif living_enemies:
+                        chosen = living_enemies[0].name
+                if chosen is not None:
+                    rt.trigger_ability(
+                        caster_id=self.owner_id,
+                        ability_name=self.ab_skill,
+                        target_ids=(chosen,),
+                        current_attack_type="Normal",
+                    )
+
+        new_ent.kit = _AvatarChangeKit(new_name, skill01_ab)
+
+        # 插入原角色站位并注册到 TurnSimulator & VMRuntime
+        sim.add_entity(new_ent, trigger_battle_start=False)
+        try:
+            sim.entities.remove(new_ent)
+            src_idx = sim.entities.index(source)
+            sim.entities.insert(src_idx + 1, new_ent)
+        except ValueError:
+            if new_ent not in sim.entities:
+                sim.entities.append(new_ent)
+        if hasattr(sim, "_rebuild_entity_cache"):
+            sim._rebuild_entity_cache()
+
+        # 同步原角色当前生效的友方纯属性光环增益（如风堇雨过天晴 MaxHP 加成；避免复制带事件回调的 E1/结界光环导致双触发）
+        for m in list(me.get_modifiers(source.name)):
+            if m.name in ("MAvatar_Hyacine_00_UltraBuff",):
+                new_m = me.add_modifier(
+                    owner_id=new_name,
+                    mod_name=m.name,
+                    caster_id=m.caster_id,
+                    ability_name=m.ability_name,
+                    life_time=m.life_time,
+                    halo_parent_uid=m.halo_parent_uid,
+                )
+                if new_m is not None and m.dynamic_values:
+                    new_m.dynamic_values.update(m.dynamic_values)
+        new_ent.current_hp = float(sim.port.max_hp(new_name))
+
+        # 注册变身角色 Ability 与 SkillParam DynamicValues 到 VMRuntime
+        ac_abilities: Dict[str, Dict[str, Any]] = {}
+        for ab_n in ac_ab_names:
+            ab_doc = rt.loader.get_ability(ab_n)
+            if ab_doc is not None:
+                ac_abilities[ab_n] = ab_doc
+
+        ac_spec = CompiledCharacterSpec(
+            unit_id=new_avatar_id,
+            is_servant=False,
+            config=ac_char_cfg,
+            abilities=ac_abilities,
+            global_modifiers=rt.loader._global_mod_by_name,
+            global_templates=rt.loader._global_tpl_by_name,
+            dynamic_floats=ac_dyn_floats,
+            skill_levels={},
+        )
+        rt.register_character(new_name, ac_spec)
+
+        # 执行 OnNewAvatarCreate 回调
+        on_create = task.get("OnNewAvatarCreate", [])
+        if on_create:
+            self.execute_tasks(on_create, ctx.clone(param_entity_id=new_name))
+
+        # 触发变身角色被动（如 MAvatar_AvatarChange_W5_Witch_00_PassiveSkill -> SetActionDelay(0)）
+        if passive_ab in ac_abilities:
+            rt.trigger_ability(caster_id=new_name, ability_name=passive_ab, target_ids=(new_name,))
+
+    def _execute_detach_avatar_change(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        rt = self.rt
+        sim = rt.sim
+        me = rt.modifier_engine
+
+        targets = self._resolve_targets(task.get("NewAvatar"), ctx)
+        for tid in targets:
+            new_ent = sim.get_entity(tid)
+            if new_ent is None or getattr(new_ent, "_detaching_avatar_change", False):
+                continue
+            new_ent._detaching_avatar_change = True
+            src_id = getattr(new_ent, "_avatar_change_source_id", None)
+            source = sim.get_entity(src_id) if src_id else None
+            if source is not None:
+                source._avatar_change_target_id = None
+                source.is_unselectable = bool(getattr(source, "_saved_unselectable", False))
+                saved_dist = getattr(source, "_saved_distance_remaining", None)
+                if saved_dist is not None:
+                    source.distance_remaining = float(saved_dist)
+                # 移除原角色身上的 SheepStatus（避免重复触发 Detach）
+                for m in list(me.get_modifiers(source.name)):
+                    if "SheepStatus" in m.name:
+                        me.remove_modifier(source.name, m.name)
+            new_ent.current_hp = 0.0
+            new_ent.distance_remaining = 1e12
+            if new_ent in sim.entities:
+                sim.entities.remove(new_ent)
+            if hasattr(sim, "_rebuild_entity_cache"):
+                sim._rebuild_entity_cache()

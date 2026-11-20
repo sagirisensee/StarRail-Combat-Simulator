@@ -108,8 +108,21 @@ class VMRuntime:
                     damage_data=dmg_data,
                     current_attack_type=atk_type,
                 )
+                for tid in all_targets:
+                    self.modifier_engine.dispatch_event(
+                        "OnAfterBeingAttacked",
+                        owner_id=tid,
+                        param_entity_id=caster_id,
+                        damage_data=dmg_data,
+                        current_attack_type=atk_type,
+                    )
             finally:
                 self._in_after_attack = False
+        pending_dead = getattr(self, "_pending_dead_enemies", None)
+        if pending_dead:
+            for dead_tid in list(pending_dead):
+                self.modifier_engine.destroy_all_for_entity(dead_tid)
+            pending_dead.clear()
 
     def end_attack_scope(self) -> None:
         self._attack_scope_depth = max(0, self._attack_scope_depth - 1)
@@ -424,6 +437,14 @@ class VMRuntime:
         self.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnPhase1Begin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnActionPhaseBegin", owner_id=evt.actor_name)
+        actor_ent = self.sim.get_entity(evt.actor_name)
+        if actor_ent is not None and getattr(actor_ent, "is_countdown", False):
+            sched = getattr(self.sim, "scheduler", None)
+            if sched is not None and sched.has_pending():
+                sched.drain()
+                director = getattr(self.sim, "_stage_director", None)
+                if director is not None and hasattr(director, "sync_spawned_entities"):
+                    director.sync_spawned_entities()
 
     def _on_turn_end(self, evt: TurnEndEvent) -> None:
         self.end_being_attacked()
@@ -506,6 +527,10 @@ class VMRuntime:
         self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.entity_name, change_value=-evt.amount)
 
     def _on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
+        if self.modifier_engine.has_modifier(evt.spirit_name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
+            self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=evt.spirit_name, param_entity_id=evt.spirit_name)
+        elif evt.owner_name and self.modifier_engine.has_modifier(evt.owner_name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
+            self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=evt.owner_name, param_entity_id=evt.spirit_name)
         self.modifier_engine.destroy_all_for_entity(evt.spirit_name)
 
     def _on_enemy_defeated(self, evt: EnemyDefeatedEvent) -> None:

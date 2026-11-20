@@ -303,10 +303,22 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         "TeamFormation",
     ):
         cur = _alive_allies(include_unselectable=True, include_countdown=False)
-    elif base in ("AllEnemy", "AllDarkTeam"):
+    elif base == "AllDarkTeam":
         cur = _alive_enemies(include_unselectable=False, include_countdown=False)
-    elif base in ("AllEnemyWithUnSelectable", "AllDarkTeamWithAllDarkTeamUnselectable"):
+    elif base == "AllEnemy":
+        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
+        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+            cur = _alive_allies(include_unselectable=False, include_countdown=False)
+        else:
+            cur = _alive_enemies(include_unselectable=False, include_countdown=False)
+    elif base == "AllDarkTeamWithAllDarkTeamUnselectable":
         cur = _alive_enemies(include_unselectable=True, include_countdown=False)
+    elif base == "AllEnemyWithUnSelectable":
+        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
+        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+            cur = _alive_allies(include_unselectable=True, include_countdown=False)
+        else:
+            cur = _alive_enemies(include_unselectable=True, include_countdown=False)
     elif base == "ServantEntityList":
         cur = [
             e.name
@@ -343,8 +355,35 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         elif mod == "RemoveBattleEvent":
             cur = [eid for eid in cur if eid != "__LEVEL__" and not _is_battle_event(sim.get_entity(eid))]
         elif mod == "RemoveUnselectable":
-            cur = [eid for eid in cur if not getattr(sim.get_entity(eid), "unselectable", False)]
-        elif mod == "GetAliveOnly":
+            cur = [
+                eid for eid in cur
+                if not getattr(sim.get_entity(eid), "unselectable", False)
+                and not getattr(sim.get_entity(eid), "is_unselectable", False)
+            ]
+        elif mod == "GetCharacterChangeTarget":
+            nxt = []
+            for eid in cur:
+                ent = sim.get_entity(eid)
+                tid = getattr(ent, "_avatar_change_target_id", None) if ent is not None else None
+                if tid and sim.get_entity(tid) is not None:
+                    nxt.append(tid)
+            cur = _dedup_preserve(nxt)
+        elif mod == "GetCharacterChangeSource":
+            nxt = []
+            for eid in cur:
+                ent = sim.get_entity(eid)
+                sid = getattr(ent, "_avatar_change_source_id", None) if ent is not None else None
+                if sid and sim.get_entity(sid) is not None:
+                    nxt.append(sid)
+            cur = _dedup_preserve(nxt)
+        elif mod == "GetBattleEvent":
+            nxt = []
+            for eid in cur:
+                for e in sim.entities:
+                    if getattr(e, "is_countdown", False) and getattr(e, "master_name", None) == eid and _is_alive_entity(sim, e):
+                        nxt.append(e.name)
+            cur = _dedup_preserve(nxt)
+        elif mod in ("GetAliveOnly", "GetAliveOrLimbo"):
             cur = [eid for eid in cur if (e := sim.get_entity(eid)) is not None and e.current_hp > 0.0]
         elif mod == "RemoveServant":
             cur = [eid for eid in cur if not getattr(sim.get_entity(eid), "is_memosprite", False)]

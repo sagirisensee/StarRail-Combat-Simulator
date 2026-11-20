@@ -136,7 +136,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "184651",
             "battle_20261114_184651.jsonl",
-            ["长夜月", "风堇"],
+            ["风堇", "长夜月"],
             attach_log_20261114_184651_plugin,
             av_budget=240.0,
             max_tl_av=240.22,
@@ -146,7 +146,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "184845",
             "battle_20261114_184845.jsonl",
-            ["缇宝", "风堇"],
+            ["风堇", "缇宝"],
             attach_log_20261114_184845_plugin,
         )
 
@@ -163,7 +163,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "205144",
             "battle_20261114_205144.jsonl",
-            ["缇宝", "风堇", "知更鸟•晴歌"],
+            ["风堇", "知更鸟•晴歌", "缇宝"],
             attach_log_20261114_205144_plugin,
         )
 
@@ -171,7 +171,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "220255",
             "battle_20261114_220255.jsonl",
-            ["缇宝", "风堇", "知更鸟•晴歌"],
+            ["风堇", "知更鸟•晴歌", "缇宝"],
             attach_log_20261114_220255_plugin,
             non_crits=OFFICIAL_20261114_220255_NON_CRITS,
         )
@@ -180,7 +180,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "221208",
             "battle_20261114_221208.jsonl",
-            ["长夜月", "风堇", "知更鸟•晴歌"],
+            ["风堇", "知更鸟•晴歌", "长夜月"],
             attach_log_20261114_221208_plugin,
             non_crits=OFFICIAL_20261114_221208_NON_CRITS,
         )
@@ -189,7 +189,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self._run_vm_case(
             "222204",
             "battle_20261114_222204.jsonl",
-            ["缇宝", "长夜月", "风堇"],
+            ["风堇", "缇宝", "长夜月"],
             attach_log_20261114_222204_plugin,
             non_crits=OFFICIAL_20261114_222204_NON_CRITS,
         )

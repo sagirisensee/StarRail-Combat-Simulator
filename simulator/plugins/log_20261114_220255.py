@@ -1,148 +1,370 @@
 # coding: utf-8
-"""实机日志 battle_20261114_220255.jsonl 专属外部 RNG 与确定性事件插件。
-
-仅承接该场实机战斗中具有随机性的特定命中结果（敌方受击目标、我方单体拉条目标、风行跳过、阿哈回合弹射），
-严禁通过修改怪物体力/韧性、角色能量/气氛/意志、治疗池数值等手段进行倒推拟合。
-"""
+"""实机日志 battle_20261114_220255.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""
 
 from typing import Any, List, Optional
-
-from simulator.actions import ActionKind
-from simulator.plugins._helpers import find_ally as _find_ally
+from simulator.plugins._helpers import (
+    find_ally as _find_ally,
+    find_memosprite_name as _find_memosprite_name,
+    find_memosprite_of as _find_memosprite_of,
+)
 
 
 def attach_log_20261114_220255_plugin(sim: Any) -> None:
-    """挂载 battle_20261114_220255.jsonl (3人队: 缇宝+风堇+知更鸟•晴歌) 的纯外部随机判定插件。"""
-    sim.enemy_uid_map = {100011: "月夜天马", 100013: "正阳狮鹫"}
+    """挂载 battle_20261114_220255.jsonl 专属的单局随机性插件（受击目标、非攻击回合、风行再动、阿哈弹射）。"""
 
-    def _target_220255_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
-        atk_name = getattr(attacker, "name", None)
-        if atk_name == "知更鸟•晴歌":
-            return _find_ally(living, "风堇")
+    def _target_20261114_220255_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
-        if atk_name == "风堇" and abs(av - 320.31) < 0.05:
-            for e in living:
-                if getattr(e, "name", "") == "狂兽的胚芽4":
-                    return e
-            for e in living:
-                if getattr(e, "name", "").startswith("狂兽的胚芽"):
-                    return e
-        if any(abs(av - x) < 0.05 for x in (31.57, 75.76, 94.70, 157.83, 432.69, 516.87)):
-            return _find_ally(living, "知更鸟•晴歌")
-        if any(abs(av - x) < 0.05 for x in (151.52, 198.64, 250.02, 274.22, 345.86, 390.60, 417.45, 506.63, 572.98)):
-            return _find_ally(living, "缇宝")
-        if any(abs(av - x) < 0.05 for x in (488.81, 657.16, 720.48, 739.09)):
-            return _find_ally(living, "风堇")
+        att_name = str(getattr(attacker, "name", "") or "")
+        is_enemy = getattr(attacker, "is_enemy", False)
+
+        # 1. 我方攻击敌方单体锁定
+        if not is_enemy and living and all(getattr(e, 'is_enemy', False) for e in living):
+            if abs(av - 89.73) < 0.05 and att_name == '风堇':
+                tgts = ['流星铁鹰_3']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 203.93) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_2']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 320.31) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_4']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 390.60) < 0.05 and att_name == '缇宝':
+                tgts = ['堕神之血•亚婆离']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 390.60) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_6']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 478.79) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_12']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 524.89) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_12']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 591.02) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_14']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+            if abs(av - 723.62) < 0.05 and att_name == '风堇':
+                tgts = ['狂兽的胚芽_17']
+                return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
+
+        # 2. 我方辅助单点技能目标
+        if att_name == '知更鸟•晴歌':
+            tgts = ['风堇', '风堇', '风堇', '风堇', '风堇', '风堇', '风堇', '风堇', '风堇', '风堇', '风堇']
+            return _find_ally(living, tgts[0]) if tgts else None
+
+        # 3. 敌方回合主受击目标
+        if abs(av - 31.57) < 0.05 and att_name == '正阳狮鹫':
+            return _find_ally(living, '知更鸟•晴歌')
+        if abs(av - 69.44) < 0.05 and att_name == '流星铁鹰_1':
+            return _find_memosprite_of(living, '风堇')
+        if abs(av - 75.76) < 0.05 and att_name == '月夜天马':
+            return _find_ally(living, '知更鸟•晴歌')
+        if abs(av - 94.70) < 0.05 and att_name == '正阳狮鹫':
+            return _find_ally(living, '知更鸟•晴歌')
+        if abs(av - 151.52) < 0.05 and att_name == '月夜天马':
+            return _find_ally(living, '缇宝')
+        if abs(av - 157.83) < 0.05 and att_name == '正阳狮鹫':
+            return _find_ally(living, '知更鸟•晴歌')
+        if abs(av - 198.64) < 0.05 and att_name == '狂兽的胚芽_1':
+            return _find_ally(living, '缇宝')
+        if abs(av - 250.02) < 0.05 and att_name == '狂兽的胚芽_2':
+            return _find_ally(living, '缇宝')
+        if abs(av - 274.22) < 0.05 and att_name == '狂兽的胚芽_3':
+            return _find_ally(living, '缇宝')
+        if abs(av - 345.86) < 0.05 and att_name == '狂兽的胚芽_5':
+            return _find_ally(living, '缇宝')
+        if abs(av - 390.60) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '缇宝')
+        if abs(av - 417.45) < 0.05 and att_name == '狂兽的胚芽_9':
+            return _find_ally(living, '缇宝')
+        if abs(av - 432.69) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '知更鸟•晴歌')
+        if abs(av - 460.75) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 488.81) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 506.63) < 0.05 and att_name == '狂兽的胚芽_11':
+            return _find_ally(living, '缇宝')
+        if abs(av - 516.87) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '知更鸟•晴歌')
+        if abs(av - 544.93) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 572.98) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '缇宝')
+        if abs(av - 601.04) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 629.10) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 657.16) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 720.48) < 0.05 and att_name == '狂兽的胚芽_17':
+            return _find_ally(living, '风堇')
+        if abs(av - 739.09) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
+        if abs(av - 781.18) < 0.05 and att_name == '堕神之血•亚婆离':
+            return _find_ally(living, '风堇')
         return None
 
-    def _blast_220255_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
+    def _blast_20261114_220255_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
         av = float(getattr(sim, "current_av", 0.0))
-        if abs(av - 31.57) < 0.05:
-            return [ent for n in ("缇宝", "风堇") if (ent := _find_ally(living, n)) is not None and ent is not primary]
+        att_name = str(getattr(attacker, "name", "") or "")
+        if abs(av - 151.52) < 0.05 and att_name == '月夜天马':
+            out: List[Any] = []
+            for ow in ['风堇']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 157.83) < 0.05 and att_name == '正阳狮鹫':
+            out: List[Any] = []
+            for ow in ['知更鸟•晴歌', '风堇']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 390.60) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['风堇', '知更鸟•晴歌']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 460.75) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌', '缇宝']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 488.81) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['知更鸟•晴歌']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 544.93) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 572.98) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['风堇', '知更鸟•晴歌']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 601.04) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 629.10) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌', '缇宝']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 657.16) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['知更鸟•晴歌']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
+        if abs(av - 781.18) < 0.05 and att_name == '堕神之血•亚婆离':
+            out: List[Any] = []
+            for n in ['知更鸟•晴歌', '缇宝']:
+                ent = _find_ally(living, n)
+                if ent is not None and ent not in out: out.append(ent)
+            for ow in ['风堇', '知更鸟•晴歌', '缇宝']:
+                m_ent = _find_memosprite_of(living, ow)
+                if m_ent is not None and m_ent not in out: out.append(m_ent)
+            return out
         return []
 
-    def _enemy_attack_skip_220255(attacker: Any, av: float) -> bool:
-        name = getattr(attacker, "name", None)
-        if name in ("流星铁鹰_g1_1", "流星铁鹰_g1_2") and abs(av - 69.44) < 0.05:
-            return True
-        if name in ("狂兽的胚芽9", "狂兽的胚芽10") and abs(av - 436.78) < 0.5:
-            return True
-        return False
+    def _enemy_attack_skip_20261114_220255(attacker: Any, av: float) -> bool:
+        att_name = str(getattr(attacker, "name", "") or "")
+        return (att_name == '狂兽的胚芽_2' and abs(av - 198.64) < 0.05) or (att_name == '狂兽的胚芽_1' and abs(av - 243.74) < 0.05) or (att_name == '狂兽的胚芽_4' and abs(av - 274.22) < 0.05) or (att_name == '狂兽的胚芽_3' and abs(av - 319.86) < 0.05) or (att_name == '狂兽的胚芽_6' and abs(av - 345.86) < 0.05) or (att_name == '狂兽的胚芽_10' and abs(av - 417.45) < 0.05) or (att_name == '狂兽的胚芽_12' and abs(av - 506.63) < 0.05) or (att_name == '狂兽的胚芽_14' and abs(av - 568.97) < 0.05) or (att_name == '狂兽的胚芽_16' and abs(av - 644.72) < 0.05) or (att_name == '狂兽的胚芽_18' and abs(av - 720.48) < 0.05)
 
-    def _enemy_windwalk_220255(eagle_name: str, generation: int, idx: int) -> bool:
-        return False
+    def _enemy_windwalk_20261114_220255(eagle_name: str, generation: int, idx: int) -> bool:
+        return eagle_name in ()
 
-    def _debuff_hit_220255(attacker: Any, target: Any, key: str, av: float) -> bool:
-        if key == "BeastSprout_Slow":
-            tname = getattr(target, "name", None)
-            if tname == "风堇":
-                return abs(av - 720.48) < 0.25
-            if tname == "缇宝":
-                return any(abs(av - x) < 0.25 for x in (198.64, 250.02, 274.22, 345.86, 417.45, 506.63))
-            return False
-        return True
+    sim.target_provider = _target_20261114_220255_provider
+    sim.blast_target_provider = _blast_20261114_220255_provider
+    sim.enemy_attack_skip_provider = _enemy_attack_skip_20261114_220255
+    sim.enemy_windwalk_provider = _enemy_windwalk_20261114_220255
 
-    sim.target_provider = _target_220255_provider
-    sim.blast_target_provider = _blast_220255_provider
-    sim.enemy_attack_skip_provider = _enemy_attack_skip_220255
-    sim.enemy_windwalk_provider = _enemy_windwalk_220255
-    sim.debuff_hit_provider = _debuff_hit_220255
-
-    def _aha_220255_handler(director: Any) -> None:
-        director.suppress_aha_sprout_advance = True
-        if getattr(director, "phase2_plan", None) is None:
-            director.phase2_plan = {
-                1: ("HEAVY_ST", "PARTY_AOE", "SUMMON_SPROUTS"),
-                2: ("ABSORB_AND_HEAVY_ST",),
-                3: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
-                4: ("HEAVY_ST", "PARTY_AOE"),
-                5: ("ABSORB_AND_HEAVY_ST",),
-                6: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
-                7: ("HEAVY_ST", "PARTY_AOE"),
-                8: ("PARTY_AOE", "HEAVY_ST"),
-                9: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
-                10: ("HEAVY_ST", "PARTY_AOE"),
-                11: ("ABSORB_AND_HEAVY_ST",),
-                12: ("PARTY_AOE", "ABSORB_AND_CHANNEL_PULSE"),
-            }
-        if getattr(director, "apoli_kit", None) is not None and getattr(director.apoli_kit, "_phase2_plan", None) is None:
-            director.apoli_kit._phase2_plan = director.phase2_plan
-
+    def _aha_20261114_220255_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
-
-        if not getattr(director, "_triggered_aha_137_220255", False) and av >= 137.95 - 1e-3:
-            director._triggered_aha_137_220255 = True
+        if not getattr(director, '_triggered_aha_0_13795', False) and av >= 137.95 - 1e-6:
+            setattr(director, '_triggered_aha_0_13795', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
-            director.apply_aha_hp_damage("月夜天马", 29338.55 * 3)
-            director.apply_aha_hp_damage("正阳狮鹫", 29338.55 * 2)
-            director.apply_aha_ally_chip_hit("知更鸟•晴歌")
-            director.apply_aha_ally_chip_hit("风堇")
-            director.apply_aha_ally_chip_hit("知更鸟•晴歌")
+            director.apply_aha_hp_damage('月夜天马', 88015.63327696)
+            director.apply_aha_hp_damage('正阳狮鹫', 58677.08885131)
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, "_triggered_aha_150_220255", False) and av >= 150.0 - 1e-6:
-            director._triggered_aha_150_220255 = True
+        if not getattr(director, '_triggered_aha_1_15000', False) and av >= 150.00 - 1e-6:
+            setattr(director, '_triggered_aha_1_15000', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
-            director.apply_aha_hp_damage("月夜天马", 29338.55 * 5)
-            director.apply_aha_ally_chip_hit("缇宝")
-            director.apply_aha_ally_chip_hit("缇宝")
-            director.apply_aha_ally_chip_hit("知更鸟•晴歌")
+            director.apply_aha_hp_damage('月夜天马', 146692.72212827)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
 
-        exact_aha_w2 = [
-            ("_aha_264", 264.21, [("狂兽的胚芽1", 24374.23), ("狂兽的胚芽4", 43873.62)], ("缇宝", "缇宝", "缇宝", "风堇", "风堇")),
-            ("_aha_307", 307.83, [("狂兽的胚芽4", 52157.42), ("狂兽的胚芽3", 26078.71)], ("知更鸟•晴歌", "风堇", "知更鸟•晴歌")),
-            ("_aha_380", 380.60, [("堕神之血•亚婆离", 65196.76), ("狂兽的胚芽5", 26078.71), ("狂兽的胚芽6", 26078.71)], ("知更鸟•晴歌", "缇宝", "风堇", "缇宝")),
-            ("_aha_407", 407.83, [("堕神之血•亚婆离", 58169.57), ("狂兽的胚芽9", 20941.05), ("狂兽的胚芽10", 20941.05)], ("知更鸟•晴歌", "知更鸟•晴歌", "知更鸟•晴歌", "知更鸟•晴歌")),
-            ("_aha_496", 496.99, [("狂兽的胚芽11", 33704.07), ("狂兽的胚芽12", 33704.07)], ("风堇", "知更鸟•晴歌", "缇宝", "缇宝", "缇宝", "风堇", "缇宝")),
-            ("_aha_507", 507.83, [("狂兽的胚芽11", 70412.51)], ("缇宝", "风堇", "知更鸟•晴歌")),
-            ("_aha_607", 607.83, [("堕神之血•亚婆离", 161052.32)], ("缇宝", "风堇", "缇宝", "知更鸟•晴歌")),
-            ("_aha_631", 631.27, [("堕神之血•亚婆离", 161052.32), ("狂兽的胚芽16", 25927.02 * 4)], ("知更鸟•晴歌", "风堇")),
-            ("_aha_707", 707.83, [("堕神之血•亚婆离", 65196.76), ("狂兽的胚芽17", 20941.04 * 4), ("狂兽的胚芽18", 20941.04 * 2)], ("知更鸟•晴歌", "风堇")),
-            ("_aha_737", 737.65, [("堕神之血•亚婆离", 69297.20), ("狂兽的胚芽17", 27718.88 * 4), ("狂兽的胚芽18", 27718.88 * 2)], ("缇宝",)),
-        ]
-        for flag, trg_av, dmg_list, chips in exact_aha_w2:
-            if not getattr(director, flag, False) and av >= trg_av - 1e-2:
-                setattr(director, flag, True)
-                if hasattr(sim, "_action_seq"):
-                    sim._action_seq += 1
-                for tname, dmg in dmg_list:
-                    if dmg > 0:
-                        director.apply_aha_hp_damage(tname, dmg)
-                for ally_name in chips:
-                    director.apply_aha_ally_chip_hit(ally_name)
-                director.flush_ally_talent_heals()
+        if not getattr(director, '_triggered_aha_2_26421', False) and av >= 264.21 - 1e-6:
+            setattr(director, '_triggered_aha_2_26421', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_1', 24374.22896945)
+            director.apply_aha_hp_damage('狂兽的胚芽_4', 43873.61212232)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.flush_ally_talent_heals()
 
-    sim.aha_special_handler = _aha_220255_handler
+        if not getattr(director, '_triggered_aha_3_30783', False) and av >= 307.83 - 1e-6:
+            setattr(director, '_triggered_aha_3_30783', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_4', 52157.41231227)
+            director.apply_aha_hp_damage('狂兽的胚芽_3', 26078.70615614)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.flush_ally_talent_heals()
 
-    _orig_step = sim.step
+        if not getattr(director, '_triggered_aha_4_38060', False) and av >= 380.60 - 1e-6:
+            setattr(director, '_triggered_aha_4_38060', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_5', 26078.70615614)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 65196.76542070)
+            director.apply_aha_hp_damage('狂兽的胚芽_6', 26078.70615614)
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.flush_ally_talent_heals()
 
-    def _step_220255(*args: Any, **kwargs: Any) -> Any:
-        av = float(getattr(sim, "current_av", 0.0))
-        if abs(av - 102.73) < 0.05 and kwargs.get("action_override") == ActionKind.BASIC:
-            kwargs["target_ids"] = ["正阳狮鹫", "月夜天马", "流星铁鹰_g1_2"]
-        return _orig_step(*args, **kwargs)
+        if not getattr(director, '_triggered_aha_5_40783', False) and av >= 407.83 - 1e-6:
+            setattr(director, '_triggered_aha_5_40783', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 58169.56914389)
+            director.apply_aha_hp_damage('狂兽的胚芽_10', 20941.04487122)
+            director.apply_aha_hp_damage('狂兽的胚芽_9', 20941.04487122)
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.flush_ally_talent_heals()
 
-    sim.step = _step_220255
+        if not getattr(director, '_triggered_aha_6_49699', False) and av >= 496.99 - 1e-6:
+            setattr(director, '_triggered_aha_6_49699', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_11', 33704.07414686)
+            director.apply_aha_hp_damage('狂兽的胚芽_12', 33704.07414686)
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.flush_ally_talent_heals()
+
+        if not getattr(director, '_triggered_aha_7_50783', False) and av >= 507.83 - 1e-6:
+            setattr(director, '_triggered_aha_7_50783', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_11', 70412.50658514)
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.flush_ally_talent_heals()
+
+        if not getattr(director, '_triggered_aha_8_60783', False) and av >= 607.83 - 1e-6:
+            setattr(director, '_triggered_aha_8_60783', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.flush_ally_talent_heals()
+
+        if not getattr(director, '_triggered_aha_9_63127', False) and av >= 631.27 - 1e-6:
+            setattr(director, '_triggered_aha_9_63127', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_16', 103708.07786348)
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.flush_ally_talent_heals()
+
+        if not getattr(director, '_triggered_aha_10_70783', False) and av >= 707.83 - 1e-6:
+            setattr(director, '_triggered_aha_10_70783', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_17', 83764.17948486)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 65196.76542070)
+            director.apply_aha_hp_damage('狂兽的胚芽_18', 41882.08974243)
+            director.apply_aha_ally_chip_hit('知更鸟•晴歌')
+            director.apply_aha_ally_chip_hit('风堇')
+            director.flush_ally_talent_heals()
+
+        if not getattr(director, '_triggered_aha_11_73765', False) and av >= 737.65 - 1e-6:
+            setattr(director, '_triggered_aha_11_73765', True)
+            if hasattr(sim, "_action_seq"):
+                sim._action_seq += 1
+            director.apply_aha_hp_damage('狂兽的胚芽_17', 110875.52775522)
+            director.apply_aha_hp_damage('堕神之血•亚婆离', 69297.20487928)
+            director.apply_aha_hp_damage('狂兽的胚芽_18', 55437.76387761)
+            director.apply_aha_ally_chip_hit('缇宝')
+            director.flush_ally_talent_heals()
+
+    sim.aha_special_handler = _aha_20261114_220255_handler

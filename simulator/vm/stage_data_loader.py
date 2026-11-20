@@ -686,14 +686,16 @@ class StageDataLoader:
         def_mod = _unwrap_value(mrow.get("DefenceModifyRatio"), 1.0)
         speed_mod = _unwrap_value(mrow.get("SpeedModifyRatio"), 1.0)
         stance_mod = _unwrap_value(mrow.get("StanceModifyRatio"), 1.0)
+        speed_mod_val = _unwrap_value(mrow.get("SpeedModifyValue"), 0.0)
+        stance_mod_val = _unwrap_value(mrow.get("StanceModifyValue"), 0.0)
 
         effective_hp_base = _snap_rational_base(hp_base, hp_mod)
         raw_hp = hp_base * hp_mod * curve.hp_ratio * eg_hp_ratio
         hp = effective_hp_base * curve.hp_ratio * eg_hp_ratio
         atk = atk_base * atk_mod * curve.atk_ratio * eg_atk_ratio
         def_ = def_base * def_mod * curve.def_ratio * eg_def_ratio
-        speed = speed_base * speed_mod * curve.speed_ratio * eg_spd_ratio
-        toughness = stance_base * stance_mod * curve.stance_ratio * eg_stance_ratio
+        speed = speed_base * speed_mod * curve.speed_ratio * eg_spd_ratio + speed_mod_val
+        toughness = stance_base * stance_mod * curve.stance_ratio * eg_stance_ratio + stance_mod_val
         ui_toughness = toughness / 3.0
 
         status_probability = curve.status_probability

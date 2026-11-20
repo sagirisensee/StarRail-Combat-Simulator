@@ -38,6 +38,7 @@ def _extract_use_skills_and_flag(
     t = node.get("$type", "")
     if t == "RPG.GameCore.UseSkill" and node.get("SkillName"):
         use_skills.append(str(node["SkillName"]))
+        return
     elif t in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue"):
         dk = node.get("DynamicKey")
         dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
@@ -47,6 +48,10 @@ def _extract_use_skills_and_flag(
                 fv = val_spec.get("FixedValue", {})
                 if isinstance(fv, Mapping) and isinstance(fv.get("Value"), (int, float)):
                     next_flags.append(int(fv["Value"]))
+    elif t == "RPG.GameCore.AddModifier":
+        mname = (node.get("ModifierName") or {}).get("Value", "") if isinstance(node.get("ModifierName"), Mapping) else ""
+        if mname == "Monster_W5_Fallen_00_AttackOrder":
+            next_flags.append(2)
     elif t == "RPG.GameCore.SelectAISkillTarget":
         sel = node.get("Selector", {})
         if isinstance(sel, Mapping) and sel.get("$type"):
@@ -230,6 +235,7 @@ class MonsterAIExecutor:
         self.phase: int = 1
         self.ai_flag: int = spec.initial_ai_flag
         self.turn_count: int = 0
+        self.last_matched_decision: Optional[AIDecisionRule] = None
 
     def set_phase(self, phase: int, reset_ai_flag: int = 1) -> None:
         self.phase = phase
@@ -255,8 +261,10 @@ class MonsterAIExecutor:
                     break
 
         if matched is None:
+            self.last_matched_decision = None
             return ()
 
+        self.last_matched_decision = matched
         if matched.next_ai_flag is not None:
             self.ai_flag = matched.next_ai_flag
         return matched.candidate_skills

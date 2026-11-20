@@ -147,7 +147,6 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.OverrideSelectDarkTeamEntityCamera",
     "RPG.GameCore.SetEffectAnimatorParameter",
     "RPG.GameCore.SetBossPluralityHP",
-    "RPG.GameCore.TriggerStanceCountDown",
     "RPG.GameCore.RefreshChangePhaseUI",
     "RPG.GameCore.StackStatusDesc",
     "RPG.GameCore.LinearProjectileData",
@@ -158,6 +157,7 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SetBattleScoringItem",
     "RPG.GameCore.SetBattleTargetProgress",
     "RPG.GameCore.ShowEvolveBuildGearSelectInBattle",
+    "RPG.GameCore.ToggleUITop",
 }
 
 
@@ -259,6 +259,8 @@ def prune_ability(ability: Mapping[str, Any]) -> Dict[str, Any]:
     cloned = dict(ability)
     if "OnStart" in cloned and isinstance(cloned["OnStart"], list):
         cloned["OnStart"] = prune_task_list(cloned["OnStart"])
+    if "OnAdd" in cloned and isinstance(cloned["OnAdd"], list):
+        cloned["OnAdd"] = prune_task_list(cloned["OnAdd"])
     if "TaskListTemplate" in cloned and isinstance(cloned["TaskListTemplate"], list):
         new_tpls = []
         for tpl in cloned["TaskListTemplate"]:
@@ -301,6 +303,7 @@ class GameDataLoader:
         self._ability_index_built = False
         self._ability_by_name: Dict[str, Dict[str, Any]] = {}
         self._global_mod_by_name: Dict[str, Dict[str, Any]] = {}
+        self._global_target_alias_by_name: Dict[str, Dict[str, Any]] = {}
         self._global_tpl_by_name: Dict[str, List[Dict[str, Any]]] = {}
         self._file_cache: Dict[str, Dict[str, Any]] = {}
 
@@ -414,6 +417,9 @@ class GameDataLoader:
         for mname, mval in data.get("GlobalModifiers", {}).items():
             if mname and mname not in self._global_mod_by_name and isinstance(mval, dict):
                 self._global_mod_by_name[mname] = prune_modifier_dict(mval)
+        for aname, aval in data.get("GlobalTargetAlias", {}).items():
+            if aname and aname not in self._global_target_alias_by_name and isinstance(aval, dict):
+                self._global_target_alias_by_name[aname] = aval
         for tpl in data.get("GlobalTemplates", []):
             tname = tpl.get("Name")
             if tname and tname not in self._global_tpl_by_name:
@@ -459,6 +465,11 @@ class GameDataLoader:
         if name not in self._global_tpl_by_name:
             self.ensure_ability_index()
         return self._global_tpl_by_name.get(name)
+
+    def get_global_target_alias(self, name: str) -> Optional[Dict[str, Any]]:
+        if name not in self._global_target_alias_by_name:
+            self.ensure_ability_index()
+        return self._global_target_alias_by_name.get(name)
 
     # --- 角色/忆灵/光锥/遗器参数解析 ---
     def compute_effective_skill_levels(

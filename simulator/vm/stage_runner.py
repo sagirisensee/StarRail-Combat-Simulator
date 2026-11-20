@@ -328,16 +328,12 @@ class StageRunner:
                     ent.weaknesses.append(elem)
                     if elem not in mrs.stacked_weaknesses:
                         mrs.stacked_weaknesses.append(elem)
-                if hasattr(ent, "damage_res") and isinstance(ent.damage_res, dict):
-                    ent.damage_res[elem] = 0.0
         elif op_type == "Remove":
             for elem in norm_list:
                 if elem in mrs.stacked_weaknesses:
                     mrs.stacked_weaknesses.remove(elem)
                 if elem in ent.weaknesses and elem not in mrs.blueprint.weaknesses:
                     ent.weaknesses.remove(elem)
-                    if hasattr(ent, "damage_res") and isinstance(ent.damage_res, dict):
-                        ent.damage_res[elem] = mrs.base_damage_res.get(elem, 0.2)
         return tuple(ent.weaknesses)
 
     # ------------------------------------------------------------------
@@ -712,6 +708,16 @@ class StageRunner:
         if t == "RPG.GameCore.ByIsTurnActionEntity":
             return bool(target_name and self.state.current_turn_actor == target_name)
 
+        if t == "RPG.GameCore.ByCompareCharacterNumber":
+            ttype = pred.get("TargetType") or {}
+            alias = str(ttype.get("Alias", "")) if isinstance(ttype, Mapping) else ""
+            if "DarkTeam" in alias or not alias:
+                lhs = float(len(self.living_enemies()))
+            else:
+                lhs = 0.0
+            rhs = self._resolve_monster_num(pred.get("CompareNumber"), mrs, dynamic_resolver, default=0.0)
+            return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
+
         raise NotImplementedError(f"Unsupported stage predicate type: {t!r}")
 
     def execute_stage_task(
@@ -724,6 +730,32 @@ class StageRunner:
         """Execute a stage/monster Task if handled by StageRunner (returns True if handled/pruned)."""
         t = str(task.get("$type", ""))
         if is_safe_prunable_type(t):
+            return True
+
+        if t == "RPG.GameCore.PredicateTaskList":
+            pred = task.get("Predicate")
+            try:
+                ok = (
+                    self.eval_stage_predicate(pred, caster_name=caster_name, dynamic_resolver=dynamic_resolver)
+                    if pred
+                    else True
+                )
+            except NotImplementedError:
+                ok = False
+            branch = task.get("SuccessTaskList", []) if ok else task.get("FailedTaskList", [])
+            for sub in branch or []:
+                if isinstance(sub, Mapping):
+                    self.execute_stage_task(sub, caster_name=caster_name, dynamic_resolver=dynamic_resolver)
+            return True
+
+        if t == "RPG.GameCore.ForceKill":
+            ttype = task.get("TargetType") or {}
+            alias = str(ttype.get("Alias", "")) if isinstance(ttype, Mapping) else ""
+            if alias == "CasterSummonedMinions" and caster_name:
+                for mrs in list(self.state.enemies):
+                    if getattr(mrs.entity, "summoner_name", None) == caster_name and mrs.entity.current_hp > 0.0:
+                        mrs.entity.current_hp = 0.0
+                        mrs.entity.is_broken = False
             return True
 
         if t == "RPG.GameCore.SummonMonster":

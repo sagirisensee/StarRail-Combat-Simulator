@@ -1036,6 +1036,7 @@ class TimelineItem:
     turn_owner: str = ""
     turn_seq: int = 0
     target_uids: Optional[Tuple[int, ...]] = None
+    between_enemy_sub_actions: bool = False
 
 
 @dataclass
@@ -1137,6 +1138,41 @@ def extract_timeline(path: str) -> List[TimelineItem]:
     """
     seq = parse_golden_jsonl(path)
     target_plan = extract_player_target_plan(path)
+    # 通用检测：识别实机中插在敌方两动之间（如狮鹫 Skill01 后、Skill02 召唤铁鹰前）的抢断终结技
+    between_sub_ults: Set[Tuple[float, int]] = set()
+    try:
+        with open(path, "r", encoding="utf-8") as _f:
+            _cur_av = 0.0
+            _cur_enemy_uid: Optional[int] = None
+            _pending_ults: List[Tuple[float, int]] = []
+            for _line in _f:
+                if not _line.strip():
+                    continue
+                _ev = json.loads(_line)
+                _et = _ev.get("event")
+                _d = _ev.get("data") or {}
+                if _et == "OnTurnBegin":
+                    _cur_av = float(_d.get("action_value", _cur_av))
+                    _ow = _d.get("turn_owner")
+                    _cur_enemy_uid = int(_ow.get("uid")) if isinstance(_ow, dict) and _ow.get("team") == "Enemy" and _ow.get("uid") else None
+                    _pending_ults = []
+                elif _cur_enemy_uid is not None:
+                    if _et == "OnUseSkill":
+                        _av_ent = _d.get("avatar") or {}
+                        _sk = _d.get("skill") or {}
+                        if _av_ent.get("team") == "Player" and _sk.get("type") == "Ultra":
+                            _pending_ults.append((round(_cur_av, 2), int(_sk.get("skill_config_id") or 0)))
+                    elif _pending_ults and _et == "OnInitializeEnemy":
+                        between_sub_ults.update(_pending_ults)
+                        _pending_ults = []
+                    elif _pending_ults and _et == "OnStatChange":
+                        _ent = _d.get("entity") or {}
+                        _prop = _d.get("property") or {}
+                        if _ent.get("team") == "Enemy" and _ent.get("uid") == _cur_enemy_uid and _prop.get("type") == "CurrentSP" and float(_prop.get("value", -1.0)) == 0.0:
+                            between_sub_ults.update(_pending_ults)
+                            _pending_ults = []
+    except Exception:
+        pass
     target_idx = 0
     items: List[TimelineItem] = []
     for turn_seq, t in enumerate(seq.turns):
@@ -1156,7 +1192,8 @@ def extract_timeline(path: str) -> List[TimelineItem]:
                             if p_uids:
                                 t_uids = p_uids
                         target_idx += 1
-                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name, target_ids=t_ids, turn_owner=t.owner, turn_seq=turn_seq, target_uids=t_uids))
+                    is_between = (kind == "ult" and (round(float(t.av), 2), int(s.config_id)) in between_sub_ults)
+                    items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name, target_ids=t_ids, turn_owner=t.owner, turn_seq=turn_seq, target_uids=t_uids, between_enemy_sub_actions=is_between))
     items.sort(key=lambda x: x.av)
     return items
 
@@ -1747,7 +1784,7 @@ def run_trajectory_replay(
             and abs(now_av - u_item.av) <= 0.5
             and now_av <= u_item.av + 1e-4
             and (
-                getattr(cur_turn, "name", "") == u_owner
+                getattr(cur_turn, "name", "").replace("_", "") == u_owner.replace("_", "")
                 if u_owner[-1:].isdigit()
                 else getattr(cur_turn, "name", "").startswith(u_owner)
             )
@@ -1759,7 +1796,7 @@ def run_trajectory_replay(
                 and getattr(e, "is_enemy", False)
                 and float(getattr(e, "current_hp", 0.0)) > 0.0
                 and (
-                    getattr(e, "name", "") == u_owner
+                    getattr(e, "name", "").replace("_", "") == u_owner.replace("_", "")
                     if u_owner[-1:].isdigit()
                     else getattr(e, "name", "").startswith(u_owner)
                 )
@@ -1847,7 +1884,7 @@ def run_trajectory_replay(
                     getattr(actor_ent, "is_enemy", False)
                     and bool(getattr(ult_queue[0][1], "turn_owner", ""))
                     and (
-                        act_name == getattr(ult_queue[0][1], "turn_owner", "")
+                        act_name.replace("_", "") == getattr(ult_queue[0][1], "turn_owner", "").replace("_", "")
                         if getattr(ult_queue[0][1], "turn_owner", "")[-1:].isdigit()
                         else act_name.startswith(getattr(ult_queue[0][1], "turn_owner", ""))
                     )
@@ -1893,7 +1930,7 @@ def run_trajectory_replay(
         # A. 延后/沉底策略 (只读预览下一行动者)
         if getattr(sim, "_current_turn_entity", None) is None and delays < 800:
             nxt = _peek_next()
-            if nxt is not None and nxt.name in _sim_player_actors(sim):
+            if nxt is not None and nxt.name in _sim_player_actors(sim) and not getattr(nxt, "_is_avatar_change_target", False):
                 land_av = float(getattr(sim, "current_av", 0.0)) + float(nxt.remaining_av)
                 q = actor_queues.get(nxt.name)
                 if q:
@@ -1925,7 +1962,21 @@ def run_trajectory_replay(
                     cand_ult = ult_queue[0][1].av
                     if now0 < cand_ult <= landing_av:
                         next_actor = getattr(sim, "peek_next_actor", lambda: None)()
-                        blocked_enemy = cand_ult >= landing_av - 0.25 and next_actor is not None and getattr(next_actor, "is_enemy", False)
+                        blocked_enemy = (
+                            cand_ult >= landing_av - 0.25
+                            and (
+                                (
+                                    next_actor is not None
+                                    and (getattr(next_actor, "is_enemy", False) or getattr(next_actor, "is_countdown", False))
+                                )
+                                or any(
+                                    (getattr(e, "is_enemy", False) or getattr(e, "is_countdown", False))
+                                    and float(getattr(e, "current_hp", 0.0)) > 0.0
+                                    and abs(now0 + float(getattr(e, "remaining_av", 1e9)) - landing_av) < 1e-3
+                                    for e in getattr(sim, "entities", ())
+                                )
+                            )
+                        )
                         if not blocked_enemy and not (cand_ult >= landing_av - 0.25 and _ult_blocked(ult_queue[0][0], ult_queue[0][1], cand_ult)):
                             ult_av = cand_ult
                 dir_av: Optional[float] = None
@@ -1947,7 +1998,23 @@ def run_trajectory_replay(
                     _fire_due_ults()
         # B. 检查下一行动者: 若为敌方实体且恰好当前到达终点，让其先执行自然回合，大招在其行动后放行
         next_actor = getattr(sim, "peek_next_actor", lambda: None)()
-        if not (next_actor is not None and getattr(next_actor, "is_enemy", False) and ult_queue and abs(ult_queue[0][1].av - float(getattr(sim, "current_av", 0.0))) < 0.25):
+        now_b = float(getattr(sim, "current_av", 0.0))
+        if not (
+            ult_queue
+            and abs(ult_queue[0][1].av - now_b) < 0.25
+            and (
+                (
+                    next_actor is not None
+                    and (getattr(next_actor, "is_enemy", False) or getattr(next_actor, "is_countdown", False))
+                )
+                or any(
+                    (getattr(e, "is_enemy", False) or getattr(e, "is_countdown", False))
+                    and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    and float(getattr(e, "remaining_av", 1e9)) <= 1e-3
+                    for e in getattr(sim, "entities", ())
+                )
+            )
+        ):
             _fire_due_ults()
         # C. 预览并执行回合
         actor_ent = sim.advance_to_next_turn()
@@ -1979,6 +2046,20 @@ def run_trajectory_replay(
             if not ult_queue:
                 return
             u_item = ult_queue[0][1]
+            if not getattr(u_item, "between_enemy_sub_actions", False):
+                cur_t = getattr(sim, "current_turn_entity", None)
+                u_ow = getattr(u_item, "turn_owner", "")
+                if not (
+                    cur_t is not None
+                    and getattr(cur_t, "is_enemy", False)
+                    and u_ow
+                    and (
+                        getattr(cur_t, "name", "").replace("_", "") == u_ow.replace("_", "")
+                        if u_ow[-1:].isdigit()
+                        else getattr(cur_t, "name", "").startswith(u_ow)
+                    )
+                ):
+                    return
             if u_item.av > float(getattr(sim, "current_av", 0.0)) + 1e-4:
                 return
             u_ent = sim.get_entity(u_item.actor)

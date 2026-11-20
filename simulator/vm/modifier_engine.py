@@ -189,7 +189,7 @@ class ModifierEngine:
                 1.0,
             )))
         if eff_max_layer is None:
-            if stacking == "Stack" or count > 1:
+            if stacking == "Stack" or count > 1 or cfg.get("LayerAddWhenStack") is not None:
                 eff_max_layer = 99
             else:
                 eff_max_layer = 1
@@ -447,6 +447,18 @@ class ModifierEngine:
             return
         mod._destroyed = True
 
+        owner_ent = self.rt.sim.get_entity(mod.owner_id) if mod.owner_id != "__LEVEL__" else None
+        if owner_ent is not None and "SingleBlock" in mod.behavior_flags:
+            owner_ent.barrier_guarded = False
+        if getattr(mod, "_applied_lock_hp", False):
+            director = getattr(self.rt.sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None:
+                try:
+                    runner.get_enemy_state(mod.owner_id).lock_hp_ratio = None
+                except KeyError:
+                    pass
+
         # 触发 OnDestroy
         mod_ctx = ExecutionContext(
             runtime=self.rt,
@@ -469,6 +481,8 @@ class ModifierEngine:
             self.by_owner[mod.owner_id] = [m for m in self.by_owner[mod.owner_id] if m.uid != mod.uid]
         if mod.owner_id != "__LEVEL__" and self.rt.sim.get_entity(mod.owner_id) is not None:
             self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key, reason=reason)
+            if "DirtyHPRatio" in mod.properties:
+                self._recompute_dirty_hp_ratio(mod.owner_id)
 
         # 通知 OnModifierRemove / OnListenModifierRemove
         self.dispatch_event(
@@ -546,6 +560,9 @@ class ModifierEngine:
                 if ent is not None and getattr(ent, "is_countdown", False):
                     ent.base_speed = max(1.0, float(val))
                 continue
+            if prop_name == "DirtyHPRatio":
+                self._recompute_dirty_hp_ratio(mod.owner_id)
+                continue
             mapping = PROPERTY_TO_STAT.get(prop_name)
             if mapping is None:
                 continue
@@ -575,6 +592,18 @@ class ModifierEngine:
             category=category,
             tags=tuple(tags),
         ))
+
+    def _recompute_dirty_hp_ratio(self, owner_id: str) -> None:
+        ent = self.rt.sim.get_entity(owner_id)
+        if ent is None or getattr(ent, "is_enemy", False):
+            return
+        total_dirty = sum(
+            float(m.properties.get("DirtyHPRatio", 0.0))
+            for m in self.get_modifiers(owner_id)
+            if not m._destroyed
+        )
+        ent.hp_lock_ratio = max(0.0, min(0.50, total_dirty))
+        ent.clamp_hp()
 
     def get_entity_property(self, entity_id: str, prop_name: str) -> float:
         """读取实体在官方引擎口径下的实时属性值（含 SpeedConvert / CriticalDamageConvert 等转化部分）。"""
@@ -609,6 +638,11 @@ class ModifierEngine:
             return sum(m.convert_properties.get("HealRatioBase", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "BaseSpeed":
             return float(ent.base_speed)
+        if prop_name == "Shield":
+            for m in self.get_modifiers(entity_id):
+                if "SingleBlock" in m.behavior_flags:
+                    return float(getattr(m, "single_block_cur", 0.0))
+            return float(getattr(ent, "shield", 0.0))
         if prop_name == "AllDamageTypeAddedRatio":
             return float(port.stat(entity_id, StatType.DMG_BOOST))
         mapping = PROPERTY_TO_STAT.get(prop_name)

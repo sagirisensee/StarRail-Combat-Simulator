@@ -335,6 +335,7 @@ class StatusManager:
         for tgt in affected_targets:
             old_max, old_hp = old_hp_map.get(id(tgt), (0.0, 0.0))
             new_max = self._calc_entity_max_hp(tgt)
+            cap = tgt.effective_hp_cap(new_max) if hasattr(tgt, "effective_hp_cap") else new_max
             is_valid_ally = (
                 not getattr(tgt, "is_enemy", False)
                 and not getattr(tgt, "is_countdown", False)
@@ -342,9 +343,9 @@ class StatusManager:
             )
             if reason == "EXPIRED" and is_valid_ally and 0 < new_max < old_max and old_hp > 1.0:
                 scaled_hp = old_hp * (new_max / old_max)
-                tgt.current_hp = max(1.0, min(new_max, scaled_hp))
-            elif 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
-                tgt.current_hp = new_max
+                tgt.current_hp = max(1.0, min(cap, scaled_hp))
+            elif 0 < cap != float("inf") and getattr(tgt, "current_hp", 0.0) > cap:
+                tgt.current_hp = cap
 
         # 发布到期/删除事实事件
         if reason == "EXPIRED" and self.simulator and hasattr(self.simulator, "event_bus"):
@@ -372,8 +373,9 @@ class StatusManager:
                 self.statuses[target_name] = [s for s in self.statuses[target_name] if s.id != status_id]
                 tgt = matching[0].target
                 new_max = self._calc_entity_max_hp(tgt)
-                if 0 < new_max != float("inf") and getattr(tgt, "current_hp", 0.0) > new_max:
-                    tgt.current_hp = new_max
+                cap = tgt.effective_hp_cap(new_max) if hasattr(tgt, "effective_hp_cap") else new_max
+                if 0 < cap != float("inf") and getattr(tgt, "current_hp", 0.0) > cap:
+                    tgt.current_hp = cap
             return
         self._remove_closure(root_uids, reason=reason)
 

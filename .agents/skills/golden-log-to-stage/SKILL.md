@@ -59,6 +59,8 @@ python gen_reconcile.py battle_logs/battle_<tag>.jsonl --data-driven --verbose
 - **分歧诊断**：若存在单动误差 `>= 0.2%`，报告会自动指出产生分歧的首个 AV、攻击者及伤害细分类型（Servant / LC_Additional / Skill 等）。
 
 ### Step 3: 底层因果闭环（治本不治标）
+> **调试 API 与排障速查**：进行事件探针追踪、实机 JSONL 窗口切片、或按误差指纹定位根因前，**先查阅 [docs/DEBUGGING_AND_API_REFERENCE.md](file:///Users/yunkaichen/Downloads/starrail/docs/DEBUGGING_AND_API_REFERENCE.md)** 获取核心入口精确签名（`build_vm_team` / `build_data_driven_stage` / `extract_timeline` / `run_trajectory_replay`）、对象真实字段与 5 步排障方法论，严禁凭猜测写探测脚本。
+
 若存在机制偏差，**改动只发生在通用 ConfigAbility VM 引擎或生成器提取算法中**，严禁在 `log_<tag>.py` 里打补丁：
 - **进战治疗池或光锥数值偏差**：在通用 VM 进战阶段（`OnBattleBegin`）校准秘技满血溢出规则或光锥 Modifier 状态机，让全量日志同时受益；
 - **目标选择偏差**：优化生成器中的技能目标范围约束求解逻辑（如扩散到相邻忆灵），重新执行 Step 1 重新生成插件。

@@ -296,7 +296,8 @@ class TestStageRunner(unittest.TestCase):
             caster_name=pegasus.name,
         )
         self.assertIn("Lightning", pegasus.weaknesses)
-        self.assertTrue(math.isclose(pegasus.damage_res["Lightning"], 0.0, abs_tol=1e-9))
+        # HSR 挂弱点 (StackWeakness) 仅赋予弱点属性以便削韧，不改变基础属性抗性
+        self.assertTrue(math.isclose(pegasus.damage_res["Lightning"], base_lightning_res, abs_tol=1e-9))
         runner.execute_stage_task(
             {"$type": "RPG.GameCore.StackWeakness", "OPType": "Remove", "WeakList": ["Thunder"]},
             caster_name=pegasus.name,

@@ -57,6 +57,7 @@ class EnemyHitRecord:
     had_hp_drop: bool = False
     had_passive_heal: bool = False
     sp_gain_counts: Dict[str, int] = field(default_factory=dict)
+    first_memo_owner: Optional[str] = None
 
 
 @dataclass
@@ -196,6 +197,8 @@ def extract_log_metadata(
     cur_hit_counts: Dict[str, int] = {}
     cur_small_heal_uids: Set[int] = set()
     cur_sp_gain_counts: Dict[str, int] = {}
+    cur_first_memo_owner: Optional[str] = None
+    last_enemy_hit_sp: float = 0.0
 
     # 无归属回合（阿哈回合）追踪
     cur_none_had_skill = False
@@ -212,6 +215,9 @@ def extract_log_metadata(
     pending_player_hit_euids: List[int] = []
     pending_player_primary_dmg_hits = 0
     player_enemy_targets_raw: Dict[Tuple[float, str], List[int]] = {}
+    in_aoe_heal_window = False
+    aoe_heal_slot_uids: List[int] = []
+    inferred_slot_uids: List[int] = []
 
     def _flush_pending_player_atk() -> None:
         nonlocal pending_player_atk, pending_player_hit_euids, pending_player_primary_dmg_hits
@@ -232,7 +238,7 @@ def extract_log_metadata(
     aha_turns: List[AhaTurnRecord] = []
 
     def _flush_turn() -> None:
-        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_small_heal_uids, cur_sp_gain_counts
+        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, last_enemy_hit_sp
         nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts
         if cur_enemy_uid is not None:
             enemy_hits.append(
@@ -244,11 +250,16 @@ def extract_log_metadata(
                     had_hp_drop=bool(cur_hit_order),
                     had_passive_heal=len(cur_small_heal_uids) >= 2,
                     sp_gain_counts=dict(cur_sp_gain_counts),
+                    first_memo_owner=cur_first_memo_owner,
                 )
             )
         elif cur_turn_owner_team is None and not cur_none_had_skill and cur_none_ally_chips:
             # 真实阿哈回合必含我方伴生微伤（过滤无我方微伤的 Boss 紫色球体/破盾扣血等系统回合）
             filtered_dmgs = [(u, d) for u, d in cur_none_enemy_dmgs if d < 500_000.0]
+            pos_dmgs = [d for _, d in filtered_dmgs if d > 1.0]
+            ref_bounce = max(pos_dmgs) if pos_dmgs else 0.0
+            if ref_bounce > 0.0:
+                filtered_dmgs = [(u, ref_bounce if d <= 1.0 else d) for u, d in filtered_dmgs]
             aha_turns.append(
                 AhaTurnRecord(
                     av=round(cur_av, 2),
@@ -264,6 +275,8 @@ def extract_log_metadata(
         cur_hit_counts = {}
         cur_small_heal_uids = set()
         cur_sp_gain_counts = {}
+        cur_first_memo_owner = None
+        last_enemy_hit_sp = 0.0
         cur_none_had_skill = False
         cur_none_enemy_dmgs = []
         cur_none_lethal_euids = set()
@@ -292,6 +305,9 @@ def extract_log_metadata(
                 if euid and ename:
                     spawn_events_raw.append((euid, ename))
             elif ev == "OnTurnBegin":
+                if in_aoe_heal_window and len(aoe_heal_slot_uids) >= 2 and not inferred_slot_uids:
+                    inferred_slot_uids = list(aoe_heal_slot_uids)
+                in_aoe_heal_window = False
                 _flush_pending_player_atk()
                 _flush_turn()
                 cur_av = float(data.get("action_value", cur_av))
@@ -314,6 +330,8 @@ def extract_log_metadata(
             elif ev == "OnUseSkill":
                 _flush_pending_player_atk()
                 if cur_turn_owner_team is None:
+                    if cur_none_ally_chips:
+                        _flush_turn()
                     cur_none_had_skill = True
                 av_ent = data.get("avatar") or {}
                 if av_ent.get("team") == "Player":
@@ -325,7 +343,13 @@ def extract_log_metadata(
                         seen_uids.append(uid)
                     skill = data.get("skill") or {}
                     sk_type = str(skill.get("type") or "")
+                    sk_id = int(skill.get("skill_config_id") or 0)
                     cname = _resolve_uid_name(uid, char_db)
+                    if not inferred_slot_uids and sk_id in (140902, 140903):
+                        in_aoe_heal_window = True
+                        aoe_heal_slot_uids = []
+                    else:
+                        in_aoe_heal_window = False
                     if sk_type == "Ultra":
                         pending_ally_ult_caster = cname
                     if sk_type in ("Normal", "BPSkill", "Ultra"):
@@ -347,12 +371,17 @@ def extract_log_metadata(
                     if not saw_first_init_enemy and uid not in seen_init_enemy_uids:
                         seen_init_enemy_uids.add(uid)
                         initial_enemy_uids.append(uid)
-                    if ptype == "CurrentHP":
+                    if ptype == "CurrentSP":
+                        last_enemy_hit_sp = val if val > 0.0 else 0.0
+                    elif ptype == "CurrentHP":
                         prev = last_enemy_hp.get(uid)
-                        if cur_turn_owner_team is None and not cur_none_had_skill and prev is not None and val < prev - 1.0:
-                            cur_none_enemy_dmgs.append((uid, prev - val))
-                            if val <= 1e-3:
-                                cur_none_lethal_euids.add(uid)
+                        if cur_turn_owner_team is None and not cur_none_had_skill and prev is not None:
+                            if val < prev - 1.0:
+                                cur_none_enemy_dmgs.append((uid, prev - val))
+                                if val <= 1e-3:
+                                    cur_none_lethal_euids.add(uid)
+                            elif abs(val - prev) <= 1.0 and val > 1e-3:
+                                cur_none_enemy_dmgs.append((uid, 0.0))
                         elif pending_player_atk is not None and (prev is None or val < prev - 1.0):
                             pending_player_hit_euids.append(uid)
                         last_enemy_hp[uid] = val
@@ -370,11 +399,20 @@ def extract_log_metadata(
                     elif ptype == "CurrentSP":
                         cname = _resolve_uid_name(uid, char_db)
                         prev_sp = last_player_sp.get(uid)
-                        if cur_enemy_uid is not None and 1.0 < val < 15.0:
+                        is_enemy_hit_sp = (
+                            cur_enemy_uid is not None
+                            and 1.0 < val < 15.0
+                            and last_enemy_hit_sp > 0.0
+                            and 0.99 <= (val / last_enemy_hit_sp) <= 1.60
+                            and not (prev_sp is not None and abs((val - prev_sp) - 3.0) < 1e-3)
+                        )
+                        if is_enemy_hit_sp:
+                            if not cur_hit_order and cur_first_memo_owner is None:
+                                cur_first_memo_owner = cname
                             cur_sp_gain_counts[cname] = cur_sp_gain_counts.get(cname, 0) + 1
                         elif cur_turn_owner_team is None and not cur_none_had_skill:
                             sp_delta = (val - prev_sp) if prev_sp is not None else val
-                            if 1.5 <= sp_delta <= 4.0:
+                            if 1.8 <= sp_delta <= 2.9:
                                 cur_none_ally_sp_counts[cname] = cur_none_ally_sp_counts.get(cname, 0) + 1
                         if val >= 0.0:
                             last_player_sp[uid] = val
@@ -384,9 +422,23 @@ def extract_log_metadata(
                             slow_hits.add((round(cur_av, 2), _resolve_uid_name(uid, char_db)))
                         last_player_spd[uid] = val
                     elif ptype == "CurrentHP":
+                        if (
+                            in_aoe_heal_window
+                            and not inferred_slot_uids
+                            and (uid in UID_TO_NAME or char_db.get(uid) is not None)
+                        ):
+                            if uid not in aoe_heal_slot_uids:
+                                aoe_heal_slot_uids.append(uid)
                         prev = last_player_hp.get(uid)
-                        if cur_enemy_uid is not None and prev is not None:
-                            if 120.0 <= val <= 550.0 and val < prev * 0.35:
+                        if cur_enemy_uid is not None:
+                            if prev is None:
+                                if val > 550.0:
+                                    name = _resolve_uid_name(uid, char_db)
+                                    if name not in cur_hit_set:
+                                        cur_hit_set.add(name)
+                                        cur_hit_order.append(name)
+                                    cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
+                            elif 120.0 <= val <= 550.0 and val < prev * 0.35:
                                 cur_small_heal_uids.add(uid)
                             elif val < prev - 1e-3 and (prev - val) < prev * 0.60:
                                 delta = prev - val
@@ -461,7 +513,13 @@ def extract_log_metadata(
                 team_uids.append(matched[0] if matched else 0)
     else:
         valid_uids = [u for u in seen_uids if u in UID_TO_NAME or char_db.get(u) is not None]
-        if 1409 in valid_uids:
+        if len(aoe_heal_slot_uids) >= 2 and not inferred_slot_uids:
+            inferred_slot_uids = list(aoe_heal_slot_uids)
+        if inferred_slot_uids:
+            ordered = [u for u in inferred_slot_uids if u in valid_uids]
+            ordered.extend(u for u in valid_uids if u not in ordered)
+            valid_uids = ordered
+        elif 1409 in valid_uids:
             valid_uids = [1409] + [u for u in valid_uids if u != 1409]
         team_uids = valid_uids
         team_names = [_resolve_uid_name(u, char_db) for u in valid_uids]
@@ -583,6 +641,7 @@ def attach_auto_rng_plugin(
                         director.flush_ally_talent_heals()
 
         sim.aha_special_handler = _auto_aha_handler
+        sim.aha_interrupt_avs = [a.av for a in meta.aha_turns]
 
     # 5. 受击目标 & 扩散目标（含差额反推 + 被动奶 O(1) + 辅助单点目标）
     recs_by_av: Dict[float, List[EnemyHitRecord]] = {}
@@ -1348,25 +1407,50 @@ def emit_plugin(
             lines.append(f"            return _find_ally(living, tgts[0]) if tgts else None")
         lines.append("")
 
-    # 3. 敌方回合主受击目标（通用：无角色掉血但有某角色受击回能 -> 自动锁定该角色的忆灵）
+    # 3. 敌方回合主受击目标（通用：支持同 AV 风行再动多回合按 _turn_id 顺序区分目标）
     lines.append("        # 3. 敌方回合主受击目标")
-    seen_enemy_hits = set()
+    hits_by_key: Dict[Tuple[float, str], List[EnemyHitRecord]] = {}
     for h in meta.enemy_hits:
         ename = meta.enemy_uid_map.get(h.enemy_uid, "")
         if not ename:
             continue
-        k = (h.av, ename)
-        if k in seen_enemy_hits:
-            continue
-        seen_enemy_hits.add(k)
+        if h.first_memo_owner or (h.had_hp_drop and h.hit_allies) or (not h.had_hp_drop and h.sp_gain_counts):
+            hits_by_key.setdefault((h.av, ename), []).append(h)
+
+    def _fmt_primary_ret(h: EnemyHitRecord) -> str:
+        if h.first_memo_owner:
+            return f"_find_memosprite_of(living, {h.first_memo_owner!r})"
         if h.had_hp_drop and h.hit_allies:
-            target = h.hit_allies[0]
-            lines.append(f"        if abs(av - {h.av:.2f}) < 0.05 and att_name == {ename!r}:")
-            lines.append(f"            return _find_ally(living, {target!r})")
-        elif not h.had_hp_drop and h.sp_gain_counts:
-            memo_owner = next(iter(h.sp_gain_counts.keys()))
-            lines.append(f"        if abs(av - {h.av:.2f}) < 0.05 and att_name == {ename!r}:")
-            lines.append(f"            return _find_memosprite_of(living, {memo_owner!r})")
+            return f"_find_ally(living, {h.hit_allies[0]!r})"
+        memo_owner = next(iter(h.sp_gain_counts.keys()))
+        return f"_find_memosprite_of(living, {memo_owner!r})"
+
+    has_multi_turn = any(len(v) > 1 for v in hits_by_key.values())
+    if has_multi_turn:
+        lines.insert(
+            lines.index(f"    def _target_{tag}_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:"),
+            "    _same_av_turn_slots: Dict[Tuple[str, str], List[int]] = {}",
+        )
+        lines.insert(
+            lines.index("    _same_av_turn_slots: Dict[Tuple[str, str], List[int]] = {}"),
+            "    from typing import Dict, Tuple",
+        )
+    for (hav, ename), hlist in hits_by_key.items():
+        if len(hlist) == 1:
+            lines.append(f"        if abs(av - {hav:.2f}) < 0.05 and att_name == {ename!r}:")
+            lines.append(f"            return {_fmt_primary_ret(hlist[0])}")
+        else:
+            lines.append(f"        if abs(av - {hav:.2f}) < 0.05 and att_name == {ename!r}:")
+            lines.append(f"            _tid = int(getattr(sim, '_turn_id', 0))")
+            lines.append(f"            _slots = _same_av_turn_slots.setdefault(('{hav:.2f}', {ename!r}), [])")
+            lines.append("            if _tid not in _slots: _slots.append(_tid)")
+            lines.append("            _slot_idx = _slots.index(_tid)")
+            for idx_i, hi in enumerate(hlist):
+                cond = "if" if idx_i == 0 else "elif"
+                if idx_i < len(hlist) - 1:
+                    lines.append(f"            {cond} _slot_idx == {idx_i}: return {_fmt_primary_ret(hi)}")
+                else:
+                    lines.append(f"            return {_fmt_primary_ret(hi)}")
     lines.append("        return None")
     lines.append("")
 
@@ -1385,11 +1469,22 @@ def emit_plugin(
         if k in seen_blast:
             continue
         seen_blast.add(k)
-        extra_chars = h.hit_allies[1:] if len(h.hit_allies) > 1 else []
-        memo_owners = [
-            ow for ow, sp_c in h.sp_gain_counts.items()
-            if ow in h.hit_allies and sp_c >= 2 * h.hit_counts.get(ow, 0) > 0
-        ]
+        if h.first_memo_owner:
+            extra_chars = list(h.hit_allies)
+            memo_owners = [
+                ow for ow, sp_c in h.sp_gain_counts.items()
+                if ow != h.first_memo_owner and (
+                    (ow in h.hit_allies and sp_c >= 2 * h.hit_counts.get(ow, 0) > 0)
+                    or (ow not in h.hit_allies and sp_c > 0)
+                )
+            ]
+        else:
+            extra_chars = h.hit_allies[1:] if len(h.hit_allies) > 1 else []
+            memo_owners = [
+                ow for ow, sp_c in h.sp_gain_counts.items()
+                if (ow in h.hit_allies and sp_c >= 2 * h.hit_counts.get(ow, 0) > 0)
+                or (h.had_hp_drop and h.hit_allies and ow not in h.hit_allies and sp_c > 0)
+            ]
         if extra_chars or memo_owners:
             lines.append(f"        if abs(av - {h.av:.2f}) < 0.05 and att_name == {ename!r}:")
             lines.append("            out: List[Any] = []")
@@ -1446,8 +1541,8 @@ def emit_plugin(
         f"    def _aha_{tag}_handler(director: Any) -> None:",
         '        av = float(getattr(sim, "current_av", 0.0))',
     ])
-    for a in meta.aha_turns:
-        flag = f"_triggered_aha_{int(a.av)}"
+    for aha_i, a in enumerate(meta.aha_turns):
+        flag = f"_triggered_aha_{aha_i}_{int(round(a.av * 100))}"
         lines.append(f"        if not getattr(director, {flag!r}, False) and av >= {a.av:.2f} - 1e-6:")
         lines.append(f"            setattr(director, {flag!r}, True)")
         lines.append('            if hasattr(sim, "_action_seq"):')
@@ -1473,6 +1568,8 @@ def emit_plugin(
         lines.append("            director.flush_ally_talent_heals()")
         lines.append("")
     lines.append(f"    sim.aha_special_handler = _aha_{tag}_handler")
+    aha_avs_literal = [round(float(a.av), 4) for a in meta.aha_turns]
+    lines.append(f"    sim.aha_interrupt_avs = {aha_avs_literal!r}")
 
     code = "\n".join(lines) + "\n"
 

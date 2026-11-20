@@ -16,7 +16,8 @@ def find_memosprite_of(living: Sequence[Any], owner_name: str) -> Optional[Any]:
     """从存活实体列表中查找指定召唤师的存活忆灵（通用，不写死忆灵名称）。"""
     for ent in living:
         if getattr(ent, "is_memosprite", False) and (
-            getattr(ent, "summoner_name", None) == owner_name
+            getattr(ent, "master_name", None) == owner_name
+            or getattr(ent, "summoner_name", None) == owner_name
             or getattr(ent, "owner_name", None) == owner_name
         ):
             return ent
