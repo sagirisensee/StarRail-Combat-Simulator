@@ -33,126 +33,21 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
                 _key = (0.00, '长夜月')
                 _idx = _servant_cursor.get(_key, 0)
                 _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
+                if _idx >= len(_seq) or _seq[_idx] is None: return None
                 return _find_ally(living, _seq[_idx])
             if abs(av - 31.57) < 0.05 and _master == '长夜月':
                 _seq = ['流星铁鹰_1']
                 _key = (31.57, '长夜月')
                 _idx = _servant_cursor.get(_key, 0)
                 _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
+                if _idx >= len(_seq) or _seq[_idx] is None: return None
                 return _find_ally(living, _seq[_idx])
             if abs(av - 100.38) < 0.05 and _master == '长夜月':
-                _seq = ['正阳狮鹫']
+                _seq = [None, '正阳狮鹫']
                 _key = (100.38, '长夜月')
                 _idx = _servant_cursor.get(_key, 0)
                 _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 186.16) < 0.05 and _master == '风堇':
-                _seq = ['月夜天马']
-                _key = (186.16, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 189.12) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['月夜天马']
-                _key = (189.12, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 206.75) < 0.05 and _master == '长夜月':
-                _seq = ['月夜天马']
-                _key = (206.75, '长夜月')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 497.72) < 0.05 and _master == '长夜月':
-                _seq = ['堕神之血•亚婆离']
-                _key = (497.72, '长夜月')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 555.91) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_9']
-                _key = (555.91, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 556.75) < 0.05 and _master == '风堇':
-                _seq = ['狂兽的胚芽_9']
-                _key = (556.75, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 656.93) < 0.05 and _master == '长夜月':
-                _seq = ['狂兽的胚芽_13', '狂兽的胚芽_13']
-                _key = (656.93, '长夜月')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 672.30) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_13']
-                _key = (672.30, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 672.93) < 0.05 and _master == '风堇':
-                _seq = ['狂兽的胚芽_13']
-                _key = (672.93, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 751.33) < 0.05 and _master == '长夜月':
-                _seq = ['狂兽的胚芽_15']
-                _key = (751.33, '长夜月')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 751.33) < 0.05 and _master == '风堇':
-                _seq = ['狂兽的胚芽_15']
-                _key = (751.33, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 759.59) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_15']
-                _key = (759.59, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 765.83) < 0.05 and _master == '风堇':
-                _seq = ['狂兽的胚芽_15']
-                _key = (765.83, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 788.69) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_15']
-                _key = (788.69, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 875.98) < 0.05 and _master == '长夜月':
-                _seq = ['堕神之血•亚婆离']
-                _key = (875.98, '长夜月')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
+                if _idx >= len(_seq) or _seq[_idx] is None: return None
                 return _find_ally(living, _seq[_idx])
 
         # 2. 我方辅助单点技能目标

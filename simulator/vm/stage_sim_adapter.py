@@ -1291,6 +1291,11 @@ class DataDrivenStageDirector:
                     if getattr(ent, "kit", None) is not None:
                         ent.kit.port = self.port
                 self._init_wave_monster_battle_events(next_wave_entities, self.runner.state.wave_index)
+                rt = getattr(self.sim, "vm_runtime", None)
+                if rt is not None:
+                    # 官方日志实证（220255 L1336、221208 L1461）：新波次入场会触发一次 turn_owner=null 的 OnTurnBegin，
+                    # 用于重置各角色每回合限制标记（如知更鸟 MAvatar_RobinS_00_Passive_HyperCharge_TurnFlag）。
+                    rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id="__LEVEL__")
 
 
 def build_data_driven_stage(

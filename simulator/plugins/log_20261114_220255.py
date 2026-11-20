@@ -12,8 +12,6 @@ from simulator.plugins._helpers import (
 def attach_log_20261114_220255_plugin(sim: Any) -> None:
     """挂载 battle_20261114_220255.jsonl 专属的单局随机性插件（受击目标、非攻击回合、风行再动、阿哈弹射）。"""
 
-    _servant_cursor: Dict[Tuple[float, str], int] = {}
-
     def _target_20261114_220255_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         att_name = str(getattr(attacker, "name", "") or "")
@@ -48,45 +46,6 @@ def attach_log_20261114_220255_plugin(sim: Any) -> None:
             if abs(av - 723.62) < 0.05 and att_name == '风堇':
                 tgts = ['狂兽的胚芽_17']
                 return _find_ally(living, tgts[min(hit_idx, len(tgts) - 1)])
-
-        # 1b. 我方忆灵技主目标（按召唤师归属 + 施放顺序游标）
-        if (not is_enemy and getattr(attacker, 'is_memosprite', False) and living and all(getattr(e, 'is_enemy', False) for e in living)):
-            _master = str(getattr(attacker, "master_name", "") or "")
-            if abs(av - 448.80) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_9']
-                _key = (448.80, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 544.93) < 0.05 and _master == '风堇':
-                _seq = ['狂兽的胚芽_14', '狂兽的胚芽_14']
-                _key = (544.93, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 565.19) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_14']
-                _key = (565.19, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 631.27) < 0.05 and _master == '风堇':
-                _seq = ['狂兽的胚芽_16', '狂兽的胚芽_16']
-                _key = (631.27, '风堇')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
-            if abs(av - 652.48) < 0.05 and _master == '知更鸟•晴歌':
-                _seq = ['狂兽的胚芽_16']
-                _key = (652.48, '知更鸟•晴歌')
-                _idx = _servant_cursor.get(_key, 0)
-                _servant_cursor[_key] = _idx + 1
-                if _idx >= len(_seq): return None
-                return _find_ally(living, _seq[_idx])
 
         # 2. 我方辅助单点技能目标
         if att_name == '知更鸟•晴歌':

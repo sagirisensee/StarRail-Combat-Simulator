@@ -44,6 +44,32 @@ from simulator.vm.stage_sim_adapter import build_data_driven_stage
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKIP_SENTINEL = "__SKIP__"
+_SERVANT_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
+
+
+def _get_servant_skill_effects() -> Dict[int, str]:
+    """从官方 ExcelOutput/AvatarServantSkillConfig.json 加载 SkillID -> SkillEffect 映射。"""
+    global _SERVANT_SKILL_EFFECT_CACHE
+    if _SERVANT_SKILL_EFFECT_CACHE is not None:
+        return _SERVANT_SKILL_EFFECT_CACHE
+    out: Dict[int, str] = {}
+    path = os.path.join(
+        ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput", "AvatarServantSkillConfig.json"
+    )
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if isinstance(rows, list):
+                for row in rows:
+                    sid = int(row.get("SkillID") or 0)
+                    eff = str(row.get("SkillEffect") or "")
+                    if sid and eff and sid not in out:
+                        out[sid] = eff
+        except Exception:
+            pass
+    _SERVANT_SKILL_EFFECT_CACHE = out
+    return out
 
 
 @dataclass
@@ -108,8 +134,8 @@ class LogMetadata:
     enemy_uid_map: Dict[int, str] = field(default_factory=dict)
     ally_ult_targets: Dict[str, List[str]] = field(default_factory=dict)  # caster_name -> [target_name, ...]
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)  # (av, caster_name) -> [enemy_name, ...]
-    # (av, master_name) -> 按该 AV 内忆灵技施放顺序排列的单体忆灵技主目标名
-    servant_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)
+    # (av, master_name) -> 按该 AV 内忆灵技施放顺序排列的单体忆灵技主目标名（None 表示同 AV 非单体技占位）
+    servant_targets: Dict[Tuple[float, str], List[Optional[str]]] = field(default_factory=dict)
     aha_turns: List[AhaTurnRecord] = field(default_factory=list)
     windwalk_enemy_uids: Set[int] = field(default_factory=set)
     slow_hits: Set[Tuple[float, str]] = field(default_factory=set)  # (av, target_name) 敌方回合内发生减速的命中记录
@@ -219,18 +245,16 @@ def extract_log_metadata(
     pending_player_hit_euids: List[int] = []
     pending_player_primary_dmg_hits = 0
     pending_player_is_servant = False
+    pending_player_skill_id = 0
     player_enemy_targets_raw: Dict[Tuple[float, str], List[int]] = {}
-    servant_targets_raw: Dict[Tuple[float, str], List[int]] = {}
+    servant_targets_raw: Dict[Tuple[float, str], List[Optional[int]]] = {}
+    servant_skill_effects = _get_servant_skill_effects()
     in_aoe_heal_window = False
     aoe_heal_slot_uids: List[int] = []
     inferred_slot_uids: List[int] = []
 
     def _servant_primary_euid() -> Optional[int]:
-        """忆灵技主目标：只认“全段命中同一个敌方”的单体忆灵技，群攻一律沿用官方默认主目标。
-
-        群攻忆灵技（Skill11 等）的主目标由官方目标范围与默认选敌决定，从日志里反推容易误判，
-        因此这里只在证据无歧义时落盘，宁可不写也不写错。
-        """
+        """单体忆灵技主目标：仅在官方技能表为 SingleAttack 且全段命中同一个敌方时提取。"""
         ordered: List[int] = []
         for u in pending_player_hit_euids:
             if u not in ordered:
@@ -241,14 +265,22 @@ def extract_log_metadata(
 
     def _flush_pending_player_atk() -> None:
         nonlocal pending_player_atk, pending_player_hit_euids, pending_player_primary_dmg_hits
-        nonlocal pending_player_is_servant
+        nonlocal pending_player_is_servant, pending_player_skill_id
         if pending_player_atk is not None:
             if pending_player_is_servant:
-                # 忆灵技按“施放顺序”逐个登记单体主目标：同 AV 可能连放单体技与群攻技，
-                # 必须用游标区分；群攻技不登记（沿用官方默认主目标），游标耗尽后自然回退默认。
-                _servant_euid = _servant_primary_euid()
-                if _servant_euid is not None:
-                    servant_targets_raw.setdefault(pending_player_atk, []).append(_servant_euid)
+                # 依据官方 AvatarServantSkillConfig.SkillEffect 区分单体技与群攻/扩散/弹射技：
+                # - SingleAttack：登记唯一扣血敌方为主目标（避免锁血/残血场景把群攻误判为单体）
+                # - AoEAttack/Blast/Bounce：写入 None 占位，保证同 AV 混排（如先群攻后单体）时游标不串号
+                sk_eff = servant_skill_effects.get(pending_player_skill_id, "")
+                if sk_eff == "SingleAttack":
+                    servant_targets_raw.setdefault(pending_player_atk, []).append(_servant_primary_euid())
+                elif sk_eff in ("AoEAttack", "Blast", "Bounce"):
+                    servant_targets_raw.setdefault(pending_player_atk, []).append(None)
+                elif not sk_eff:
+                    # 未知忆灵技兜底：仅在无歧义单目标时登记
+                    _servant_euid = _servant_primary_euid()
+                    if _servant_euid is not None:
+                        servant_targets_raw.setdefault(pending_player_atk, []).append(_servant_euid)
             # 仅对纯单体技能（主技能 OnDamage 命中数 == 1，如风堇普攻）记录首个扣血敌方为主目标；
             # 扩散/群攻（主技能 OnDamage 命中数 > 1，如缇宝普攻）由默认居中逻辑处理
             elif (
@@ -264,6 +296,7 @@ def extract_log_metadata(
         pending_player_hit_euids = []
         pending_player_primary_dmg_hits = 0
         pending_player_is_servant = False
+        pending_player_skill_id = 0
 
     last_player_hp: Dict[int, float] = {}
     last_player_spd: Dict[int, float] = {}
@@ -406,6 +439,7 @@ def extract_log_metadata(
                         # 忆灵技（Servant）的施法者 UID 是召唤师本体，主目标仍需按官方日志锁定
                         pending_player_atk = (round(cur_av, 2), cname)
                         pending_player_is_servant = sk_type == "Servant"
+                        pending_player_skill_id = sk_id
             elif ev == "OnDamage":
                 if pending_player_atk is not None:
                     dtype = str(data.get("type") or "")
@@ -562,10 +596,14 @@ def extract_log_metadata(
         if names:
             player_enemy_targets[k_pt] = names
 
-    servant_targets: Dict[Tuple[float, str], List[str]] = {}
+    servant_targets: Dict[Tuple[float, str], List[Optional[str]]] = {}
     for k_pt, euids in servant_targets_raw.items():
-        seq = [enemy_uid_map[u] for u in euids if u in enemy_uid_map]
-        if seq:
+        seq: List[Optional[str]] = [
+            (enemy_uid_map.get(u) if u is not None else None) for u in euids
+        ]
+        while seq and seq[-1] is None:
+            seq.pop()
+        if any(x is not None for x in seq):
             servant_targets[k_pt] = seq
 
     if team_override:
@@ -829,7 +867,7 @@ def attach_auto_rng_plugin(
                     if p_name == master_name and abs(p_av - key_av) <= 0.05 and seq:
                         idx = servant_cursor.get((p_av, p_name), 0)
                         servant_cursor[(p_av, p_name)] = idx + 1
-                        if idx >= len(seq):
+                        if idx >= len(seq) or seq[idx] is None:
                             return None
                         target_ename = seq[idx]
                         found = _find_ally(living, target_ename)
@@ -1495,7 +1533,7 @@ def emit_plugin(
             lines.append(f"                _key = ({p_av:.2f}, {p_name!r})")
             lines.append("                _idx = _servant_cursor.get(_key, 0)")
             lines.append("                _servant_cursor[_key] = _idx + 1")
-            lines.append("                if _idx >= len(_seq): return None")
+            lines.append("                if _idx >= len(_seq) or _seq[_idx] is None: return None")
             lines.append("                return _find_ally(living, _seq[_idx])")
         lines.append("")
 

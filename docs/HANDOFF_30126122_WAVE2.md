@@ -402,3 +402,25 @@ for m in rt.modifier_engine.get_modifiers("长夜月"):
 
 > 注意：`sim.get_entity("长夜")` 才是 Data-Driven 下长夜月忆灵的真实实体名（`is_memosprite=True`、`master_name="长夜月"`），
 > 报表里的 `长夜月 (忆灵)` 只是伤害归属显示名，`target_provider` 收到的是 `长夜`。
+
+---
+
+## 11. 最新修复与状态（2026-11-20 19:1x）
+
+### 11.1 已落盘修复
+
+1. **生成器忆灵技主目标按官方技能表精确区分（`simulator/vm/reconcile_generator.py`）**：
+   - 新增 `_get_servant_skill_effects()` 读取官方 `ExcelOutput/AvatarServantSkillConfig.json` 的 `SkillEffect` 字段。
+   - 仅对 `SkillEffect == "SingleAttack"` 抽取单体主目标；对 `AoEAttack/Blast/Bounce` 写入 `None` 占位以防同 AV 混排游标串号（纯 `None` 条目自动裁剪，不污染插件）。
+   - **验证结果**：`log_20261114_222204.py` 用新生成器重新 `--emit-plugin` 后直接恢复 **`0.0000%`（36/36 动全零）通过**，全部 8 份插件与生成器现已完全同步。
+
+2. **Wave 切波入场补发 `OnListenTurnBegin`（`simulator/vm/stage_sim_adapter.py`）**：
+   - 实机日志实证（`220255` `L1336`、`221208` `L1461`）：新波次入场时会触发一次 `turn_owner=null` 的 `OnTurnBegin`，重置全队每回合限制标记（包括知更鸟 `MAvatar_RobinS_00_Passive_HyperCharge_TurnFlag`）。
+   - 修复前：Wave 1 末尾风堇身上的 `TurnFlag` 带入 Wave 2，吞掉了 Wave 2 首动后风堇被动回血的 `OnBeforeDealHeal`，导致两份日志同期气氛值均少 1 层。
+   - 修复后（在 `DataDrivenStageDirector` 波次切换后派发 `OnListenTurnBegin(param_entity_id="__LEVEL__")`）：
+     - **`220255`**：`AV=157.83 / 186.93 / 203.93 / 216.02` 连续 4 动全部归零 **`0.000%`**，第一分叉推进至 **`AV=245.12`**（`+29.926%`，`知更鸟•晴歌 (忆灵)` `叽叽啾啾四重奏`）。
+     - **`221208`**：`AV=206.75 / 235.84 / 253.13 / 256.68 / 264.94` 连续 5 动全部归零 **`0.000%`**，第一分叉推进至 **`AV=294.04`**（`+38.668%`，`知更鸟•晴歌 (忆灵)` `叽叽啾啾四重奏`）。
+
+### 11.2 回归与下一步卡点
+- **门禁回归**：6 份绿测例（`155925/184651/184845/204943/205144/222204`）+ 5 项 `test_stage_runner` 单元全绿零回退。
+- **下一步唯一共因卡点**：`220255` (`AV=245.12`) 与 `221208` (`AV=294.04`) 均为知更鸟•晴歌（忆灵）释放 `1151201`（`叽叽啾啾四重奏`）时 SIM 偏高约 `30%~38%`（`221208` GT 为 3 段 `22,431 + 99,847 + 99,847 = 222,126`，SIM 为 `308,018`），优先排查此时段敌方存活/增益状态或知更鸟忆灵 Buff 结算差异。
