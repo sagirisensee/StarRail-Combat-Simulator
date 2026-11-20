@@ -379,18 +379,19 @@ class DataDrivenEnemyKit(EnemyKit):
             if living_allies:
                 target_ids = tuple(living_allies)
         elif tinfo == "SkillPointEntity":
-            bosses = rt.executor._resolve_targets(
-                {"Alias": "Monster_W5_Fallen_00_Self"},
-                rt.executor._make_ctx(self.owner_id, entry_ab)
-                if hasattr(rt.executor, "_make_ctx")
-                else None,
-            ) if hasattr(rt.executor, "_make_ctx") else []
-            if not bosses:
-                from simulator.vm.target_alias import ExecutionContext
-                tmp_ctx = ExecutionContext(runtime=rt, caster_id=self.owner_id, ability_name=entry_ab)
-                bosses = rt.executor._resolve_targets({"Alias": "Monster_W5_Fallen_00_Self"}, tmp_ctx)
-            if bosses:
-                target_ids = tuple(bosses)
+            other_enemies = [
+                e for e in sim.entities
+                if e.is_enemy
+                and not getattr(e, "is_countdown", False)
+                and e.current_hp > 0.0
+                and e.name != self.owner_id
+            ]
+            if other_enemies:
+                other_enemies.sort(
+                    key=lambda e: (1 if getattr(e, "is_boss", False) else 0, float(getattr(e, "max_hp", 0.0))),
+                    reverse=True,
+                )
+                target_ids = (other_enemies[0].name,)
         rt.trigger_ability(
             caster_id=self.owner_id,
             ability_name=entry_ab,
@@ -412,12 +413,13 @@ class DataDrivenEnemyKit(EnemyKit):
         self._ensure_windwalk_init(sim)
 
         # 非攻击辅助回合（如流星铁鹰 Skill02【如流星闪耀】赋予友方风行）：
-        # 对具有 AIFlag 自切换能力的数据驱动怪物（如狂兽的胚芽），优先走官方 ConfigAI + ConfigAbility 分支
+        # 对具有 AIFlag 自切换能力的数据驱动怪物，优先走官方 ConfigAI + ConfigAbility 分支
+        has_dynamic_ai_flag = any(d.next_ai_flag is not None for d in self.ai_executor.spec.decisions)
         skip_prov = getattr(sim, "enemy_attack_skip_provider", None)
         if (
             skip_prov is not None
             and attacker is not None
-            and "胚芽" not in self.owner_id
+            and not has_dynamic_ai_flag
             and skip_prov(attacker, sim.current_av)
         ):
             if self.windwalk_target:
@@ -547,22 +549,40 @@ class DataDrivenEnemyKit(EnemyKit):
                     self._execute_ability_tasks(entry_ab)
                     game_loader = getattr(self.runner.factory, "game_loader", None)
                     if game_loader:
-                        ab_doc = game_loader.get_ability(entry_ab)
-                        if ab_doc:
-                            s_doc = str(ab_doc)
-                            if "OneMorePerTurn" in s_doc:
-                                if "RemoveModifier" in s_doc and "OneMorePerTurn" in s_doc:
-                                    can_one_more = False
-                                    next_turn_one_more = False
-                                if "AddModifier" in s_doc and "OneMorePerTurn" in s_doc:
-                                    next_turn_one_more = True
-
-                # 蓄力移除 OneMorePerTurn，终极技释放恢复 OneMorePerTurn (官方语义保底)
-                if sk.skill_trigger_key == "Skill03" and "Monster_W5_Fallen_00" not in str(entry_ab or ""):
-                    can_one_more = False
-                    next_turn_one_more = False
-                elif sk.skill_trigger_key == "Skill04" and "Monster_W5_Fallen_00" not in str(entry_ab or ""):
-                    next_turn_one_more = True
+                        ab_cands = [entry_ab]
+                        if "_Phase01" in entry_ab:
+                            ab_cands.append(entry_ab.replace("_Phase01", "_Phase02"))
+                        for cand_ab in ab_cands:
+                            ab_doc = game_loader.get_ability(cand_ab)
+                            if not ab_doc:
+                                continue
+                            def _scan_one_more(node: Any) -> Tuple[bool, bool]:
+                                rem = add = False
+                                if isinstance(node, dict):
+                                    t_nd = node.get("$type", "")
+                                    mn = node.get("ModifierName")
+                                    mval = mn.get("Value") if isinstance(mn, dict) else mn
+                                    if mval == "OneMorePerTurn":
+                                        if t_nd == "RPG.GameCore.RemoveModifier":
+                                            rem = True
+                                        elif t_nd == "RPG.GameCore.AddModifier":
+                                            add = True
+                                    for v in node.values():
+                                        r2, a2 = _scan_one_more(v)
+                                        rem = rem or r2
+                                        add = add or a2
+                                elif isinstance(node, list):
+                                    for it in node:
+                                        r2, a2 = _scan_one_more(it)
+                                        rem = rem or r2
+                                        add = add or a2
+                                return rem, add
+                            has_rem, has_add = _scan_one_more(ab_doc)
+                            if has_rem:
+                                can_one_more = False
+                                next_turn_one_more = False
+                            if has_add:
+                                next_turn_one_more = True
 
                 # 2. Sync any newly spawned monsters to TurnSimulator
                 director = getattr(sim, "_stage_director", None)

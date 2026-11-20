@@ -1672,16 +1672,36 @@ class TaskExecutor:
         stance = self._eval_num(atk_prop.get("StanceValue"), ctx, 0.0)
         atk_type = str(atk_prop.get("AttackType", ctx.current_attack_type or "Normal"))
         if stance <= 0.0 and atk_prop.get("StanceValue"):
-            # 官方 Skill StanceValue 哈希 (如 1659254037 单体 / 1182064154 群体) 存储在角色技能表 ShowStanceList 中
+            # 官方 Skill StanceValue 哈希存储在角色技能表 AvatarSkillConfig.ShowStanceList 中
             ab_l = ctx.ability_name
-            if "Skill01" in ab_l or atk_type in ("Normal", "Servant"):
-                stance = 30.0
-            elif "Skill03" in ab_l or atk_type == "Ultra":
-                stance = 90.0 if "Evernight" in ab_l else 60.0
-            elif "Skill02" in ab_l or atk_type == "BPSkill":
-                stance = 60.0
-            elif atk_type in ("Insert", "Pursued"):
-                stance = 15.0
+            caster_ent_st = sim.get_entity(ctx.caster_id)
+            caster_aid = getattr(caster_ent_st, "avatar_id", None) if caster_ent_st is not None else None
+            if caster_aid is not None:
+                sk_idx = 0
+                if "Skill01" in ab_l or atk_type == "Normal":
+                    sk_idx = 1
+                elif "Skill02" in ab_l or atk_type == "BPSkill":
+                    sk_idx = 2
+                elif "Skill03" in ab_l or atk_type == "Ultra":
+                    sk_idx = 3
+                if sk_idx > 0:
+                    rt.loader._ensure_avatar_skills()
+                    sk_row = (rt.loader._avatar_skills or {}).get((int(caster_aid) * 100 + sk_idx, 1))
+                    if isinstance(sk_row, dict):
+                        ssl = sk_row.get("ShowStanceList") or []
+                        if ssl:
+                            v0 = ssl[0].get("Value", 0.0) if isinstance(ssl[0], dict) else ssl[0]
+                            if float(v0) > 0.0:
+                                stance = float(v0)
+            if stance <= 0.0:
+                if "Skill01" in ab_l or atk_type in ("Normal", "Servant"):
+                    stance = 30.0
+                elif "Skill03" in ab_l or atk_type == "Ultra":
+                    stance = 60.0
+                elif "Skill02" in ab_l or atk_type == "BPSkill":
+                    stance = 60.0
+                elif atk_type in ("Insert", "Pursued"):
+                    stance = 15.0
 
         scaling_stat = "atk"
         if ftype == "ByMaxHP":
@@ -2459,13 +2479,9 @@ class TaskExecutor:
                     skill01_ab = ea
                 elif sn in ("SkillP01", "PassiveSkill01") and not passive_ab:
                     passive_ab = ea
-        if not skill01_ab:
-            skill01_ab = "Avatar_AvatarChange_W5_Witch_00_Skill01_Phase01"
-        if not passive_ab:
-            passive_ab = "MAvatar_AvatarChange_W5_Witch_00_PassiveSkill"
         for extra_ab in (
             skill01_ab,
-            skill01_ab.replace("_Phase01", "_Phase02"),
+            skill01_ab.replace("_Phase01", "_Phase02") if skill01_ab else "",
             passive_ab,
         ):
             if extra_ab and extra_ab not in ac_ab_names:
@@ -2482,7 +2498,7 @@ class TaskExecutor:
                 return AbilityDefinition(
                     kind=ActionKind.BASIC,
                     target_mode=TargetMode.SINGLE_ENEMY,
-                    name="狂躁的铃音",
+                    name=f"AvatarChange_{new_avatar_id}_Basic",
                     skill_id=new_avatar_id * 100 + 1,
                 )
 
@@ -2534,9 +2550,19 @@ class TaskExecutor:
         if hasattr(sim, "_rebuild_entity_cache"):
             sim._rebuild_entity_cache()
 
-        # 同步原角色当前生效的友方纯属性光环增益（如风堇雨过天晴 MaxHP 加成；避免复制带事件回调的 E1/结界光环导致双触发）
+        # 同步原角色当前生效的友方纯属性光环增益（避免复制带事件回调的 E1/结界光环导致双触发）
         for m in list(me.get_modifiers(source.name)):
-            if m.name in ("MAvatar_Hyacine_00_UltraBuff",):
+            if (
+                m.properties
+                and m.caster_id != source.name
+                and m.config.get("StatusType") != "Debuff"
+                and m.halo_parent_uid is None
+                and ("HPAddedRatio" in m.properties or "HPDelta" in m.properties)
+                and all(
+                    isinstance(cb, dict) and cb.get("Event") in ("OnCreate", "OnStack", "OnDestroy")
+                    for cb in (m.config.get("_CallbackList") or [])
+                )
+            ):
                 new_m = me.add_modifier(
                     owner_id=new_name,
                     mod_name=m.name,

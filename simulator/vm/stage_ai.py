@@ -48,10 +48,6 @@ def _extract_use_skills_and_flag(
                 fv = val_spec.get("FixedValue", {})
                 if isinstance(fv, Mapping) and isinstance(fv.get("Value"), (int, float)):
                     next_flags.append(int(fv["Value"]))
-    elif t == "RPG.GameCore.AddModifier":
-        mname = (node.get("ModifierName") or {}).get("Value", "") if isinstance(node.get("ModifierName"), Mapping) else ""
-        if mname == "Monster_W5_Fallen_00_AttackOrder":
-            next_flags.append(2)
     elif t == "RPG.GameCore.SelectAISkillTarget":
         sel = node.get("Selector", {})
         if isinstance(sel, Mapping) and sel.get("$type"):
