@@ -1097,6 +1097,8 @@ def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...], Tu
                 sid = s.get("skill_config_id")
                 hit_uids = []
                 if stype == "Ultra" and sid == 151203:
+                    caster_uid = av.get("uid")
+                    sp_fallback_uid = None
                     for j in range(i + 1, min(i + 25, len(events))):
                         ev2 = events[j]
                         if ev2.get("event") in ("OnUseSkill", "OnTurnBegin"):
@@ -1105,11 +1107,21 @@ def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...], Tu
                             d2 = ev2.get("data", {})
                             ent = d2.get("entity", {})
                             prop = d2.get("property", {})
-                            if ent.get("team") == "Player" and prop.get("type") == "ActionDelay":
+                            if ent.get("team") == "Player":
                                 u = ent.get("uid")
-                                if u is not None:
+                                if prop.get("type") == "ActionDelay" and u is not None:
                                     hit_uids.append(u)
                                     break
+                                if (
+                                    sp_fallback_uid is None
+                                    and prop.get("type") == "CurrentSP"
+                                    and u is not None
+                                    and u != caster_uid
+                                    and float(prop.get("value", 0.0)) > 0.0
+                                ):
+                                    sp_fallback_uid = u
+                    if not hit_uids and sp_fallback_uid is not None:
+                        hit_uids.append(sp_fallback_uid)
                     named_targets = tuple(KNOWN_AVATAR_NAMES[u] for u in hit_uids if u in KNOWN_AVATAR_NAMES)
                     player_skill_targets.append((sid, named_targets, tuple(hit_uids)))
                     continue
@@ -1868,17 +1880,20 @@ def run_trajectory_replay(
     if prev_auto_ult is not None:
         sim.auto_ult = False
 
-    def _on_turn_action_completed(actor_ent: Any, *, enemy_only: bool = False) -> None:
+    def _on_turn_action_completed(actor_ent: Any, *, pre_turn_end: bool = False) -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
         act_name = getattr(actor_ent, "name", "")
-        if enemy_only and not getattr(actor_ent, "is_enemy", False):
-            return
         while (
             ult_queue
             and ult_queue[0][1].av <= now_av + 1e-4
             and (
                 (
-                    not enemy_only
+                    pre_turn_end
+                    and not getattr(actor_ent, "is_enemy", False)
+                    and getattr(ult_queue[0][1], "turn_owner", "") == act_name
+                )
+                or (
+                    not pre_turn_end
                     and ult_queue[0][1].actor == act_name
                     and getattr(ult_queue[0][1], "turn_owner", "") == act_name
                     and act_name == "缇宝"
@@ -1893,7 +1908,7 @@ def run_trajectory_replay(
                     )
                 )
             )
-            and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av, allow_cur_enemy=enemy_only)
+            and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av, allow_cur_enemy=pre_turn_end)
         ):
             _idx, item = ult_queue.popleft()
             fired_master.add(_idx)
@@ -1914,7 +1929,7 @@ def run_trajectory_replay(
             else:
                 result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
 
-    sim.pre_turn_end_hook = lambda actor_ent: _on_turn_action_completed(actor_ent, enemy_only=True)
+    sim.pre_turn_end_hook = lambda actor_ent: _on_turn_action_completed(actor_ent, pre_turn_end=True)
     sim.turn_action_completed_hook = _on_turn_action_completed
     # 本体排期按角色分队列: 每名角色的回合只在其排期时点 (或迟到时) 发生,
     # 无排期的额外回合直接沉底, 与官方轨迹一一对应

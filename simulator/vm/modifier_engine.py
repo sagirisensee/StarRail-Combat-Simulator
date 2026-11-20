@@ -461,6 +461,7 @@ class ModifierEngine:
         owner_ent = self.rt.sim.get_entity(mod.owner_id) if mod.owner_id != "__LEVEL__" else None
         if owner_ent is not None and "SingleBlock" in mod.behavior_flags:
             owner_ent.barrier_guarded = False
+            owner_ent.toughness_locked = False
             if hasattr(mod, "_saved_toughness_dmg_reduction"):
                 owner_ent.toughness_dmg_reduction = float(getattr(mod, "_saved_toughness_dmg_reduction"))
         if getattr(mod, "_applied_lock_hp", False):
@@ -608,15 +609,27 @@ class ModifierEngine:
 
     def _recompute_dirty_hp_ratio(self, owner_id: str) -> None:
         ent = self.rt.sim.get_entity(owner_id)
-        if ent is None or getattr(ent, "is_enemy", False) or getattr(ent, "is_memosprite", False):
+        if ent is None or getattr(ent, "is_enemy", False) or self.has_behavior_flag(owner_id, "ImmuneDebuff"):
             return
         total_dirty = sum(
             float(m.properties.get("DirtyHPRatio", 0.0))
             for m in self.get_modifiers(owner_id)
             if not m._destroyed
         )
+        old_hp = float(getattr(ent, "current_hp", 0.0))
         ent.hp_lock_ratio = max(0.0, min(0.50, total_dirty))
         ent.clamp_hp()
+        lost = old_hp - float(getattr(ent, "current_hp", 0.0))
+        if lost > 1e-6:
+            from simulator.events import HPLostEvent
+            self.rt.sim.event_bus.publish(HPLostEvent(
+                av=self.rt.sim.current_av,
+                cycle=self.rt.sim.current_cycle,
+                entity_name=ent.name,
+                amount=lost,
+                hp_left=float(ent.current_hp),
+                cause="DirtyHPRatio",
+            ))
 
     def get_entity_property(self, entity_id: str, prop_name: str) -> float:
         """读取实体在官方引擎口径下的实时属性值（含 SpeedConvert / CriticalDamageConvert 等转化部分）。"""
@@ -652,9 +665,6 @@ class ModifierEngine:
         if prop_name == "BaseSpeed":
             return float(ent.base_speed)
         if prop_name == "Shield":
-            for m in self.get_modifiers(entity_id):
-                if "SingleBlock" in m.behavior_flags:
-                    return float(getattr(m, "single_block_cur", 0.0))
             return float(getattr(ent, "shield", 0.0))
         if prop_name == "AllDamageTypeAddedRatio":
             return float(port.stat(entity_id, StatType.DMG_BOOST))

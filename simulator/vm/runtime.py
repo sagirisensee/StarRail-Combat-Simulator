@@ -118,6 +118,12 @@ class VMRuntime:
                     )
             finally:
                 self._in_after_attack = False
+        pending_dying = getattr(self, "_pending_dying_enemies", None)
+        if pending_dying:
+            dying_batch = list(pending_dying)
+            pending_dying.clear()
+            for dead_tid, killer_id in dying_batch:
+                self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
             for dead_tid in list(pending_dead):

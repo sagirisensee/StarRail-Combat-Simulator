@@ -52,7 +52,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
 
         # 2. 我方辅助单点技能目标
         if att_name == '知更鸟•晴歌':
-            tgts = ['长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月']
+            tgts = ['长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月', '长夜月']
             return _find_ally(living, tgts[0]) if tgts else None
 
         # 3. 敌方回合主受击目标
@@ -85,7 +85,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
         if abs(av - 539.81) < 0.05 and att_name == '堕神之血•亚婆离':
             return _find_ally(living, '风堇')
         if abs(av - 572.75) < 0.05 and att_name == '堕神之血•亚婆离':
-            return _find_ally(living, '风堇')
+            return _find_ally(living, '长夜月')
         if abs(av - 600.32) < 0.05 and att_name == '狂兽的胚芽_11':
             return _find_ally(living, '知更鸟•晴歌')
         if abs(av - 600.81) < 0.05 and att_name == '堕神之血•亚婆离':
@@ -146,7 +146,7 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             return out
         if abs(av - 572.75) < 0.05 and att_name == '堕神之血•亚婆离':
             out: List[Any] = []
-            for n in ['知更鸟•晴歌', '长夜月']:
+            for n in ['风堇', '知更鸟•晴歌']:
                 ent = _find_ally(living, n)
                 if ent is not None and ent not in out: out.append(ent)
             for ow in ['风堇', '知更鸟•晴歌', '长夜月']:
@@ -234,14 +234,29 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
     def _enemy_windwalk_20261114_221208(eagle_name: str, generation: int, idx: int) -> bool:
         return eagle_name in ()
 
+    def _enemy_retarget_20261114_221208(caster: Any, candidates: List[Any]) -> Optional[Any]:
+        av = float(getattr(sim, "current_av", 0.0))
+        cname = getattr(caster, "name", "")
+        if abs(av - 539.81) < 0.05 and cname == '堕神之血•亚婆离':
+            for e in candidates:
+                if getattr(e, 'name', '') == '狂兽的胚芽_10': return e
+        if abs(av - 741.10) < 0.05 and cname == '堕神之血•亚婆离':
+            for e in candidates:
+                if getattr(e, 'name', '') == '狂兽的胚芽_16': return e
+        if abs(av - 888.29) < 0.05 and cname == '堕神之血•亚婆离':
+            for e in candidates:
+                if getattr(e, 'name', '') == '狂兽的胚芽_20': return e
+        return None
+
     sim.target_provider = _target_20261114_221208_provider
     sim.blast_target_provider = _blast_20261114_221208_provider
     sim.enemy_attack_skip_provider = _enemy_attack_skip_20261114_221208
     sim.enemy_windwalk_provider = _enemy_windwalk_20261114_221208
+    sim.enemy_retarget_provider = _enemy_retarget_20261114_221208
 
     def _aha_20261114_221208_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))
-        if not getattr(director, '_triggered_aha_0_13795', False) and av >= 137.95 - 1e-6:
+        if not getattr(director, '_triggered_aha_0_13795', False) and av >= 137.948635 - 1e-4:
             setattr(director, '_triggered_aha_0_13795', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -249,10 +264,14 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_hp_damage('月夜天马', 115246.01882056)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_1_15000', False) and av >= 150.00 - 1e-6:
+        if not getattr(director, '_triggered_aha_1_15000', False) and av >= 150.000000 - 1e-4:
             setattr(director, '_triggered_aha_1_15000', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -260,17 +279,21 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_hp_damage('正阳狮鹫', 86434.51411542)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('长夜月')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_2_25638', False) and av >= 256.38 - 1e-6:
+        if not getattr(director, '_triggered_aha_2_25638', False) and av >= 256.382979 - 1e-4:
             setattr(director, '_triggered_aha_2_25638', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_2', 46098.40750437)
             director.apply_aha_hp_damage('狂兽的胚芽_1', 46098.40750437)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('长夜月')
             director.apply_aha_ally_chip_hit('长夜月')
             director.apply_aha_ally_chip_hit('长夜月')
@@ -278,18 +301,20 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_3_35675', False) and av >= 356.75 - 1e-6:
+        if not getattr(director, '_triggered_aha_3_35675', False) and av >= 356.747248 - 1e-4:
             setattr(director, '_triggered_aha_3_35675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('堕神之血•亚婆离', 76830.67921370)
             director.apply_aha_hp_damage('狂兽的胚芽_4', 76830.67921370)
             director.apply_aha_hp_damage('狂兽的胚芽_3', 25610.22640457)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('长夜月')
             director.apply_aha_ally_chip_hit('长夜月')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_4_41982', False) and av >= 419.82 - 1e-6:
+        if not getattr(director, '_triggered_aha_4_41982', False) and av >= 419.815052 - 1e-4:
             setattr(director, '_triggered_aha_4_41982', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -300,31 +325,37 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit('长夜月')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_5_45675', False) and av >= 456.75 - 1e-6:
+        if not getattr(director, '_triggered_aha_5_45675', False) and av >= 456.747248 - 1e-4:
             setattr(director, '_triggered_aha_5_45675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_7', 23049.20375219)
             director.apply_aha_hp_damage('狂兽的胚芽_8', 92196.81500874)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_6_55675', False) and av >= 556.75 - 1e-6:
+        if not getattr(director, '_triggered_aha_6_55675', False) and av >= 556.747248 - 1e-4:
             setattr(director, '_triggered_aha_6_55675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_9', 46098.40750437)
             director.apply_aha_hp_damage('堕神之血•亚婆离', 23049.20375219)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_7_59492', False) and av >= 594.92 - 1e-6:
+        if not getattr(director, '_triggered_aha_7_59492', False) and av >= 594.921802 - 1e-4:
             setattr(director, '_triggered_aha_7_59492', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -333,11 +364,13 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_hp_damage('狂兽的胚芽_12', 25894.79905831)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_8_65675', False) and av >= 656.75 - 1e-6:
+        if not getattr(director, '_triggered_aha_8_65675', False) and av >= 656.747248 - 1e-4:
             setattr(director, '_triggered_aha_8_65675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -346,31 +379,39 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_hp_damage('狂兽的胚芽_14', 20519.41309502)
             _mname = _find_memosprite_name(sim, '风堇')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_9_70719', False) and av >= 707.19 - 1e-6:
+        if not getattr(director, '_triggered_aha_9_70719', False) and av >= 707.191434 - 1e-4:
             setattr(director, '_triggered_aha_9_70719', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('堕神之血•亚婆离', 0.00000000)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_10_75675', False) and av >= 756.75 - 1e-6:
+        if not getattr(director, '_triggered_aha_10_75675', False) and av >= 756.747248 - 1e-4:
             setattr(director, '_triggered_aha_10_75675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('堕神之血•亚婆离', 138295.22251311)
             director.apply_aha_hp_damage('狂兽的胚芽_15', 23049.20375219)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             _mname = _find_memosprite_name(sim, '知更鸟•晴歌')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_11_81357', False) and av >= 813.57 - 1e-6:
+        if not getattr(director, '_triggered_aha_11_81357', False) and av >= 813.574413 - 1e-4:
             setattr(director, '_triggered_aha_11_81357', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -379,13 +420,15 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_hp_damage('狂兽的胚芽_18', 46105.37392985)
             _mname = _find_memosprite_name(sim, '风堇')
             if _mname: director.apply_aha_ally_chip_hit(_mname)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('长夜月')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_12_85675', False) and av >= 856.75 - 1e-6:
+        if not getattr(director, '_triggered_aha_12_85675', False) and av >= 856.747248 - 1e-4:
             setattr(director, '_triggered_aha_12_85675', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
@@ -400,12 +443,14 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.flush_ally_talent_heals()
 
-        if not getattr(director, '_triggered_aha_13_92078', False) and av >= 920.78 - 1e-6:
+        if not getattr(director, '_triggered_aha_13_92078', False) and av >= 920.775557 - 1e-4:
             setattr(director, '_triggered_aha_13_92078', True)
             if hasattr(sim, "_action_seq"):
                 sim._action_seq += 1
             director.apply_aha_hp_damage('狂兽的胚芽_19', 69147.61125656)
             director.apply_aha_hp_damage('堕神之血•亚婆离', 28811.50470514)
+            _mname = _find_memosprite_name(sim, '风堇')
+            if _mname: director.apply_aha_ally_chip_hit(_mname)
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
             director.apply_aha_ally_chip_hit('风堇')
             director.apply_aha_ally_chip_hit('知更鸟•晴歌')
@@ -414,4 +459,4 @@ def attach_log_20261114_221208_plugin(sim: Any) -> None:
             director.flush_ally_talent_heals()
 
     sim.aha_special_handler = _aha_20261114_221208_handler
-    sim.aha_interrupt_avs = [137.95, 150.0, 256.38, 356.75, 419.82, 456.75, 556.75, 594.92, 656.75, 707.19, 756.75, 813.57, 856.75, 920.78]
+    sim.aha_interrupt_avs = [137.948635, 150.0, 256.382979, 356.747248, 419.815052, 456.747248, 556.747248, 594.921802, 656.747248, 707.191434, 756.747248, 813.574413, 856.747248, 920.775557]

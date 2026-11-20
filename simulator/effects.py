@@ -482,7 +482,12 @@ class EffectResolver:
                 killer_name = killer.name
                 if getattr(killer, "is_memosprite", False) and getattr(killer, "master_name", None):
                     killer_name = killer.master_name
-                if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
+                vm_rt = getattr(self.simulator, "vm_runtime", None)
+                vm_handles_kill_sp = bool(
+                    vm_rt is not None
+                    and vm_rt.modifier_engine.has_modifier(killer_name, "Local_SPAdd")
+                )
+                if not vm_handles_kill_sp and hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
                     self.simulator.port.gain_hit_energy(killer_name, 10.0, cause=f"击败【{target.name}】击杀回能 (基础 10.0, 受 ERR 放大)")
                 bus.publish(EnemyDefeatedEvent(
                     av=round(av, 2),

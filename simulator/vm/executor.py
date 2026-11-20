@@ -502,8 +502,10 @@ class TaskExecutor:
             servants = self._resolve_targets(pred.get("ServantType"), ctx)
             for sv in servants:
                 ent = sim.get_entity(sv)
-                if ent is not None and getattr(ent, "master_name", None) in summoners:
-                    return True
+                if ent is not None:
+                    owner = getattr(ent, "summoner_name", None) or getattr(ent, "master_name", None)
+                    if owner in summoners:
+                        return True
             return False
 
         if t == "RPG.GameCore.ByCheckModifierCallBackName":
@@ -878,6 +880,15 @@ class TaskExecutor:
                                                 picked_order.append(ex.name)
                                 if picked_order:
                                     out = picked_order + [cid for cid in out if cid not in picked_order]
+                            elif not cand_ents:
+                                r_prov = getattr(sim, "enemy_retarget_provider", None)
+                                dark_cands = [sim.get_entity(cid) for cid in out]
+                                dark_cands = [e for e in dark_cands if e is not None and getattr(e, "is_enemy", False)]
+                                if dark_cands and callable(r_prov):
+                                    picked = r_prov(caster_ent, dark_cands)
+                                    pname = getattr(picked, "name", picked) if picked is not None else None
+                                    if isinstance(pname, str) and pname in out:
+                                        out = [pname] + [cid for cid in out if cid != pname]
                     out = out[:cap]
                 return out
 
@@ -1420,6 +1431,7 @@ class TaskExecutor:
                 owner_ent = sim.get_entity(mod.owner_id)
                 if owner_ent is not None:
                     owner_ent.barrier_guarded = True
+                    owner_ent.toughness_locked = True
                     director = getattr(sim, "_stage_director", None)
                     runner = getattr(director, "runner", None) if director is not None else None
                     if runner is not None:
@@ -1438,6 +1450,7 @@ class TaskExecutor:
             owner_ent = sim.get_entity(owner_id) if owner_id else None
             if owner_ent is not None:
                 owner_ent.barrier_guarded = True
+                owner_ent.toughness_locked = True
             return
 
         if t == "RPG.GameCore.AttachAvatarChange":
@@ -1811,6 +1824,7 @@ class TaskExecutor:
                 rt.begin_being_attacked(ctx.caster_id, real_targets)
             any_died_mid_aoe = False
             pending_limbo: List[str] = []
+            pending_dying: List[str] = []
             for idx, tid in enumerate(real_targets):
                 if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type in ("Servant", "Pursued"):
                     any_died_mid_aoe = False
@@ -1881,10 +1895,18 @@ class TaskExecutor:
                     caster_ent = sim.get_entity(ctx.caster_id)
                     if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
                         sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
+                        if sp_base <= 0.0 and ctx.ability_name:
+                            mspec = getattr(getattr(caster_ent, "kit", None), "ai_spec", None)
+                            if mspec is not None:
+                                for sk_key, sk_spec in getattr(mspec, "skills_by_key", {}).items():
+                                    if sk_key and (f"_{sk_key}_" in ctx.ability_name or ctx.ability_name.endswith(f"_{sk_key}")):
+                                        sp_base = float(getattr(sk_spec, "sp_hit_base", 0.0) or 0.0)
+                                        break
                         sp_ratio = self._eval_num(atk_prop.get("SPHitRatio"), ctx, 0.0)
                         sp_hit = sp_base * sp_ratio * hit_split
                         if sp_hit > 0.0:
-                            sim.port.gain_hit_energy(tid, base_amount=sp_hit)
+                            energy_tid = (getattr(tgt_ent, "master_name", None) or tid) if getattr(tgt_ent, "is_memosprite", False) else tid
+                            sim.port.gain_hit_energy(energy_tid, base_amount=sp_hit)
                 if len(real_targets) > 1 or applied_def_red:
                     sim.resolver.resolve_all()
                     if applied_def_red and tgt_ent is not None:
@@ -1908,7 +1930,8 @@ class TaskExecutor:
                         except KeyError:
                             pass
                     if was_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
-                        me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
+                        if tid not in pending_dying:
+                            pending_dying.append(tid)
                         pending_dead = getattr(rt, "_pending_dead_enemies", None)
                         if pending_dead is None:
                             pending_dead = []
@@ -1916,6 +1939,18 @@ class TaskExecutor:
                         if tid not in pending_dead:
                             pending_dead.append(tid)
             sim.resolver.resolve_all()
+            if pending_dying:
+                if getattr(rt, "_attack_scope_depth", 0) > 0:
+                    q = getattr(rt, "_pending_dying_enemies", None)
+                    if q is None:
+                        q = []
+                        rt._pending_dying_enemies = q
+                    for d_tid in pending_dying:
+                        if not any(x[0] == d_tid for x in q):
+                            q.append((d_tid, ctx.caster_id))
+                else:
+                    for d_tid in pending_dying:
+                        me.dispatch_event("OnBeforeDying", owner_id=d_tid, param_entity_id=ctx.caster_id)
             for l_tid in pending_limbo:
                 me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=ctx.caster_id)
         finally:
@@ -2110,9 +2145,20 @@ class TaskExecutor:
     def _execute_turn_insert(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
         sim = rt.sim
-        targets = self._resolve_targets(task.get("TargetType") or {"Alias": "Caster"}, ctx)
         prio = str(task.get("InsertAbilityPriority") or task.get("InsertActionPriority") or "Character_ChainSkill")
         ab_name = _str_val(task.get("AbilityName"))
+        if task.get("TargetType") is not None:
+            targets = self._resolve_targets(task.get("TargetType"), ctx)
+        elif ctx.modifier_owner_id and (
+            prio == "MonsterForceKill"
+            or (
+                ctx.caster_id
+                and (sim.get_entity(ctx.caster_id) is None or getattr(sim.get_entity(ctx.caster_id), "current_hp", 0.0) <= 0.0)
+            )
+        ):
+            targets = [ctx.modifier_owner_id]
+        else:
+            targets = self._resolve_targets({"Alias": "Caster"}, ctx)
         ability_tgt_spec = task.get("AbilityTarget")
 
         for tid in targets:

@@ -256,8 +256,10 @@ class DataDrivenEnemyKit(EnemyKit):
         from simulator.vm.target_alias import ExecutionContext
 
         visited: set[str] = set()
-        mod_tasks: List[Tuple[Mapping[str, Any], str]] = []
+        mod_tasks: List[Tuple[Mapping[str, Any], str, bool]] = []
         dyn_tasks: List[Mapping[str, Any]] = []
+        saw_dmg = False
+        saw_finish = False
 
         def _walk_ab(ab_doc: Mapping[str, Any], scope_alias: str) -> None:
             _walk(ab_doc.get("OnStart", []), scope_alias)
@@ -266,11 +268,17 @@ class DataDrivenEnemyKit(EnemyKit):
                     _walk(tpl.get("TaskList", []), scope_alias)
 
         def _walk(tasks: Sequence[Any], scope_alias: str) -> None:
+            nonlocal saw_dmg, saw_finish
             for t in tasks:
                 if not isinstance(t, Mapping):
                     continue
                 tt = t.get("$type", "")
-                if tt == "RPG.GameCore.SetDynamicValue":
+                if tt == "RPG.GameCore.DamageByAttackProperty":
+                    saw_dmg = True
+                elif tt == "RPG.GameCore.DamagePerformFinish":
+                    if saw_dmg:
+                        saw_finish = True
+                elif tt == "RPG.GameCore.SetDynamicValue":
                     dk = t.get("DynamicKey")
                     dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
                     if dk_name and dk_name != "AIFlag":
@@ -314,8 +322,8 @@ class DataDrivenEnemyKit(EnemyKit):
                         )
                         or tt_kind == "RPG.GameCore.TargetSequence"
                     ):
-                        if not any(str((mt.get("ModifierName") or {}).get("Value", "")) == mname for mt, _ in mod_tasks):
-                            mod_tasks.append((t, scope_alias or alias))
+                        if not any(str((mt.get("ModifierName") or {}).get("Value", "")) == mname for mt, _, _ in mod_tasks):
+                            mod_tasks.append((t, scope_alias or alias, saw_finish))
 
         visited.add(entry_ab)
         root_ab = game_loader.get_ability(entry_ab)
@@ -334,29 +342,39 @@ class DataDrivenEnemyKit(EnemyKit):
         )
         if dyn_tasks:
             rt.executor.execute_tasks(dyn_tasks, ctx)
-        for task, scope_alias in mod_tasks:
-            mname = str((task.get("ModifierName") or {}).get("Value", ""))
-            life = rt.executor._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
-            cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
-            cnt = int(round(rt.executor._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else 1
-            max_l = int(round(rt.executor._eval_num(task["MaxLayer"], ctx, 1.0))) if "MaxLayer" in task else None
-            inherit = str(task.get("InheritCaster", ""))
-            apply_tgts = list(hit_targets)
-            for tid in apply_tgts:
-                eff_caster = tid if inherit == "TargetSelf" else self.owner_id
-                rt.modifier_engine.add_modifier(
-                    owner_id=tid,
-                    caster_id=eff_caster,
-                    mod_name=mname,
-                    ability_name=entry_ab,
-                    dynamic_values=task.get("DynamicValues"),
-                    life_time=life,
-                    count=cnt,
-                    max_layer=max_l,
-                    ctx=ctx.clone(ability_target_ids=(tid,)),
-                )
 
-    def _execute_vm_non_damage_skill(self, entry_ab: str, sim: TurnSimulator) -> None:
+        def _apply_mod_batch(batch: Sequence[Tuple[Mapping[str, Any], str, bool]]) -> None:
+            for task, scope_alias, _ in batch:
+                mname = str((task.get("ModifierName") or {}).get("Value", ""))
+                life = rt.executor._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
+                cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
+                cnt = int(round(rt.executor._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else 1
+                max_l = int(round(rt.executor._eval_num(task["MaxLayer"], ctx, 1.0))) if "MaxLayer" in task else None
+                inherit = str(task.get("InheritCaster", ""))
+                apply_tgts = list(hit_targets)
+                for tid in apply_tgts:
+                    eff_caster = tid if inherit == "TargetSelf" else self.owner_id
+                    rt.modifier_engine.add_modifier(
+                        owner_id=tid,
+                        caster_id=eff_caster,
+                        mod_name=mname,
+                        ability_name=entry_ab,
+                        dynamic_values=task.get("DynamicValues"),
+                        life_time=life,
+                        count=cnt,
+                        max_layer=max_l,
+                        ctx=ctx.clone(ability_target_ids=(tid,)),
+                    )
+
+        pre_mods = [m for m in mod_tasks if not m[2]]
+        post_mods = [m for m in mod_tasks if m[2]]
+        if pre_mods:
+            _apply_mod_batch(pre_mods)
+        if post_mods:
+            rt.end_being_attacked()
+            _apply_mod_batch(post_mods)
+
+    def _execute_vm_non_damage_skill(self, entry_ab: str, sim: TurnSimulator, *, sp_hit_base: float = 0.0) -> None:
         """通用执行敌方非直伤/支援/吞噬技能 AST (如 HealHP、Retarget+ForceKill、AddModifier)。"""
         rt = getattr(sim, "vm_runtime", None)
         if rt is None or not entry_ab:
@@ -392,12 +410,17 @@ class DataDrivenEnemyKit(EnemyKit):
                     reverse=True,
                 )
                 target_ids = (other_enemies[0].name,)
-        rt.trigger_ability(
-            caster_id=self.owner_id,
-            ability_name=entry_ab,
-            target_ids=target_ids,
-            skill_target_ids=target_ids,
-        )
+        prev_sp_base = getattr(rt, "_current_enemy_sp_hit_base", 0.0)
+        rt._current_enemy_sp_hit_base = float(sp_hit_base)
+        try:
+            rt.trigger_ability(
+                caster_id=self.owner_id,
+                ability_name=entry_ab,
+                target_ids=target_ids,
+                skill_target_ids=target_ids,
+            )
+        finally:
+            rt._current_enemy_sp_hit_base = prev_sp_base
 
     def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
         sim: TurnSimulator = self.port.sim
@@ -470,6 +493,8 @@ class DataDrivenEnemyKit(EnemyKit):
             if action_idx == 1 and not can_one_more:
                 break
             action_idx += 1
+            if action_idx == 2 and rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore"):
+                rt.modifier_engine.remove_modifier(self.owner_id, "OneMore")
 
             if rt is not None:
                 from simulator.vm.expr import dotnet_hash
@@ -595,7 +620,7 @@ class DataDrivenEnemyKit(EnemyKit):
                     continue
                 if mult <= 0.0 or sk.damage_type is None:
                     if entry_ab:
-                        self._execute_vm_non_damage_skill(entry_ab, sim)
+                        self._execute_vm_non_damage_skill(entry_ab, sim, sp_hit_base=float(getattr(sk, "sp_hit_base", 0.0) or 0.0))
                     continue
 
                 # 索敌: 若技能在 Ability 中声明了 AllEnemy 或为全体横扫，则命中全体
@@ -707,6 +732,9 @@ class DataDrivenEnemyKit(EnemyKit):
                     self._marked_target = resolved[0]
                 if entry_ab and resolved:
                     self._apply_enemy_skill_modifiers(entry_ab, resolved, sim)
+                rt_after_hit = getattr(sim, "vm_runtime", None)
+                if rt_after_hit is not None:
+                    rt_after_hit.end_being_attacked()
 
                 sched_pre = getattr(sim, "scheduler", None)
                 if (action_idx == 1 and can_one_more) or (sched_pre is not None and sched_pre.has_pending()):
@@ -715,7 +743,7 @@ class DataDrivenEnemyKit(EnemyKit):
                         rt_sub.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=self.owner_id)
 
                 sub_cb = getattr(sim, "on_enemy_sub_action_end", None)
-                if callable(sub_cb) and attacker is not None and attacker.current_hp > 0.0:
+                if callable(sub_cb) and action_idx == 1 and can_one_more and attacker is not None and attacker.current_hp > 0.0:
                     sched = getattr(sim, "scheduler", None)
                     prev_depth = getattr(sched, "_action_frame_depth", 0) if sched is not None else 0
                     if sched is not None and prev_depth > 0:
@@ -895,8 +923,9 @@ class DataDrivenStageDirector:
                 self._pending_aha_turn = False
                 if not getattr(self, "_suppress_aha_turn_reset", False):
                     rt.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id="阿哈")
-                    cur_owner = getattr(getattr(self.sim, "_current_turn_entity", None), "name", "__LEVEL__")
-                    rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_owner)
+                    cur_ent = getattr(self.sim, "_current_turn_entity", None)
+                    if cur_ent is not None:
+                        rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_ent.name)
             return
         for ent in self.sim.entities:
             if not ent.is_enemy and ent.current_hp > 0:

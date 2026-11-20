@@ -133,6 +133,7 @@ class LogMetadata:
     final_av: float
     enemy_uid_map: Dict[int, str] = field(default_factory=dict)
     ally_ult_targets: Dict[str, List[str]] = field(default_factory=dict)  # caster_name -> [target_name, ...]
+    enemy_retarget_picks: List[Tuple[float, int, int]] = field(default_factory=list)  # (av, caster_uid, victim_uid)
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)  # (av, caster_name) -> [enemy_name, ...]
     # (av, master_name) -> 按该 AV 内忆灵技施放顺序排列的单体忆灵技主目标名（None 表示同 AV 非单体技占位）
     servant_targets: Dict[Tuple[float, str], List[Optional[str]]] = field(default_factory=dict)
@@ -236,11 +237,16 @@ def extract_log_metadata(
     cur_none_lethal_euids: Set[int] = set()
     cur_none_ally_chips: List[str] = []
     cur_none_ally_sp_counts: Dict[str, int] = {}
+    cur_none_pending_hp_chip_uid: Optional[int] = None
     last_player_sp: Dict[int, float] = {}
 
     # 辅助单点拉条终结技目标追踪（通用：检测任意 Ultra 后伴随单名队友负 ActionDelay）
     pending_ally_ult_caster: Optional[str] = None
+    pending_ally_ult_sid: int = 0
+    pending_ally_ult_uid: int = 0
+    pending_ally_ult_sp_fallback: Optional[str] = None
     ally_ult_targets: Dict[str, List[str]] = {}
+    enemy_retarget_picks: List[Tuple[float, int, int]] = []
     pending_player_atk: Optional[Tuple[float, str]] = None
     pending_player_hit_euids: List[int] = []
     pending_player_primary_dmg_hits = 0
@@ -307,21 +313,19 @@ def extract_log_metadata(
 
     def _flush_turn() -> None:
         nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_sub_hits, cur_sub_actions, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, last_enemy_hit_sp
-        nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts
+        nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts, cur_none_pending_hp_chip_uid
         if cur_enemy_uid is not None:
             if cur_sub_hits:
                 cur_sub_actions.append(list(cur_sub_hits))
             eff_hit_order = list(cur_hit_order)
-            # 敌方两动中若先放全体 AoE 再放单体点名（如 Skill02 + Skill01），单体目标放在首位供 target_provider 精准锁定
-            if (
-                len(cur_sub_actions) >= 2
-                and len(set(cur_sub_actions[0])) >= 2
-                and len(set(cur_sub_actions[-1])) == 1
-            ):
-                st_tgt = cur_sub_actions[-1][0]
-                if st_tgt in eff_hit_order:
-                    eff_hit_order.remove(st_tgt)
-                eff_hit_order.insert(0, st_tgt)
+            # 敌方多动中若先放全体 AoE 再放单体点名（如 Skill02 + Skill01 [+ Skill04]），将单体目标放在首位供 target_provider 精准锁定
+            if len(cur_sub_actions) >= 2 and len(set(cur_sub_actions[0])) >= 2:
+                st_subs = [sub[0] for sub in cur_sub_actions[1:] if len(set(sub)) == 1]
+                if st_subs:
+                    st_tgt = st_subs[0]
+                    if st_tgt in eff_hit_order:
+                        eff_hit_order.remove(st_tgt)
+                    eff_hit_order.insert(0, st_tgt)
             enemy_hits.append(
                 EnemyHitRecord(
                     av=round(cur_av, 2),
@@ -343,7 +347,7 @@ def extract_log_metadata(
                 filtered_dmgs = [(u, ref_bounce if d <= 1.0 else d) for u, d in filtered_dmgs]
             aha_turns.append(
                 AhaTurnRecord(
-                    av=round(cur_av, 2),
+                    av=round(cur_av, 6),
                     enemy_damages=filtered_dmgs,
                     ally_chip_hits=list(cur_none_ally_chips),
                     ally_sp_gain_counts=dict(cur_none_ally_sp_counts),
@@ -365,6 +369,7 @@ def extract_log_metadata(
         cur_none_lethal_euids = set()
         cur_none_ally_chips = []
         cur_none_ally_sp_counts = {}
+        cur_none_pending_hp_chip_uid = None
 
     with open(log_path, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -408,7 +413,12 @@ def extract_log_metadata(
                 else:
                     cur_turn_owner_team = None
                     prev_enemy_turn = None
+                if pending_ally_ult_caster is not None and pending_ally_ult_sp_fallback is not None:
+                    ally_ult_targets.setdefault(pending_ally_ult_caster, []).append(pending_ally_ult_sp_fallback)
                 pending_ally_ult_caster = None
+                pending_ally_ult_sid = 0
+                pending_ally_ult_uid = 0
+                pending_ally_ult_sp_fallback = None
                 _flush_pending_player_atk()
             elif ev == "OnUseSkill":
                 _flush_pending_player_atk()
@@ -435,6 +445,9 @@ def extract_log_metadata(
                         in_aoe_heal_window = False
                     if sk_type == "Ultra":
                         pending_ally_ult_caster = cname
+                        pending_ally_ult_sid = sk_id
+                        pending_ally_ult_uid = uid
+                        pending_ally_ult_sp_fallback = None
                     if sk_type in ("Normal", "BPSkill", "Ultra", "Servant"):
                         # 忆灵技（Servant）的施法者 UID 是召唤师本体，主目标仍需按官方日志锁定
                         pending_player_atk = (round(cur_av, 2), cname)
@@ -477,15 +490,29 @@ def extract_log_metadata(
                             or (pending_player_atk[1].startswith("UID_") and abs(val - prev) <= 1.0 and val > 1e-3)
                         ):
                             pending_player_hit_euids.append(uid)
+                        elif cur_enemy_uid is not None and uid != cur_enemy_uid and prev is not None and prev > 0.0 and val <= 0.0:
+                            enemy_retarget_picks.append((round(cur_av, 2), cur_enemy_uid, uid))
                         last_enemy_hp[uid] = val
                 elif team_tag == "Player" and uid:
                     if uid not in seen_uid_set:
                         seen_uid_set.add(uid)
                         seen_uids.append(uid)
-                    if pending_ally_ult_caster is not None and ptype == "ActionDelay" and val < -1.0:
-                        tgt_name = _resolve_uid_name(uid, char_db)
-                        ally_ult_targets.setdefault(pending_ally_ult_caster, []).append(tgt_name)
-                        pending_ally_ult_caster = None
+                    if pending_ally_ult_caster is not None:
+                        if ptype == "ActionDelay" and val < -1.0:
+                            tgt_name = _resolve_uid_name(uid, char_db)
+                            ally_ult_targets.setdefault(pending_ally_ult_caster, []).append(tgt_name)
+                            pending_ally_ult_caster = None
+                            pending_ally_ult_sid = 0
+                            pending_ally_ult_uid = 0
+                            pending_ally_ult_sp_fallback = None
+                        elif (
+                            pending_ally_ult_sid == 151203
+                            and pending_ally_ult_sp_fallback is None
+                            and ptype == "CurrentSP"
+                            and uid != pending_ally_ult_uid
+                            and val > 0.0
+                        ):
+                            pending_ally_ult_sp_fallback = _resolve_uid_name(uid, char_db)
                     if ptype == "MaxHP":
                         if uid not in last_player_hp:
                             last_player_hp[uid] = val
@@ -505,9 +532,19 @@ def extract_log_metadata(
                             cur_sp_gain_counts[cname] = cur_sp_gain_counts.get(cname, 0) + 1
                         elif cur_turn_owner_team is None and not cur_none_had_skill:
                             sp_delta = (val - prev_sp) if prev_sp is not None else val
-                            if 1.8 <= sp_delta <= 2.9:
+                            if cur_none_pending_hp_chip_uid == uid:
                                 cur_none_ally_sp_counts[cname] = cur_none_ally_sp_counts.get(cname, 0) + 1
-                        if val >= 0.0:
+                                cur_none_pending_hp_chip_uid = None
+                            elif 1.8 <= sp_delta <= 2.9:
+                                cur_none_ally_sp_counts[cname] = cur_none_ally_sp_counts.get(cname, 0) + 1
+                        if val <= 0.0:
+                            last_player_sp[uid] = 0.0
+                        elif prev_sp is not None and (
+                            is_enemy_hit_sp
+                            or (val <= 35.0 and val <= prev_sp + 1e-4)
+                        ):
+                            last_player_sp[uid] = prev_sp + val
+                        else:
                             last_player_sp[uid] = val
                     elif ptype == "Speed":
                         prev_spd = last_player_spd.get(uid)
@@ -534,6 +571,9 @@ def extract_log_metadata(
                                     cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
                             elif 120.0 <= val <= 550.0 and val < prev * 0.35:
                                 cur_small_heal_uids.add(uid)
+                                if cur_sub_hits:
+                                    cur_sub_actions.append(list(cur_sub_hits))
+                                    cur_sub_hits = []
                             elif val < prev - 1e-3 and (prev - val) < prev * 0.60:
                                 delta = prev - val
                                 # 过滤敌方回合结束时的 1% 伴生微伤/DoT，避免误将未受直接攻击的队友计入受击/扩散目标
@@ -549,6 +589,7 @@ def extract_log_metadata(
                             delta = prev - val
                             if 0.05 <= delta <= 10.0:
                                 cur_none_ally_chips.append(_resolve_uid_name(uid, char_db))
+                                cur_none_pending_hp_chip_uid = uid
                         if prev is None or val >= prev * 0.40:
                             last_player_hp[uid] = val
 
@@ -639,6 +680,7 @@ def extract_log_metadata(
         final_av=cur_av,
         enemy_uid_map=enemy_uid_map,
         ally_ult_targets=ally_ult_targets,
+        enemy_retarget_picks=enemy_retarget_picks,
         player_enemy_targets=player_enemy_targets,
         servant_targets=servant_targets,
         aha_turns=aha_turns,
@@ -973,8 +1015,20 @@ def attach_auto_rng_plugin(
 
         return known_blasts
 
+    def _enemy_retarget_provider(caster: Any, candidates: List[Any]) -> Optional[Any]:
+        av = float(getattr(sim, "current_av", 0.0))
+        cname = getattr(caster, "name", "")
+        for p_av, c_uid, v_uid in meta.enemy_retarget_picks:
+            if abs(av - p_av) < 0.05 and meta.enemy_uid_map.get(c_uid, "") == cname:
+                vname = meta.enemy_uid_map.get(v_uid, "")
+                for ent in candidates:
+                    if getattr(ent, "name", "") == vname:
+                        return ent
+        return None
+
     sim.target_provider = _target_provider
     sim.blast_target_provider = _blast_provider
+    sim.enemy_retarget_provider = _enemy_retarget_provider
 
 
 def _try_load_existing_plugin(tag: str) -> Tuple[Optional[Callable[[Any], None]], Set[Any]]:
@@ -1672,19 +1726,40 @@ def emit_plugin(
         "",
     ])
 
+    # 6.5 敌方随机 Retarget（如 Boss 随机吞噬胚芽）
+    retarget_pairs = [
+        (p_av, meta.enemy_uid_map.get(c_uid, ""), meta.enemy_uid_map.get(v_uid, ""))
+        for p_av, c_uid, v_uid in meta.enemy_retarget_picks
+        if c_uid in meta.enemy_uid_map and v_uid in meta.enemy_uid_map
+    ]
+    lines.extend([
+        f"    def _enemy_retarget_{tag}(caster: Any, candidates: List[Any]) -> Optional[Any]:",
+        '        av = float(getattr(sim, "current_av", 0.0))',
+        '        cname = getattr(caster, "name", "")',
+    ])
+    for p_av, cname, vname in retarget_pairs:
+        lines.append(f"        if abs(av - {p_av:.2f}) < 0.05 and cname == {cname!r}:")
+        lines.append(f"            for e in candidates:")
+        lines.append(f"                if getattr(e, 'name', '') == {vname!r}: return e")
+    lines.extend([
+        "        return None",
+        "",
+    ])
+
     # 7. 挂载钩子与阿哈弹射处理（通用：直接回放日志记录的敌方扣血与我方受击/忆灵微伤）
     lines.extend([
         f"    sim.target_provider = _target_{tag}_provider",
         f"    sim.blast_target_provider = _blast_{tag}_provider",
         f"    sim.enemy_attack_skip_provider = _enemy_attack_skip_{tag}",
         f"    sim.enemy_windwalk_provider = _enemy_windwalk_{tag}",
+        f"    sim.enemy_retarget_provider = _enemy_retarget_{tag}",
         "",
         f"    def _aha_{tag}_handler(director: Any) -> None:",
         '        av = float(getattr(sim, "current_av", 0.0))',
     ])
     for aha_i, a in enumerate(meta.aha_turns):
         flag = f"_triggered_aha_{aha_i}_{int(round(a.av * 100))}"
-        lines.append(f"        if not getattr(director, {flag!r}, False) and av >= {a.av:.2f} - 1e-6:")
+        lines.append(f"        if not getattr(director, {flag!r}, False) and av >= {a.av:.6f} - 1e-4:")
         lines.append(f"            setattr(director, {flag!r}, True)")
         lines.append('            if hasattr(sim, "_action_seq"):')
         lines.append("                sim._action_seq += 1")
@@ -1709,7 +1784,7 @@ def emit_plugin(
         lines.append("            director.flush_ally_talent_heals()")
         lines.append("")
     lines.append(f"    sim.aha_special_handler = _aha_{tag}_handler")
-    aha_avs_literal = [round(float(a.av), 4) for a in meta.aha_turns]
+    aha_avs_literal = [round(float(a.av), 6) for a in meta.aha_turns]
     lines.append(f"    sim.aha_interrupt_avs = {aha_avs_literal!r}")
 
     code = "\n".join(lines) + "\n"

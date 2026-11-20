@@ -424,3 +424,31 @@ for m in rt.modifier_engine.get_modifiers("长夜月"):
 ### 11.2 回归与下一步卡点
 - **门禁回归**：6 份绿测例（`155925/184651/184845/204943/205144/222204`）+ 5 项 `test_stage_runner` 单元全绿零回退。
 - **下一步唯一共因卡点**：`220255` (`AV=245.12`) 与 `221208` (`AV=294.04`) 均为知更鸟•晴歌（忆灵）释放 `1151201`（`叽叽啾啾四重奏`）时 SIM 偏高约 `30%~38%`（`221208` GT 为 3 段 `22,431 + 99,847 + 99,847 = 222,126`，SIM 为 `308,018`），优先排查此时段敌方存活/增益状态或知更鸟忆灵 Buff 结算差异。
+
+---
+
+## 12. 最新修复与状态（2026-11-20 23:3x — `221208` 全绿 0.0000%）
+
+### 12.1 已落盘通用修复
+1. **`BattleEventCaster` 局部优先解析（`simulator/vm/target_alias.py`）**：
+   - `BattleEventCaster` 优先从当前 BattleEvent 实体的 `master_name` 解析，再回退全局 `rt.named_targets`，彻底避免 Wave 2 `BattleEvent_20041` 覆盖全局 `BattleEventCaster` 导致 `晴空乐手•倒计时` `HyperValue` 衰减失效。
+2. **回合末 / 受击窗口 / 独立阿哈回合 / 子行动时序严格对齐官方 AST**：
+   - `simulator/golden_diff.py`：同回合玩家大招（`turn_owner == act_name`）在 `_end_current_turn` 之前结算；补齐 `151203` 在目标自身回合（`ActionDelay == 0`）下通过非施法者队友 `CurrentSP` 回退识别目标。
+   - `simulator/vm/stage_sim_adapter.py`：
+     - `_apply_enemy_skill_modifiers` 遍历官方 AST 时按 `DamagePerformFinish` 位置切分 `pre_mods` / `post_mods`，在二者之间调用 `rt.end_being_attacked()`（兼容月夜天马 `Debuff_Mark` 在前、胚芽/Boss `BlackBlood` 在后）；
+     - 第 2 动开始时移除 `"OneMore"` 标记，保证 Boss P2 `Decision[3]` 正确分支；
+     - 独立阿哈回合结束（`_current_turn_entity is None`）不再伪造 `OnListenTurnBegin("__LEVEL__")` 清空每回合标记；
+     - `on_enemy_sub_action_end` 仅在多动敌人第一动后（`action_idx == 1 and can_one_more`）触发，避免单动小怪回合内抢跑 `OnListenBeforeTurnPhase1End`。
+   - `simulator/vm/executor.py` & `simulator/vm/runtime.py`：攻击作用域内（`_attack_scope_depth > 0`）阵亡敌方的 `OnBeforeDying` 延迟至 `DamagePerformFinish`（`flush_pending_after_attack`）统一结算。
+3. **护盾 / 锁韧 / 血上限压缩 / 召唤物同步退场**：
+   - `simulator/vm/modifier_engine.py`：`_recompute_dirty_hp_ratio` 压缩血量时正确发布 `HPLostEvent` 并用官方 `ImmuneDebuff` 替代硬编码 `is_memosprite`；`get_entity_property(..., "Shield")` 返回实体普通护盾而非 `SingleBlock`；`SingleBlock` 销毁同步解除 `toughness_locked`。
+   - `simulator/vm/executor.py`：`SingleBlock` 屏障初始化/锁韧标记（`OOCOGGMJLBN` / `PGFAJJBCMDK`）同步设置 `toughness_locked = True`；修复 `ByHasSummonRelation` 检查 `summoner_name` 及 `TurnInsertAbility` 省略 `TargetType` 时 `MonsterForceKill`（或 `Caster` 已阵亡）回退至 `ModifierOwnerEntity`，使 Boss 阵亡时 `MCommon_Servant` 正常触发 `Common_Servant_Forcekill` 清理残余胚芽。
+4. **能量与随机目标回放修复**：
+   - `simulator/effects.py`：VM 角色已挂载官方 `Local_SPAdd` 时跳过重复硬编码的 `+10` 击杀回能。
+   - `simulator/vm/executor.py`：`_execute_damage` 中敌方 `TurnInsertAbility`（如 `Skill04_Phase02`）从 `ai_spec.skills_by_key` 读取 `sp_hit_base` 并将忆灵受击回能归属主人；`Retarget(ByRandom=True)` 接入敌方候选的 `enemy_retarget_provider`（如 Boss 随机吞噬胚芽）。
+   - `simulator/vm/reconcile_generator.py`（+ 重新 `--emit-plugin` 生成 `simulator/plugins/log_20261114_221208.py`）：阿哈 AV 提升至 6 位小数精度；修复 `last_player_sp` 对增量 SP 事件及连续同值回能的累加；支持多动敌人非末动单体目标提取；自动提取并挂载 `enemy_retarget_provider` 与 `151203` `CurrentSP` 回退目标。
+
+### 12.2 回归验证结果
+- **`221208`**：`turns=42/42`、`ults=35/35`、`sp_grant=0`、`mem_grant=0.0`、`forced/failed=0`、`GT=52,821,480.79` vs `SIM=52,821,468.12`、**`total_err=0.0000%`**、**`max_turn_err=0.0000%`**、**`over_0.2%=0/68`**。
+- **全量回归**：`pytest simulator/vm/test_vm_30126122_alignment.py -k "155925 or 184651 or 184845 or 204943 or 205144 or 221208 or 222204" -v` **7/7 PASSED**；`pytest simulator/vm/test_stage_runner.py -v` **5/5 PASSED**。
+- **下一步**：仅剩最后 1 条用例 `220255`，基于本轮通用修复直接复测并顺时间线收尾，全绿后删除手写 `stage_30126122.py`。

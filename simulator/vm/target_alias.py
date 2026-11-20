@@ -346,6 +346,22 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         enemies = [sim.get_entity(n) for n in _alive_enemies()]
         enemies = [e for e in enemies if e is not None]
         cur = [max(enemies, key=lambda e: e.current_hp).name] if enemies else []
+    elif base == "BattleEventCaster":
+        owner_id = None
+        for cand_id in (ctx.modifier_owner_id, ctx.caster_id):
+            if not cand_id:
+                continue
+            cand_ent = sim.get_entity(cand_id)
+            if cand_ent is not None and _is_battle_event(cand_ent):
+                mname = getattr(cand_ent, "master_name", None)
+                if mname and sim.get_entity(mname) is not None:
+                    owner_id = mname
+                    break
+        if owner_id is not None:
+            cur = [owner_id]
+        else:
+            named = rt.named_targets.get(base)
+            cur = [n for n in named if sim.get_entity(n) is not None] if named else []
     else:
         # 检查动态注册的 Named Target / Partner (如 RobinS_Partner02, RobinS_Partner03)
         named = rt.named_targets.get(base)
