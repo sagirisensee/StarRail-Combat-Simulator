@@ -1,7 +1,7 @@
 ---
 name: golden-log-to-stage
 description: >-
-  Generate clean, decoupled Log RNG Plugins, Stage alignments, and Tests (< 0.2%
+  Generate clean, decoupled Log RNG Plugins, Stage alignments, and Tests (< 0.01%
   total damage error) directly from an official HSR battle_logs/battle_*.jsonl using
   the reconcile generator and the data-driven ConfigAbility VM engine.
 ---
@@ -56,7 +56,7 @@ python gen_reconcile.py battle_logs/battle_<tag>.jsonl --data-driven --verbose
 检查输出诊断报告：
 - **动作匹配**：`turns == turn_total` 且 `ults == ult_total`（100% 匹配）；
 - **资源补发**：`sp_granted == 0`，`memoria_granted == 0.0`，`presence_grants == 0`；
-- **分歧诊断**：若存在单动误差 `>= 0.2%`，报告会自动指出产生分歧的首个 AV、攻击者及伤害细分类型（Servant / LC_Additional / Skill 等）。
+- **分歧诊断**：若存在单动误差 `>= 0.01%`，报告会自动指出产生分歧的首个 AV、攻击者及伤害细分类型（Servant / LC_Additional / Skill 等）。
 
 ### Step 3: 底层因果闭环（治本不治标）
 > **调试 API 与排障速查**：进行事件探针追踪、实机 JSONL 窗口切片、或按误差指纹定位根因前，**先查阅 [docs/DEBUGGING_AND_API_REFERENCE.md](file:///Users/yunkaichen/Downloads/starrail/docs/DEBUGGING_AND_API_REFERENCE.md)** 获取核心入口精确签名（`build_vm_team` / `build_data_driven_stage` / `extract_timeline` / `run_trajectory_replay`）、对象真实字段与 5 步排障方法论，严禁凭猜测写探测脚本。
@@ -85,5 +85,5 @@ pytest simulator/vm/test_vm_<stage_id>_alignment.py -k test_vm_<tag> -v
 - 回合匹配：`100%`；
 - 终结技匹配：`100%`；
 - 强制干预/补发资源：`0`；
-- 全场总伤误差：`< 0.2%`（重点用例要求更高）；
-- 逐动伤害误差：全场所有结算动次单动误差全部 `< 0.2%`。
+- 全场总伤误差：`< 0.01%`（重点用例要求更高）；
+- 逐动伤害误差：全场所有结算动次单动误差全部 `< 0.01%`。

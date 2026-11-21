@@ -14,8 +14,8 @@ from ...combat_port import BuffSpec
 from ...damage import DamageRequest
 from ...effects import ApplyDamageEffect
 from ...status import DurationTiming, Modifier, ModifierOp, StatType
-from .griffin import AQUILA_MARK_KEY
-from .pegasus import ORONYX_MARK_KEY
+AQUILA_MARK_KEY = "Enemy_Aquila_Mark"
+ORONYX_MARK_KEY = "Enemy_Oronyx_Mark"
 
 
 class BaseEnemyCombatPortImpl:

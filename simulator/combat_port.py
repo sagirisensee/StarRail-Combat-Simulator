@@ -445,20 +445,12 @@ class SimulatorCombatPort:
         ent = self._get_entity(entity_id)
         if not ent:
             return 0
-        handler_cls = None
-        try:
-            from .relics.registry import RelicRegistry
-            entry = RelicRegistry.get(set_key)
-            if entry:
-                handler_cls = entry[1]
-        except Exception:
-            handler_cls = None
         key_str = str(set_key).strip().lower()
         pieces = 0
         for handler in getattr(ent, "relic_handlers", None) or []:
             spec = getattr(handler, "spec", None)
-            matched = handler_cls is not None and isinstance(handler, handler_cls)
-            if not matched and spec is not None:
+            matched = False
+            if spec is not None:
                 if isinstance(set_key, int) and getattr(spec, "set_id", None) == set_key:
                     matched = True
                 elif key_str.isdigit() and getattr(spec, "set_id", None) == int(key_str):

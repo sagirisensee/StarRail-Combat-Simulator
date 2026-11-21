@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from simulator.stage_30126122 import (
+from simulator.vm._test_stage_30126122_refs import (
     APOLI_PHASE1_HP,
     APOLI_PHASE2_HP,
     EAGLE_HP,

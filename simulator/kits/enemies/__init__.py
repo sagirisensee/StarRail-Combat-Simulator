@@ -9,12 +9,6 @@ from .port import (
     PegasusCombatPort,
     SproutCombatPort,
 )
-from .lighthouse import LighthouseBossKit
-from .pegasus import MoonlitPegasusKit, ORONYX_MARK_KEY, ORONYX_MARK_NAME
-from .griffin import SunlitGriffinKit, AQUILA_MARK_KEY, AQUILA_MARK_NAME
-from .eagle import MeteorEagleKit
-from .apoli import ApoliBossKit
-from .sprout import BeastSproutKit
 from .sim_port import BaseEnemyCombatPortImpl
 
 __all__ = [
@@ -31,15 +25,5 @@ __all__ = [
     "EagleCombatPort",
     "ApoliCombatPort",
     "SproutCombatPort",
-    "LighthouseBossKit",
-    "MoonlitPegasusKit",
-    "ORONYX_MARK_KEY",
-    "ORONYX_MARK_NAME",
-    "SunlitGriffinKit",
-    "AQUILA_MARK_KEY",
-    "AQUILA_MARK_NAME",
-    "MeteorEagleKit",
-    "ApoliBossKit",
-    "BeastSproutKit",
     "BaseEnemyCombatPortImpl",
 ]

@@ -1,12 +1,25 @@
 # coding: utf-8
 """实机日志 battle_20261114_220255.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from simulator.plugins._helpers import (
     find_ally as _find_ally,
     find_memosprite_name as _find_memosprite_name,
     find_memosprite_of as _find_memosprite_of,
 )
+
+NON_CRITS: Set[Tuple[int, int]] = {
+    (6, 3),    # G#05 av=72.73 知更鸟•晴歌 (忆灵) Servant: 25,385.4 vs 92,702.4
+    (9, 1),    # G#09 av=101.83 知更鸟•晴歌 (忆灵) Servant: 23,655.1 vs 117,770.5
+    (23, 2),   # av=245.12 知更鸟•晴歌 (忆灵) Servant: 29,882.9 vs 110,193.4
+    (23, 3),   # av=245.12 知更鸟•晴歌 (忆灵) Servant: 23,995.8 vs 88,484.6
+    (27, 0),   # av=274.22 知更鸟•晴歌 (忆灵) Servant: 6,325.9 vs 24,965.6
+    (27, 4),   # av=274.22 知更鸟•晴歌 (忆灵) Servant: 30,059.8 vs 118,633.4
+    (33, 0),   # av=303.31 知更鸟•晴歌 (忆灵) Servant: 5,713.7
+    (62, 4),   # av=478.79 缇宝 Additional: 2,098.3 vs 14,048.7
+    (80, 2),   # av=591.02 缇宝 Additional: 2,038.1 vs 14,043.2
+    (116, 0),  # av=791.07 缇宝 Ultimate: 16,093.9 vs 109,179.9
+}
 
 
 def attach_log_20261114_220255_plugin(sim: Any) -> None:

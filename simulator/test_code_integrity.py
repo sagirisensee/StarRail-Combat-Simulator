@@ -12,7 +12,6 @@ from simulator.core import TurnSimulator
 from simulator.damage import DamageCalculator, DamageRequest
 from simulator.entity import Entity
 from simulator.combat_port import BuffSpec
-from simulator.scaling.resolver import SkillScalingFactory
 from simulator.status import DurationTiming, Modifier, ModifierOp, StatType
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,11 +30,9 @@ class TestCodeIntegrity(unittest.TestCase):
     }
 
     KIT_FILES = (
-        os.path.join(ROOT_DIR, "simulator", "kits", "characters", "changyeyue.py"),
-        os.path.join(ROOT_DIR, "simulator", "kits", "characters", "tibao.py"),
-        os.path.join(ROOT_DIR, "simulator", "kits", "characters", "fengjin.py"),
-        os.path.join(ROOT_DIR, "simulator", "kits", "characters", "robin_sunnysong.py"),
-        os.path.join(ROOT_DIR, "simulator", "scaling", "resolver.py"),
+        os.path.join(ROOT_DIR, "simulator", "vm", "executor.py"),
+        os.path.join(ROOT_DIR, "simulator", "vm", "runtime.py"),
+        os.path.join(ROOT_DIR, "simulator", "vm", "reconcile_generator.py"),
     )
 
     def test_no_forbidden_fudge_constants_in_character_kits(self):
@@ -52,45 +49,6 @@ class TestCodeIntegrity(unittest.TestCase):
                         self.FORBIDDEN_FLOATS,
                         f"在 {os.path.basename(path)} 第 {getattr(node, 'lineno', '?')} 行发现禁用凑数常数 {val}",
                     )
-
-    def test_official_nanoka_skill_levels_and_multipliers(self):
-        """校验全队技能等级上限与倍率严格对齐 Nanoka 4.6 官方解包表 (普攻/忆灵基准 Lv 6, 战技/终结技/天赋基准 Lv 10)。"""
-        # 1. 长夜月 (1413, E2): 忆灵技/忆灵天赋 Lv 6 (无 E3/E5 加成)
-        s_1413 = SkillScalingFactory.create("1413", eidolon=2)
-        self.assertEqual(s_1413.effective_level("1141301"), 6)
-        self.assertEqual(s_1413.effective_level("1141307"), 6)
-        self.assertAlmostEqual(s_1413.value("1141301", 0), 0.50, places=4)
-        self.assertAlmostEqual(s_1413.value("1141301", 1), 0.10, places=4)
-        self.assertAlmostEqual(s_1413.value("1141307", 0), 0.12, places=4)
-        self.assertAlmostEqual(s_1413.value("1141307", 1), 0.06, places=4)
-        self.assertAlmostEqual(s_1413.value("ultra", 0), 2.00, places=4)
-        # E1 独立忆灵乘区: >=4/3/2/1 名敌人对应 1.20 / 1.25 / 1.30 / 1.50
-        self.assertAlmostEqual(s_1413.eidolon_value(1, 0), 1.20, places=4)
-        self.assertAlmostEqual(s_1413.eidolon_value(1, 1), 1.25, places=4)
-        self.assertAlmostEqual(s_1413.eidolon_value(1, 2), 1.30, places=4)
-        self.assertAlmostEqual(s_1413.eidolon_value(1, 3), 1.50, places=4)
-
-        # 2. 缇宝 (1403, E6): 普攻 Lv 7 (6+1), 战技/终结技/天赋 Lv 12 (10+2)
-        s_1403 = SkillScalingFactory.create("1403", eidolon=6)
-        self.assertEqual(s_1403.effective_level("basic"), 7)
-        self.assertEqual(s_1403.effective_level("skill"), 12)
-        self.assertEqual(s_1403.effective_level("ultra"), 12)
-        self.assertEqual(s_1403.effective_level("talent"), 12)
-        self.assertAlmostEqual(s_1403.value("ultra", 0), 0.33, places=4)
-        self.assertAlmostEqual(s_1403.value("ultra", 2), 0.132, places=4)
-        self.assertAlmostEqual(s_1403.value("talent", 0), 0.198, places=4)
-        self.assertAlmostEqual(s_1403.eidolon_value(6, 0), 7.29, places=4)
-
-        # 3. 风堇 (1409, E1): 忆灵技/普攻基准 Lv 6
-        s_1409 = SkillScalingFactory.create("1409", eidolon=1)
-        self.assertEqual(s_1409.effective_level("1140901"), 6)
-        self.assertEqual(s_1409.effective_level("140901"), 6)
-        self.assertAlmostEqual(s_1409.value("1140901", 0), 0.20, places=4)
-
-        # 4. 知更鸟•晴歌 (1512, E1): 晴空乐手忆灵技 1151201 Lv 6 = 150% 生命上限
-        s_1512 = SkillScalingFactory.create("1512", eidolon=1)
-        self.assertEqual(s_1512.effective_level("1151201"), 6)
-        self.assertAlmostEqual(s_1512.value("1151201", 1), 1.50, places=4)
 
     def test_damage_calculator_hp_percent_uses_white_base_hp(self):
         """校验 DamageCalculator 的生命百分比增益严格乘算 base_white_hp，而非面板总 max_hp。"""

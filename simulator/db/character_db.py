@@ -295,33 +295,11 @@ class CharacterDB:
             profile = self.get_by_name(str(avatar_id_or_name_or_profile))
 
         from ..core import Entity
-        try:
-            from ..kits.registry import get_kit_class
-        except ImportError:
-            get_kit_class = None
+        from ..protocols import GenericKit, apply_equipped_relics_affixes
 
         if not profile:
             char_name = str(avatar_id_or_name_or_profile)
-            kit_cls = get_kit_class(char_name) if get_kit_class else None
-            kit_inst = kit_cls(owner_id=char_name, port=None, eidolon=0) if kit_cls else None
-            if kit_inst:
-                try:
-                    from ..scaling import SkillScalingFactory
-                    scaling = SkillScalingFactory.create(char_name, eidolon=0)
-                    if scaling:
-                        kit_inst.bind_scaling(scaling)
-                except Exception:
-                    pass
-            max_energy = 120.0
-            if kit_inst:
-                try:
-                    from ..actions import ActionKind
-                    ult_defn = kit_inst.definition(ActionKind.ULTIMATE)
-                    if ult_defn and ult_defn.cost.energy > 0:
-                        max_energy = ult_defn.cost.energy
-                except Exception:
-                    pass
-            ent = Entity(
+            return Entity(
                 name=char_name,
                 base_speed=134.0,
                 base_atk=2600.0,
@@ -330,86 +308,20 @@ class CharacterDB:
                 max_hp=10000.0,
                 current_hp=10000.0,
                 energy=0.0,
-                max_energy=max_energy,
-                kit=kit_inst,
+                max_energy=120.0,
+                kit=GenericKit(owner_id=char_name, port=None, eidolon=0),
                 distance_remaining=10000.0,
                 policy=policy,
                 is_enemy=False
             )
-            if kit_inst and hasattr(kit_inst, "apply_trace_passives"):
-                kit_inst.apply_trace_passives(ent)
-            return ent
 
         panel = profile.panel
+        kit_inst = GenericKit(owner_id=profile.name, port=None, eidolon=profile.eidolon)
+        max_energy = float(AVATAR_STATS.get(profile.avatar_id, {}).get("max_energy") or 120.0)
 
-        # 自动尝试装配对应的 KitHandler (未专门定制的角色优雅回退至 GenericKit)
-        kit_inst = None
-        if get_kit_class:
-            kit_cls = get_kit_class(profile.name) or get_kit_class(str(profile.avatar_id))
-            if not kit_cls:
-                from ..kits.registry import GenericKit
-                kit_cls = GenericKit
-            if kit_cls:
-                kit_inst = kit_cls(owner_id=profile.name, port=None, eidolon=profile.eidolon)
-                try:
-                    from ..scaling import SkillScalingFactory
-                    scaling = SkillScalingFactory.create(profile.name or str(profile.avatar_id), eidolon=profile.eidolon)
-                    if scaling:
-                        kit_inst.bind_scaling(scaling)
-                except Exception:
-                    pass
-
-        max_energy = 120.0
-        if kit_inst:
-            try:
-                from ..actions import ActionKind
-                ult_defn = kit_inst.definition(ActionKind.ULTIMATE)
-                if ult_defn and ult_defn.cost.energy > 0:
-                    max_energy = ult_defn.cost.energy
-            except Exception:
-                pass
-
-        # 自动尝试装配对应的独立 LightConeHandler
+        # 局内光锥/遗器被动统一由 ConfigAbility VM 适配器挂载，此处仅输出纯局外面板实体
         lc_inst = None
-        if profile.light_cone:
-            try:
-                from ..light_cones import LightConeRegistry
-                s_val = int(profile.light_cone.superimposition) if hasattr(profile.light_cone, "superimposition") else 1
-                lc_name = profile.light_cone.name if hasattr(profile.light_cone, "name") else str(profile.light_cone)
-                lc_inst = LightConeRegistry.create(lc_name, owner_id=profile.name, port=None, superimposition=s_val)
-            except Exception:
-                pass
-
-        # 自动尝试装配对应的独立 RelicSetHandler
-        relic_handlers = []
-        set_counts: Dict[str, int] = {}
-        if getattr(profile, "relics", None):
-            try:
-                from ..relics import RelicRegistry
-                set_keys: Dict[str, Any] = {}
-                for r in profile.relics:
-                    sid = getattr(r, "relic_set_id", 0)
-                    sname = getattr(r, "set_name", "")
-                    key = sname if sname else str(sid)
-                    set_counts[key] = set_counts.get(key, 0) + 1
-                    set_keys[key] = sid if sid > 0 else sname
-
-                for key, cnt in set_counts.items():
-                    lookup_key = set_keys.get(key, key)
-                    if cnt >= 4:
-                        h = RelicRegistry.create(lookup_key, owner_id=profile.name, port=None, pieces=4)
-                        if not h and isinstance(lookup_key, int) and key != str(lookup_key):
-                            h = RelicRegistry.create(key, owner_id=profile.name, port=None, pieces=4)
-                        if h:
-                            relic_handlers.append(h)
-                    elif cnt >= 2:
-                        h = RelicRegistry.create(lookup_key, owner_id=profile.name, port=None, pieces=2)
-                        if not h and isinstance(lookup_key, int) and key != str(lookup_key):
-                            h = RelicRegistry.create(key, owner_id=profile.name, port=None, pieces=2)
-                        if h:
-                            relic_handlers.append(h)
-            except Exception:
-                pass
+        relic_handlers: List[Any] = []
 
         breakdowns = getattr(panel, "breakdowns", {}) or {}
         base_white_hp = getattr(breakdowns.get("hp"), "base_white", panel.hp)
@@ -451,16 +363,8 @@ class CharacterDB:
             is_enemy=False
         )
 
-        # 1. 遗器被动属性与主词条提取 (解耦委托至遗器模块自身处理)
-        from ..relics.base import apply_equipped_relics_affixes
+        # 遗器主词条静态属性（如治疗衣/充能绳等非面板汇总项）提取
         apply_equipped_relics_affixes(getattr(profile, "relics", None), entity)
-        for rh in relic_handlers:
-            if hasattr(rh, "apply_panel_passives"):
-                rh.apply_panel_passives(entity)
-
-        # 2. 角色行迹常驻被动属性与白字基准提取 (多态委托至各角色的技能套件 Kit 自身处理)
-        if kit_inst and hasattr(kit_inst, "apply_trace_passives"):
-            kit_inst.apply_trace_passives(entity)
 
         return entity
 

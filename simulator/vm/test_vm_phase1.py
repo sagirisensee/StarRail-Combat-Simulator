@@ -13,7 +13,6 @@ from simulator.vm import (
     eval_dynamic_float,
     eval_postfix_expr,
 )
-from simulator.scaling.resolver import SkillScalingFactory
 
 
 class TestVMPhase1(unittest.TestCase):
@@ -73,7 +72,6 @@ class TestVMPhase1(unittest.TestCase):
         # 1. 长夜月 (1413, E2)
         c1413 = self.loader.load_character(1413, eidolon=2)
         s1413 = self.loader.load_servant(11413, eidolon=2)
-        n1413 = SkillScalingFactory.create("1413", eidolon=2)
         self.assertEqual(c1413.skill_levels[1141301], 6)
         self.assertEqual(c1413.skill_levels[1141307], 6)
         # Skill03 multiplier = 2.00
@@ -84,7 +82,7 @@ class TestVMPhase1(unittest.TestCase):
                 for k, v in c1413.config["DynamicValues"]["Floats"].items()
                 if v.get("ReadInfo") == {"Type": "SkillParam", "TriggerKey": "Skill03", "Index": 0}
             ),
-            n1413.value("ultra", 0),
+            2.0,
             places=4,
         )
         # Servant 1141301 params = [0.50, 0.10]
@@ -93,14 +91,13 @@ class TestVMPhase1(unittest.TestCase):
             for k, v in s1413.config["DynamicValues"]["Floats"].items()
             if v.get("ReadInfo") == {"Type": "SkillParam", "TriggerKey": "Skill01", "Index": 0}
         )
-        self.assertAlmostEqual(sv_p0, n1413.value("1141301", 0), places=4)
+        self.assertAlmostEqual(sv_p0, 0.5, places=4)
         inh_1413 = self.loader.get_servant_base_inheritance(11413, eidolon=2)
         self.assertAlmostEqual(inh_1413["hp_inherit"], 0.50, places=4)
         self.assertAlmostEqual(inh_1413["speed_base"], 160.0, places=4)
 
         # 2. 缇宝 (1403, E6)
         c1403 = self.loader.load_character(1403, eidolon=6)
-        n1403 = SkillScalingFactory.create("1403", eidolon=6)
         self.assertEqual(c1403.skill_levels[140301], 7)
         self.assertEqual(c1403.skill_levels[140302], 12)
         self.assertEqual(c1403.skill_levels[140303], 12)
@@ -110,12 +107,11 @@ class TestVMPhase1(unittest.TestCase):
             for k, v in c1403.config["DynamicValues"]["Floats"].items()
             if v.get("ReadInfo") == {"Type": "SkillParam", "TriggerKey": "Skill03", "Index": 0}
         )
-        self.assertAlmostEqual(u0, n1403.value("ultra", 0), places=4)
+        self.assertAlmostEqual(u0, 0.33, places=4)
 
         # 3. 风堇 (1409, E1) + 小伊卡 (11409)
         c1409 = self.loader.load_character(1409, eidolon=1)
         s1409 = self.loader.load_servant(11409, eidolon=1)
-        n1409 = SkillScalingFactory.create("1409", eidolon=1)
         self.assertEqual(c1409.skill_levels[1140901], 6)
         self.assertIn("Avatar_Hyacine_00_Skill02_Phase02", c1409.abilities)
         self.assertIn("MServant_HyacineServant_00_Passive", s1409.global_modifiers)
@@ -124,19 +120,18 @@ class TestVMPhase1(unittest.TestCase):
             for k, v in s1409.config["DynamicValues"]["Floats"].items()
             if v.get("ReadInfo") == {"Type": "SkillParam", "TriggerKey": "Skill01", "Index": 0}
         )
-        self.assertAlmostEqual(sv_hy_0, n1409.value("1140901", 0), places=4)
+        self.assertAlmostEqual(sv_hy_0, 0.2, places=4)
 
         # 4. 晴歌 / 知更鸟S (1512, E1) + 晴空乐手 (11512)
         c1512 = self.loader.load_character(1512, eidolon=1)
         s1512 = self.loader.load_servant(11512, eidolon=1)
-        n1512 = SkillScalingFactory.create("1512", eidolon=1)
         self.assertEqual(c1512.skill_levels[1151201], 6)
         sv_rb_1 = next(
             s1512.dynamic_floats[int(k)]
             for k, v in s1512.config["DynamicValues"]["Floats"].items()
             if v.get("ReadInfo") == {"Type": "SkillParam", "TriggerKey": "Skill01", "Index": 1}
         )
-        self.assertAlmostEqual(sv_rb_1, n1512.value("1151201", 1), places=4)
+        self.assertAlmostEqual(sv_rb_1, 1.5, places=4)
 
     def test_relics_and_light_cones_load_and_resolve(self):
         ab_125, dyn_125 = self.loader.get_relic_ability(125, 4)

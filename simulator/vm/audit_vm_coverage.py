@@ -61,10 +61,7 @@ STRUCTURAL_DATA_TYPES: Set[str] = {
 
 
 def extract_executor_supported_types(executor_path: Path) -> Tuple[Set[str], Set[str]]:
-    """Statically parse ``simulator/vm/executor.py`` via AST to extract supported Task & Predicate ``$type`` strings."""
-    source = executor_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(executor_path))
-
+    """Statically parse ``simulator/vm/executor.py`` and ``simulator/vm/ops/*.py`` via AST to extract supported Task & Predicate ``$type`` strings."""
     supported_predicates: Set[str] = set()
     supported_tasks: Set[str] = set()
 
@@ -77,14 +74,25 @@ def extract_executor_supported_types(executor_path: Path) -> Tuple[Set[str], Set
                 ):
                     out.add(val)
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "TaskExecutor":
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef):
-                    if item.name == "_eval_predicate_raw":
-                        _collect_strings_from_method(item, supported_predicates)
-                    elif item.name == "execute_task":
-                        _collect_strings_from_method(item, supported_tasks)
+    scan_paths: List[Path] = [executor_path]
+    ops_dir = executor_path.parent / "ops"
+    if ops_dir.is_dir():
+        scan_paths.extend(sorted(ops_dir.glob("*.py")))
+
+    target_classes = {"TaskExecutor", "PredicateOpsMixin", "CombatOpsMixin", "TurnOpsMixin"}
+    task_methods = {"execute_task", "_dispatch_combat_op", "_dispatch_turn_op"}
+
+    for path in scan_paths:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in target_classes:
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef):
+                        if item.name == "_eval_predicate_raw":
+                            _collect_strings_from_method(item, supported_predicates)
+                        elif item.name in task_methods:
+                            _collect_strings_from_method(item, supported_tasks)
 
     return supported_tasks, supported_predicates
 

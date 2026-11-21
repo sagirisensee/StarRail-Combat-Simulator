@@ -16,18 +16,24 @@ from simulator.golden_diff import (
 from simulator.plugins.log_20261114_155925 import attach_log_20261114_155925_plugin
 from simulator.plugins.log_20261114_184651 import attach_log_20261114_184651_plugin
 from simulator.plugins.log_20261114_184845 import attach_log_20261114_184845_plugin
-from simulator.plugins.log_20261114_204943 import attach_log_20261114_204943_plugin
-from simulator.plugins.log_20261114_205144 import attach_log_20261114_205144_plugin
-from simulator.plugins.log_20261114_220255 import attach_log_20261114_220255_plugin
-from simulator.plugins.log_20261114_221208 import attach_log_20261114_221208_plugin
-from simulator.plugins.log_20261114_222204 import attach_log_20261114_222204_plugin
-from simulator.plugins.non_crit_ledgers import (
-    OFFICIAL_20261114_204943_NON_CRITS,
-    OFFICIAL_20261114_220255_NON_CRITS,
-    OFFICIAL_20261114_221208_NON_CRITS,
-    OFFICIAL_20261114_222204_NON_CRITS,
+from simulator.plugins.log_20261114_204943 import (
+    NON_CRITS as OFFICIAL_20261114_204943_NON_CRITS,
+    attach_log_20261114_204943_plugin,
 )
-from simulator.stage_30126122 import build_stage_30126122
+from simulator.plugins.log_20261114_205144 import attach_log_20261114_205144_plugin
+from simulator.plugins.log_20261114_220255 import (
+    NON_CRITS as OFFICIAL_20261114_220255_NON_CRITS,
+    attach_log_20261114_220255_plugin,
+)
+from simulator.plugins.log_20261114_221208 import (
+    NON_CRITS as OFFICIAL_20261114_221208_NON_CRITS,
+    attach_log_20261114_221208_plugin,
+)
+from simulator.plugins.log_20261114_222204 import attach_log_20261114_222204_plugin
+from simulator.plugins.log_20261115_041608 import (
+    NON_CRITS as OFFICIAL_20261115_041608_NON_CRITS,
+    attach_log_20261115_041608_plugin,
+)
 from simulator.vm.factory import build_vm_team
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.stage_sim_adapter import build_data_driven_stage
@@ -61,10 +67,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         log_path = os.path.join(ROOT_DIR, "battle_logs", filename)
         g = parse_golden_jsonl(log_path)
         team = build_vm_team(names, db=self.db, loader=self.loader)
-        if data_driven:
-            sim, director = build_data_driven_stage(30126122, team, technique_users=list(names))
-        else:
-            sim, director = build_stage_30126122(team, technique_users=list(names))
+        sim, director = build_data_driven_stage(30126122, team, technique_users=list(names))
 
         attach_exact_crit_oracle(sim, log_path=log_path, non_crits=non_crits or set())
         plugin_fn(sim)
@@ -90,9 +93,9 @@ class TestVMStage30126122Alignment(unittest.TestCase):
 
         err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
         self.assertLess(err, total_limit, f"{tag} VM 总伤偏差过大: {err:.4%} (limit={total_limit:.2%})")
-        self._assert_per_turn_sub_0_2_pct(tag, g, traj, turn_limit=turn_limit, ika_turn_limit=ika_turn_limit)
+        self._assert_per_turn_sub_0_01_pct(tag, g, traj, turn_limit=turn_limit, ika_turn_limit=ika_turn_limit)
 
-    def _assert_per_turn_sub_0_2_pct(
+    def _assert_per_turn_sub_0_01_pct(
         self, tag: str, g: object, traj: object, *, turn_limit: float = 0.0001, ika_turn_limit: float = 0.0001
     ) -> None:
         gt_by_av: dict[float, float] = {}
@@ -191,7 +194,15 @@ class TestVMStage30126122Alignment(unittest.TestCase):
             "battle_20261114_222204.jsonl",
             ["风堇", "缇宝", "长夜月"],
             attach_log_20261114_222204_plugin,
-            non_crits=OFFICIAL_20261114_222204_NON_CRITS,
+        )
+
+    def test_vm_20261115_041608(self) -> None:
+        self._run_vm_case(
+            "041608",
+            "battle_20261115_041608.jsonl",
+            ["风堇", "缇宝", "长夜月", "知更鸟•晴歌"],
+            attach_log_20261115_041608_plugin,
+            non_crits=OFFICIAL_20261115_041608_NON_CRITS,
         )
 
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from simulator.stage_30126122 import (
+from simulator.vm._test_stage_30126122_refs import (
     APOLI_BASE_SPEED,
     APOLI_PHASE1_BARRIER_RATIO,
     APOLI_PHASE1_HP,

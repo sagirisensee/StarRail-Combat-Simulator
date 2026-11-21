@@ -1,12 +1,17 @@
 # coding: utf-8
 """实机日志 battle_20261114_204943.jsonl 专属随机事件插件（由 gen_reconcile 纯通用自动生成）。"""
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from simulator.plugins._helpers import (
     find_ally as _find_ally,
     find_memosprite_name as _find_memosprite_name,
     find_memosprite_of as _find_memosprite_of,
 )
+
+NON_CRITS: Set[Tuple[int, int]] = {
+    (5, 4),   # AV 72.73: 晴空乐手 叽叽啾啾四重奏 hit 5 -> 流星铁鹰_g1_2 (13,801.90 vs 36,530.86)
+    (16, 0),  # AV 160.02: 晴空乐手 叽叽啾啾四重奏 hit 1 -> 流星铁鹰_g1_1 (13,591.17 vs 34,141.11)
+}
 
 
 def attach_log_20261114_204943_plugin(sim: Any) -> None:

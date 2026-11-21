@@ -14,11 +14,13 @@
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 import math
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 
+@lru_cache(maxsize=4096)
 def dotnet_hash(s: str) -> int:
     """计算官方 DynamicKey / TriggerKey 所用的 32 位有符号 .NET 字符串哈希。"""
     h1 = 5381
@@ -255,9 +257,21 @@ def eval_compiled_expr(expr: CompiledPostfixExpr, resolver: HashResolver) -> flo
     return _resolve_num(stack[-1], resolver)
 
 
+_POSTFIX_EXPR_CACHE: Dict[int, Tuple[Mapping[str, Any], CompiledPostfixExpr]] = {}
+
+
 def eval_postfix_expr(data: Mapping[str, Any], resolver: HashResolver) -> float:
-    """直接对原始 PostfixExpr 字典求值。"""
-    return eval_compiled_expr(CompiledPostfixExpr.from_dict(data), resolver)
+    """直接对原始 PostfixExpr 字典求值（带 O(1) 预解码字节码缓存）。"""
+    key = id(data)
+    cached = _POSTFIX_EXPR_CACHE.get(key)
+    if cached is not None and cached[0] is data:
+        compiled = cached[1]
+    else:
+        compiled = CompiledPostfixExpr.from_dict(data)
+        if len(_POSTFIX_EXPR_CACHE) >= 4096:
+            _POSTFIX_EXPR_CACHE.clear()
+        _POSTFIX_EXPR_CACHE[key] = (data, compiled)
+    return eval_compiled_expr(compiled, resolver)
 
 
 def eval_dynamic_float(spec: Any, resolver: HashResolver, default: float = 0.0) -> float:

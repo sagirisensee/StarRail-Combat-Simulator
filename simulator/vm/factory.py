@@ -125,17 +125,6 @@ def build_vm_entity(
     else:
         aid, eid, lc_id, lc_s, relics = _infer_loadout_from_profile(rp)
 
-    # 扣除 character_db_export 中已预烘焙、但官方 VM 会主动添加的局内被动：
-    # 1409: PointB1 (+1.00 CR), Relic 320 (+0.20 OH)
-    # 1403 / 1413: Relic 319 拾骨地 (+0.28 CD)
-    if uid == 1409:
-        ent.base_crit_rate = max(0.05, ent.base_crit_rate - 1.00)
-        ent.base_effect_res = max(0.0, ent.base_effect_res - 0.50)
-        ent.base_outgoing_healing = max(0.0, ent.base_outgoing_healing - 0.20)
-    elif uid in (1403, 1413):
-        ent.base_crit_dmg = max(0.50, ent.base_crit_dmg - 0.28)
-    # 1413: PointB3 / 行迹已含暴击，Relic 319 仅在局内加暴伤(未进面板)
-
     ent.kit = ConfigAbilityKitAdapter(name, aid, eidolon=eid, loader=vm_loader)
     if lc_id is not None:
         ent.light_cone = ConfigAbilityLightConeAdapter(name, lc_id, superimposition=lc_s)

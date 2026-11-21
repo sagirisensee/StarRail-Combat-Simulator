@@ -22,9 +22,7 @@ from ..events import (
     TurnBeginEvent,
     TurnEndEvent,
 )
-from ..kits.base import KitHandler
-from ..light_cones.base import LightConeHandler
-from ..relics.base import RelicSetHandler
+from ..protocols import KitHandler, LightConeHandler, RelicSetHandler
 from ..status import StatType
 from .executor import TaskExecutor
 from .loader import CompiledCharacterSpec, GameDataLoader
@@ -80,8 +78,8 @@ class VMRuntime:
         self._attack_scope_depth += 1
 
     def trigger_or_defer_limbo(self, owner_id: str, param_entity_id: Optional[str]) -> bool:
-        """若当前处于死亡批处理（OnBeforeDying）中，将转阶段回血延后至整批完成后触发，防止后续自伤误扣新阶段 HP。"""
-        if getattr(self, "_in_dying_batch", False):
+        """若当前处于攻击作用域或死亡批处理（OnBeforeDying）中，将转阶段回血延后至结算完成后触发，防止附加/真伤或自伤误扣新阶段 HP。"""
+        if getattr(self, "_in_dying_batch", False) or getattr(self, "_attack_scope_depth", 0) > 0:
             q = getattr(self, "_pending_limbo_after_dying", None)
             if q is None:
                 q = []
@@ -92,44 +90,43 @@ class VMRuntime:
         return False
 
     def flush_pending_after_attack(self) -> None:
-        if self._pending_after_attack is None:
-            return
-        atk_seq, caster_id, dmg_data, atk_type = self._pending_after_attack
-        self._pending_after_attack = None
-        all_targets = tuple(self._attack_targets_by_key.get((atk_seq, caster_id), ()))
-        after_set = getattr(self, "_after_attack_fired", None)
-        if after_set is None:
-            after_set = set()
-            self._after_attack_fired = after_set
-        after_key = (atk_seq, caster_id)
-        if after_key not in after_set:
-            after_set.add(after_key)
-            self._in_after_attack = True
-            try:
-                self.modifier_engine.dispatch_event(
-                    "OnAfterAttack",
-                    owner_id=caster_id,
-                    attack_target_ids=all_targets,
-                    damage_data=dmg_data,
-                    current_attack_type=atk_type,
-                )
-                self.modifier_engine.dispatch_event(
-                    "OnListenAfterAttack",
-                    param_entity_id=caster_id,
-                    attack_target_ids=all_targets,
-                    damage_data=dmg_data,
-                    current_attack_type=atk_type,
-                )
-                for tid in all_targets:
+        if self._pending_after_attack is not None:
+            atk_seq, caster_id, dmg_data, atk_type = self._pending_after_attack
+            self._pending_after_attack = None
+            all_targets = tuple(self._attack_targets_by_key.get((atk_seq, caster_id), ()))
+            after_set = getattr(self, "_after_attack_fired", None)
+            if after_set is None:
+                after_set = set()
+                self._after_attack_fired = after_set
+            after_key = (atk_seq, caster_id)
+            if after_key not in after_set:
+                after_set.add(after_key)
+                self._in_after_attack = True
+                try:
                     self.modifier_engine.dispatch_event(
-                        "OnAfterBeingAttacked",
-                        owner_id=tid,
-                        param_entity_id=caster_id,
+                        "OnAfterAttack",
+                        owner_id=caster_id,
+                        attack_target_ids=all_targets,
                         damage_data=dmg_data,
                         current_attack_type=atk_type,
                     )
-            finally:
-                self._in_after_attack = False
+                    self.modifier_engine.dispatch_event(
+                        "OnListenAfterAttack",
+                        param_entity_id=caster_id,
+                        attack_target_ids=all_targets,
+                        damage_data=dmg_data,
+                        current_attack_type=atk_type,
+                    )
+                    for tid in all_targets:
+                        self.modifier_engine.dispatch_event(
+                            "OnAfterBeingAttacked",
+                            owner_id=tid,
+                            param_entity_id=caster_id,
+                            damage_data=dmg_data,
+                            current_attack_type=atk_type,
+                        )
+                finally:
+                    self._in_after_attack = False
         pending_dying = getattr(self, "_pending_dying_enemies", None)
         if pending_dying:
             dying_batch = list(pending_dying)
@@ -141,26 +138,26 @@ class VMRuntime:
                     self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
             finally:
                 self._in_dying_batch = prev_in_dying
-            if not prev_in_dying:
-                pending_limbo = getattr(self, "_pending_limbo_after_dying", None)
-                if pending_limbo:
-                    limbo_batch = list(pending_limbo)
-                    pending_limbo.clear()
-                    for limbo_tid, limbo_killer in limbo_batch:
-                        ent = self.sim.get_entity(limbo_tid)
-                        kit = getattr(ent, "kit", None) if ent is not None else None
-                        runner = getattr(kit, "runner", None) if kit is not None else None
-                        if runner is not None:
-                            try:
-                                mrs = runner.get_enemy_state(limbo_tid)
-                                setattr(mrs, "_limbo_pending", False)
-                            except KeyError:
-                                pass
-                        self.modifier_engine.dispatch_event(
-                            "OnLimboWaitHeal",
-                            owner_id=limbo_tid,
-                            param_entity_id=limbo_killer,
-                        )
+        if not getattr(self, "_in_dying_batch", False):
+            pending_limbo = getattr(self, "_pending_limbo_after_dying", None)
+            if pending_limbo:
+                limbo_batch = list(pending_limbo)
+                pending_limbo.clear()
+                for limbo_tid, limbo_killer in limbo_batch:
+                    ent = self.sim.get_entity(limbo_tid)
+                    kit = getattr(ent, "kit", None) if ent is not None else None
+                    runner = getattr(kit, "runner", None) if kit is not None else None
+                    if runner is not None:
+                        try:
+                            mrs = runner.get_enemy_state(limbo_tid)
+                            setattr(mrs, "_limbo_pending", False)
+                        except KeyError:
+                            pass
+                    self.modifier_engine.dispatch_event(
+                        "OnLimboWaitHeal",
+                        owner_id=limbo_tid,
+                        param_entity_id=limbo_killer,
+                    )
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
             for dead_tid in list(pending_dead):
@@ -363,9 +360,8 @@ class VMRuntime:
         inh = self.loader.get_servant_base_inheritance(servant_id, eidolon=eidolon)
         sv_spec = self.loader.load_servant(servant_id, owner_avatar_id=spec_master.unit_id if spec_master else None, eidolon=eidolon)
 
-        # 读取中文名（回退常见映射）
-        default_names = {11409: "小伊卡", 11413: "长夜", 11512: "晴空乐手"}
-        sv_name = default_names.get(servant_id, f"Servant_{servant_id}")
+        from ..golden.models import SERVANT_NAMES
+        sv_name = SERVANT_NAMES.get(servant_id, f"Servant_{servant_id}")
 
         master_base_hp = float(getattr(master, "base_max_hp", 0.0) or self.sim.port.max_hp(master_id))
         master_white_hp = float(getattr(master, "base_white_hp", 0.0) or master_base_hp)

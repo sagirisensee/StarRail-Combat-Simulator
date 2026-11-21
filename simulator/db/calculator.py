@@ -15,7 +15,9 @@ from .models import (
 from .tables import (
     AVATAR_STATS, DEFAULT_5STAR_STATS, DEFAULT_4STAR_STATS,
     LIGHTCONE_STATS, DEFAULT_5STAR_LC, DEFAULT_4STAR_LC,
-    RELIC_MAIN_VALUES, RELIC_SUB_RULES, RELIC_SETS
+    RELIC_MAIN_VALUES, RELIC_SUB_RULES, RELIC_SETS,
+    get_avatar_base_stats, get_lightcone_stats,
+    get_relic_main_value, get_relic_sub_rule,
 )
 
 
@@ -39,9 +41,11 @@ class StatCalculator:
         relics_raw: List[Dict[str, Any]]
     ) -> Tuple[CharacterPanel, Optional[EquippedLightCone], List[EquippedRelic]]:
         avatar_id = int(avatar_raw.get("avatar_id", 0))
-        
-        # 1. 获取角色基础白值与行迹
-        c_stats = AVATAR_STATS.get(avatar_id)
+        avatar_level = int(avatar_raw.get("level", 80))
+        avatar_promo = int(avatar_raw.get("promotion", 6))
+
+        # 1. 按官方 AvatarPromotionConfig + AvatarSkillTreeConfig 获取任意等级精确白值与小行迹
+        c_stats = get_avatar_base_stats(avatar_id, level=avatar_level, promotion=avatar_promo)
         if not c_stats:
             c_stats = DEFAULT_5STAR_STATS if avatar_id >= 1000 else DEFAULT_4STAR_STATS
 
@@ -58,7 +62,10 @@ class StatCalculator:
 
         if lc_raw:
             item_id = int(lc_raw.get("item_id", 0))
-            lc_cfg = LIGHTCONE_STATS.get(item_id)
+            lc_level = int(lc_raw.get("level", 80))
+            lc_promo = int(lc_raw.get("promotion", 6))
+            lc_rank = int(lc_raw.get("rank", 1))
+            lc_cfg = get_lightcone_stats(item_id, level=lc_level, promotion=lc_promo, rank=lc_rank)
             if not lc_cfg:
                 lc_cfg = DEFAULT_5STAR_LC if item_id >= 23000 else DEFAULT_4STAR_LC
 
@@ -100,16 +107,16 @@ class StatCalculator:
         for r_raw in relics_raw:
             r_id = str(r_raw.get("relic_id", 0))
             slot = int(r_id[-1]) if r_id and r_id[-1].isdigit() and int(r_id[-1]) in range(1, 7) else 1
+            rarity = int(r_id[0]) - 1 if len(r_id) >= 6 and r_id[0].isdigit() and int(r_id[0]) in range(3, 7) else 5
             set_id = int(r_raw.get("relic_set_id", 0))
             level = int(r_raw.get("level", 15))
             main_affix_id = int(r_raw.get("main_affix_id", 1))
             
             set_counts[set_id] = set_counts.get(set_id, 0) + 1
-            set_name = RELIC_SETS.get(set_id, {}).get("name", f"套装{set_id}")
+            set_name = r_raw.get("set_name") or RELIC_SETS.get(set_id, {}).get("name", f"套装{set_id}")
 
-            # 解析主词条
-            slot_main_table = RELIC_MAIN_VALUES.get(slot, {})
-            main_info = slot_main_table.get(main_affix_id, {"name": f"词条{main_affix_id}", "key": "unknown", "val": 0.0, "is_pct": False})
+            # 按官方 RelicMainAffixConfig 精确计算当前星级与强化等级的主词条
+            main_info = get_relic_main_value(slot, main_affix_id, level=level, rarity=rarity)
             m_key = main_info["key"]
             m_val = float(main_info["val"])
             m_pct = bool(main_info["is_pct"])
@@ -119,14 +126,14 @@ class StatCalculator:
             else:
                 relic_flat_bonuses[m_key] = relic_flat_bonuses.get(m_key, 0.0) + m_val
 
-            # 解析副词条
+            # 按官方 RelicSubAffixConfig 精确计算副词条档位值
             parsed_subs: List[Dict[str, Any]] = []
             for sub in r_raw.get("sub_affixes", []):
                 sid = int(sub.get("sub_affix_id", 0))
                 cnt = int(sub.get("count", 1))
                 stp = int(sub.get("step", 0))
 
-                sub_rule = RELIC_SUB_RULES.get(sid)
+                sub_rule = get_relic_sub_rule(sid, rarity=rarity)
                 if sub_rule:
                     s_key = sub_rule["key"]
                     s_val = cnt * sub_rule["base"] + stp * sub_rule["step_val"]

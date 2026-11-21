@@ -3,11 +3,7 @@
 Core Architecture Exports:
 - Engine & Entities: TurnSimulator, Entity, BattleInspector
 - Port & Contracts: CombatPort, SimulatorCombatPort, BuffSpec, ActionKind, ActionContext, AbilityDefinition, TargetMode, ResourceCost
-- Plugin Bases & Decorators:
-  * KitHandler, register_kit, get_kit_class
-  * LightConeHandler, LightConeRegistry, register_light_cone
-  * RelicSetHandler, RelicRegistry, register_relic_set
-  * StageMechanicPlugin, StageMechanicRegistry, register_stage_mechanic
+- Handler Protocols: KitHandler, LightConeHandler, RelicSetHandler, StageMechanicPlugin, StageMechanicRegistry, register_stage_mechanic
 - Status & Events: StatusManager, StatusInstance, StatType, Modifier, ModifierOp, DurationTiming, StatusTag, EventBus, BattleEvent
 - Damage & DB: DamageCalculator, DamageRequest, DamageBreakdown, CharacterDB, CharacterProfile, CharacterPanel, StatCalculator
 """
@@ -26,9 +22,7 @@ from .events import (
 from .sp import SkillPointManager
 from .status import StatusManager, StatusInstance, StatType, Modifier, ModifierOp, DurationTiming, StatusTag
 from .stage_mechanics import StageMechanicPlugin, StageMechanicRegistry, register_stage_mechanic
-from .kits import KitHandler, register_kit, get_kit_class
-from .light_cones import LightConeHandler, LightConeRegistry, register_light_cone
-from .relics import RelicSetHandler, RelicRegistry, register_relic_set
+from .protocols import KitHandler, LightConeHandler, RelicSetHandler
 from .db import CharacterDB, CharacterProfile, CharacterPanel, StatCalculator
 
 __all__ = [
@@ -72,14 +66,8 @@ __all__ = [
     "StageMechanicRegistry",
     "register_stage_mechanic",
     "KitHandler",
-    "register_kit",
-    "get_kit_class",
     "LightConeHandler",
-    "LightConeRegistry",
-    "register_light_cone",
     "RelicSetHandler",
-    "RelicRegistry",
-    "register_relic_set",
     "CharacterDB",
     "CharacterProfile",
     "CharacterPanel",
