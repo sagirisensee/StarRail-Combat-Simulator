@@ -193,6 +193,7 @@ run_trajectory_replay(sim, director, tl, av_budget=240.0)
 | 错误写法 | 报错现象 | 正确写法 |
 | :--- | :--- | :--- |
 | `python3 -c 'print(f"{d.get(\"key\")}")'` | `SyntaxError: unexpected character after line continuation character` | **禁止在 f-string `{...}` 内使用 `\"`**；先把值赋给局部变量（`v = d.get("key"); print(f"{v}")`）或直接用逗号分隔 `print("...", d.get("key"))` |
+| PowerShell 下 `python -c "... \" ..."` | PowerShell 把双引号剥离导致 `SyntaxError` | 用 heredoc 管道 `@'\n...\n'@ \| python -`（避免单行命令行内多层引号转义冲突） |
 | `timeout 30 pytest ...` | `zsh: command not found: timeout`（macOS 默认无 GNU `timeout`） | 直接执行命令，无需加 `timeout` 前缀 |
 
 ### 2. 模块导出与方法名坑
@@ -200,21 +201,40 @@ run_trajectory_replay(sim, director, tl, av_budget=240.0)
 | 错误写法 | 正确写法 |
 | :--- | :--- |
 | `from simulator.kits.enemies.sim_port import SimEnemyPort` | `from simulator.kits.enemies.sim_port import BaseEnemyCombatPortImpl` |
-| `from simulator.golden_diff import run_reconcile` | `from simulator.vm.reconcile_generator import reconcile_log`（或直接跑 CLI `python3 gen_reconcile.py <log> --data-driven --verbose`） |
+| `from simulator.golden_diff import run_reconcile` / `GoldenDiffEngine` | `from simulator.vm.reconcile_generator import reconcile_log`（或直接跑 CLI `python3 gen_reconcile.py <log> --data-driven --verbose`） |
+| `from simulator.vm.reconcile_generator import load_ground_truth` / `run_vm_reconcile` / `extract_metadata` / `extract_official_log_metadata` | `parse_golden_jsonl(path)`（在 `simulator.golden_diff`） / `extract_log_metadata(path)`（只收 1 个位置参数 `log_path`） / `reconcile_log(log_path, *, force_data_driven=False, ...)`（**无 `data_driven=` 关键字，正确参数为 `force_data_driven=`**） |
 | `from simulator.vm.test_vm_30126122_alignment import _run_vm_case` | `_run_vm_case` 是 `TestVMStage30126122Alignment` 实例方法；直接跑 `python3 -m pytest simulator/vm/test_vm_30126122_alignment.py -k "<tag>" -v` |
-| `StageDataLoader().compile_stage(30126122)` | `StageDataLoader().load_stage(30126122)` |
+| `StageDataLoader().compile_stage(30126122)` / `load_stage_config(...)` | `StageDataLoader().load_stage(30126122)` |
 | `StageDataLoader()._read_json("Config/...")` | `GameDataLoader()._read_json("Config/...")`（`StageDataLoader` 无 `_read_json`） |
+| `GameDataLoader().load_ability(...)` / `get_modifier(...)` / `get_stage_config(...)` / `get_monster_config(...)` | `loader.get_ability(name)` / `loader.get_global_modifier(name)` / `StageDataLoader().load_stage(stage_id)` / `StageDataLoader().load_monster(...)` |
 | `StageAILoader().load_monster_ai(...)` | `StageAILoader().compile_monster_ai(...)` |
-| `from simulator.events import HealEvent` | `from simulator.events import HealAppliedEvent` |
+| `from simulator.vm.executor import AbilityExecutor` / `ActionExecutor` | `from simulator.vm.executor import TaskExecutor`（注意实例内部持有 `self.rt`，**不是 `self.runtime`**） |
+| `from simulator.vm.runtime import AbilityVMRuntime` / `dotnet_hash` | `from simulator.vm.runtime import VMRuntime`；`from simulator.vm.expr import dotnet_hash` |
+| `from simulator.vm.stage_sim_adapter import build_vm_team` / `run_stage_with_plugins` | `from simulator.vm.factory import build_vm_team`；搭舞台用 `build_data_driven_stage(stage_id, team, ...)`（必须传 `team` 位置参数，**不接受 `avatar_ids=`**） |
+| `from simulator.events import HealEvent` / `HPChangeEvent` / `EntityDyingEvent` / `EnergyChangedEvent` | `from simulator.events import HealAppliedEvent` / `HPLostEvent` / `DamageAppliedEvent` / `EnemyDefeatedEvent` |
+| `BaseEnemyCombatPortImpl.apply_enemy_attack(owner_id, targets, ...)`（位置传参） | **全部参数均为 keyword-only (`*`)**：必须写 `apply_enemy_attack(owner_id=..., target_ids=(...,), multiplier=..., element=..., hit_energy=..., hits=..., blast=...)` |
+| `VMRuntime.trigger_ability(ability_name, ...)`（多个位置参数） | 除 `self, ability_name` 外其余为 keyword-only（如 `caster_id=...`, `target_ids=...`） |
+| `attach_log_<tag>_plugin(sim, non_crits=...)` | 插件函数只接收 `(sim)`，非暴击集合需传给 `attach_exact_crit_oracle(sim, log_path=..., non_crits=...)` |
 
 ### 3. 对象真实属性名坑
 
 | 对象 | 错误属性名 | 正确属性 / 读取方式 |
 | :--- | :--- | :--- |
-| `VMRuntime` | `rt.dynamic_values` | `rt.entity_dynamics` 或 `rt.get_dynamic_value(entity_id, dotnet_hash("Key"))` |
-| `HealAppliedEvent` | `e.healer_name` | `e.source_name`（配合 `e.target_name`, `e.amount`） |
-| `Entity` | `e.damage_reduction`（直接访问） | `getattr(e, "damage_reduction", 0.0)`（非所有实体默认挂载该字段）；变身/克隆实体时务必同时拷贝白值 `base_white_hp/atk/def/speed` |
-| `DamageHit`（`golden_diff.py`） | `d.target` | 仅含 `d.attacker`, `d.damage_type`, `d.damage`（无 `target` 字段） |
-| `CompiledMonsterSpec` | `m.ai_spec` | 通过 `StageAILoader` 编译，或运行时从 `ent.kit.ai_spec` 获取 |
+| `TurnSimulator` | `sim.av` / `sim.current_actor` / `sim.allies` / `sim.action_order` / `sim.is_finished` / `sim.advance_turn()` | **`sim.current_av`**、`sim.current_turn_entity`、`sim.get_action_order()`、`sim.step()` / `sim.advance_to_next_turn()`；我方筛选 `[e for e in sim.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]` |
+| `VMRuntime` | `rt.ability_registry` / `rt.ability_definitions` / `rt.dynamic_values` / `rt.new_context(...)` | `rt.loader.get_ability(name)`、`rt.entity_dynamics` 或 `rt.get_dynamic_value(entity_id, dotnet_hash("Key"))` |
+| `ModifierEngine` | `me.get_active_modifiers(...)` / `me._modifiers_by_target` / `me._modifier_defs` / `me.get_dynamic_value(...)` | **`sim.vm_runtime.modifier_engine.get_modifiers(owner_id, name=None)`**（`by_owner` 按实体存储；动态值查 `rt.get_dynamic_value(...)` 或 `mod.dynamic_values`） |
+| `VMModifierInstance` | `m.stack_count` / `m.callback_list` | 层数是 **`m.layer`**（与 `m.max_layer`、`m.owner_id`、`m.caster_id`、`m.life_time`、`m.behavior_flags`）；配置字典在 `m.config` |
+| `DataDrivenStageDirector` | `director.runtime` / `director.enemy_port` / `director.setup_wave(...)` | 通过 **`sim.vm_runtime`** 访问 VM 运行时；波次状态在 `director.runner.state`（`wave_index`） |
+| `MonsterRuntimeState` | `mrs.name` / `mrs.spec` | 名称在 **`mrs.entity.name`**，蓝图在 **`mrs.blueprint`**，基础抗性在 `mrs.base_damage_res` |
+| `CompiledMonsterSpec` | `m.ai_spec` / `m.abilities` | AI 通过 `StageAILoader().compile_monster_ai(...)` 或 `ent.kit.ai_spec` 获取；能力列表字段为 **`m.ability_list`** |
 | `CompiledStageSpec` | `st.stage_ability_list` / `st.stage_abilities` | 关卡能力配置在 `st.stage_config_data` 与 `st.battle_events` 中 |
+| `TrajectoryResult` | `traj.sequence` / `traj.turn_records` | 官方/回放序列在 **`traj.replay.sequence`**（即 `BattleSequence`，含 `.turns` / `.total_damage` / `.final_av`）；动作与大招记录在 `traj.records` / `traj.master_records` / `traj.ult_records` |
+| `BattleSequence` / `TurnRecord` | `for t in seq:` / `seq.actions` / `t.actor` / `t.actor_name` | `BattleSequence` 不可直接迭代，遍历 **`seq.turns`**；每个 `TurnRecord` 的行动者属性为 **`t.owner`** |
+| `TimelineItem` | `item.actor_name` / `item.character` / `item.action_type` | 字段为 **`item.actor`**、**`item.kind`**（`"basic"\|"skill"\|"ult"\|"spirit"`）、`item.av`、`item.skill_id`、`item.target_ids` |
+| `Entity` | `e.toughness` / `e.current_speed` / `e.statuses` / `e.modifiers` / `e.buffs` / `e.damage_reduction` / `e.add_energy()` | 韧性为 `e.current_toughness` / `e.max_toughness`；速度为只读 `e.speed`；能量直接加减 `e.energy`（受 `e.max_energy` 上限约束）；Status 通过 `sim.status_mgr` 或 `sim.vm_runtime.modifier_engine.get_modifiers(e.name)` 查；`getattr(e, "damage_reduction", 0.0)`；克隆/变身实体务必同步拷贝 `base_white_hp/atk/def/speed` |
+| `HealAppliedEvent` | `e.healer_name` / `e.heal_amount` | `e.source_name`、`e.target_name`、`e.amount` |
+| `EnemyDefeatedEvent` | `e.enemy_name` / `e.killer_name` | **`e.target_name`**、**`e.attacker_name`** |
+| `DamageAppliedEvent` | `e.amount` | **`e.damage`**、`e.attacker_name`、`e.target_name`、`e.damage_type` |
+| `DamageHit`（`golden_diff.py`） | `d.target` | 仅含 `d.attacker`, `d.damage_type`, `d.damage`（无 `target` 字段） |
+| `DamageBreakdown` | `bd.base_damage` / `bd.toughness_mult` | 属性为 `bd.base_dmg` 等（查看 `simulator/damage.py` 定义） |
 | `battle_*.jsonl` `OnDamage` | `data["damage_type"]`、`data["attacker"]["name"]` | 伤害类型字段是 **`data["type"]`**；`attacker` / `turn_owner` 仅含 `{"team", "uid"}`（无 `name`，敌方 `name` 需从 `OnInitializeEnemy` 建映射） |

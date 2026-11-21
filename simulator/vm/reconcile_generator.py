@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -230,6 +231,7 @@ def extract_log_metadata(
     cur_sp_gain_counts: Dict[str, int] = {}
     cur_first_memo_owner: Optional[str] = None
     last_enemy_hit_sp: float = 0.0
+    paused_enemy_ctx: Optional[Dict[str, Any]] = None
 
     # 无归属回合（阿哈回合）追踪
     cur_none_had_skill = False
@@ -341,10 +343,6 @@ def extract_log_metadata(
         elif cur_turn_owner_team is None and not cur_none_had_skill and cur_none_ally_chips:
             # 真实阿哈回合必含我方伴生微伤（过滤无我方微伤的 Boss 紫色球体/破盾扣血等系统回合）
             filtered_dmgs = [(u, d) for u, d in cur_none_enemy_dmgs if d < 500_000.0]
-            pos_dmgs = [d for _, d in filtered_dmgs if d > 1.0]
-            ref_bounce = max(pos_dmgs) if pos_dmgs else 0.0
-            if ref_bounce > 0.0:
-                filtered_dmgs = [(u, ref_bounce if d <= 1.0 else d) for u, d in filtered_dmgs]
             aha_turns.append(
                 AhaTurnRecord(
                     av=round(cur_av, 6),
@@ -396,6 +394,7 @@ def extract_log_metadata(
                 if in_aoe_heal_window and len(aoe_heal_slot_uids) >= 2 and not inferred_slot_uids:
                     inferred_slot_uids = list(aoe_heal_slot_uids)
                 in_aoe_heal_window = False
+                paused_enemy_ctx = None
                 _flush_pending_player_atk()
                 _flush_turn()
                 cur_av = float(data.get("action_value", cur_av))
@@ -429,7 +428,24 @@ def extract_log_metadata(
                 av_ent = data.get("avatar") or {}
                 if av_ent.get("team") == "Player":
                     if cur_enemy_uid is not None:
+                        _paused_sub_actions = list(cur_sub_actions)
+                        if cur_sub_hits:
+                            _paused_sub_actions.append(list(cur_sub_hits))
+                        _snap = {
+                            "av": round(cur_av, 2),
+                            "euid": cur_enemy_uid,
+                            "hit_order": list(cur_hit_order),
+                            "hit_set": set(cur_hit_set),
+                            "hit_counts": dict(cur_hit_counts),
+                            "sub_actions": _paused_sub_actions,
+                            "small_heal": set(cur_small_heal_uids),
+                            "sp_gains": dict(cur_sp_gain_counts),
+                            "first_memo": cur_first_memo_owner,
+                            "last_sp": last_enemy_hit_sp,
+                        }
                         _flush_turn()
+                        _snap["rec_idx"] = len(enemy_hits) - 1
+                        paused_enemy_ctx = _snap
                     uid = int(av_ent.get("uid") or 0)
                     if uid and uid not in seen_uid_set:
                         seen_uid_set.add(uid)
@@ -471,6 +487,25 @@ def extract_log_metadata(
                         seen_init_enemy_uids.add(uid)
                         initial_enemy_uids.append(uid)
                     if ptype == "CurrentSP":
+                        if (
+                            cur_enemy_uid is None
+                            and paused_enemy_ctx is not None
+                            and paused_enemy_ctx["euid"] == uid
+                            and abs(round(cur_av, 2) - paused_enemy_ctx["av"]) < 0.05
+                            and paused_enemy_ctx["rec_idx"] == len(enemy_hits) - 1
+                        ):
+                            enemy_hits.pop()
+                            cur_enemy_uid = paused_enemy_ctx["euid"]
+                            cur_hit_order = list(paused_enemy_ctx["hit_order"])
+                            cur_hit_set = set(paused_enemy_ctx["hit_set"])
+                            cur_hit_counts = dict(paused_enemy_ctx["hit_counts"])
+                            cur_sub_actions = list(paused_enemy_ctx["sub_actions"])
+                            cur_sub_hits = []
+                            cur_small_heal_uids = set(paused_enemy_ctx["small_heal"])
+                            cur_sp_gain_counts = dict(paused_enemy_ctx["sp_gains"])
+                            cur_first_memo_owner = paused_enemy_ctx["first_memo"]
+                            last_enemy_hit_sp = float(paused_enemy_ctx["last_sp"])
+                            paused_enemy_ctx = None
                         if cur_enemy_uid is not None and uid == cur_enemy_uid and val <= 1e-6 and cur_sub_hits:
                             cur_sub_actions.append(list(cur_sub_hits))
                             cur_sub_hits = []
@@ -535,7 +570,7 @@ def extract_log_metadata(
                             if cur_none_pending_hp_chip_uid == uid:
                                 cur_none_ally_sp_counts[cname] = cur_none_ally_sp_counts.get(cname, 0) + 1
                                 cur_none_pending_hp_chip_uid = None
-                            elif 1.8 <= sp_delta <= 2.9:
+                            elif (1.8 <= sp_delta <= 2.9) or (prev_sp is not None and val >= 100.0 and abs(val - prev_sp) < 1e-4 and val > 0.0):
                                 cur_none_ally_sp_counts[cname] = cur_none_ally_sp_counts.get(cname, 0) + 1
                         if val <= 0.0:
                             last_player_sp[uid] = 0.0
@@ -630,6 +665,64 @@ def extract_log_metadata(
             enemy_uid_map[euid] = f"{ename}_{spawn_seq_by_name[ename]}"
         else:
             enemy_uid_map[euid] = ename
+
+    # 对阿哈回合被特殊护盾全额吸收（delta_hp <= 1.0）的命中段：
+    # 1) 同回合有其他未带盾敌方扣血时，按同日志实测同回合双目标基础伤害比（抗性比）缩放置换；
+    # 2) 全段均被护盾吸收时，回退至该怪物（或同场前次未带盾）单段观测伤害。
+    def _base_enemy_name(u: int) -> str:
+        nm = enemy_uid_map.get(u, "")
+        if "_" in nm and nm.rsplit("_", 1)[1].isdigit():
+            return nm.rsplit("_", 1)[0]
+        return nm
+
+    pairwise_ratios: Dict[Tuple[str, str], List[float]] = {}
+    for a in aha_turns:
+        by_base: Dict[str, List[float]] = {}
+        for u, d in a.enemy_damages:
+            if d > 1.0:
+                bn = _base_enemy_name(u)
+                if bn:
+                    by_base.setdefault(bn, []).append(d)
+        base_med = {bn: sorted(ds)[len(ds) // 2] for bn, ds in by_base.items()}
+        for b_t, d_t in base_med.items():
+            for b_r, d_r in base_med.items():
+                if b_t != b_r and d_r > 1.0:
+                    pairwise_ratios.setdefault((b_t, b_r), []).append(d_t / d_r)
+    med_ratio = {k: sorted(vs)[len(vs) // 2] for k, vs in pairwise_ratios.items()}
+
+    last_unshielded_by_base: Dict[str, float] = {}
+    last_any_unshielded: float = 0.0
+    for a in aha_turns:
+        pos_items = [(u, d) for u, d in a.enemy_damages if d > 1.0]
+        new_dmgs: List[Tuple[int, float]] = []
+        for u, d in a.enemy_damages:
+            if d > 1.0:
+                new_dmgs.append((u, d))
+                bn = _base_enemy_name(u)
+                if bn:
+                    last_unshielded_by_base[bn] = d
+                last_any_unshielded = d
+            elif pos_items:
+                bn = _base_enemy_name(u)
+                est_list: List[float] = []
+                for u_ref, d_ref in pos_items:
+                    b_ref = _base_enemy_name(u_ref)
+                    r = med_ratio.get((bn, b_ref))
+                    if r is not None:
+                        est_list.append(d_ref * r)
+                if est_list:
+                    est = sorted(est_list)[len(est_list) // 2]
+                else:
+                    est = max(dr for _, dr in pos_items)
+                new_dmgs.append((u, est))
+                if bn:
+                    last_unshielded_by_base[bn] = est
+                last_any_unshielded = est
+            else:
+                bn = _base_enemy_name(u)
+                est = last_unshielded_by_base.get(bn, last_any_unshielded)
+                new_dmgs.append((u, est))
+        a.enemy_damages = new_dmgs
 
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = {}
     for k_pt, euids in player_enemy_targets_raw.items():

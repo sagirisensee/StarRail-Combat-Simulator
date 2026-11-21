@@ -899,9 +899,35 @@ class TaskExecutor:
                     matched = _match_retarget()
                 finally:
                     self.rt._include_limbo = False
-            for tid in matched:
-                t_ctx = ctx.clone(param_entity_id=tid, ability_target_ids=(tid,))
-                self.execute_tasks(task.get("TaskList", []), t_ctx)
+            if len(matched) > 1 and sim is not None and hasattr(sim, "notify_entity_ready") and not getattr(sim, "_in_retarget_ready_batch", False):
+                orig_notify = sim.notify_entity_ready
+                deferred_ready: List[str] = []
+
+                def _batch_notify(entity_name: str, *, allow_jump_natural: bool = False) -> None:
+                    if allow_jump_natural:
+                        orig_notify(entity_name, allow_jump_natural=True)
+                    elif entity_name not in deferred_ready:
+                        deferred_ready.append(entity_name)
+
+                sim._in_retarget_ready_batch = True
+                sim.notify_entity_ready = _batch_notify
+                try:
+                    for tid in matched:
+                        t_ctx = ctx.clone(param_entity_id=tid, ability_target_ids=(tid,))
+                        self.execute_tasks(task.get("TaskList", []), t_ctx)
+                finally:
+                    sim.notify_entity_ready = orig_notify
+                    sim._in_retarget_ready_batch = False
+                natural_due = getattr(sim, "_natural_due_names", ())
+                ready_q = getattr(sim, "_ready_queue", None)
+                for ename in reversed(deferred_ready):
+                    if isinstance(ready_q, list) and ename in ready_q and ename not in natural_due:
+                        ready_q.remove(ename)
+                    orig_notify(ename, allow_jump_natural=False)
+            else:
+                for tid in matched:
+                    t_ctx = ctx.clone(param_entity_id=tid, ability_target_ids=(tid,))
+                    self.execute_tasks(task.get("TaskList", []), t_ctx)
             return
 
         if t in ("RPG.GameCore.FireProjectile", "RPG.GameCore.NewFireProjectile"):
@@ -1952,7 +1978,8 @@ class TaskExecutor:
                     for d_tid in pending_dying:
                         me.dispatch_event("OnBeforeDying", owner_id=d_tid, param_entity_id=ctx.caster_id)
             for l_tid in pending_limbo:
-                me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=ctx.caster_id)
+                if not rt.trigger_or_defer_limbo(l_tid, ctx.caster_id):
+                    me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=ctx.caster_id)
         finally:
             sim.resolver.end_aoe()
             self._damage_capture_stack.pop()
@@ -2089,8 +2116,9 @@ class TaskExecutor:
                         try:
                             mrs = runner.get_enemy_state(tid)
                             if getattr(mrs, "_limbo_pending", False):
-                                setattr(mrs, "_limbo_pending", False)
-                                me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=ctx.caster_id)
+                                if not rt.trigger_or_defer_limbo(tid, ctx.caster_id):
+                                    setattr(mrs, "_limbo_pending", False)
+                                    me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=ctx.caster_id)
                         except KeyError:
                             pass
                     if ent.current_hp <= 0.0:

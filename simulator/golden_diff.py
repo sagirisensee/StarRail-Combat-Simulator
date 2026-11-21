@@ -1827,13 +1827,13 @@ def run_trajectory_replay(
             u_owner in _sim_player_actors(sim)
             and abs(now_av - u_item.av) <= 0.5
             and (cur_turn is None or getattr(cur_turn, "name", "") != u_owner)
-            and any(
+        ):
+            if any(
                 t_idx not in fired_master
                 and getattr(timeline[t_idx], "turn_seq", -1) == u_turn_seq
                 for t_idx in turn_indices
-            )
-        ):
-            return True
+            ):
+                return True
         for t_idx in turn_indices:
             if t_idx >= u_idx:
                 break
@@ -1929,7 +1929,19 @@ def run_trajectory_replay(
             else:
                 result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
 
-    sim.pre_turn_end_hook = lambda actor_ent: _on_turn_action_completed(actor_ent, pre_turn_end=True)
+    def _pre_turn_end_hook(actor_ent: Any) -> None:
+        if getattr(actor_ent, "is_enemy", False) and float(getattr(actor_ent, "current_hp", 0.0)) > 0.0:
+            _pending_d = getattr(sim, "_pending_turn_reset_distance", None)
+            _base_d = 10000.0 if _pending_d is None else float(_pending_d)
+            actor_ent.distance_remaining = _base_d
+            _on_turn_action_completed(actor_ent, pre_turn_end=True)
+            _delta_d = float(getattr(actor_ent, "distance_remaining", _base_d)) - _base_d
+            if abs(_delta_d) > 1e-6:
+                sim._pending_turn_reset_distance = max(0.0, _base_d + _delta_d)
+            return
+        _on_turn_action_completed(actor_ent, pre_turn_end=True)
+
+    sim.pre_turn_end_hook = _pre_turn_end_hook
     sim.turn_action_completed_hook = _on_turn_action_completed
     # 本体排期按角色分队列: 每名角色的回合只在其排期时点 (或迟到时) 发生,
     # 无排期的额外回合直接沉底, 与官方轨迹一一对应
@@ -1961,8 +1973,11 @@ def run_trajectory_replay(
                         continue
                     elif head.av < land_av and (land_av - head.av) <= 0.5:
                         nxt.distance_remaining = max(0.0, nxt.distance_remaining - float(nxt.speed) * (land_av - head.av))
-                else:
-                    # 无剩余排期: 沉底到预算之外, 该角色不再产生额外回合
+                elif not any(
+                    getattr(u, "turn_owner", "") == nxt.name and abs(float(u.av) - land_av) <= 0.5
+                    for _, u in ult_queue
+                ):
+                    # 无剩余排期（且当前时点无挂载在该角色回合内的终结技）: 沉底到预算之外
                     nxt.distance_remaining += float(nxt.speed) * (av_budget - land_av + 1000.0)
                     if nxt.name in getattr(sim, "_ready_queue", ()):
                         sim._ready_queue.remove(nxt.name)

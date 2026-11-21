@@ -48,7 +48,7 @@
 | **205144** | 风堇 + 知更鸟•晴歌 + 缇宝 | 🟢 **全绿达标** | **0.0000%** | 5/5 动 + 6/6 大招 (100%) | 9/9 动全部 `0.000%`，零硬编码通用生成器一键通过 |
 | **222204** | 风堇 + 缇宝 + 长夜月 | 🟢 **全绿达标** | **0.0000%** | 31/31 动 + 21/21 大招 (100%) | 36/36 动全部 `0.0000%`（5330 万总伤仅差 `-1.88`），`sp_grant=0 / mem_grant=0.0 / forced=0` |
 | **221208** | 风堇 + 知更鸟•晴歌 + 长夜月 | 🟢 **全绿达标** | **0.0000%** | 42/42 动 + 35/35 大招 (100%) | 68/68 动全部 `0.000%`（5282 万总伤仅差 `-12.67`），`sp_grant=0 / mem_grant=0.0 / forced=0`，零硬编码通用生成器一键通过 |
-| **220255** | 风堇 + 知更鸟•晴歌 + 缇宝 | 🟡 Wave 1 全绿 / Wave 2 排查中 | 待复测 | 27/27 动 + 37/37 大招 | Wave 1 8/8 动全 `0.000%`；本轮 `BattleEventCaster` / 护盾 / 击杀回能 / `ByRandom` 等通用 VM 修复已落盘，下一步直接复测并顺时间线收尾 |
+| **220255** | 风堇 + 知更鸟•晴歌 + 缇宝 | 🟢 **全绿达标** | **0.0000%** | 27/27 动 + 37/37 大招 (100%) | 48/48 动全部 `0.0000%`（5299 万总伤仅差 `-1.23`，`over_0.2%=0/48`），阿哈满能量队友微伤通用识别 + 垂死批次延迟 Limbo 恢复，零硬编码通过 |
 
 ---
 
@@ -59,9 +59,9 @@
 2. [x] **3 人队 Wave 1 + `222204` 全场达标 (< 0.01%) & 引擎去硬编码**：
    - [x] `205144`（Wave 1）与 `222204`（含 Wave 2 堕神之血•亚婆离全 2 阶段 + 变羊 `UID_6025`）均达 **`0.0000%`**，6/6 严格门禁 + 7/7 单元测试全绿。
    - [x] 清理 `stage_sim_adapter.py` / `stage_ai.py` / `executor.py` 中 7 处历史硬编码（`8026f7d`）。
-3. [ ] **剩余 Wave 2 收尾 (< 0.01%)**：
+3. [x] **剩余 Wave 2 收尾 (< 0.01%)**：
    - [x] `221208`：Wave 1 + Wave 2 全场 68/68 动全部 `0.000%`（**`total_err=0.0000%`**，7/7 严格门禁 + 5/5 单元测试全绿，详见 [HANDOFF_30126122_WAVE2.md](file:///d:/Downloads/StarRail-Combat-Simulator/docs/HANDOFF_30126122_WAVE2.md) 第 12 节）。
-   - [ ] `220255`：最后 1 条未绿用例，基于本轮落盘的通用 VM 修复直接复测并顺时间线收尾。
+   - [x] `220255`：Wave 1 + Wave 2 全场 48/48 动全部 `0.0000%`（**`total_err=0.0000%`**，详见 [HANDOFF_30126122_WAVE2.md](file:///d:/Downloads/StarRail-Combat-Simulator/docs/HANDOFF_30126122_WAVE2.md) 第 13 节）。
 4. [ ] **清理老代码与统一门禁**：
-   - [x] 统一 [test_vm_30126122_alignment.py](file:///Users/yunkaichen/Downloads/starrail/simulator/vm/test_vm_30126122_alignment.py) 全部 8 用例门禁为 `data_driven=True` 且 `total_limit=0.0001`, `turn_limit=0.0001`, `ika_turn_limit=0.0001`。
+   - [x] 统一 [test_vm_30126122_alignment.py](file:///d:/Downloads/StarRail-Combat-Simulator/simulator/vm/test_vm_30126122_alignment.py) 全部 8 用例门禁为 `data_driven=True` 且 `total_limit=0.0001`, `turn_limit=0.0001`, `ika_turn_limit=0.0001`。
    - [ ] 8 用例全绿后，彻底删除手写的 `simulator/stage_30126122.py` 与相关过渡测试。

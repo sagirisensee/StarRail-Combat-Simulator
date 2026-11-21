@@ -79,6 +79,18 @@ class VMRuntime:
     def begin_attack_scope(self) -> None:
         self._attack_scope_depth += 1
 
+    def trigger_or_defer_limbo(self, owner_id: str, param_entity_id: Optional[str]) -> bool:
+        """若当前处于死亡批处理（OnBeforeDying）中，将转阶段回血延后至整批完成后触发，防止后续自伤误扣新阶段 HP。"""
+        if getattr(self, "_in_dying_batch", False):
+            q = getattr(self, "_pending_limbo_after_dying", None)
+            if q is None:
+                q = []
+                self._pending_limbo_after_dying = q
+            if not any(tid == owner_id for tid, _ in q):
+                q.append((owner_id, param_entity_id))
+            return True
+        return False
+
     def flush_pending_after_attack(self) -> None:
         if self._pending_after_attack is None:
             return
@@ -122,8 +134,33 @@ class VMRuntime:
         if pending_dying:
             dying_batch = list(pending_dying)
             pending_dying.clear()
-            for dead_tid, killer_id in dying_batch:
-                self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
+            prev_in_dying = getattr(self, "_in_dying_batch", False)
+            self._in_dying_batch = True
+            try:
+                for dead_tid, killer_id in dying_batch:
+                    self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
+            finally:
+                self._in_dying_batch = prev_in_dying
+            if not prev_in_dying:
+                pending_limbo = getattr(self, "_pending_limbo_after_dying", None)
+                if pending_limbo:
+                    limbo_batch = list(pending_limbo)
+                    pending_limbo.clear()
+                    for limbo_tid, limbo_killer in limbo_batch:
+                        ent = self.sim.get_entity(limbo_tid)
+                        kit = getattr(ent, "kit", None) if ent is not None else None
+                        runner = getattr(kit, "runner", None) if kit is not None else None
+                        if runner is not None:
+                            try:
+                                mrs = runner.get_enemy_state(limbo_tid)
+                                setattr(mrs, "_limbo_pending", False)
+                            except KeyError:
+                                pass
+                        self.modifier_engine.dispatch_event(
+                            "OnLimboWaitHeal",
+                            owner_id=limbo_tid,
+                            param_entity_id=limbo_killer,
+                        )
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
             for dead_tid in list(pending_dead):
