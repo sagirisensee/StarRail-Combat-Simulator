@@ -6,13 +6,13 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from simulator.core import Entity, TurnSimulator
-from simulator.kits.enemies.base import (
+from simulator.vm.enemy_port import (
+    BaseEnemyCombatPortImpl,
     EnemyActionContext,
     EnemyActionResult,
     EnemyKit,
     STANDARD_ACTION_DISTANCE,
 )
-from simulator.kits.enemies.sim_port import BaseEnemyCombatPortImpl
 from simulator.vm.stage_ai import (
     AISkillActionSpec,
     CompiledMonsterAISpec,
@@ -101,10 +101,26 @@ class DataDrivenEnemyKit(EnemyKit):
                     )
                     overflow = (raw_damage - absorbed) if allow_overflow else 0.0
                     if new_shld <= 0.0:
-                        rt.modifier_engine.destroy_modifier(mod)
                         owner_ent = sim.get_entity(self.owner_id) if sim is not None else None
                         if owner_ent is not None and overflow > 0.0:
+                            try:
+                                mrs_ov = self.runner.get_enemy_state(self.owner_id)
+                                cur_hp_ov = float(mrs_ov.entity.current_hp)
+                                max_hp_ov = float(mrs_ov.entity.max_hp)
+                                if mrs_ov.lock_hp_ratio is not None and mrs_ov.lock_hp_ratio > 0.0:
+                                    fl_ov = max_hp_ov * float(mrs_ov.lock_hp_ratio)
+                                    if cur_hp_ov >= fl_ov - 1e-6 and cur_hp_ov - overflow < fl_ov:
+                                        overflow = max(0.0, cur_hp_ov - fl_ov)
+                                if mrs_ov.phase < mrs_ov.max_phase and cur_hp_ov - overflow <= 0.0:
+                                    setattr(mrs_ov, "_limbo_pending", True)
+                                    setattr(mrs_ov.entity, "_vm_limbo_pending", True)
+                                    overflow = max(0.0, cur_hp_ov - 1.0)
+                            except KeyError:
+                                pass
+                            owner_ent.current_hp = max(0.0, float(owner_ent.current_hp) - overflow)
                             setattr(owner_ent, "_single_block_break_overflow", overflow)
+                        rt.modifier_engine.destroy_modifier(mod)
+                        return 0.0
                     return overflow
 
         try:
@@ -116,7 +132,7 @@ class DataDrivenEnemyKit(EnemyKit):
         max_hp = float(mrs.entity.max_hp)
         if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:
             floor_hp = max_hp * float(mrs.lock_hp_ratio)
-            if cur_hp > floor_hp and cur_hp - raw_damage < floor_hp:
+            if cur_hp >= floor_hp - 1e-6 and cur_hp - raw_damage < floor_hp:
                 raw_damage = max(0.0, cur_hp - floor_hp)
 
         if mrs.phase < mrs.max_phase and cur_hp - raw_damage <= 0.0:
@@ -172,17 +188,42 @@ class DataDrivenEnemyKit(EnemyKit):
         ab = game_loader.get_ability(ability_name)
         if not ab:
             return
-        for t in ab.get("OnStart", []):
-            tt = t.get("$type", "")
-            if tt == "RPG.GameCore.TriggerAbility":
-                child_name = t.get("AbilityName", {}).get("Value")
-                if child_name and "Camera" not in child_name:
-                    self._execute_ability_tasks(child_name, visited=visited)
-            elif tt == "RPG.GameCore.PredicateTaskList":
-                for st in t.get("SuccessTaskList", []):
-                    self.runner.execute_stage_task(st, caster_name=self.owner_id)
-            else:
-                self.runner.execute_stage_task(t, caster_name=self.owner_id)
+        sim = getattr(self.enemy_port, "sim", None)
+        rt = getattr(sim, "vm_runtime", None) if sim is not None else None
+        if rt is not None:
+            self._ensure_monster_dynamic_values(rt)
+            dyn_resolver = lambda h: rt.resolve_hash(self.owner_id, h, ability_name=ability_name)
+        else:
+            dyn_resolver = None
+        def _run_stage_tasks(tasks: Sequence[Any]) -> None:
+            for t in tasks:
+                if not isinstance(t, Mapping):
+                    continue
+                tt = t.get("$type", "")
+                if tt == "RPG.GameCore.TriggerAbility":
+                    child_name = t.get("AbilityName", {}).get("Value")
+                    if child_name and "Camera" not in child_name:
+                        self._execute_ability_tasks(child_name, visited=visited)
+                elif tt == "RPG.GameCore.PredicateTaskList":
+                    pred = t.get("Predicate")
+                    try:
+                        ok = (
+                            self.runner.eval_stage_predicate(
+                                pred, caster_name=self.owner_id, dynamic_resolver=dyn_resolver
+                            )
+                            if pred
+                            else True
+                        )
+                    except NotImplementedError:
+                        ok = True
+                    branch = t.get("SuccessTaskList", []) if ok else t.get("FailedTaskList", [])
+                    _run_stage_tasks(branch or [])
+                else:
+                    self.runner.execute_stage_task(
+                        t, caster_name=self.owner_id, dynamic_resolver=dyn_resolver
+                    )
+
+        _run_stage_tasks(ab.get("OnStart", []))
 
     def _ensure_monster_dynamic_values(self, rt: Any) -> None:
         """将官方怪物 CharacterConfig 中的 SkillParam DynamicValues 与 CustomValues 注入 VM 运行时，供敌方 AST 表达式求值。"""
@@ -615,6 +656,24 @@ class DataDrivenEnemyKit(EnemyKit):
                 if mult <= 0.0 or sk.damage_type is None:
                     if entry_ab:
                         self._execute_vm_non_damage_skill(entry_ab, sim, sp_hit_base=float(getattr(sk, "sp_hit_base", 0.0) or 0.0))
+                    sched_pre = getattr(sim, "scheduler", None)
+                    if (action_idx == 1 and can_one_more) or (sched_pre is not None and sched_pre.has_pending()):
+                        rt_sub = getattr(sim, "vm_runtime", None)
+                        if rt_sub is not None:
+                            rt_sub.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=self.owner_id)
+                    sub_cb = getattr(sim, "on_enemy_sub_action_end", None)
+                    if callable(sub_cb) and action_idx == 1 and can_one_more and attacker is not None and attacker.current_hp > 0.0:
+                        sched = getattr(sim, "scheduler", None)
+                        prev_depth = getattr(sched, "_action_frame_depth", 0) if sched is not None else 0
+                        if sched is not None and prev_depth > 0:
+                            sched._action_frame_depth = 0
+                        try:
+                            sub_cb()
+                            if sched is not None and sched.has_pending():
+                                sched.drain()
+                        finally:
+                            if sched is not None and prev_depth > 0:
+                                sched._action_frame_depth = prev_depth
                     continue
 
                 # 索敌: 若技能在 Ability 中声明了 AllEnemy 或为全体横扫，则命中全体
@@ -729,6 +788,17 @@ class DataDrivenEnemyKit(EnemyKit):
                 rt_after_hit = getattr(sim, "vm_runtime", None)
                 if rt_after_hit is not None:
                     rt_after_hit.end_being_attacked()
+                    if resolved:
+                        rt_after_hit.modifier_engine.dispatch_event(
+                            "OnAfterAttack",
+                            owner_id=self.owner_id,
+                            attack_target_ids=tuple(resolved),
+                        )
+                        rt_after_hit.modifier_engine.dispatch_event(
+                            "OnListenAfterAttack",
+                            param_entity_id=self.owner_id,
+                            attack_target_ids=tuple(resolved),
+                        )
 
                 sched_pre = getattr(sim, "scheduler", None)
                 if (action_idx == 1 and can_one_more) or (sched_pre is not None and sched_pre.has_pending()):
@@ -771,6 +841,10 @@ class DataDrivenEnemyKit(EnemyKit):
             if has_fast_action_mod and rt is not None:
                 rt.modifier_engine.remove_modifier(self.owner_id, "MCommon_FastAction")
             return EnemyActionResult(reset_distance=0.0)
+
+        pending_reset = getattr(sim, "_pending_turn_reset_distance", None)
+        if pending_reset is not None:
+            return EnemyActionResult(reset_distance=float(pending_reset))
 
         return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
 

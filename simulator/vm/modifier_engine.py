@@ -242,6 +242,8 @@ class ModifierEngine:
         is_new = target_existing is None
         if target_existing is not None:
             mod = target_existing
+            if max_layer is None and cfg_max_layer is None and mod.max_layer > 1:
+                eff_max_layer = mod.max_layer
             if count < 0:
                 mod.layer = max(0, mod.layer + count)
             elif eff_max_layer > 1:
@@ -288,6 +290,10 @@ class ModifierEngine:
 
         # 执行静态 Properties（若配置有直接写 Property 字段）
         self._apply_static_modifier_props(mod)
+        if "MuteBreak" in mod.behavior_flags and owner_id != "__LEVEL__":
+            owner_ent = self.rt.sim.get_entity(owner_id)
+            if owner_ent is not None:
+                owner_ent.toughness_locked = True
 
         if mod.life_time is not None and mod.life_step_moment == "TurnEnd":
             sim = getattr(self.rt, "sim", None)
@@ -461,9 +467,25 @@ class ModifierEngine:
         owner_ent = self.rt.sim.get_entity(mod.owner_id) if mod.owner_id != "__LEVEL__" else None
         if owner_ent is not None and "SingleBlock" in mod.behavior_flags:
             owner_ent.barrier_guarded = False
-            owner_ent.toughness_locked = False
+            has_other_lock = any(
+                not m._destroyed
+                and m.uid != mod.uid
+                and ("MuteBreak" in m.behavior_flags or "SingleBlock" in m.behavior_flags)
+                for m in self.get_modifiers(mod.owner_id)
+            )
+            if not has_other_lock:
+                owner_ent.toughness_locked = False
             if hasattr(mod, "_saved_toughness_dmg_reduction"):
                 owner_ent.toughness_dmg_reduction = float(getattr(mod, "_saved_toughness_dmg_reduction"))
+        if owner_ent is not None and "MuteBreak" in mod.behavior_flags:
+            has_other_lock = any(
+                not m._destroyed
+                and m.uid != mod.uid
+                and ("MuteBreak" in m.behavior_flags or "SingleBlock" in m.behavior_flags)
+                for m in self.get_modifiers(mod.owner_id)
+            )
+            if not has_other_lock:
+                owner_ent.toughness_locked = False
         if getattr(mod, "_applied_lock_hp", False):
             director = getattr(self.rt.sim, "_stage_director", None)
             runner = getattr(director, "runner", None) if director is not None else None

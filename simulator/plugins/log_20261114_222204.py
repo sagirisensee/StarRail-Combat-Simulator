@@ -170,10 +170,19 @@ def attach_log_20261114_222204_plugin(sim: Any) -> None:
     def _enemy_windwalk_20261114_222204(eagle_name: str, generation: int, idx: int) -> bool:
         return eagle_name in ()
 
+    def _enemy_retarget_20261114_222204(caster: Any, candidates: List[Any]) -> Optional[Any]:
+        av = float(getattr(sim, "current_av", 0.0))
+        cname = getattr(caster, "name", "")
+        if abs(av - 340.13) < 0.05 and cname == '缇宝':
+            for e in candidates:
+                if getattr(e, 'name', '') == '狂兽的胚芽_8': return e
+        return None
+
     sim.target_provider = _target_20261114_222204_provider
     sim.blast_target_provider = _blast_20261114_222204_provider
     sim.enemy_attack_skip_provider = _enemy_attack_skip_20261114_222204
     sim.enemy_windwalk_provider = _enemy_windwalk_20261114_222204
+    sim.enemy_retarget_provider = _enemy_retarget_20261114_222204
 
     def _aha_20261114_222204_handler(director: Any) -> None:
         av = float(getattr(sim, "current_av", 0.0))

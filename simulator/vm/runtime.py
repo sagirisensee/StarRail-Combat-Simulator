@@ -57,6 +57,8 @@ class VMRuntime:
         self._skill_sp_ratio_granted: bool = False
 
         # 订阅 TurnSimulator 核心事实事件，转发给官方 Modifier 引擎
+        self.control_skill_mapping: Dict[Tuple[str, str], str] = {}
+        self.turn_control_skill_snapshot: Dict[str, str] = {}
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         self.sim.event_bus.subscribe(TurnEndEvent, self._on_turn_end)
         self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)
@@ -417,7 +419,10 @@ class VMRuntime:
         if init_dynamics:
             self.entity_dynamics[sv_name].update(init_dynamics)
 
-        # 触发忆灵自身被动与入场能力（SkillP* 仅触发 EntryAbility / 被动，禁止误触 _Resummon/_Insert）
+        # 清理旧的技能槽映射，再触发忆灵自身被动与入场能力（SkillP* 仅触发 EntryAbility / 被动，禁止误触 _Resummon/_Insert）
+        for k in [k for k in self.control_skill_mapping if k[0] == sv_name]:
+            self.control_skill_mapping.pop(k, None)
+        self.turn_control_skill_snapshot.pop(sv_name, None)
         seen_init: set[str] = set()
         for ab_name in sv_spec.config.get("AbilityList", []):
             if "PassiveSkill" in ab_name and ab_name not in seen_init:
@@ -442,8 +447,8 @@ class VMRuntime:
                         seen_init.add(ab_name)
                         self.trigger_ability(caster_id=sv_name, ability_name=ab_name, target_ids=(sv_name,))
 
-        # 初始跑道对齐：11409 (小伊卡) 永不进入自然跑道；11512 (晴空乐手) 未进 Fever 前隐藏跑条
-        if servant_id in (11409, 11512):
+        # 基础速度为 0 的忆灵不进入自然跑道（由官方 AvatarServantConfig.SpeedBase=0 / SpeedOverride 决定）
+        if float(getattr(sv_entity, "base_speed", 0.0)) <= 0.0:
             sv_entity.distance_remaining = 1e12
 
         # 通知全队光环 / OnListenCharacterCreate，并按最新光环刷新满血上限
@@ -469,15 +474,30 @@ class VMRuntime:
     # ------------------------------------------------------------------
     def _on_turn_begin(self, evt: TurnBeginEvent) -> None:
         # 实机日志已证实 (184845 [961..966], 204943 [637..640], 155925 [304..305])：
-        # ModifierPhase1End 与 OnPhase1 在自然回合开始阶段（TurnPhase1）触发；
+        # TurnPhase1 顺序：OnPhase1 -> OnListenTurnBegin -> OnListenTurnPhase1Begin
+        # -> OnListenBeforeTurnPhase1End (血嗜等回合开始扣血 & 伴生小伊卡回血，此时 Phase1End 到期光环仍在！)
+        # -> ModifierPhase1End (回合开始到期光环结算) -> OnActionPhaseBegin；
         # 终结技/追击等额外行动不经过 TurnBegin，不触发 OnPhase1。
-        self.modifier_engine.tick_life_step("ModifierPhase1End", evt.actor_name)
         self.modifier_engine.dispatch_event("OnPhase1", owner_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnPhase1Begin", param_entity_id=evt.actor_name)
-        self.modifier_engine.dispatch_event("OnActionPhaseBegin", owner_id=evt.actor_name)
+        self.turn_control_skill_snapshot[evt.actor_name] = self.control_skill_mapping.get((evt.actor_name, "ControlSkill01"), "Skill01")
+        self._in_turn_phase1_end = True
+        try:
+            self.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=evt.actor_name)
+        finally:
+            self._in_turn_phase1_end = False
         actor_ent = self.sim.get_entity(evt.actor_name)
-        if actor_ent is not None and getattr(actor_ent, "is_countdown", False):
+        if actor_ent is not None and not getattr(actor_ent, "is_enemy", False):
+            sched = getattr(self.sim, "scheduler", None)
+            if sched is not None and sched.has_pending():
+                sched.drain()
+                director = getattr(self.sim, "_stage_director", None)
+                if director is not None and hasattr(director, "sync_spawned_entities"):
+                    director.sync_spawned_entities()
+        self.modifier_engine.tick_life_step("ModifierPhase1End", evt.actor_name)
+        self.modifier_engine.dispatch_event("OnActionPhaseBegin", owner_id=evt.actor_name)
+        if actor_ent is not None and not getattr(actor_ent, "is_enemy", False):
             sched = getattr(self.sim, "scheduler", None)
             if sched is not None and sched.has_pending():
                 sched.drain()
@@ -486,6 +506,7 @@ class VMRuntime:
                     director.sync_spawned_entities()
 
     def _on_turn_end(self, evt: TurnEndEvent) -> None:
+        self.turn_control_skill_snapshot.pop(evt.actor_name, None)
         self.end_being_attacked()
         self._in_turn_phase1_end = True
         try:
@@ -699,37 +720,19 @@ class ConfigAbilityKitAdapter(KitHandler):
             rt = getattr(self.port.sim, "vm_runtime", None)
         return bool(rt is not None and rt.modifier_engine.has_modifier(self.owner_id, mod_name))
 
-    def _is_evernight_ultra_mode(self) -> bool:
-        if self.is_servant or self.unit_id != 1413:
-            return False
-        if not self._has_runtime_modifier("MAvatar_Evernight_00_UltraMode"):
-            return False
+    def _resolve_control_skill_key(self, ctrl_type: str, default_key: str) -> str:
         rt = self._runtime or (getattr(self.port.sim, "vm_runtime", None) if (self.port and getattr(self.port, "sim", None)) else None)
-        if rt is None:
-            return False
-        return any(
-            getattr(e, "is_memosprite", False)
-            and getattr(e, "master_name", None) == self.owner_id
-            and e.current_hp > 0
-            for e in rt.sim.entities
-        )
-
-    def _is_evey_burst_mode(self) -> bool:
-        if not self.is_servant or self.unit_id != 11413:
-            return False
-        rt = self._runtime or (getattr(self.port.sim, "vm_runtime", None) if (self.port and getattr(self.port, "sim", None)) else None)
-        if rt is None:
-            return False
-        me = rt.modifier_engine
-        if not me.has_modifier(self.owner_id, "MServant_EvernightServant_00_TriggerNormal"):
-            return False
-        if me.has_behavior_flag(self.owner_id, "STAT_CTRL") or me.has_behavior_flag(self.owner_id, "DisableAction"):
-            return False
-        ent = rt.sim.get_entity(self.owner_id)
-        master_id = getattr(ent, "master_name", None) if ent is not None else None
-        if master_id and (me.has_behavior_flag(master_id, "STAT_CTRL") or me.has_behavior_flag(master_id, "DisableAction")):
-            return False
-        return True
+        if rt is not None:
+            if self.is_servant and ctrl_type == "ControlSkill01":
+                cur_turn = getattr(rt.sim, "_current_turn_entity", None)
+                if cur_turn is not None and getattr(cur_turn, "name", None) == self.owner_id:
+                    snap = rt.turn_control_skill_snapshot.get(self.owner_id)
+                    if snap and snap in self._skill_abilities:
+                        return snap
+            mapped = rt.control_skill_mapping.get((self.owner_id, ctrl_type))
+            if mapped and mapped in self._skill_abilities:
+                return mapped
+        return default_key
 
     def _resolve_skill_row(self, sk_key: str) -> Optional[Dict[str, Any]]:
         if self.is_servant:
@@ -791,25 +794,25 @@ class ConfigAbilityKitAdapter(KitHandler):
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if self.is_servant:
             if kind in (ActionKind.SKILL, ActionKind.MEMOSPRITE_SKILL):
-                if self._is_evey_burst_mode():
-                    sk_id = self._resolve_skill_id("Skill11", 7)
-                    return AbilityDefinition(kind=kind, name="忆灵爆发", target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=0), is_auto=True, skill_id=sk_id)
-                sk_id = self._resolve_skill_id("Skill01", 1)
-                cost = ResourceCost(sp=-1) if self.unit_id == 11512 else ResourceCost(sp=0)
-                return AbilityDefinition(kind=kind, name="忆灵技", target_mode=TargetMode.ALL_ENEMIES, cost=cost, is_auto=True, skill_id=sk_id)
+                sk_key = self._resolve_control_skill_key("ControlSkill01", "Skill01")
+                sk_id = self._resolve_skill_id(sk_key, 7 if sk_key == "Skill11" else 1)
+                cost = self._resolve_sp_cost(sk_key, 0)
+                name = "忆灵爆发" if sk_key == "Skill11" else "忆灵技"
+                return AbilityDefinition(kind=kind, name=name, target_mode=TargetMode.ALL_ENEMIES, cost=cost, is_auto=True, skill_id=sk_id)
             return AbilityDefinition(kind=kind, name=str(kind.name), target_mode=TargetMode.ALL_ENEMIES, cost=ResourceCost(sp=0), is_auto=True)
 
         if kind == ActionKind.BASIC:
-            sk_id = self._resolve_skill_id("Skill01", 1)
+            sk_key = self._resolve_control_skill_key("ControlSkill01", "Skill01")
+            sk_id = self._resolve_skill_id(sk_key, 1)
             return AbilityDefinition(
                 kind=kind,
                 name="普攻",
-                target_mode=self._resolve_target_mode("Skill01", TargetMode.SINGLE_ENEMY),
-                cost=self._resolve_sp_cost("Skill01", -1),
+                target_mode=self._resolve_target_mode(sk_key, TargetMode.SINGLE_ENEMY),
+                cost=self._resolve_sp_cost(sk_key, -1),
                 skill_id=sk_id,
             )
         if kind == ActionKind.SKILL:
-            sk_key = "Skill21" if self._is_evernight_ultra_mode() else "Skill02"
+            sk_key = self._resolve_control_skill_key("ControlSkill02", "Skill02")
             sk_id = self._resolve_skill_id(sk_key, 9 if sk_key == "Skill21" else 2)
             return AbilityDefinition(
                 kind=kind,
@@ -819,11 +822,12 @@ class ConfigAbilityKitAdapter(KitHandler):
                 skill_id=sk_id,
             )
         if kind == ActionKind.ULTIMATE:
-            sk_id = self._resolve_skill_id("Skill03", 3)
+            sk_key = self._resolve_control_skill_key("ControlSkill03", "Skill03")
+            sk_id = self._resolve_skill_id(sk_key, 3)
             return AbilityDefinition(
                 kind=kind,
                 name="终结技",
-                target_mode=self._resolve_target_mode("Skill03", TargetMode.ALL_ALLIES),
+                target_mode=self._resolve_target_mode(sk_key, TargetMode.ALL_ALLIES),
                 cost=ResourceCost(),
                 skill_id=sk_id,
             )
@@ -851,31 +855,19 @@ class ConfigAbilityKitAdapter(KitHandler):
         rt = self._ensure_registered()
         if self.is_servant:
             if ctx.kind in (ActionKind.SKILL, ActionKind.MEMOSPRITE_SKILL):
-                ent_obj = rt.sim.get_entity(self.owner_id)
-                forced_sid = getattr(ent_obj, "_trajectory_skill_id", 0) if ent_obj is not None else 0
-                if forced_sid:
-                    ent_obj._trajectory_skill_id = 0
-                eff_sid = ctx.skill_id or forced_sid
-                if self.unit_id == 11413 and eff_sid == 1141301:
-                    sk_key = "Skill01"
-                elif self.unit_id == 11413 and eff_sid == 1141307:
-                    sk_key = "Skill11"
-                else:
-                    sk_key = "Skill11" if self._is_evey_burst_mode() else "Skill01"
+                sk_key = self._resolve_control_skill_key("ControlSkill01", "Skill01")
                 sk_type = "Servant"
             else:
                 sk_key, sk_type = ("Skill01", "Servant")
         else:
-            if ctx.kind == ActionKind.SKILL and self._is_evernight_ultra_mode():
-                sk_key, sk_type = ("Skill21", "BPSkill")
-            else:
-                sk_map = {
-                    ActionKind.BASIC: ("Skill01", "Normal"),
-                    ActionKind.SKILL: ("Skill02", "BPSkill"),
-                    ActionKind.ULTIMATE: ("Skill03", "Ultra"),
-                    ActionKind.MEMOSPRITE_SKILL: ("Skill01", "Servant"),
-                }
-                sk_key, sk_type = sk_map.get(ctx.kind, ("Skill01", "Normal"))
+            sk_map = {
+                ActionKind.BASIC: ("ControlSkill01", "Skill01", "Normal"),
+                ActionKind.SKILL: ("ControlSkill02", "Skill02", "BPSkill"),
+                ActionKind.ULTIMATE: ("ControlSkill03", "Skill03", "Ultra"),
+                ActionKind.MEMOSPRITE_SKILL: ("ControlSkill01", "Skill01", "Servant"),
+            }
+            ctrl_t, def_key, sk_type = sk_map.get(ctx.kind, ("ControlSkill01", "Skill01", "Normal"))
+            sk_key = self._resolve_control_skill_key(ctrl_t, def_key)
 
         ab_list = self._skill_abilities.get(sk_key, [])
         t_info = self._skill_target_infos.get(sk_key) or {}
@@ -941,13 +933,20 @@ class ConfigAbilityKitAdapter(KitHandler):
                 and (not forbid_sv or not getattr(e, "is_memosprite", False))
             ]
             eff_targets = (picked[0],) if picked else ((self.owner_id,) if not avoid_self else ())
-        elif t_type == "AllEnemy" and not ctx.target_ids:
+        elif t_type == "AllEnemy":
             eff_targets = tuple(
-                e.name for e in rt.sim.entities
-                if getattr(e, "is_enemy", False)
-                and not getattr(e, "is_countdown", False)
-                and not getattr(e, "is_unselectable", False)
-                and float(getattr(e, "current_hp", 0.0)) > 0.0
+                e.name
+                for e in sorted(
+                    (
+                        e
+                        for e in rt.sim.entities
+                        if getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    ),
+                    key=lambda x: getattr(x, "_spawn_seq", 0),
+                )
             )
         elif t_type == "AllTeamMember" and not ctx.target_ids:
             eff_targets = tuple(

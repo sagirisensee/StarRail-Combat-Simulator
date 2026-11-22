@@ -322,12 +322,14 @@ class StageRunner:
         mrs = self.get_enemy_state(target_name)
         ent = mrs.entity
         norm_list = [normalize_element(w) for w in weak_list if w]
-        if op_type in ("Add", "Protected"):
+        if op_type == "Add":
             for elem in norm_list:
                 if elem not in ent.weaknesses:
                     ent.weaknesses.append(elem)
                     if elem not in mrs.stacked_weaknesses:
                         mrs.stacked_weaknesses.append(elem)
+        elif op_type == "Protected":
+            ent.toughness_locked = True
         elif op_type == "Remove":
             for elem in norm_list:
                 if elem in mrs.stacked_weaknesses:

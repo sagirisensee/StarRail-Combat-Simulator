@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional, Set, Tuple
 
+from simulator.vm.factory import UID_TO_NAME
 from .models import EnemyHitRecord, LogMetadata, ROOT_DIR, ReconcileReport
 
 
@@ -299,9 +300,9 @@ def emit_plugin(
     ])
 
     retarget_pairs = [
-        (p_av, meta.enemy_uid_map.get(c_uid, ""), meta.enemy_uid_map.get(v_uid, ""))
+        (p_av, meta.enemy_uid_map.get(c_uid) or UID_TO_NAME.get(c_uid, ""), meta.enemy_uid_map.get(v_uid, ""))
         for p_av, c_uid, v_uid in meta.enemy_retarget_picks
-        if c_uid in meta.enemy_uid_map and v_uid in meta.enemy_uid_map
+        if (c_uid in meta.enemy_uid_map or c_uid in UID_TO_NAME) and v_uid in meta.enemy_uid_map
     ]
     lines.extend([
         f"    def _enemy_retarget_{tag}(caster: Any, candidates: List[Any]) -> Optional[Any]:",
@@ -355,6 +356,9 @@ def emit_plugin(
     lines.append(f"    sim.aha_special_handler = _aha_{tag}_handler")
     aha_avs_literal = [round(float(a.av), 6) for a in meta.aha_turns]
     lines.append(f"    sim.aha_interrupt_avs = {aha_avs_literal!r}")
+    if meta.enemy_uid_map:
+        lines.append('    if not getattr(sim, "enemy_uid_map", None):')
+        lines.append(f"        sim.enemy_uid_map = {dict(meta.enemy_uid_map)!r}")
 
     code = "\n".join(lines) + "\n"
 

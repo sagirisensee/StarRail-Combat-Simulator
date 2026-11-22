@@ -203,6 +203,9 @@ class PredicateOpsMixin:
             rhs = self._eval_num(pred.get("CompareValue"), ctx, 1.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
+        if t == "RPG.GameCore.ByHaveUniqueNameEffect":
+            return False
+
         if t == "RPG.GameCore.ByTargetTeam":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             want_team = str(pred.get("Team", ""))

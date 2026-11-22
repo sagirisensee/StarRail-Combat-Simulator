@@ -113,8 +113,9 @@ class TurnOpsMixin:
                         )
                     else:
                         eff_tgts = tuple(e.name for e in sim.entities if e.is_enemy and e.current_hp > 0)
-                    me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, current_skill_type=sk_t)
-                    me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
+                    if sk_t == "Insert":
+                        me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, current_skill_type=sk_t)
+                        me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
                     prev_sp_base = rt._active_skill_sp_base
                     prev_sp_granted = rt._skill_sp_ratio_granted
                     rt._active_skill_sp_base = _sp

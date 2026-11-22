@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from simulator.vm.factory import UID_TO_NAME
 from simulator.vm.reconcile.models import (
     AmbiguousMemospriteSlot,
     EnemyHitRecord,
@@ -378,7 +379,8 @@ def attach_auto_rng_plugin(
         av = float(getattr(sim, "current_av", 0.0))
         cname = getattr(caster, "name", "")
         for p_av, c_uid, v_uid in meta.enemy_retarget_picks:
-            if abs(av - p_av) < 0.05 and meta.enemy_uid_map.get(c_uid, "") == cname:
+            expected_cname = meta.enemy_uid_map.get(c_uid) or UID_TO_NAME.get(c_uid, "")
+            if abs(av - p_av) < 0.05 and expected_cname == cname:
                 vname = meta.enemy_uid_map.get(v_uid, "")
                 for ent in candidates:
                     if getattr(ent, "name", "") == vname:

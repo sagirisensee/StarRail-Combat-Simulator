@@ -9,8 +9,8 @@ import re
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from simulator.actions import ActionContext, ActionKind
-from simulator.events import ActionExecuteEvent, BattleEvent, TurnBeginEvent
+from simulator.actions import ActionKind
+from simulator.events import ActionExecuteEvent, BattleEvent
 from simulator.golden.models import (
     SPIRIT_TRAJECTORY_SKILLS,
     Decision,
@@ -286,35 +286,7 @@ def run_trajectory_replay(
                             return memo
             return candidates[0] if candidates and sub_idx == 0 else None
 
-        def _trace_bounce_provider(attacker: Any, candidates: List[Any], count: int = 10, sub_idx: int = 0) -> List[Any]:
-            now_av = float(getattr(sim, "current_av", 0.0))
-            best_turn = _find_turn(now_av, attacker)
-            if best_turn:
-                subs = best_turn.get("sub_targets") or []
-                if subs:
-                    tlist = subs[sub_idx] if sub_idx < len(subs) and subs[sub_idx] else []
-                else:
-                    tlist = best_turn.get("targets", []) if sub_idx == 0 else []
-                if count <= 0:
-                    c_map = {c.name: c for c in candidates}
-                    return [c_map[t] for t in dict.fromkeys(tlist) if t in c_map]
-                if tlist:
-                    res = []
-                    c_map = {c.name: c for c in candidates}
-                    for tname in tlist:
-                        if tname in c_map:
-                            res.append(c_map[tname])
-                        if len(res) >= count:
-                            break
-                    while len(res) < count and res:
-                        res.append(res[-1])
-                    return res
-            if count <= 0:
-                return list(candidates[:1]) if sub_idx == 0 else []
-            return [candidates[i % len(candidates)] for i in range(count)] if sub_idx == 0 else []
-
         sim.target_provider = _trace_target_provider
-        sim.bounce_target_provider = _trace_bounce_provider
 
         has_break_in_log = False
         if log_path and os.path.exists(str(log_path)):
@@ -330,12 +302,10 @@ def run_trajectory_replay(
             spirit_queues.setdefault(i.skill_id, deque()).append(
                 TrajectoryCast(av=i.av, actor=i.actor, skill_id=i.skill_id, name=i.name, order=idx)
             )
-    master_indices = [idx for idx, i in enumerate(timeline) if i.kind in ("basic", "skill", "ult")]
     turn_indices = [idx for idx, i in enumerate(timeline) if i.kind in ("basic", "skill")]
     fired_master: Set[int] = set()
     organic: List[Tuple[int, float]] = []
     organic_used: Set[int] = set()
-    stash = {"amount": 0.0}
     master_fired: List[Tuple[str, int, float]] = []
 
     def _on_action(e: Any) -> None:
@@ -349,263 +319,18 @@ def run_trajectory_replay(
 
     sim.event_bus.subscribe(ActionExecuteEvent, _on_action)
 
-    def _kit_of(entity_name: str) -> Any:
-        ent = sim.get_entity(entity_name)
-        return getattr(ent, "kit", None) if ent is not None else None
-
-    def _changye_kit() -> Any:
-        moon = sim.get_entity("长夜月")
-        return getattr(moon, "kit", None) if moon is not None else None
-
-    def _get_vm_memoria() -> float:
-        rt = getattr(sim, "vm_runtime", None)
-        if rt is None:
-            return 0.0
-        from simulator.vm.expr import dotnet_hash
-
-        if sim.get_entity("长夜") is not None and "长夜" in rt.entity_dynamics:
-            return float(rt.get_dynamic_value("长夜", dotnet_hash("_Partner_Count")))
-        if "长夜月" in rt.entity_dynamics:
-            return float(rt.get_dynamic_value("长夜月", dotnet_hash("_Partner_Count_Show")))
-        return 0.0
-
-    def _set_vm_memoria(val: float) -> None:
-        rt = getattr(sim, "vm_runtime", None)
-        if rt is None:
-            return
-        from simulator.vm.expr import dotnet_hash
-
-        v = float(val)
-        if "长夜月" in rt.entity_dynamics:
-            rt.set_dynamic_value("长夜月", dotnet_hash("_Partner_Count_Show"), v)
-        if "长夜" in rt.entity_dynamics:
-            rt.set_dynamic_value("长夜", dotnet_hash("_Partner_Count"), v)
-
-    def _force_spirit(cast: TrajectoryCast, now_av: float) -> TrajectoryRecord:
-        patches: List[str] = []
-        sid = cast.skill_id
-        organic_before = len(organic)
-        rt = getattr(sim, "vm_runtime", None)
-        try:
-            if rt is not None:
-                enemies = tuple(
-                    e.name for e in sim.entities
-                    if getattr(e, "is_enemy", False) and float(getattr(e, "current_hp", 0.0)) > 0.0
-                )
-                if sid in (1141301, 1141307):
-                    if sim.get_entity("长夜月") is None:
-                        return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
-                    changye_ent = sim.get_entity("长夜")
-                    if changye_ent is None or float(getattr(changye_ent, "current_hp", 0.0)) <= 0.0:
-                        changye_ent = rt.summon_servant("长夜月", 11413)
-                        patches.append("presence")
-                        result.presence_grants += 1
-                    sim.cancel_immediate_action("长夜")
-                    if changye_ent is not None:
-                        sim._turn_id += 1
-                        sim.event_bus.publish(TurnBeginEvent(
-                            av=round(sim.current_av, 2),
-                            cycle=sim.current_cycle,
-                            actor_id=changye_ent.name,
-                            actor_name=changye_ent.name,
-                            speed=round(changye_ent.speed, 1),
-                            turn_id=sim._turn_id,
-                        ))
-                        sim.run_stage_turn_begin(changye_ent)
-                    if sid == 1141307:
-                        if stash["amount"] > 0:
-                            cur_mem = _get_vm_memoria()
-                            _set_vm_memoria(cur_mem + stash["amount"])
-                            patches.append(f"stash+{stash['amount']:.0f}")
-                            stash["amount"] = 0.0
-                        cur_mem = _get_vm_memoria()
-                        if cur_mem < 16:
-                            deficit = 16 - cur_mem
-                            _set_vm_memoria(16.0)
-                            patches.append(f"memoria+{deficit:.0f}")
-                            result.memoria_granted += deficit
-                        rt.trigger_ability(
-                            caster_id="长夜",
-                            ability_name="Servant_EvernightServant_00_Skill11_Phase01",
-                            target_ids=enemies,
-                            skill_target_ids=enemies,
-                            current_skill_type="Servant",
-                            current_attack_type="Servant",
-                        )
-                        rt.modifier_engine.dispatch_event(
-                            "OnListenAfterSkillUse",
-                            param_entity_id="长夜",
-                            current_skill_type="Servant",
-                        )
-                        if sim.port.entity_exists("长夜"):
-                            sim.port.despawn_spirit("长夜", reason="1141307 自毁离场")
-                    else:
-                        if changye_ent is None or getattr(changye_ent, "kit", None) is None:
-                            return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
-                        ctx = ActionContext(action_id="trajectory", actor_id="长夜", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies, skill_id=1141301)
-                        changye_ent.kit.execute(ctx)
-                elif sid == 1140901:
-                    if sim.get_entity("风堇") is None:
-                        return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
-                    ika_ent = sim.get_entity("小伊卡")
-                    if ika_ent is None or float(getattr(ika_ent, "current_hp", 0.0)) <= 0.0:
-                        ika_ent = rt.summon_servant("风堇", 11409)
-                        patches.append("presence")
-                        result.presence_grants += 1
-                    if ika_ent is None or getattr(ika_ent, "kit", None) is None:
-                        return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
-                    ctx = ActionContext(action_id="trajectory", actor_id="小伊卡", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies)
-                    ika_ent.kit.execute(ctx)
-                elif sid == 1151201:
-                    ent = sim.get_entity("晴空乐手")
-                    if ent is None or getattr(ent, "kit", None) is None:
-                        return TrajectoryRecord(sid, cast.name, cast.av, None, "unforceable", ())
-                    ctx = ActionContext(action_id="trajectory", actor_id="晴空乐手", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies)
-                    ent.kit.execute(ctx)
-                else:
-                    ent = sim.get_entity(cast.actor)
-                    if ent is None or getattr(ent, "kit", None) is None:
-                        return TrajectoryRecord(sid, cast.name, cast.av, None, "unforceable", ())
-                    ctx = ActionContext(action_id="trajectory", actor_id=cast.actor, kind=ActionKind.MEMOSPRITE_SKILL, target_ids=enemies, skill_id=sid)
-                    ent.kit.execute(ctx)
-            elif sid in (1141301, 1141307):
-                kit = _changye_kit()
-                if kit is None:
-                    return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ())
-                if sim.get_entity("长夜") is None or not getattr(kit, "spirit_alive", False):
-                    kit.summon_spirit()
-                    patches.append("presence")
-                    result.presence_grants += 1
-                sim.cancel_immediate_action("长夜")
-                changye_ent = sim.get_entity("长夜")
-                if changye_ent is not None:
-                    sim._turn_id += 1
-                    sim.event_bus.publish(TurnBeginEvent(
-                        av=round(sim.current_av, 2),
-                        cycle=sim.current_cycle,
-                        actor_id=changye_ent.name,
-                        actor_name=changye_ent.name,
-                        speed=round(changye_ent.speed, 1),
-                        turn_id=sim._turn_id,
-                    ))
-                    sim.run_stage_turn_begin(changye_ent)
-                if sid == 1141307:
-                    if stash["amount"] > 0:
-                        kit.yizhi = float(kit.yizhi) + stash["amount"]
-                        patches.append(f"stash+{stash['amount']:.0f}")
-                        stash["amount"] = 0.0
-                    if float(getattr(kit, "yizhi", 0)) < 16:
-                        deficit = 16 - float(kit.yizhi)
-                        kit.yizhi = 16
-                        patches.append(f"memoria+{deficit:.0f}")
-                        result.memoria_granted += deficit
-                    kit.trigger_spirit_burst()
-                else:
-                    kit._execute_memosprite_skill()
-            elif sid == 1140901:
-                fkit = _kit_of("风堇")
-                if sim.get_entity("小伊卡") is None and fkit is not None:
-                    fkit.summon_yika()
-                    patches.append("presence")
-                    result.presence_grants += 1
-                ika_kit = _kit_of("小伊卡")
-                if ika_kit is None:
-                    return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
-                ika_kit.cast_scatter()
-            elif sid == 1151201:
-                ent = sim.get_entity("晴空乐手")
-                if ent is None or getattr(ent, "kit", None) is None:
-                    return TrajectoryRecord(sid, cast.name, cast.av, None, "unforceable", ())
-                ctx = ActionContext(action_id="trajectory", actor_id="晴空乐手", kind=ActionKind.MEMOSPRITE_SKILL, target_ids=tuple(e.name for e in sim.entities if getattr(e, "is_enemy", False)))
-                ent.kit.execute(ctx)
-        except Exception:
-            return TrajectoryRecord(sid, cast.name, cast.av, None, "failed", tuple(patches))
-        resolver = getattr(sim, "resolver", None)
-        if resolver is not None:
-            resolver.resolve_all()
-        sim.port.publish_action(cast.actor, cast.name, ActionKind.MEMOSPRITE_SKILL, skill_id=sid)
-        for idx in range(organic_before, len(organic)):
-            if organic[idx][0] == sid:
-                organic_used.add(idx)
-        if director is not None:
-            director.after_step()
-        return TrajectoryRecord(sid, cast.name, cast.av, now_av, "forced", tuple(patches))
-
-    def _clamp_memoria(now_av: float) -> None:
-        q = spirit_queues.get(1141307)
-        if not q:
-            return
-        if getattr(sim, "vm_runtime", None) is not None:
-            if sim.get_entity("长夜月") is None:
-                return
-            cur_mem = _get_vm_memoria()
-            if q[0].av - now_av > 10.0 and cur_mem > 15:
-                excess = cur_mem - 15
-                _set_vm_memoria(15.0)
-                stash["amount"] += excess
-            elif q[0].av - now_av <= 10.0 and stash["amount"] > 0:
-                _set_vm_memoria(int(cur_mem + stash["amount"]))
-                stash["amount"] = 0.0
-            return
-        kit = _changye_kit()
-        if kit is None:
-            return
-        if q[0].av - now_av > 10.0 and float(getattr(kit, "yizhi", 0)) > 15:
-            excess = float(kit.yizhi) - 15
-            kit.yizhi = 15
-            stash["amount"] += excess
-        elif q[0].av - now_av <= 10.0 and stash["amount"] > 0:
-            kit.yizhi = int(float(kit.yizhi) + stash["amount"])
-            stash["amount"] = 0.0
-            if hasattr(kit, "_check_threshold"):
-                kit._check_threshold()
-
-    def _master_blocked(cast: TrajectoryCast, now_av: float) -> bool:
-        if cast.order < 0 or now_av > cast.av + 15.0:
+    def _spirit_due(cast: TrajectoryCast) -> bool:
+        ent = sim.get_entity(cast.actor)
+        if ent is None or not getattr(ent, "is_memosprite", False):
             return False
-        for j in master_indices:
-            if j >= cast.order:
-                break
-            if j not in fired_master and timeline[j].av <= cast.av + 0.5:
-                return True
-        for other_q in spirit_queues.values():
-            if other_q and other_q[0].order < cast.order and abs(other_q[0].av - cast.av) <= 0.5:
-                return True
-        if cast.skill_id in (1141301, 1141307) and getattr(director, "_pending_transition_sprouts", False):
-            return True
-        return False
-
-    defer_counts: Dict[Tuple[str, int, float, int], int] = {}
-
-    def _has_zero_av_pending() -> bool:
-        if getattr(sim, "_ready_queue", ()):
-            return True
-        peek = sim.peek_next_actor() if hasattr(sim, "peek_next_actor") else None
-        return peek is not None and float(getattr(peek, "distance_remaining", 1e9)) <= 1e-6
-
-    def _musician_due() -> bool:
-        ent = sim.get_entity("晴空乐手")
-        if ent is None:
-            return False
-        if ent.name in getattr(sim, "_ready_queue", ()):
-            return True
-        if float(getattr(ent, "distance_remaining", 1e9)) <= 5.0:
-            return True
-        peek = sim.peek_next_actor() if hasattr(sim, "peek_next_actor") else None
-        return peek is ent
-
-    def _changye_due(sid: int = 1141307) -> bool:
-        ent = sim.get_entity("长夜")
-        if ent is None:
-            return False
-        if sid == 1141307:
-            if getattr(sim, "vm_runtime", None) is not None:
-                if _get_vm_memoria() + 4 < 16:
+        kit = getattr(ent, "kit", None)
+        if kit is not None and hasattr(kit, "definition"):
+            try:
+                adef = kit.definition(ActionKind.MEMOSPRITE_SKILL)
+                if adef is not None and getattr(adef, "skill_id", 0) and int(adef.skill_id) != int(cast.skill_id):
                     return False
-            else:
-                kit = _changye_kit()
-                if kit is None or float(getattr(kit, "yizhi", 0)) + 4 < 16:
-                    return False
+            except Exception:
+                pass
         if ent.name in getattr(sim, "_ready_queue", ()):
             return True
         if float(getattr(ent, "distance_remaining", 1e9)) <= 5.0:
@@ -631,31 +356,21 @@ def run_trajectory_replay(
                 result.records.append(TrajectoryRecord(sid, head.name, head.av, organic[match_idx][1], "organic", ()))
                 q.popleft()
 
-    def _enforce_spirits() -> None:
-        now_av = float(getattr(sim, "current_av", 0.0))
-        _clamp_memoria(now_av)
-        _match_organic_spirits()
-        for sid, q in spirit_queues.items():
-            while q and q[0].av <= now_av and not _master_blocked(q[0], now_av):
-                zero_key = ("zero_av", sid, q[0].av, q[0].order)
-                if _has_zero_av_pending() and defer_counts.get(zero_key, 0) < 16:
-                    defer_counts[zero_key] = defer_counts.get(zero_key, 0) + 1
-                    break
-                due_key = ("due", sid, q[0].av, q[0].order)
-                if (
-                    (sid == 1151201 and _musician_due())
-                    or (sid in (1141301, 1141307) and _changye_due(sid))
-                ) and defer_counts.get(due_key, 0) < 1:
-                    defer_counts[due_key] = defer_counts.get(due_key, 0) + 1
-                    break
-                cast = q.popleft()
-                result.records.append(_force_spirit(cast, now_av))
+    def _resolve_turn_owner(raw_owner: str) -> str:
+        for pfx in ("UID_", "敌人#"):
+            if raw_owner.startswith(pfx) and raw_owner[len(pfx):].isdigit():
+                uid_map = getattr(sim, "enemy_uid_map", None)
+                if isinstance(uid_map, dict):
+                    mapped = uid_map.get(int(raw_owner[len(pfx):]))
+                    if mapped:
+                        return str(mapped)
+        return raw_owner
 
     def _ult_blocked(u_idx: int, u_item: Any, now_av: float, *, allow_cur_enemy: bool = False) -> bool:
         if now_av > u_item.av + 15.0:
             return False
         cur_turn = getattr(sim, "current_turn_entity", None)
-        u_owner = getattr(u_item, "turn_owner", "")
+        u_owner = _resolve_turn_owner(getattr(u_item, "turn_owner", ""))
         if (
             cur_turn is not None
             and getattr(cur_turn, "is_enemy", False)
@@ -715,18 +430,18 @@ def run_trajectory_replay(
                 break
             if t_idx not in fired_master and abs(timeline[t_idx].av - u_item.av) <= 0.5:
                 return True
-        mq = spirit_queues.get(1151201)
-        if mq and mq[0].order < u_idx and abs(mq[0].av - u_item.av) <= 0.5 and _musician_due():
-            return True
-        for sid in (1141301, 1141307):
-            cq = spirit_queues.get(sid)
-            if cq and cq[0].order < u_idx and abs(cq[0].av - u_item.av) <= 0.5 and _changye_due(sid):
+        for sq in spirit_queues.values():
+            if sq and sq[0].order < u_idx and abs(sq[0].av - u_item.av) <= 0.5 and _spirit_due(sq[0]):
                 return True
         return False
 
     def _fire_due_ults(*, allow_cur_enemy: bool = False) -> None:
         now_av = float(getattr(sim, "current_av", 0.0))
         while ult_queue and ult_queue[0][1].av <= now_av + 1e-4 and not _ult_blocked(ult_queue[0][0], ult_queue[0][1], now_av, allow_cur_enemy=allow_cur_enemy):
+            if allow_cur_enemy and not getattr(ult_queue[0][1], "between_enemy_sub_actions", False):
+                _cand_ent = sim.get_entity(ult_queue[0][1].actor)
+                if _cand_ent is None or float(_cand_ent.energy) < float(_cand_ent.max_energy) - 1e-6:
+                    break
             _idx, item = ult_queue.popleft()
             fired_master.add(_idx)
             ent = sim.get_entity(item.actor)
@@ -738,10 +453,6 @@ def run_trajectory_replay(
                 ent.energy = float(ent.max_energy)
                 result.ult_energy_granted += deficit
             ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
-            for e in list(getattr(sim, "entities", ())):
-                kit = getattr(e, "kit", None)
-                if kit is not None and getattr(kit, "_pending_volley", False) and hasattr(kit, "_flush_zone_window"):
-                    kit._flush_zone_window()
             if director is not None:
                 director.after_step()
             result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, now_av if ok else None))
@@ -771,15 +482,14 @@ def run_trajectory_replay(
                     not pre_turn_end
                     and ult_queue[0][1].actor == act_name
                     and getattr(ult_queue[0][1], "turn_owner", "") == act_name
-                    and act_name == "缇宝"
                 )
                 or (
                     getattr(actor_ent, "is_enemy", False)
-                    and bool(getattr(ult_queue[0][1], "turn_owner", ""))
+                    and bool(_resolve_turn_owner(getattr(ult_queue[0][1], "turn_owner", "")))
                     and (
-                        act_name.replace("_", "") == getattr(ult_queue[0][1], "turn_owner", "").replace("_", "")
-                        if getattr(ult_queue[0][1], "turn_owner", "")[-1:].isdigit()
-                        else act_name.startswith(getattr(ult_queue[0][1], "turn_owner", ""))
+                        act_name.replace("_", "") == _resolve_turn_owner(getattr(ult_queue[0][1], "turn_owner", "")).replace("_", "")
+                        if _resolve_turn_owner(getattr(ult_queue[0][1], "turn_owner", ""))[-1:].isdigit()
+                        else act_name.startswith(_resolve_turn_owner(getattr(ult_queue[0][1], "turn_owner", "")))
                     )
                 )
             )
@@ -794,10 +504,6 @@ def run_trajectory_replay(
                     ent.energy = float(ent.max_energy)
                     result.ult_energy_granted += deficit
                 ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
-                for e in list(getattr(sim, "entities", ())):
-                    kit = getattr(e, "kit", None)
-                    if kit is not None and getattr(kit, "_pending_volley", False) and hasattr(kit, "_flush_zone_window"):
-                        kit._flush_zone_window()
                 if director is not None:
                     director.after_step()
                 result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, now_av if ok else None))
@@ -913,6 +619,7 @@ def run_trajectory_replay(
         if not (
             ult_queue
             and abs(ult_queue[0][1].av - now_b) < 0.25
+            and getattr(ult_queue[0][1], "turn_owner", "") != "环境/插队"
             and (
                 (
                     next_actor is not None
@@ -928,30 +635,8 @@ def run_trajectory_replay(
         ):
             _fire_due_ults()
         actor_ent = sim.advance_to_next_turn()
-        if actor_ent is not None and actor_ent.name == "长夜" and getattr(director, "_pending_transition_sprouts", False):
-            boss_ent = sim.get_entity("堕神之血•亚婆离")
-            if boss_ent is not None:
-                if "堕神之血•亚婆离" in getattr(sim, "_ready_queue", ()):
-                    sim._ready_queue.remove("堕神之血•亚婆离")
-                sim._ready_queue.insert(0, "长夜")
-                sim._current_turn_entity = boss_ent
-                actor_ent = boss_ent
         if director is not None:
             director.after_step()
-
-        def _ult_ready_before_enemy_step() -> bool:
-            if (
-                actor_ent is None
-                or not getattr(actor_ent, "is_enemy", False)
-                or not getattr(actor_ent, "is_boss", False)
-                or not ult_queue
-            ):
-                return False
-            u_item = ult_queue[0][1]
-            if u_item.av > float(getattr(sim, "current_av", 0.0)) + 1e-4:
-                return False
-            u_ent = sim.get_entity(u_item.actor)
-            return u_ent is not None and float(u_ent.energy) >= float(u_ent.max_energy) - 1e-6
 
         def _on_sub_action_end() -> None:
             if not ult_queue:
@@ -959,7 +644,7 @@ def run_trajectory_replay(
             u_item = ult_queue[0][1]
             if not getattr(u_item, "between_enemy_sub_actions", False):
                 cur_t = getattr(sim, "current_turn_entity", None)
-                u_ow = getattr(u_item, "turn_owner", "")
+                u_ow = _resolve_turn_owner(getattr(u_item, "turn_owner", ""))
                 if not (
                     cur_t is not None
                     and getattr(cur_t, "is_enemy", False)
@@ -978,7 +663,6 @@ def run_trajectory_replay(
                 _fire_due_ults(allow_cur_enemy=True)
 
         sim.on_enemy_sub_action_end = _on_sub_action_end
-        _pre_boss_ult = _ult_ready_before_enemy_step()
         if (
             float(getattr(sim, "current_av", 0.0)) < 1e-4
             or (
@@ -987,9 +671,8 @@ def run_trajectory_replay(
                 and ult_queue
                 and getattr(ult_queue[0][1], "turn_owner", "") == actor_ent.name
             )
-            or _pre_boss_ult
         ):
-            _fire_due_ults(allow_cur_enemy=_pre_boss_ult)
+            _fire_due_ults()
         if actor_ent is None or getattr(actor_ent, "current_hp", 0.0) <= 0.0:
             if actor_ent is not None and getattr(sim, "_current_turn_entity", None) is actor_ent:
                 sim._current_turn_entity = None
@@ -1024,48 +707,26 @@ def run_trajectory_replay(
                             continue
                         ename = uid_override_map[u]
                         ent = sim.get_entity(ename)
-                        if ent is not None:
-                            ename = ent.name
-                        else:
-                            m_eg = re.match(r"^(.+)_g(\d+)_(\d+)$", ename)
-                            if m_eg:
-                                alt = f"{m_eg.group(1)}_{(int(m_eg.group(2)) - 1) * 3 + int(m_eg.group(3))}"
-                                ent_alt = sim.get_entity(alt)
-                                if ent_alt is not None:
-                                    ename = ent_alt.name
-                        mapped_list.append(ename)
+                        mapped_list.append(ent.name if ent is not None else ename)
                     if mapped_list:
                         target_ids = tuple(mapped_list)
                 if target_ids is None:
                     raw_tids = getattr(head, "target_ids", None)
                     if raw_tids:
-                        mapped_raw = []
-                        for tid in raw_tids:
-                            ent = sim.get_entity(tid)
-                            if ent is not None:
-                                mapped_raw.append(ent.name)
-                            else:
-                                m_eg = re.match(r"^(.+)_g(\d+)_(\d+)$", tid)
-                                if m_eg:
-                                    alt = f"{m_eg.group(1)}_{(int(m_eg.group(2)) - 1) * 3 + int(m_eg.group(3))}"
-                                    ent_alt = sim.get_entity(alt)
-                                    if ent_alt is not None:
-                                        mapped_raw.append(ent_alt.name)
+                        mapped_raw = [
+                            ent.name
+                            for tid in raw_tids
+                            if (ent := sim.get_entity(tid)) is not None
+                        ]
                         if len(mapped_raw) == len(raw_tids):
                             target_ids = tuple(mapped_raw)
                 replay.turn_matched += 1
-        if actor_ent.name == "长夜":
-            q01 = spirit_queues.get(1141301)
-            q07 = spirit_queues.get(1141307)
-            cur_av_now = float(getattr(sim, "current_av", 0.0))
-            if q01 and q01[0].av <= cur_av_now + 0.05 and (not q07 or (q01[0].av, q01[0].order) < (q07[0].av, q07[0].order)):
-                actor_ent._trajectory_skill_id = 1141301
         sim.step(action_override=override, target_ids=target_ids)
         if director is not None:
             director.after_step()
         _match_organic_spirits()
         _fire_due_ults()
-        _enforce_spirits()
+        _match_organic_spirits()
 
     while ult_queue and ult_queue[0][1].av <= av_budget:
         _idx, item = ult_queue.popleft()
@@ -1082,11 +743,8 @@ def run_trajectory_replay(
     while ult_queue:
         _idx, item = ult_queue.popleft()
         result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
-    now_av = float(getattr(sim, "current_av", 0.0))
+    _match_organic_spirits()
     for sid, q in spirit_queues.items():
-        while q and q[0].av <= av_budget:
-            cast = q.popleft()
-            result.records.append(_force_spirit(cast, now_av))
         while q:
             cast = q.popleft()
             result.records.append(TrajectoryRecord(sid, cast.name, cast.av, None, "failed", ()))

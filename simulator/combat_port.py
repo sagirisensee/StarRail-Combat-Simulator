@@ -337,10 +337,6 @@ class SimulatorCombatPort:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "is_countdown", False))
 
-    def is_barrier_guarded(self, entity_id: str) -> bool:
-        ent = self._get_entity(entity_id)
-        return bool(ent and getattr(ent, "barrier_guarded", False))
-
     def is_boss(self, entity_id: str) -> bool:
         ent = self._get_entity(entity_id)
         return bool(ent and getattr(ent, "is_boss", False))
@@ -379,11 +375,6 @@ class SimulatorCombatPort:
         for e in self.sim.entities:
             if e.is_enemy != actor.is_enemy or getattr(e, "unspawned", False):
                 continue
-            if getattr(e, "is_memosprite", False):
-                master = self.sim.get_entity(getattr(e, "master_name", ""))
-                if master and getattr(master, "kit", None) and hasattr(master.kit, "spirit_alive"):
-                    if not master.kit.spirit_alive:
-                        continue
             if getattr(e, "is_proxy", False):
                 continue
             if e.current_hp > 0 or getattr(e, "is_infinite_hp", False):
@@ -887,12 +878,6 @@ class SimulatorCombatPort:
             return self.sim.request_ultimate(actor_id, target_ids=target_ids)
         return False
 
-    def turn_sp_consumed(self, entity_id: str) -> int:
-        """查询指定角色在其当前自身单回合内已累计消耗的战技点数 (非自身自然回合返回 0)。"""
-        if hasattr(self.sim, "get_turn_sp_consumed"):
-            return self.sim.get_turn_sp_consumed(entity_id)
-        return 0
-
     def attack(
         self,
         source_id: str,
@@ -1022,9 +1007,6 @@ class SimulatorCombatPort:
                 ))
                 if hasattr(self.sim, "tracer") and self.sim.tracer:
                     self.sim.tracer.record_hp_lost(ent.name, actual, cause)
-            for e in list(self.sim.entities):
-                if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
-                    e.kit.on_hp_lost(entity_id, actual, cause)
 
     def resolve_effects(self) -> None:
         """立即排空并结算当前挂起的效果队列（供多段独立子动作边界同步结算使用）。"""

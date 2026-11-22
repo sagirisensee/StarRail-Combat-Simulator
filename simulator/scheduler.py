@@ -424,11 +424,6 @@ class ActionScheduler:
                         for e in getattr(self.sim, "entities", ())
                     )
                 ):
-                    ent = self.sim.get_entity(intent.actor_id)
-                    kit = getattr(ent, "kit", None) if ent is not None else None
-                    if kit is not None and hasattr(kit, "_resolve_talent_heal"):
-                        kit._resolve_talent_heal()
-                        self.sim.resolver.resolve_all()
                     continue
 
                 executed_count += 1

@@ -90,16 +90,22 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
                 return
             act_i, hit_i, eff_cr = pending.pop(0)
             bd = getattr(e, "breakdown", None)
-            if e.is_crit and bd is not None and getattr(bd, "crit_mult", 1.0) > 1.05:
+            if bd is not None:
                 dtype = getattr(e.damage_type, "value", str(e.damage_type)) if e.damage_type is not None else ""
+                atk_name = getattr(e, "attacker_name", "") or ""
+                atk_ent = sim.get_entity(atk_name) if atk_name else None
+                if atk_ent is not None and getattr(atk_ent, "is_memosprite", False) and getattr(atk_ent, "master_name", None):
+                    atk_name = str(atk_ent.master_name)
                 records.append(
                     (
                         round(float(getattr(sim, "current_av", 0.0)), 2),
                         act_i,
                         hit_i,
+                        atk_name,
                         dtype,
+                        bool(e.is_crit),
                         eff_cr,
-                        float(bd.crit_mult),
+                        float(getattr(bd, "crit_mult", 1.0)),
                         float(e.damage),
                     )
                 )
@@ -128,33 +134,34 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
 
 def _detect_non_crits_from_trace(
     g: Any,
-    crit_records: Sequence[Tuple[float, int, int, str, float, float, float]],
+    crit_records: Sequence[Tuple[float, int, int, str, str, bool, float, float, float]],
 ) -> Set[Tuple[int, int]]:
-    """将 SIM 暴击命中与 GT 同 AV 同类型伤害逐段比对，精确识别实机未暴击的 (act_idx, hit_idx)。
+    """将 SIM 暴击命中与 GT 同 AV 同攻击者同类型伤害逐段比对，精确识别实机未暴击的 (act_idx, hit_idx)。
 
     严格防呆：
     - 仅检查有效暴击率 < 99.9% 的角色命中；
     - 仅当 sim_dmg / gt_dmg 与该次命中的 1 + CritDMG (crit_mult) 偏差 < 6% 时才判定为未暴击。
     """
-    gt_hits: Dict[Tuple[float, str], List[float]] = {}
+    gt_hits: Dict[Tuple[float, str, str], List[float]] = {}
     for t in g.turns:
         av = round(t.av, 2)
         for d in t.damages:
             if d.damage_type == "DoT":
                 continue
-            gt_hits.setdefault((av, d.damage_type), []).append(float(d.damage))
+            atk_base = str(d.attacker).replace(" (忆灵)", "")
+            gt_hits.setdefault((av, atk_base, d.damage_type), []).append(float(d.damage))
 
-    sim_grouped: Dict[Tuple[float, str], List[Tuple[int, int, float, float, float]]] = {}
-    for av, act_i, hit_i, dtype, eff_cr, crit_mult, dmg in crit_records:
-        sim_grouped.setdefault((av, dtype), []).append((act_i, hit_i, eff_cr, crit_mult, dmg))
+    sim_grouped: Dict[Tuple[float, str, str], List[Tuple[int, int, bool, float, float, float]]] = {}
+    for av, act_i, hit_i, atk_name, dtype, is_crit, eff_cr, crit_mult, dmg in crit_records:
+        sim_grouped.setdefault((av, atk_name, dtype), []).append((act_i, hit_i, is_crit, eff_cr, crit_mult, dmg))
 
     detected: Set[Tuple[int, int]] = set()
     for key, s_list in sim_grouped.items():
         g_list = gt_hits.get(key)
         if not g_list or len(g_list) != len(s_list):
             continue
-        for (act_i, hit_i, eff_cr, crit_mult, s_dmg), g_dmg in zip(s_list, g_list):
-            if eff_cr >= 0.999 or g_dmg <= 0.0:
+        for (act_i, hit_i, is_crit, eff_cr, crit_mult, s_dmg), g_dmg in zip(s_list, g_list):
+            if not is_crit or crit_mult <= 1.05 or eff_cr >= 0.999 or g_dmg <= 0.0:
                 continue
             ratio = s_dmg / g_dmg
             if abs(ratio - crit_mult) / crit_mult < 0.06:
@@ -181,7 +188,7 @@ def _run_single_pass(
     sim, director, stage_mode = build_stage_for_id(
         meta.stage_id,
         team,
-        technique_users=meta.team_names,
+        technique_users=[e.name for e in team],
         force_data_driven=force_data_driven,
     )
 
@@ -191,18 +198,7 @@ def _run_single_pass(
     attach_exact_crit_oracle(sim, log_path=log_path, non_crits=non_crits)
     crit_records = _attach_crit_hit_recorder(sim) if record_crits else []
     if not getattr(sim, "enemy_uid_map", None) and meta.enemy_uid_map:
-        if force_data_driven:
-            dd_map: Dict[int, str] = {}
-            for uid, ename in meta.enemy_uid_map.items():
-                m_eg = re.match(r"^(.+)_g(\d+)_(\d+)$", ename)
-                if m_eg:
-                    base, gen, idx = m_eg.group(1), int(m_eg.group(2)), int(m_eg.group(3))
-                    dd_map[uid] = f"{base}_{(gen - 1) * 3 + idx}"
-                else:
-                    dd_map[uid] = ename
-            sim.enemy_uid_map = dd_map
-        else:
-            sim.enemy_uid_map = dict(meta.enemy_uid_map)
+        sim.enemy_uid_map = dict(meta.enemy_uid_map)
     if plugin_fn is not None:
         plugin_fn(sim)
         plugin_mode = f"plugin:log_{meta.tag}"
@@ -351,8 +347,8 @@ def reconcile_log(
         record_crits=True,
     )
 
-    # 自动检测未暴击 (act_idx, hit_idx) 并收敛
-    for _nc_round in range(2):
+    # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，无新检出立即 break）
+    for _nc_round in range(6):
         newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits
         if not newly_detected:
             break
@@ -427,6 +423,41 @@ def reconcile_log(
                     break
             if not improved_any:
                 break
+
+        if overrides:
+            report, ambiguous_slots, crit_records = _run_single_pass(
+                log_path,
+                meta,
+                g,
+                tl,
+                char_db=char_db,
+                vm_loader=vm_loader,
+                force_data_driven=force_data_driven,
+                plugin_fn=None,
+                non_crits=non_crits,
+                av_budget=av_budget,
+                memosprite_overrides=overrides,
+                record_crits=True,
+            )
+            for _nc_round in range(2):
+                newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits
+                if not newly_detected:
+                    break
+                non_crits = set(non_crits) | newly_detected
+                report, ambiguous_slots, crit_records = _run_single_pass(
+                    log_path,
+                    meta,
+                    g,
+                    tl,
+                    char_db=char_db,
+                    vm_loader=vm_loader,
+                    force_data_driven=force_data_driven,
+                    plugin_fn=None,
+                    non_crits=non_crits,
+                    av_budget=av_budget,
+                    memosprite_overrides=overrides,
+                    record_crits=True,
+                )
 
     report.non_crits = set(non_crits)
     return report

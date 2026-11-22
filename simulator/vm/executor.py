@@ -33,15 +33,13 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
     def _on_damage_applied(self, evt: DamageAppliedEvent) -> None:
         if self._damage_capture_stack:
             tgt = self.rt.sim.get_entity(evt.target_name)
-            bd = getattr(evt, "breakdown", None)
-            bm = getattr(bd, "barrier_mult", 1.0) if bd is not None else 1.0
             bg = bool(tgt is not None and getattr(tgt, "barrier_guarded", False))
             overflow = getattr(tgt, "_single_block_break_overflow", None) if tgt is not None else None
             if overflow is not None:
                 delattr(tgt, "_single_block_break_overflow")
                 self._damage_capture_stack[-1][0] += float(overflow)
                 return
-            if bm < 1.0 or bg:
+            if bg:
                 return
             self._damage_capture_stack[-1][0] += float(evt.damage)
 
@@ -86,7 +84,15 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                         pred = step.get("Predicate")
                         cur = [tid for tid in cur if self.eval_predicate(pred, ctx.clone(param_entity_id=tid))]
                     elif st == "RPG.GameCore.TargetShuffle":
-                        continue
+                        r_prov = getattr(sim, "enemy_retarget_provider", None)
+                        caster_ent = sim.get_entity(ctx.caster_id)
+                        dark_cands = [sim.get_entity(cid) for cid in cur]
+                        dark_cands = [e for e in dark_cands if e is not None and getattr(e, "is_enemy", False)]
+                        if caster_ent is not None and dark_cands and callable(r_prov):
+                            picked = r_prov(caster_ent, dark_cands)
+                            pname = getattr(picked, "name", picked) if picked is not None else None
+                            if isinstance(pname, str) and pname in cur:
+                                cur = [pname] + [cid for cid in cur if cid != pname]
                     elif st == "RPG.GameCore.TargetSortByFormation":
                         if bool(step.get("HighestFirst", False)):
                             cur = list(reversed(cur))
@@ -174,14 +180,15 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
     ) -> None:
         mod_target = None
         scope = task.get("ContextScope", "")
+        target_id = self._dyn_scope_entity(task, ctx)
         if ctx.modifier_instance is not None:
             if scope in ("Modifier", "ContextModifier"):
                 mod_target = ctx.modifier_instance
-            elif "TargetType" not in task and scope not in ("ContextCaster", "SummonerEntity"):
+            elif scope not in ("ContextCaster", "SummonerEntity"):
                 mod_floats = ctx.modifier_instance.config.get("DynamicValues", {}).get("Floats", {})
                 if str(key_h) in mod_floats or key_h in ctx.modifier_instance.dynamic_values:
-                    mod_target = ctx.modifier_instance
-        target_id = self._dyn_scope_entity(task, ctx)
+                    if "TargetType" not in task or target_id == ctx.modifier_instance.owner_id:
+                        mod_target = ctx.modifier_instance
         self.rt.set_dynamic_value(
             target_id,
             key_h,
@@ -782,8 +789,13 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 ctx,
                 0.0,
             )
+            cur_turn = getattr(sim, "_current_turn_entity", None)
             for tid in targets:
-                if val < 0:
+                if val <= -1.0 + 1e-6 and not getattr(sim, "_in_retarget_ready_batch", False):
+                    if cur_turn is not None and cur_turn.name == tid:
+                        setattr(cur_turn, "_vm_immediate_jump", True)
+                    sim.port.set_distance(tid, 0.0)
+                elif val < 0:
                     sim.port.advance(ctx.caster_id, tid, abs(val))
                 elif val > 0:
                     sim.port.delay(ctx.caster_id, tid, val)
@@ -801,8 +813,32 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             if val_spec is None:
                 val_spec = task.get("DelayValue") if "DelayValue" in task else task.get("Value")
             val = self._eval_num(val_spec, ctx, 1.0)
+            cur_turn = getattr(sim, "_current_turn_entity", None)
             for tid in targets:
-                sim.port.set_distance(tid, max(0.0, val * 10000.0))
+                if val <= 1e-6:
+                    if cur_turn is not None and cur_turn.name == tid:
+                        setattr(cur_turn, "_vm_immediate_jump", True)
+                    ent = sim.get_entity(tid)
+                    rq = getattr(sim, "_ready_queue", None)
+                    if ent is not None and isinstance(rq, list):
+                        ent.distance_remaining = 0.0
+                        if tid not in rq and (ent.current_hp > 0 or getattr(ent, "is_infinite_hp", False)):
+                            nat = getattr(sim, "_natural_due_names", None)
+                            if isinstance(nat, set):
+                                nat.discard(tid)
+                            batch_ids = getattr(ctx, "_set_delay_zero_batch", None)
+                            if batch_ids is None:
+                                batch_ids = []
+                                setattr(ctx, "_set_delay_zero_batch", batch_ids)
+                            insert_at = 0
+                            while insert_at < len(rq) and rq[insert_at] in batch_ids:
+                                insert_at += 1
+                            rq.insert(insert_at, tid)
+                            batch_ids.append(tid)
+                    else:
+                        sim.port.set_distance(tid, 0.0)
+                else:
+                    sim.port.set_distance(tid, max(0.0, val * 10000.0))
             return
 
         if t in ("RPG.GameCore.TurnInsertAbility", "RPG.GameCore.TurnInsertAbilityCondition", "RPG.GameCore.TurnInsertAction"):
@@ -886,10 +922,14 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
 
         if t == "RPG.GameCore.ModifyCurrentSkillDelayCost":
             val = self._eval_num(task.get("NormalizedValue") or task.get("Value"), ctx, 0.0)
-            if getattr(sim, "_current_turn_entity", None) is not None:
+            cur_turn = getattr(sim, "_current_turn_entity", None)
+            if cur_turn is not None:
                 cur_d = getattr(sim, "_pending_turn_reset_distance", None)
                 base_d = 10000.0 if cur_d is None else float(cur_d)
-                sim._pending_turn_reset_distance = max(0.0, base_d + val * 10000.0)
+                new_d = max(0.0, base_d + val * 10000.0)
+                sim._pending_turn_reset_distance = new_d
+                if new_d <= 0.0:
+                    setattr(cur_turn, "_vm_immediate_jump", True)
             return
 
         if t == "RPG.GameCore.SummonMonster":
@@ -900,7 +940,9 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 director.summon_enemy(
                     ctx.caster_id,
                     task,
-                    dynamic_resolver=lambda h: rt.get_dynamic_value(ctx.caster_id, h),
+                    dynamic_resolver=lambda h: self.rt.resolve_hash(
+                        ctx.caster_id, h, ability_name=ctx.ability_name, local_ctx=ctx
+                    ),
                 )
             return
 
@@ -926,13 +968,19 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             director = getattr(sim, "_stage_director", None)
             runner = getattr(director, "runner", None) if director is not None else None
             if runner is not None and hasattr(runner, "execute_stage_task"):
-                runner.execute_stage_task(
-                    task,
-                    caster_name=ctx.caster_id,
-                    dynamic_resolver=lambda h: self.rt.resolve_hash(
-                        ctx.caster_id, h, ability_name=ctx.ability_name, local_ctx=ctx
-                    ),
+                targets = (
+                    self._resolve_targets(task.get("TargetType"), ctx)
+                    if task.get("TargetType") is not None
+                    else [ctx.modifier_owner_id or ctx.caster_id]
                 )
+                for tid in targets or [ctx.modifier_owner_id or ctx.caster_id]:
+                    runner.execute_stage_task(
+                        task,
+                        caster_name=tid,
+                        dynamic_resolver=lambda h: self.rt.resolve_hash(
+                            ctx.caster_id, h, ability_name=ctx.ability_name, local_ctx=ctx
+                        ),
+                    )
             return
 
         if t == "RPG.GameCore.TriggerStanceCountDown":
@@ -974,6 +1022,18 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             if owner_ent is not None:
                 owner_ent.barrier_guarded = True
                 owner_ent.toughness_locked = True
+            return
+
+        if t == "RPG.GameCore.SetControlSkillMapping":
+            sk_key = str(task.get("SkillTriggerKey") or "")
+            ctrl_type = str(task.get("ControlSkillType") or "ControlSkill01")
+            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            for tid in targets:
+                if tid:
+                    if sk_key:
+                        self.rt.control_skill_mapping[(tid, ctrl_type)] = sk_key
+                    else:
+                        self.rt.control_skill_mapping.pop((tid, ctrl_type), None)
             return
 
         if t == "RPG.GameCore.AttachAvatarChange":

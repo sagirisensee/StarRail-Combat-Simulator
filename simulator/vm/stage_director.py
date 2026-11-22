@@ -13,8 +13,8 @@ from simulator.events import (
     TurnBeginEvent,
     WeaknessBreakEvent,
 )
-from simulator.kits.enemies.sim_port import BaseEnemyCombatPortImpl
-from simulator.stage_director import AnomalyWaveMode, BreakStatusHelper, MoCWaveMode
+from simulator.vm.enemy_port import BaseEnemyCombatPortImpl
+from simulator.vm.wave_modes import AnomalyWaveMode, BreakStatusHelper, MoCWaveMode
 from simulator.status import StatType
 from simulator.vm.enemy_kit import DataDrivenEnemyKit
 from simulator.vm.stage_ai import CompiledMonsterAISpec, StageAILoader
@@ -38,9 +38,18 @@ class DataDrivenStageDirector:
         self.port = BaseEnemyCombatPortImpl(sim)
         self.stage_id = runner.built_stage.stage_id
         self.max_waves = runner.built_stage.num_waves
+        source_spec = runner.built_stage.source_spec
+        self.challenge_mode: str = getattr(source_spec, "challenge_mode", "Other")
         self._is_moc = (
-            runner.built_stage.source_spec.stage_infinite_group_id is None
-            and runner.built_stage.stage_type == "Challenge"
+            self.challenge_mode == "MoC"
+            if self.challenge_mode != "Other"
+            else (
+                source_spec.stage_infinite_group_id is None
+                and runner.built_stage.stage_type == "Challenge"
+            )
+        )
+        self._has_cycle_aha_extra_turn: bool = bool(
+            getattr(source_spec, "has_cycle_aha_extra_turn", False)
         )
         self._wave_mode = (
             MoCWaveMode(max_waves=self.max_waves)
@@ -66,11 +75,56 @@ class DataDrivenStageDirector:
         self.sim.event_bus.subscribe(DamageAppliedEvent, self._break_helper.on_damage_applied)
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         setattr(self.sim, "_stage_director", self)
+        self._init_stage_affix_abilities()
+
+    def _init_stage_affix_abilities(self) -> None:
+        """挂载官方 ChallengePeakConfig -> MazeBuff 声明的关卡环境词条（如血噬、洞穿）。"""
+        affixes = getattr(self.runner.built_stage.source_spec, "stage_affix_abilities", ())
+        if not affixes:
+            return
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is None:
+            return
+        maze_buff_param_hashes = (462955996, 59671469)
+        rt.loader.ensure_ability_index()
+        for ab_name, params in affixes:
+            ab = rt.loader.get_ability(ab_name)
+            if not ab:
+                continue
+            on_add = ab.get("OnAdd") or []
+            if on_add:
+                from simulator.vm.target_alias import ExecutionContext
+
+                ctx = ExecutionContext(
+                    runtime=rt,
+                    caster_id="__LEVEL__",
+                    ability_name=ab_name,
+                    ability_target_ids=("__LEVEL__",),
+                    modifier_owner_id="__LEVEL__",
+                )
+                rt.executor.execute_tasks(on_add, ctx)
+            # 将每个 MazeBuff 专属的 ParamList 写入其对应的 Modifier 实例 dynamic_values，避免多个关卡词条共用 __LEVEL__[462955996] 互相覆盖
+            for mod in rt.modifier_engine.get_modifiers("__LEVEL__"):
+                if mod.ability_name == ab_name:
+                    for idx, val in enumerate(params):
+                        if idx < len(maze_buff_param_hashes):
+                            mod.dynamic_values[maze_buff_param_hashes[idx]] = float(val)
+        # 对已入场实体补发一次 OnListenCharacterCreate，使所有环境词条挂到全部现有角色与敌方
+        for ent in list(self.sim.entities):
+            if getattr(ent, "is_countdown", False):
+                continue
+            rt.modifier_engine.dispatch_event(
+                "OnListenCharacterCreate",
+                owner_id="__LEVEL__",
+                param_entity_id=ent.name,
+            )
 
     def _current_wave_cycle(self) -> int:
         return self._wave_mode.current_wave_cycle(self.sim)
 
     def _check_cycle_aha_extra_turn(self) -> None:
+        if not self._has_cycle_aha_extra_turn:
+            return
         cur_cycle = self._current_wave_cycle()
         key = (self.wave, cur_cycle)
         if key not in self._triggered_aha_cycles:
@@ -112,15 +166,16 @@ class DataDrivenStageDirector:
     def peek_next_interrupt_av(self, now0: float, landing_av: float) -> Optional[float]:
         """返回 (now0, landing_av) 区间内最早的关卡轮次边界或待触发阿哈事件 AV。"""
         best: Optional[float] = None
-        c = 1
-        wave_start = getattr(self, "_wave_start_av", 0.0)
-        while True:
-            if (self.wave, c) not in self._triggered_aha_cycles:
-                cyc_av = wave_start + 150.0 + 100.0 * (c - 1)
-                if now0 + 1e-6 < cyc_av < landing_av - 1e-6:
-                    best = cyc_av
-                break
-            c += 1
+        if self._has_cycle_aha_extra_turn:
+            c = 1
+            wave_start = getattr(self, "_wave_start_av", 0.0)
+            while True:
+                if (self.wave, c) not in self._triggered_aha_cycles:
+                    cyc_av = wave_start + 150.0 + 100.0 * (c - 1)
+                    if now0 + 1e-6 < cyc_av < landing_av - 1e-6:
+                        best = cyc_av
+                    break
+                c += 1
         for idx, cand in enumerate(getattr(self.sim, "aha_interrupt_avs", ())):
             if idx in self._fired_aha_interrupts:
                 continue
@@ -158,12 +213,6 @@ class DataDrivenStageDirector:
                     cur_ent = getattr(self.sim, "_current_turn_entity", None)
                     if cur_ent is not None:
                         rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=cur_ent.name)
-            return
-        for ent in self.sim.entities:
-            if not ent.is_enemy and ent.current_hp > 0:
-                kit = getattr(ent, "kit", None)
-                if kit is not None and hasattr(kit, "_resolve_talent_heal"):
-                    kit._resolve_talent_heal()
 
     def _check_aha_special_damage_events(self) -> None:
         handler = getattr(self.sim, "aha_special_handler", None)
@@ -462,11 +511,6 @@ class DataDrivenStageDirector:
                     cause="attack_damage",
                 ))
                 vm_rt.modifier_engine.dispatch_event("OnAfterBeingHitAll", owner_id=ent.name, param_entity_id="阿哈")
-            else:
-                for ally in self.sim.entities:
-                    kit = getattr(ally, "kit", None)
-                    if kit is not None and hasattr(kit, "on_hp_lost"):
-                        kit.on_hp_lost(ent.name, actual, cause="attack_damage")
         energy_target = ent
         if getattr(ent, "is_memosprite", False) and getattr(ent, "max_energy", 0.0) <= 0.0:
             master_name = getattr(ent, "master_name", None)
@@ -498,6 +542,19 @@ class DataDrivenStageDirector:
         return new_phase
 
     def after_step(self) -> None:
+        # -1. 将回合内通过 SetActionDelay(0)/100% 拉条触发自身立即再动的实体提至 _ready_queue 最前（优先于自然到点实体）
+        ready_q = getattr(self.sim, "_ready_queue", None)
+        if isinstance(ready_q, list) and len(ready_q) > 1:
+            jumped: List[str] = []
+            for nm in list(ready_q):
+                ent = self.sim.get_entity(nm)
+                if ent is not None and getattr(ent, "_vm_immediate_jump", False):
+                    setattr(ent, "_vm_immediate_jump", False)
+                    jumped.append(nm)
+            if jumped:
+                rest = [nm for nm in ready_q if nm not in jumped]
+                ready_q[:] = jumped + rest
+
         # 0. Aha cycle check & special damage check
         self._check_cycle_aha_extra_turn()
         self._check_aha_special_damage_events()
@@ -593,10 +650,15 @@ def build_data_driven_stage(
                 if entry_elem in getattr(e, "weaknesses", ()):
                     e.current_toughness = max(0.0, e.current_toughness - 10.0)
 
+    norm_tech_users = (
+        [u[:-2] if isinstance(u, str) and u.endswith("_旧") else u for u in technique_users]
+        if technique_users is not None
+        else None
+    )
     sim = TurnSimulator(
         entities=list(team) + list(wave0_enemies),
-        use_techniques=bool(technique_users),
-        technique_users=list(technique_users) if technique_users is not None else None,
+        use_techniques=bool(norm_tech_users),
+        technique_users=norm_tech_users,
         auto_ult=auto_ult,
     )
     director = DataDrivenStageDirector(sim, runner, ai_loader)

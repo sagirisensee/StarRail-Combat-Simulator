@@ -144,8 +144,9 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             if not getattr(e, "is_enemy", False):
                 continue
             if not _is_alive_entity(sim, e):
+                pending_dead = getattr(rt, "_pending_dead_enemies", None) or ()
                 if not (
-                    has_living_wave_enemy
+                    (has_living_wave_enemy or (include_limbo and e.name in pending_dead))
                     and any(m.owner_id == e.name for m in rt.modifier_engine.all_modifiers())
                 ):
                     continue
@@ -261,7 +262,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             cur = list(ctx.template_param_targets)
         else:
             cur = [ctx.param_entity_id] if ctx.param_entity_id else []
-    elif base == "AttackTargetList":
+    elif base in ("AttackTargetList", "ParamEntityAttackTargetList"):
         cur = list(ctx.attack_target_ids or ctx.ability_target_ids)
     elif base == "CurrentTurnOwnerEntity":
         t = getattr(sim, "current_turn_entity", None)

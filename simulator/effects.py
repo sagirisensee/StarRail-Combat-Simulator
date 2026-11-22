@@ -78,7 +78,6 @@ class ApplyDamageEffect(EffectRequest):
     damage_tag: str = "direct"
     damage_type: Optional[DamageType] = None  # 权威伤害分类；为 None 时由 damage_tag 经 DamageType.from_tag 收编
     action_id: int = 0
-    defer_after_being_hit: bool = False
 
 
 class EffectResolver:
@@ -178,8 +177,6 @@ class EffectResolver:
                 self.simulator.sp.generate(effect.delta, effect.actor_name, effect.reason, av)
             elif effect.delta < 0:
                 self.simulator.sp.consume(abs(effect.delta), effect.actor_name, effect.reason, av)
-                if hasattr(self.simulator, "record_turn_sp_consumption"):
-                    self.simulator.record_turn_sp_consumption(effect.actor_name, abs(effect.delta))
             bus.publish(SPChangeEvent(
                 av=round(av, 2),
                 cycle=cycle,
@@ -297,15 +294,7 @@ class EffectResolver:
                         vuln_mult = 1.0 + vuln
                         dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
 
-                        memosprite_mult = vm_base_multi
-                        if getattr(effect.attacker, "is_memosprite", False) and hasattr(self, "simulator") and self.simulator:
-                            for ally_ent in self.simulator.entities:
-                                if not getattr(ally_ent, "is_enemy", False) and getattr(ally_ent, "current_hp", 0.0) > 0:
-                                    ally_kit = getattr(ally_ent, "kit", None)
-                                    if ally_kit is not None and hasattr(ally_kit, "_memosprite_damage_mult"):
-                                        memosprite_mult *= float(ally_kit._memosprite_damage_mult())
-
-                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr) * memosprite_mult
+                        break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr) * vm_base_multi
                         if hasattr(target, "current_hp"):
                             target.current_hp = max(0.0, target.current_hp - break_dmg)
 
@@ -355,18 +344,6 @@ class EffectResolver:
                 effect.request.extra_res_pen += float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
                 effect.request.extra_vuln += float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
                 effect.request.vm_hit_hooks_applied = True
-            if (
-                (effect.request.damage_type == DamageType.SERVANT or getattr(req_attacker, "is_memosprite", False))
-                and not req_attacker.is_enemy
-                and not getattr(effect.request, "is_true_damage", False)
-            ):
-                for e in list(getattr(self.simulator, "entities", [])):
-                    if not e.is_enemy and e.current_hp > 0 and getattr(e, "kit", None) is not None:
-                        fn = getattr(e.kit, "_memosprite_damage_mult", None)
-                        if callable(fn):
-                            m = float(fn())
-                            effect.request.skill_multiplier *= m
-                            effect.request.flat_damage *= m
 
             # 1. 伤害纯计算
             breakdown = DamageCalculator.calculate(effect.request)
@@ -390,7 +367,7 @@ class EffectResolver:
                 and getattr(req_attacker, "is_enemy", False)
                 and not getattr(target, "is_enemy", False)
             )
-            if notify_vm_being_hit and not getattr(effect, "defer_after_being_hit", False):
+            if notify_vm_being_hit:
                 vm_rt.modifier_engine.dispatch_event(
                     "OnBeforeBeingHitAll",
                     owner_id=target.name,
@@ -410,12 +387,9 @@ class EffectResolver:
                         hp_left=hp_left,
                         cause="attack_damage"
                     ))
-                    for e in list(getattr(self.simulator, "entities", [])):
-                        if getattr(e, "kit", None) and hasattr(e.kit, "on_hp_lost"):
-                            e.kit.on_hp_lost(target.name, actual_loss, cause="attack_damage")
             else:
                 hp_left = 0.0
-            if notify_vm_being_hit and not getattr(effect, "defer_after_being_hit", False):
+            if notify_vm_being_hit:
                 vm_rt.modifier_engine.dispatch_event(
                     "OnAfterBeingHitAll",
                     owner_id=target.name,
@@ -462,11 +436,10 @@ class EffectResolver:
                 and resolved_damage_type == DamageType.DIRECT
             ):
                 action_seq = getattr(self.simulator, "_action_seq", 0)
-                in_pulse = getattr(self.simulator, "_in_channel_pulse", False)
                 energy_recipient = getattr(target, "master_name", None) if getattr(target, "is_memosprite", False) else target.name
                 hit_key = (action_seq, target.name)
-                if energy_recipient and (in_pulse or action_seq == 0 or hit_key not in self._hit_energy_action_recipients):
-                    if action_seq > 0 and not in_pulse:
+                if energy_recipient and (action_seq == 0 or hit_key not in self._hit_energy_action_recipients):
+                    if action_seq > 0:
                         self._hit_energy_action_recipients.add(hit_key)
                     hit_base = getattr(effect.request.attacker, "hit_energy", 0.0) or getattr(effect.request, "hit_energy", 0.0) or 5.0
                     if hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):

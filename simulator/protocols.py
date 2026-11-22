@@ -36,20 +36,6 @@ class KitHandler(ABC):
         self.port = port
         self.eidolon = eidolon
         self.skill_levels = skill_levels or {}
-        self.scaling: Optional[Any] = None
-
-    def bind_scaling(self, scaling: Any) -> None:
-        self.scaling = scaling
-
-    def skill_param(self, skill_key: str, index: int = 0, default: float = 0.0) -> float:
-        if self.scaling is not None:
-            return self.scaling.value(skill_key, index, default)
-        return default
-
-    def eidolon_param(self, rank: int, index: int = 0, default: float = 0.0) -> float:
-        if self.scaling is not None and hasattr(self.scaling, "eidolon_value"):
-            return self.scaling.eidolon_value(rank, index, default)
-        return default
 
     @abstractmethod
     def definition(self, kind: ActionKind) -> AbilityDefinition:
@@ -87,9 +73,6 @@ class KitHandler(ABC):
         pass
 
     def on_event(self, event: Any) -> None:
-        pass
-
-    def on_hp_lost(self, entity_id: str, actual_loss: float, cause: str) -> None:
         pass
 
     def intercept_incoming_damage(self, target_id: str, raw_damage: float) -> float:

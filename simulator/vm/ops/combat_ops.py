@@ -333,7 +333,7 @@ class CombatOpsMixin:
             pending_limbo: List[str] = []
             pending_dying: List[str] = []
             for idx, tid in enumerate(real_targets):
-                if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type in ("Servant", "Pursued"):
+                if idx > 0 and any_died_mid_aoe and not is_true_dmg and atk_type in ("Servant", "Pursued", "Ultra"):
                     any_died_mid_aoe = False
                     dmg_data = dict(base_before_hit_all)
                     me.dispatch_event(
@@ -370,8 +370,16 @@ class CombatOpsMixin:
                         current_attack_type=atk_type,
                     )
                     def_red = float(tgt_hit_data.get("Defender_AllDamageReduce", 0.0))
+                    red_mult = 1.0 - prev_dmg_red
                     if def_red > 0.0:
-                        tgt_ent.damage_reduction = def_red
+                        red_mult *= max(0.0, 1.0 - def_red)
+                    for m_def in me.get_modifiers(tid):
+                        m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
+                        if m_red > 0.0:
+                            red_mult *= max(0.0, 1.0 - m_red)
+                    combined_red = max(0.0, 1.0 - red_mult)
+                    if abs(combined_red - prev_dmg_red) > 1e-9:
+                        tgt_ent.damage_reduction = combined_red
                         applied_def_red = True
                 if not is_nested_sub:
                     me.dispatch_event(
@@ -431,7 +439,8 @@ class CombatOpsMixin:
                             mrs = runner.get_enemy_state(tid)
                             if getattr(mrs, "_limbo_pending", False):
                                 setattr(mrs, "_limbo_pending", False)
-                                any_died_mid_aoe = True
+                                if atk_type in ("Servant", "Pursued"):
+                                    any_died_mid_aoe = True
                                 if tid not in pending_limbo:
                                     pending_limbo.append(tid)
                         except KeyError:
@@ -565,7 +574,7 @@ class CombatOpsMixin:
                         cur_hp = float(mrs.entity.current_hp)
                         if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:
                             fl = max_hp * float(mrs.lock_hp_ratio)
-                            if cur_hp > fl and cur_hp - raw_loss < fl:
+                            if cur_hp >= fl - 1e-6 and cur_hp - raw_loss < fl:
                                 raw_loss = max(0.0, cur_hp - fl)
                         if mrs.phase < mrs.max_phase and cur_hp - raw_loss <= 0.0:
                             setattr(mrs, "_limbo_pending", True)

@@ -141,6 +141,7 @@ def extract_log_metadata(
     last_player_spd: Dict[int, float] = {}
     slow_hits: Set[Tuple[float, str]] = set()
     last_enemy_hp: Dict[int, float] = {}
+    pending_tie_highest_hp_euid: Optional[int] = None
     enemy_hits: List[EnemyHitRecord] = []
     aha_turns: List[AhaTurnRecord] = []
 
@@ -200,6 +201,28 @@ def extract_log_metadata(
         cur_none_ally_sp_counts = {}
         cur_none_pending_hp_chip_uid = None
 
+    def _pause_enemy_turn_if_active() -> None:
+        nonlocal paused_enemy_ctx
+        if cur_enemy_uid is not None:
+            _paused_sub_actions = list(cur_sub_actions)
+            if cur_sub_hits:
+                _paused_sub_actions.append(list(cur_sub_hits))
+            _snap = {
+                "av": round(cur_av, 2),
+                "euid": cur_enemy_uid,
+                "hit_order": list(cur_hit_order),
+                "hit_set": set(cur_hit_set),
+                "hit_counts": dict(cur_hit_counts),
+                "sub_actions": _paused_sub_actions,
+                "small_heal": set(cur_small_heal_uids),
+                "sp_gains": dict(cur_sp_gain_counts),
+                "first_memo": cur_first_memo_owner,
+                "last_sp": last_enemy_hit_sp,
+            }
+            _flush_turn()
+            _snap["rec_idx"] = len(enemy_hits) - 1
+            paused_enemy_ctx = _snap
+
     with open(log_path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -258,25 +281,7 @@ def extract_log_metadata(
                     cur_none_had_skill = True
                 av_ent = data.get("avatar") or {}
                 if av_ent.get("team") == "Player":
-                    if cur_enemy_uid is not None:
-                        _paused_sub_actions = list(cur_sub_actions)
-                        if cur_sub_hits:
-                            _paused_sub_actions.append(list(cur_sub_hits))
-                        _snap = {
-                            "av": round(cur_av, 2),
-                            "euid": cur_enemy_uid,
-                            "hit_order": list(cur_hit_order),
-                            "hit_set": set(cur_hit_set),
-                            "hit_counts": dict(cur_hit_counts),
-                            "sub_actions": _paused_sub_actions,
-                            "small_heal": set(cur_small_heal_uids),
-                            "sp_gains": dict(cur_sp_gain_counts),
-                            "first_memo": cur_first_memo_owner,
-                            "last_sp": last_enemy_hit_sp,
-                        }
-                        _flush_turn()
-                        _snap["rec_idx"] = len(enemy_hits) - 1
-                        paused_enemy_ctx = _snap
+                    _pause_enemy_turn_if_active()
                     uid = int(av_ent.get("uid") or 0)
                     if uid and uid not in seen_uid_set:
                         seen_uid_set.add(uid)
@@ -302,10 +307,26 @@ def extract_log_metadata(
                         pending_player_skill_id = sk_id
                         pending_player_skill_type = sk_type
             elif ev == "OnDamage":
+                dtype = str(data.get("type") or "")
+                if dtype in ("Ultimate", "Ultra") and pending_ally_ult_caster is not None:
+                    pending_ally_ult_caster = None
+                    pending_ally_ult_sid = 0
+                    pending_ally_ult_uid = 0
+                    pending_ally_ult_sp_fallback = None
                 if pending_player_atk is not None:
-                    dtype = str(data.get("type") or "")
                     if dtype in ("Basic", "Normal", "Skill", "BPSkill", "Ultimate", "Ultra"):
                         pending_player_primary_dmg_hits += 1
+                atk_ent = data.get("attacker") or {}
+                if (
+                    atk_ent.get("team") == "Player"
+                    and int(atk_ent.get("uid") or 0) == 1403
+                    and dtype == "Additional"
+                    and pending_tie_highest_hp_euid is not None
+                ):
+                    pick_item = (round(cur_av, 2), 1403, pending_tie_highest_hp_euid)
+                    if pick_item not in enemy_retarget_picks:
+                        enemy_retarget_picks.append(pick_item)
+                    pending_tie_highest_hp_euid = None
             elif ev == "OnStatChange":
                 ent = data.get("entity") or {}
                 team_tag = ent.get("team")
@@ -323,6 +344,7 @@ def extract_log_metadata(
                             cur_enemy_uid is None
                             and paused_enemy_ctx is not None
                             and paused_enemy_ctx["euid"] == uid
+                            and val <= 1e-6
                             and abs(round(cur_av, 2) - paused_enemy_ctx["av"]) < 0.05
                             and paused_enemy_ctx["rec_idx"] == len(enemy_hits) - 1
                         ):
@@ -344,6 +366,12 @@ def extract_log_metadata(
                         last_enemy_hit_sp = val if val > 0.0 else 0.0
                     elif ptype == "CurrentHP":
                         prev = last_enemy_hp.get(uid)
+                        if prev is not None and val < prev - 1.0 and last_enemy_hp:
+                            max_cur = max(last_enemy_hp.values())
+                            if prev >= max_cur - 1.0 and sum(1 for v in last_enemy_hp.values() if abs(v - prev) < 1.0) >= 2:
+                                pending_tie_highest_hp_euid = uid
+                            else:
+                                pending_tie_highest_hp_euid = None
                         if cur_turn_owner_team is None and not cur_none_had_skill and prev is not None:
                             if val < prev - 1.0:
                                 cur_none_enemy_dmgs.append((uid, prev - val))
@@ -384,6 +412,8 @@ def extract_log_metadata(
                         if uid not in last_player_hp:
                             last_player_hp[uid] = val
                     elif ptype == "CurrentSP":
+                        if val < -1.0:
+                            _pause_enemy_turn_if_active()
                         cname = _resolve_uid_name(uid, char_db)
                         prev_sp = last_player_sp.get(uid)
                         is_enemy_hit_sp = (
@@ -608,7 +638,11 @@ def extract_log_metadata(
         elif 1409 in valid_uids:
             valid_uids = [1409] + [u for u in valid_uids if u != 1409]
         team_uids = valid_uids
-        team_names = [_resolve_uid_name(u, char_db) for u in valid_uids]
+        if stage_id == 30510021:
+            _oct_map = {1403: "缇宝_旧", 1512: "知更鸟•晴歌_旧"}
+            team_names = [_oct_map.get(u, _resolve_uid_name(u, char_db)) for u in valid_uids]
+        else:
+            team_names = [_resolve_uid_name(u, char_db) for u in valid_uids]
 
     return LogMetadata(
         log_path=os.path.abspath(log_path),

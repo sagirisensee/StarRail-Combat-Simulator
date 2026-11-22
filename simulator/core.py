@@ -451,24 +451,6 @@ class TurnSimulator:
             self.resolver.resolve_all()
         return active_entity
 
-    def record_turn_sp_consumption(self, actor_name: str, amount: int) -> None:
-        """记录单次战技点消耗：仅当消耗者正处于其自身的自然回合内 (actor_name == _current_turn_entity.name)
-        时，才累加至该角色的「自身单回合 SP 消耗计数」(对齐星期日光锥【回到大地的飞行】判定：
-        自身回合内的追加回合耗点计入自身回合，队友回合内触发的追加回合耗点不计入自身回合)。
-        """
-        if amount <= 0:
-            return
-        if self._current_turn_entity is not None and self._current_turn_entity.name == actor_name:
-            self._turn_owner_sp_consumed += int(amount)
-
-    def get_turn_sp_consumed(self, actor_id: str) -> int:
-        """查询某角色在其当前自身单回合内已累计消耗的战技点数；若当前不是该角色的自然回合则返回 0。"""
-        ent = self.get_entity(actor_id)
-        resolved = ent.name if ent is not None else actor_id
-        if self._current_turn_entity is not None and self._current_turn_entity.name == resolved:
-            return self._turn_owner_sp_consumed
-        return 0
-
     def run_stage_turn_begin(self, active_entity: Entity) -> None:
         """结算关卡机制插件的回合开始钩子 (如【血噬】回合初扣血)。
 
@@ -480,15 +462,6 @@ class TurnSimulator:
         """
         for plugin in getattr(self, "stage_plugins", []):
             plugin.on_turn_begin(active_entity, self)
-        self.resolver.resolve_all()
-        for ent in list(self.entities):
-            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_turn_begin_after_stage"):
-                ent.kit.on_turn_begin_after_stage(active_entity)
-        if not getattr(active_entity, "is_countdown", False):
-            ika = self.get_entity("小伊卡")
-            if ika is not None and getattr(ika, "kit", None) is not None and not hasattr(ika.kit, "on_turn_begin_after_stage"):
-                if hasattr(ika.kit, "_resolve_talent_heal"):
-                    ika.kit._resolve_talent_heal()
         self.resolver.resolve_all()
 
     def _execute_action(
@@ -520,7 +493,7 @@ class TurnSimulator:
         with self.scheduler.action_frame():
             self._action_seq += 1
             intent = active_entity.get_next_action_intent()
-            from simulator.kits.enemies.base import EnemyKit, EnemyActionContext
+            from simulator.vm.enemy_port import EnemyKit, EnemyActionContext
             is_char_kit = getattr(active_entity, "kit", None) is not None and not isinstance(active_entity.kit, EnemyKit)
             if is_char_kit:
                 if action_override is not None:
@@ -568,15 +541,11 @@ class TurnSimulator:
                     owner_turn_id=owner_turn_id,
                     owner_turn_actor_id=owner_turn_actor,
                 )
-                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_before"):
-                    active_entity.kit.on_action_before(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_before(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
                     rh.on_action_before(ctx)
                 active_entity.kit.execute(ctx)
-                if getattr(active_entity, "kit", None) is not None and hasattr(active_entity.kit, "on_action_after"):
-                    active_entity.kit.on_action_after(ctx)
                 if getattr(active_entity, "light_cone", None) is not None:
                     active_entity.light_cone.on_action_after(ctx)
                 for rh in getattr(active_entity, "relic_handlers", []):
@@ -625,10 +594,6 @@ class TurnSimulator:
                             req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
                             self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
-            self.resolver.resolve_all()
-            for ent in list(self.entities):
-                if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_end"):
-                    ent.kit.on_action_end(active_entity)
             self.resolver.resolve_all()
             if should_publish:
                 self.event_bus.publish(PrimaryDamageCompleteEvent(

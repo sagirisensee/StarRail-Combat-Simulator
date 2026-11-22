@@ -5423,28 +5423,40 @@
       },
       "breakdowns": {
         "hp": {
-          "base_white": 2317.0,
-          "flat_bonus": 4187.0,
-          "percent_bonus": "180.71%",
-          "final_value": 6505.103795
+          "base_white": 2317.896,
+          "flat_bonus": 743.703795,
+          "percent_bonus": "148.58%",
+          "final_value": 6505.437011357713
         },
         "atk": {
-          "base_white": 1053.0,
-          "flat_bonus": 430.0,
-          "percent_bonus": "40.84%",
-          "final_value": 1483.0
+          "base_white": 1053.108,
+          "flat_bonus": 352.8,
+          "percent_bonus": "7.34%",
+          "final_value": 1483.2482560483647
         },
         "def": {
-          "base_white": 1124.0,
-          "flat_bonus": 109.0,
-          "percent_bonus": "9.70%",
-          "final_value": 1234.038811
+          "base_white": 1124.55,
+          "flat_bonus": 55.039019,
+          "percent_bonus": "4.86%",
+          "final_value": 1234.242045
         },
         "spd": {
           "base_white": 96.0,
-          "flat_bonus": -5.68,
-          "percent_bonus": "0.00%",
+          "flat_bonus": 2.0,
+          "percent_bonus": "-8.00%",
           "final_value": 90.32
+        },
+        "crit_dmg": {
+          "base_white": 0.5,
+          "flat_bonus": 0.0,
+          "percent_bonus": "274.20%",
+          "final_value": 3.2420000084
+        },
+        "err": {
+          "base_white": 1.0,
+          "flat_bonus": 0.0,
+          "percent_bonus": "19.44%",
+          "final_value": 1.194394015
         }
       },
       "substat_roll_stats": {

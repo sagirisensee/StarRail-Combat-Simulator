@@ -262,6 +262,9 @@ class CompiledStageSpec:
     waves: tuple[CompiledWaveSpec, ...]
     battle_events: tuple[CompiledBattleEventSpec, ...]
     summon_monsters: Mapping[int, CompiledMonsterSpec] = field(default_factory=dict)
+    stage_affix_abilities: tuple[tuple[str, tuple[float, ...]], ...] = ()
+    challenge_mode: str = "Other"
+    has_cycle_aha_extra_turn: bool = False
 
     @property
     def num_waves(self) -> int:
@@ -678,7 +681,8 @@ class StageDataLoader:
         stance_base = _unwrap_value(trow.get("StanceBase"), 0.0)
         crit_damage_base = _unwrap_value(trow.get("CriticalDamageBase"), 0.2)
         status_res_base = _unwrap_value(trow.get("StatusResistanceBase"), 0.0)
-        initial_delay_ratio = _unwrap_value(trow.get("InitialDelayRatio"), 1.0)
+        # 官方 Protobuf 导出规范：值为 1.0 的怪物显式写出 {"Value": 1}，省略该字段代表初始行动延迟为 0.0（开局立即行动，如「灯塔」）
+        initial_delay_ratio = _unwrap_value(trow.get("InitialDelayRatio"), 0.0)
         initial_distance = 10000.0 * initial_delay_ratio
 
         hp_mod = _unwrap_value(mrow.get("HPModifyRatio"), 1.0)
@@ -1029,6 +1033,10 @@ class StageDataLoader:
                         compiled_bes.append(be)
                         seen_be_ids.add(be.battle_event_id)
 
+        stage_affix_abilities = self._load_stage_affix_abilities(int(stage_id))
+        challenge_mode = self._detect_challenge_mode(int(stage_id))
+        has_cycle_aha_extra_turn = self._detect_cycle_aha_extra_turn(compiled_bes)
+
         return CompiledStageSpec(
             stage_id=int(stage_id),
             stage_name=self.resolve_text(srow.get("StageName")),
@@ -1043,7 +1051,116 @@ class StageDataLoader:
             waves=tuple(waves),
             battle_events=tuple(compiled_bes),
             summon_monsters=summon_monsters,
+            stage_affix_abilities=stage_affix_abilities,
+            challenge_mode=challenge_mode,
+            has_cycle_aha_extra_turn=has_cycle_aha_extra_turn,
         )
+
+    def _detect_challenge_mode(self, stage_id: int) -> str:
+        """根据官方四大深渊配置表精确识别玩法模式：MoC / PF / AS / Peak / Other。"""
+        excel_dir = self.tbgd_root / "ExcelOutput"
+        table_specs = (
+            ("ChallengeMazeConfig.json", ("EventIDList1", "EventIDList2"), "MoC"),
+            ("ChallengeStoryMazeConfig.json", ("EventIDList1", "EventIDList2"), "PF"),
+            ("ChallengeBossMazeConfig.json", ("EventIDList1", "EventIDList2"), "AS"),
+            ("ChallengePeakConfig.json", ("EventIDList",), "Peak"),
+            ("ChallengePeakBossConfig.json", ("EventIDList", "HardEventIDList"), "Peak"),
+        )
+        for fn, ev_keys, mode in table_specs:
+            fp = excel_dir / fn
+            if not fp.exists():
+                continue
+            try:
+                rows = json.loads(fp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for row in rows:
+                for ek in ev_keys:
+                    if stage_id in (row.get(ek) or ()):
+                        return mode
+        return "Other"
+
+    def _detect_cycle_aha_extra_turn(
+        self, battle_events: Sequence[CompiledBattleEventSpec]
+    ) -> bool:
+        """检查关卡挂载的 BattleEvent 能力配置是否包含欢愉阿哈周期额外回合（Elation_StartElationTime）。"""
+        ab_names: set[str] = set()
+        for be in battle_events:
+            for ab_name in be.ability_list:
+                if ab_name:
+                    ab_names.add(str(ab_name))
+        if not ab_names:
+            return False
+        ca_dir = self.tbgd_root / "Config" / "ConfigAbility"
+        if not ca_dir.exists():
+            return False
+        for fp in ca_dir.glob("BattleEventAbility*.json"):
+            if fp.name.endswith(".layout.json"):
+                continue
+            try:
+                txt = fp.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            if "Elation_StartElationTime" not in txt:
+                continue
+            if not any(ab in txt for ab in ab_names):
+                continue
+            try:
+                data = json.loads(txt)
+            except Exception:
+                continue
+            for ab in data.get("AbilityList") or ():
+                if str(ab.get("Name") or "") in ab_names:
+                    if "Elation_StartElationTime" in json.dumps(ab, ensure_ascii=False):
+                        return True
+        return False
+
+    def _load_stage_affix_abilities(
+        self, stage_id: int
+    ) -> tuple[tuple[str, tuple[float, ...]], ...]:
+        """从官方 ChallengePeakConfig / ChallengePeakBossConfig + MazeBuff.json 解析关卡环境词条。"""
+        excel_dir = self.tbgd_root / "ExcelOutput"
+        tag_ids: list[int] = []
+        for fn, ev_key, tag_key in (
+            ("ChallengePeakConfig.json", "EventIDList", "TagList"),
+            ("ChallengePeakBossConfig.json", "HardEventIDList", "HardTagList"),
+        ):
+            fp = excel_dir / fn
+            if not fp.exists():
+                continue
+            try:
+                rows = json.loads(fp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for row in rows:
+                if stage_id in (row.get(ev_key) or ()):
+                    for tid in row.get(tag_key) or ():
+                        if int(tid) not in tag_ids:
+                            tag_ids.append(int(tid))
+        if not tag_ids:
+            return ()
+        mb_path = excel_dir / "MazeBuff.json"
+        if not mb_path.exists():
+            return ()
+        try:
+            mb_rows = json.loads(mb_path.read_text(encoding="utf-8"))
+        except Exception:
+            return ()
+        mb_by_id = {int(r.get("ID") or 0): r for r in mb_rows}
+        out: list[tuple[str, tuple[float, ...]]] = []
+        for tid in tag_ids:
+            row = mb_by_id.get(tid)
+            if not row:
+                continue
+            ab_key = str(row.get("InBattleBindingKey") or "")
+            if not ab_key:
+                continue
+            params = tuple(
+                float(p.get("Value", 0.0)) if isinstance(p, Mapping) else float(p)
+                for p in (row.get("ParamList") or ())
+            )
+            out.append((ab_key, params))
+        return tuple(out)
 
     def _collect_summons(
         self,

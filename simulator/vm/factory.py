@@ -31,9 +31,11 @@ UID_TO_NAME: Dict[int, str] = {
 
 NAME_TO_UID: Dict[str, int] = {
     "缇宝": 1403,
+    "缇宝_旧": 1403,
     "风堇": 1409,
     "长夜月": 1413,
     "知更鸟•晴歌": 1512,
+    "知更鸟•晴歌_旧": 1512,
     "知更鸟•晴歌_爱如此刻永恒": 1512,
 }
 
@@ -101,15 +103,20 @@ def build_vm_entity(
     uid = resolve_vm_uid(uid_or_name, db=char_db)
     known_name = UID_TO_NAME.get(uid)
 
-    if known_name == "知更鸟•晴歌":
+    raw_key = str(uid_or_name).strip() if isinstance(uid_or_name, str) else ""
+    use_profile_loadout = False
+    if raw_key == "缇宝_旧":
+        rp = char_db.get_by_name("缇宝_旧") or char_db.get_by_name("缇宝")
+    elif raw_key == "知更鸟•晴歌_旧":
+        rp = char_db.get_by_name("知更鸟•晴歌")
+        use_profile_loadout = True
+    elif known_name == "知更鸟•晴歌":
         rp = char_db.get_by_name("知更鸟•晴歌_爱如此刻永恒") or char_db.get_by_name(known_name)
-        if rp is not None:
-            rp.name = "知更鸟•晴歌"
     elif known_name is not None:
         rp = char_db.get_by_name(known_name)
     else:
         rp = char_db.get(uid) or (
-            char_db.get_by_name(str(uid_or_name).strip()) if isinstance(uid_or_name, str) else None
+            char_db.get_by_name(raw_key) if raw_key else None
         )
     if rp is None:
         raise KeyError(f"CharacterDB 中未找到角色档案: {uid_or_name!r} (uid={uid})")
@@ -120,6 +127,8 @@ def build_vm_entity(
 
     if loadout is not None:
         aid, eid, lc_id, lc_s, relics = loadout
+    elif use_profile_loadout:
+        aid, eid, lc_id, lc_s, relics = _infer_loadout_from_profile(rp)
     elif uid in TEAM_VM_LOADOUT:
         aid, eid, lc_id, lc_s, relics = TEAM_VM_LOADOUT[uid]
     else:
@@ -147,5 +156,5 @@ def build_vm_team(
     for item in uids_or_names:
         uid = resolve_vm_uid(item, db=char_db)
         ov = loadouts.get(uid) if loadouts is not None else None
-        team.append(build_vm_entity(uid, db=char_db, loader=vm_loader, loadout=ov, db_path=db_path))
+        team.append(build_vm_entity(item, db=char_db, loader=vm_loader, loadout=ov, db_path=db_path))
     return team
