@@ -141,6 +141,16 @@ def attach_auto_rng_plugin(
 
     cursor_by_av: Dict[Any, int] = {}
     active_rec_by_av: Dict[Any, EnemyHitRecord] = {}
+    active_turn_seq_by_key: Dict[Any, int] = {}
+    sub_hit_offset_by_key: Dict[Any, int] = {}
+    turn_seq = [0]
+    from simulator.events import BattleEvent as _BE, TurnBeginEvent as _TBE
+
+    def _on_turn_begin_seq(ev: _BE) -> None:
+        if isinstance(ev, _TBE):
+            turn_seq[0] += 1
+
+    sim.event_bus.subscribe(_BE, _on_turn_begin_seq)
     ally_ult_cursor: Dict[str, int] = {}
     servant_cursor: Dict[Tuple[float, str], int] = {}
     recorded_ambig_keys: Set[Tuple[float, int, str]] = set()
@@ -291,15 +301,26 @@ def attach_auto_rng_plugin(
         pool = name_matched if name_matched else recs
         cursor_key = (av_key, att_name) if name_matched else av_key
         if hit_idx == 0:
-            idx = min(cursor_by_av.get(cursor_key, 0), len(pool) - 1)
-            rec = pool[idx]
-            cursor_by_av[cursor_key] = cursor_by_av.get(cursor_key, 0) + 1
-            active_rec_by_av[cursor_key] = rec
-            active_rec_by_av[av_key] = rec
+            if (
+                active_turn_seq_by_key.get(cursor_key) == turn_seq[0]
+                and cursor_key in active_rec_by_av
+            ):
+                # 同一敌方回合内的第 2 动（OneMorePerTurn）：复用本回合 EnemyHitRecord，推进子目标偏移
+                rec = active_rec_by_av[cursor_key]
+                sub_hit_offset_by_key[cursor_key] = sub_hit_offset_by_key.get(cursor_key, 0) + 1
+            else:
+                idx = min(cursor_by_av.get(cursor_key, 0), len(pool) - 1)
+                rec = pool[idx]
+                cursor_by_av[cursor_key] = cursor_by_av.get(cursor_key, 0) + 1
+                active_rec_by_av[cursor_key] = rec
+                active_rec_by_av[av_key] = rec
+                active_turn_seq_by_key[cursor_key] = turn_seq[0]
+                sub_hit_offset_by_key[cursor_key] = 0
         else:
             rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
 
-        if hit_idx == 0 and rec.first_memo_owner:
+        eff_hit_idx = hit_idx + sub_hit_offset_by_key.get(cursor_key, 0)
+        if eff_hit_idx == 0 and rec.first_memo_owner:
             m_first = next(
                 (
                     e for e in living
@@ -320,8 +341,9 @@ def attach_auto_rng_plugin(
         for nm in rec.hit_allies:
             hit_seq.extend([nm] * max(1, rec.hit_counts.get(nm, 1)))
 
-        if hit_idx < len(hit_seq):
-            return _find_ally(living, hit_seq[hit_idx])
+        seq_idx = eff_hit_idx - 1 if (rec.first_memo_owner and eff_hit_idx > 0) else eff_hit_idx
+        if 0 <= seq_idx < len(hit_seq):
+            return _find_ally(living, hit_seq[seq_idx])
 
         if hit_idx == 0 and not rec.had_hp_drop and rec.sp_gain_counts:
             memo_owner = next(iter(rec.sp_gain_counts.keys()))
@@ -370,7 +392,7 @@ def attach_auto_rng_plugin(
         known_blasts: List[Any] = []
         for nm in extra_chars:
             ent = _find_ally(living, nm)
-            if ent is not None and ent not in known_blasts:
+            if ent is not None and ent is not primary and ent not in known_blasts:
                 known_blasts.append(ent)
 
         memos = _living_memosprites(living)
@@ -381,13 +403,16 @@ def attach_auto_rng_plugin(
         if ov_key in overrides:
             extra_names = overrides[ov_key]
             out = list(known_blasts)
+            matched_any = False
             for mname in extra_names:
                 ment = _find_ally(memos, mname)
                 if ment is not None and ment not in out and ment is not primary:
                     out.append(ment)
-            if extra_names:
-                _record_inf(rec.av, rec.enemy_uid, "blast", extra_names, "second_pass_confirmed")
-            return out
+                    matched_any = True
+            if not extra_names or matched_any:
+                if extra_names:
+                    _record_inf(rec.av, rec.enemy_uid, "blast", extra_names, "second_pass_confirmed")
+                return out
 
         if rec.sp_gain_counts:
             if rec.first_memo_owner:
@@ -467,6 +492,26 @@ def attach_auto_rng_plugin(
                         return ent
         return None
 
+    used_spawn_indices: Set[int] = set()
+
+    def _summon_id_provider(av: float, default_mid: int, candidate_ids: Sequence[int]) -> Optional[int]:
+        if not meta.enemy_spawns or not candidate_ids:
+            return None
+        for idx, (sp_av, sp_id, _sp_name) in enumerate(meta.enemy_spawns):
+            if idx in used_spawn_indices:
+                continue
+            if abs(sp_av - av) <= 0.15:
+                # 匹配候选召唤池中的 monster_id 或 template_id
+                if sp_id in candidate_ids:
+                    used_spawn_indices.add(idx)
+                    return sp_id
+                for cid in candidate_ids:
+                    if str(cid).startswith(str(sp_id)):
+                        used_spawn_indices.add(idx)
+                        return cid
+        return None
+
     sim.target_provider = _target_provider
     sim.blast_target_provider = _blast_provider
     sim.enemy_retarget_provider = _enemy_retarget_provider
+    sim.summon_id_provider = _summon_id_provider

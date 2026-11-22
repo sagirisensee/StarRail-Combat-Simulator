@@ -38,6 +38,7 @@ def extract_log_metadata(
     seen_init_enemy_uids: Set[int] = set()
     enemy_uid_map: Dict[int, str] = {}
     spawn_events_raw: List[Tuple[int, str]] = []
+    enemy_spawns: List[Tuple[float, int, str]] = []
     saw_first_init_enemy = False
 
     # 回合态追踪
@@ -76,6 +77,7 @@ def extract_log_metadata(
     enemy_retarget_picks: List[Tuple[float, int, int]] = []
     pending_player_atk: Optional[Tuple[float, str]] = None
     pending_player_hit_euids: List[int] = []
+    pending_player_hit_dmgs: Dict[int, float] = {}
     pending_player_primary_dmg_hits = 0
     pending_player_is_servant = False
     pending_player_skill_id = 0
@@ -99,18 +101,24 @@ def extract_log_metadata(
         return None
 
     def _flush_pending_player_atk() -> None:
-        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_primary_dmg_hits
+        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits
         nonlocal pending_player_is_servant, pending_player_skill_id, pending_player_skill_type
         if pending_player_atk is not None:
             if pending_player_is_servant:
                 # 依据官方 AvatarServantSkillConfig.SkillEffect 区分单体技与群攻/扩散/弹射技：
                 # - SingleAttack：登记唯一扣血敌方为主目标（避免锁血/残血场景把群攻误判为单体）
-                # - AoEAttack/Blast/Bounce：写入 None 占位，保证同 AV 混排（如先群攻后单体）时游标不串号
+                # - AoEAttack/Blast：若某目标首次扣血量显著高于次高目标（>1.4x，如主副倍率群攻/扩散），锁定为主目标；否则 None 占位
+                # - Bounce：写入 None 占位，保证同 AV 混排时游标不串号
                 sk_eff = servant_skill_effects.get(pending_player_skill_id, "")
                 if sk_eff == "SingleAttack":
                     servant_targets_raw.setdefault(pending_player_atk, []).append(_servant_primary_euid())
                 elif sk_eff in ("AoEAttack", "Blast", "Bounce"):
-                    servant_targets_raw.setdefault(pending_player_atk, []).append(None)
+                    inferred_primary: Optional[int] = None
+                    if sk_eff in ("AoEAttack", "Blast") and len(pending_player_hit_dmgs) >= 2:
+                        sorted_dmgs = sorted(pending_player_hit_dmgs.items(), key=lambda kv: kv[1], reverse=True)
+                        if sorted_dmgs[1][1] > 0.0 and sorted_dmgs[0][1] > sorted_dmgs[1][1] * 1.4:
+                            inferred_primary = sorted_dmgs[0][0]
+                    servant_targets_raw.setdefault(pending_player_atk, []).append(inferred_primary)
                 elif not sk_eff:
                     # 未知忆灵技兜底：仅在无歧义单目标时登记
                     _servant_euid = _servant_primary_euid()
@@ -131,6 +139,7 @@ def extract_log_metadata(
                     player_enemy_targets_raw.setdefault(pending_player_atk, []).append(pending_player_hit_euids[0])
         pending_player_atk = None
         pending_player_hit_euids = []
+        pending_player_hit_dmgs = {}
         pending_player_primary_dmg_hits = 0
         pending_player_is_servant = False
         pending_player_skill_id = 0
@@ -243,12 +252,15 @@ def extract_log_metadata(
                 saw_first_init_enemy = True
                 enemy = data.get("enemy") or {}
                 euid = int(enemy.get("uid") or 0)
+                eid = int(enemy.get("id") or 0)
                 ename = str(enemy.get("name") or "")
                 props = (enemy.get("base_stats") or {}).get("properties") or {}
                 if euid and "CurrentHP" in props:
                     last_enemy_hp[euid] = float(props["CurrentHP"])
                 if euid and ename:
                     spawn_events_raw.append((euid, ename))
+                if eid and ename:
+                    enemy_spawns.append((round(cur_av, 2), eid, ename))
             elif ev == "OnTurnBegin":
                 if in_aoe_heal_window and len(aoe_heal_slot_uids) >= 2 and not inferred_slot_uids:
                     inferred_slot_uids = list(aoe_heal_slot_uids)
@@ -390,6 +402,8 @@ def extract_log_metadata(
                             or (pending_player_atk[1].startswith("UID_") and abs(val - prev) <= 1.0 and val > 1e-3)
                         ):
                             pending_player_hit_euids.append(uid)
+                            if prev is not None and val < prev - 1.0 and uid not in pending_player_hit_dmgs:
+                                pending_player_hit_dmgs[uid] = prev - val
                         elif cur_enemy_uid is not None and uid != cur_enemy_uid and prev is not None and prev > 0.0 and val <= 0.0:
                             enemy_retarget_picks.append((round(cur_av, 2), cur_enemy_uid, uid))
                         last_enemy_hp[uid] = val
@@ -423,7 +437,7 @@ def extract_log_metadata(
                         prev_sp = last_player_sp.get(uid)
                         is_enemy_hit_sp = (
                             cur_enemy_uid is not None
-                            and 1.0 < val < 15.0
+                            and 1.0 < val < 35.0
                             and last_enemy_hit_sp > 0.0
                             and 0.99 <= (val / last_enemy_hit_sp) <= 1.60
                             and not (prev_sp is not None and abs((val - prev_sp) - 3.0) < 1e-3)
@@ -668,4 +682,5 @@ def extract_log_metadata(
         windwalk_enemy_uids=windwalk_enemy_uids,
         slow_hits=slow_hits,
         enemy_hp_at_turn_end=enemy_hp_at_turn_end,
+        enemy_spawns=enemy_spawns,
     )

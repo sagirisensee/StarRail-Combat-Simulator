@@ -8,7 +8,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from simulator.db.character_db import CharacterDB
-from simulator.golden_diff import (
+from simulator.golden import (
     attach_exact_crit_oracle,
     diff_sequences,
     extract_timeline,
@@ -22,6 +22,7 @@ from simulator.vm.reconcile.metadata import extract_log_metadata
 from simulator.vm.reconcile.models import (
     DEFAULT_CHAR_DB_PATH,
     AmbiguousMemospriteSlot,
+    EnemyHitMismatch,
     InferredMemospriteHit,
     LogMetadata,
     ReconcileReport,
@@ -200,6 +201,65 @@ def _run_single_pass(
 
     attach_exact_crit_oracle(sim, log_path=log_path, non_crits=non_crits)
     crit_records = _attach_crit_hit_recorder(sim) if record_crits else []
+
+    # 现场逐动三方（官方 TargetInfo 期望 / 日志实录 / 模拟实际）敌方受击一致性检测
+    enemy_hit_mismatches: List[EnemyHitMismatch] = []
+    # 按 TurnBeginEvent 序号切分敌方回合: (turn_seq, av, enemy_name, sim_hits_set, last_skill_meta)
+    sim_enemy_turn_records: List[Tuple[int, float, str, Set[str], Tuple[int, str, str, Tuple[str, ...]]]] = []
+    _audit_turn_seq = [0]
+    from simulator.events import BattleEvent as _BE, TurnBeginEvent as _TBE
+
+    def _on_audit_turn_begin(ev: _BE) -> None:
+        if isinstance(ev, _TBE):
+            _audit_turn_seq[0] += 1
+
+    sim.event_bus.subscribe(_BE, _on_audit_turn_begin)
+
+    def _on_enemy_skill_resolved(
+        *,
+        av: float,
+        enemy_name: str,
+        skill_id: int,
+        skill_key: str,
+        expected_scope: str,
+        expected_hits: Tuple[str, ...],
+        sim_hits: Tuple[str, ...],
+    ) -> None:
+        tseq = _audit_turn_seq[0]
+        # 1. 现场结构断言：官方 TargetInfo + 当前站位推导的期望命中集合 vs 模拟实际命中集合
+        if expected_hits and set(expected_hits) != set(sim_hits):
+            enemy_hit_mismatches.append(
+                EnemyHitMismatch(
+                    av=av,
+                    enemy_name=enemy_name,
+                    log_hits=(),
+                    sim_hits=sim_hits,
+                    skill_id=skill_id,
+                    skill_key=skill_key,
+                    expected_scope=expected_scope,
+                    expected_hits=expected_hits,
+                )
+            )
+        # 2. 按敌方回合（TurnBeginEvent）聚合，供与日志 EnemyHitRecord 1 对 1 对撞
+        if (
+            sim_enemy_turn_records
+            and sim_enemy_turn_records[-1][0] == tseq
+            and sim_enemy_turn_records[-1][2] == enemy_name
+        ):
+            sim_enemy_turn_records[-1][3].update(sim_hits)
+            sim_enemy_turn_records[-1] = (
+                tseq,
+                sim_enemy_turn_records[-1][1],
+                enemy_name,
+                sim_enemy_turn_records[-1][3],
+                (skill_id, skill_key, expected_scope, expected_hits),
+            )
+        else:
+            sim_enemy_turn_records.append(
+                (tseq, av, enemy_name, set(sim_hits), (skill_id, skill_key, expected_scope, expected_hits))
+            )
+
+    sim.on_enemy_skill_resolved = _on_enemy_skill_resolved
     if sim_enemy_hp_out is not None:
         from simulator.events import BattleEvent, DamageAppliedEvent, TurnEndEvent
 
@@ -295,6 +355,51 @@ def _run_single_pass(
     tot_err = abs(sim_tot - gold_tot) / gold_tot if gold_tot > 0 else 0.0
     forced_or_failed = sum(1 for r in traj.records if r.mode in ("forced", "failed"))
 
+    # 比对敌方回合实际命中我方本体集合 vs 日志提取受击集合（1 对 1 按 TurnBegin 对齐）
+    used_sim_rec: Set[int] = set()
+    for h in meta.enemy_hits:
+        if not h.hit_allies:
+            continue
+        log_set = set(h.hit_allies)
+        expected_name = meta.enemy_uid_map.get(h.enemy_uid, f"UID_{h.enemy_uid}")
+        best_idx: Optional[int] = None
+        best_dt = 0.25
+        for idx, (_tseq, s_av, s_atk, _s_tgts, _sk_meta) in enumerate(sim_enemy_turn_records):
+            if idx in used_sim_rec:
+                continue
+            dt = abs(s_av - h.av)
+            if dt <= best_dt:
+                if s_atk == expected_name or best_idx is None:
+                    best_dt = dt
+                    best_idx = idx
+                    if s_atk == expected_name and dt <= 0.05:
+                        break
+        if best_idx is not None:
+            used_sim_rec.add(best_idx)
+            _tseq, _s_av, s_atk, sim_set, (sk_id, sk_key, exp_scope, exp_hits) = sim_enemy_turn_records[best_idx]
+            if sim_set != log_set:
+                enemy_hit_mismatches.append(
+                    EnemyHitMismatch(
+                        av=round(h.av, 2),
+                        enemy_name=s_atk,
+                        log_hits=tuple(sorted(log_set)),
+                        sim_hits=tuple(sorted(sim_set)),
+                        skill_id=sk_id,
+                        skill_key=sk_key,
+                        expected_scope=exp_scope,
+                        expected_hits=exp_hits,
+                    )
+                )
+        else:
+            enemy_hit_mismatches.append(
+                EnemyHitMismatch(
+                    av=round(h.av, 2),
+                    enemy_name=expected_name,
+                    log_hits=tuple(sorted(log_set)),
+                    sim_hits=(),
+                )
+            )
+
     report = ReconcileReport(
         meta=meta,
         stage_mode=stage_mode,
@@ -314,6 +419,7 @@ def _run_single_pass(
         turn_diffs=turn_diffs,
         inferred_memosprite_hits=inferred_hits,
         unresolved_ambiguous_slots=len(ambiguous_slots),
+        enemy_hit_mismatches=enemy_hit_mismatches,
     )
     return report, ambiguous_slots, crit_records
 

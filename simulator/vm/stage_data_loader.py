@@ -117,6 +117,10 @@ class CompiledMonsterSkillSpec:
     base_params: tuple[float, ...]
     effective_params: tuple[float, ...]
     is_passive: bool = False
+    is_blast: bool = False
+    is_aoe: bool = False
+    hit_count: int = 1
+    has_mark_target: bool = False
 
     def param(self, index: int, default: float = 0.0) -> float:
         """Return effective skill parameter at ``index`` (0-based)."""
@@ -532,6 +536,97 @@ class StageDataLoader:
                 self._char_config_cache[rel_path] = {}
         return self._char_config_cache[rel_path]
 
+    def _inspect_monster_skill_abilities(
+        self, json_config_path: str
+    ) -> dict[str, tuple[int, bool, bool]]:
+        """从官方 Monster_*_Ability.json 通用提取每个技能的 (hit_count, ability_is_blast, has_mark_target)。"""
+        if not json_config_path:
+            return {}
+        cache = getattr(self, "_monster_ab_skill_meta_cache", None)
+        if cache is None:
+            cache = {}
+            self._monster_ab_skill_meta_cache = cache
+        if json_config_path in cache:
+            return cache[json_config_path]
+
+        stem = Path(json_config_path).name.replace("_Config.json", "_Ability.json")
+        ab_path = self.tbgd_root / "Config" / "ConfigAbility" / "Monster" / stem
+        out: dict[str, tuple[int, bool, bool]] = {}
+        if not ab_path.exists():
+            cache[json_config_path] = out
+            return out
+        try:
+            doc = json.loads(ab_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cache[json_config_path] = out
+            return out
+
+        import re as _re
+
+        for ab in doc.get("AbilityList", []):
+            if not isinstance(ab, Mapping):
+                continue
+            ab_name = str(ab.get("Name") or "")
+            m = _re.search(r"_(Skill\d+)(?:_Phase02)?$", ab_name)
+            if not m:
+                continue
+            sk_key = m.group(1)
+            raw_txt = json.dumps(ab, ensure_ascii=False)
+            ab_is_blast = ("TargetAdjoinEntity" in raw_txt) or (f"_{sk_key}_Target" in raw_txt and sk_key == "Skill04")
+            has_mark = (f"_{sk_key}_Target" in raw_txt and sk_key == "Skill04") or ("Mark" in raw_txt and sk_key == "Skill04")
+
+            hs_fixed: list[float] = []
+            hs_dyn_total: list[float] = []
+            retarget_max: list[int] = []
+
+            def _walk(node: Any) -> None:
+                if isinstance(node, Mapping):
+                    nt = node.get("$type", "")
+                    if nt == "RPG.GameCore.DamageByAttackProperty":
+                        ap = node.get("AttackProperty")
+                        if isinstance(ap, Mapping):
+                            hs = ap.get("HitSplitRatio")
+                            if isinstance(hs, Mapping):
+                                if not hs.get("IsDynamic", False):
+                                    fv = (hs.get("FixedValue") or {}).get("Value")
+                                    if isinstance(fv, (int, float)) and 0.0 < float(fv) < 1.0:
+                                        hs_fixed.append(float(fv))
+                                else:
+                                    fvs = (hs.get("PostfixExpr") or {}).get("FixedValues") or []
+                                    if fvs and isinstance(fvs[0], Mapping):
+                                        v0 = fvs[0].get("Value")
+                                        if isinstance(v0, (int, float)) and float(v0) > 1.0:
+                                            hs_dyn_total.append(float(v0))
+                    elif nt == "RPG.GameCore.Retarget":
+                        mn = node.get("MaxNumber")
+                        if isinstance(mn, Mapping):
+                            mv = (mn.get("FixedValue") or {}).get("Value")
+                            if isinstance(mv, (int, float)) and int(mv) > 1:
+                                retarget_max.append(int(mv))
+                    for v in node.values():
+                        _walk(v)
+                elif isinstance(node, list):
+                    for item in node:
+                        _walk(item)
+
+            _walk(ab)
+            hit_cnt = 1
+            if hs_fixed:
+                hit_cnt = max(1, int(round(1.0 / hs_fixed[0])))
+            elif hs_dyn_total and retarget_max:
+                hit_cnt = max(1, int(round(hs_dyn_total[0] / retarget_max[0])))
+
+            prev = out.get(sk_key)
+            if prev is None or hit_cnt > prev[0] or ab_is_blast or has_mark:
+                out[sk_key] = (
+                    max(hit_cnt, prev[0] if prev else 1),
+                    ab_is_blast or (prev[1] if prev else False),
+                    has_mark or (prev[2] if prev else False),
+                )
+
+        cache[json_config_path] = out
+        return out
+
     def compile_battle_event(
         self,
         battle_event_id: int,
@@ -727,6 +822,27 @@ class StageDataLoader:
                 override_map[int(sid)] = [_unwrap_value(p, -1.0) for p in plist]
 
         skills: dict[int, CompiledMonsterSkillSpec] = {}
+        # Inspect Character Config JSON for SkillList (TargetInfo), PhaseList and AbilityList
+        json_config_path = str(trow.get("JsonConfig", ""))
+        char_cfg = self._load_char_config(json_config_path)
+        char_cfg_with_path = dict(char_cfg)
+        char_cfg_with_path["JsonConfig"] = json_config_path
+
+        blast_trigger_keys: set[str] = set()
+        aoe_trigger_keys: set[str] = set()
+        for sk_cfg in char_cfg.get("SkillList", []):
+            if not isinstance(sk_cfg, Mapping):
+                continue
+            sk_name = str(sk_cfg.get("Name", ""))
+            t_info = sk_cfg.get("TargetInfo")
+            if isinstance(t_info, Mapping):
+                if t_info.get("SubTargetType") == "TargetAdjoinEntity":
+                    blast_trigger_keys.add(sk_name)
+                if t_info.get("TargetType") == "AllEnemy":
+                    aoe_trigger_keys.add(sk_name)
+
+        ab_skill_meta = self._inspect_monster_skill_abilities(json_config_path)
+
         skills_by_key: dict[str, CompiledMonsterSkillSpec] = {}
         for sid_raw in mrow.get("SkillList", []):
             sid = int(sid_raw)
@@ -745,6 +861,8 @@ class StageDataLoader:
                 effective_params = base_params
 
             tkey = str(srow.get("SkillTriggerKey", ""))
+            is_aoe_sk = (tkey in aoe_trigger_keys)
+            ab_hits, ab_blast, ab_mark = ab_skill_meta.get(tkey, (1, False, False))
             spec = CompiledMonsterSkillSpec(
                 skill_id=sid,
                 name=self.resolve_text(srow.get("SkillName")),
@@ -755,17 +873,15 @@ class StageDataLoader:
                 sp_hit_base=_unwrap_value(srow.get("SPHitBase"), 0.0),
                 base_params=base_params,
                 effective_params=effective_params,
-                is_passive=bool(srow.get("IsThreat") is False and tkey.startswith("Passive")),
+                is_passive=bool(tkey.startswith("Passive")),
+                is_blast=(not is_aoe_sk) and ((tkey in blast_trigger_keys) or ab_blast),
+                is_aoe=is_aoe_sk,
+                hit_count=(ab_hits if not is_aoe_sk else 1),
+                has_mark_target=(not is_aoe_sk) and ab_mark,
             )
             skills[sid] = spec
             if tkey:
                 skills_by_key[tkey] = spec
-
-        # Inspect Character Config JSON for PhaseList and AbilityList
-        json_config_path = str(trow.get("JsonConfig", ""))
-        char_cfg = self._load_char_config(json_config_path)
-        char_cfg_with_path = dict(char_cfg)
-        char_cfg_with_path["JsonConfig"] = json_config_path
 
         dyn_floats: Mapping[str, Any] = (
             char_cfg.get("DynamicValues", {}).get("Floats", {})

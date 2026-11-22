@@ -1036,6 +1036,81 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                         self.rt.control_skill_mapping.pop((tid, ctrl_type), None)
             return
 
+        if t == "RPG.GameCore.SetDynamicEntityParam":
+            key = _str_val(task.get("DynamicKey"))
+            owners = self._resolve_targets(task.get("ReadTargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            param_spec = task.get("ParamTargetType")
+            alias = param_spec.get("Alias") if isinstance(param_spec, Mapping) else None
+            if alias == "None" or param_spec is None:
+                vals: List[str] = []
+            else:
+                vals = self._resolve_targets(param_spec, ctx)
+            for oid in owners:
+                if oid and key:
+                    if vals:
+                        self.rt.dynamic_entity_params[(oid, key)] = list(vals)
+                    else:
+                        self.rt.dynamic_entity_params.pop((oid, key), None)
+            return
+
+        if t == "RPG.GameCore.AddStageAbilityByName":
+            ab_name = _str_val(task.get("StageAbilityName"))
+            if ab_name:
+                owner = ctx.caster_id or "__LEVEL__"
+                for dk, dv in (task.get("DynamicValues") or {}).items():
+                    rt.set_dynamic_value(owner, dotnet_hash(str(dk)), self._eval_num(dv, ctx, 0.0), ability_name=ab_name)
+                rt.trigger_ability(
+                    caster_id=owner,
+                    ability_name=ab_name,
+                    target_ids=(ctx.caster_id,),
+                )
+            return
+
+        if t == "RPG.GameCore.DamageStance":
+            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            sval = self._eval_num(task.get("StanceValue"), ctx, 0.0)
+            if sval > 0.0:
+                for tid in targets:
+                    ent = sim.get_entity(tid)
+                    if ent is not None and getattr(ent, "current_toughness", 0.0) > 0.0:
+                        ent.current_toughness = max(0.0, float(ent.current_toughness) - sval)
+            return
+
+        if t == "RPG.GameCore.DestroyBattleCharacter":
+            uniq = str(task.get("CharacterUniqueName") or "")
+            if uniq:
+                targets = list(rt.named_targets.get(uniq, ()))
+                if not targets and sim.get_entity(uniq) is not None:
+                    targets = [uniq]
+            elif "TargetType" in task:
+                targets = self._resolve_targets(task.get("TargetType"), ctx)
+            else:
+                targets = []
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is not None:
+                    ent.current_hp = 0.0
+                    me.destroy_all_for_entity(tid)
+                    if hasattr(sim, "remove_entity"):
+                        sim.remove_entity(tid)
+            return
+
+        if t == "RPG.GameCore.RandomConfig":
+            tlist = task.get("TaskList") or []
+            odds_list = task.get("OddsList") or []
+            if tlist:
+                best_idx = 0
+                if odds_list:
+                    weights = [self._eval_num(o, ctx, 0.0) for o in odds_list[:len(tlist)]]
+                    if any(w > 0.0 for w in weights):
+                        best_idx = max(range(len(weights)), key=lambda i: weights[i])
+                chosen = tlist[best_idx]
+                if isinstance(chosen, Mapping):
+                    self.execute_task(chosen, ctx)
+                elif isinstance(chosen, list):
+                    self.execute_tasks(chosen, ctx)
+            return
+
         if t == "RPG.GameCore.AttachAvatarChange":
             self._execute_attach_avatar_change(task, ctx)
             return

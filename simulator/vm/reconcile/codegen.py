@@ -28,6 +28,14 @@ def format_report(report: ReconcileReport, *, threshold: float = 0.0001, verbose
             lines.append(
                 f"  AV={hit.av:6.2f} enemy={hit.enemy_uid} kind={hit.kind:7s} -> {list(hit.targets)} [{hit.source}]"
             )
+    if report.enemy_hit_mismatches:
+        lines.append(f"Enemy hit mismatches ({len(report.enemy_hit_mismatches)}):")
+        for mm in report.enemy_hit_mismatches:
+            sk_info = f" {mm.skill_key}({mm.skill_id}/{mm.expected_scope})" if mm.skill_id else ""
+            exp_info = f" expected={list(mm.expected_hits)}" if mm.expected_hits else ""
+            lines.append(
+                f"  [HIT MISMATCH] AV={mm.av:6.2f} {mm.enemy_name}{sk_info}:{exp_info} sim={list(mm.sim_hits)} log={list(mm.log_hits)}"
+            )
     rows = report.turn_diffs if verbose else over
     if rows:
         lines.append("")

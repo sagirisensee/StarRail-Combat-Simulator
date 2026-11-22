@@ -219,8 +219,43 @@ class DataDrivenStageDirector:
         if handler is not None:
             handler(self)
 
+    def _trigger_monster_passive_abilities(self, ent: Entity, rt: Any) -> None:
+        """触发怪物的入场被动能力：AbilityList 中的 *PassiveSkillInitiate 与 SkillList 中的 Passive 技能入口。"""
+        try:
+            mrs = self.runner.get_enemy_state(ent.name)
+        except KeyError:
+            return
+        triggered: set[str] = set()
+        for ab_name in getattr(mrs.blueprint, "ability_list", ()):
+            s_ab = str(ab_name)
+            if "PassiveSkillInitiate" in s_ab and s_ab not in triggered:
+                triggered.add(s_ab)
+                rt.trigger_ability(caster_id=ent.name, ability_name=s_ab, target_ids=(ent.name,))
+        sl = self.ai_loader.stage_loader
+        tmpl = sl.monster_templates.get(
+            int(getattr(mrs.blueprint, "monster_template_id", 0)), {}
+        )
+        cfg_path = str(tmpl.get("JsonConfig") or "")
+        if cfg_path:
+            char_cfg = sl._load_char_config(cfg_path)
+            for sk_item in char_cfg.get("SkillList", ()) or ():
+                if not isinstance(sk_item, dict):
+                    continue
+                if sk_item.get("SkillType") != "Passive" and not str(sk_item.get("Name", "")).startswith("PassiveSkill"):
+                    continue
+                entry_ab = str(sk_item.get("EntryAbility") or "")
+                if (
+                    entry_ab
+                    and entry_ab not in triggered
+                    and "BGM" not in entry_ab
+                    and "MuteHitFly" not in entry_ab
+                    and "StanceBreak_Action" not in entry_ab
+                ):
+                    triggered.add(entry_ab)
+                    rt.trigger_ability(caster_id=ent.name, ability_name=entry_ab, target_ids=(ent.name,))
+
     def _init_wave_monster_battle_events(self, entities: Sequence[Entity], wave_index: int) -> None:
-        """通用初始化当前波次怪物的 DynamicValues、触发 *PassiveSkillInitiate，并结算入场立即就绪的 BattleEvent（如 20041 进场召唤胚芽）。"""
+        """通用初始化当前波次怪物的 DynamicValues、触发入场被动，并结算入场立即就绪的 BattleEvent（如 20041 进场召唤胚芽）。"""
         rt = getattr(self.sim, "vm_runtime", None)
         if rt is None:
             return
@@ -228,17 +263,7 @@ class DataDrivenStageDirector:
             kit = getattr(ent, "kit", None)
             if kit is not None and hasattr(kit, "_ensure_monster_dynamic_values"):
                 kit._ensure_monster_dynamic_values(rt)
-            try:
-                mrs = self.runner.get_enemy_state(ent.name)
-            except KeyError:
-                continue
-            for ab_name in getattr(mrs.blueprint, "ability_list", ()):
-                if "PassiveSkillInitiate" in str(ab_name):
-                    rt.trigger_ability(
-                        caster_id=ent.name,
-                        ability_name=str(ab_name),
-                        target_ids=(ent.name,),
-                    )
+            self._trigger_monster_passive_abilities(ent, rt)
 
         # 若怪物 PassiveSkillInitiate 创建了 OnAdd 立即置零跑道 (distance_remaining == 0) 的 BattleEvent (如 20041)，
         # 按官方波次进场时序立即触发其 OnPhase1 + drain 并将距离重置为 10000.0
@@ -335,18 +360,7 @@ class DataDrivenStageDirector:
                     if rt is not None and hasattr(ent.kit, "_ensure_monster_dynamic_values"):
                         ent.kit._ensure_monster_dynamic_values(rt)
                 if rt is not None:
-                    try:
-                        mrs = self.runner.get_enemy_state(ent.name)
-                    except KeyError:
-                        mrs = None
-                    if mrs is not None:
-                        for ab_name in getattr(mrs.blueprint, "ability_list", ()):
-                            if "PassiveSkillInitiate" in str(ab_name):
-                                rt.trigger_ability(
-                                    caster_id=ent.name,
-                                    ability_name=str(ab_name),
-                                    target_ids=(ent.name,),
-                                )
+                    self._trigger_monster_passive_abilities(ent, rt)
             self._sync_enemy_order()
         return new_entities
 
@@ -374,6 +388,8 @@ class DataDrivenStageDirector:
             caster_name,
             summon_task,
             dynamic_resolver=dynamic_resolver,
+            summon_id_provider=getattr(self.sim, "summon_id_provider", None),
+            current_av=float(getattr(self.sim, "current_av", 0.0)),
         )
         widx = self.runner.state.wave_index
         self.attach_kits_to_entities(spawned, widx)
@@ -383,18 +399,7 @@ class DataDrivenStageDirector:
             if rt is not None and getattr(ent, "kit", None) is not None and hasattr(ent.kit, "_ensure_monster_dynamic_values"):
                 ent.kit._ensure_monster_dynamic_values(rt)
             if rt is not None:
-                try:
-                    mrs = self.runner.get_enemy_state(ent.name)
-                except KeyError:
-                    mrs = None
-                if mrs is not None:
-                    for ab_name in getattr(mrs.blueprint, "ability_list", ()):
-                        if "PassiveSkillInitiate" in str(ab_name):
-                            rt.trigger_ability(
-                                caster_id=ent.name,
-                                ability_name=str(ab_name),
-                                target_ids=(ent.name,),
-                            )
+                self._trigger_monster_passive_abilities(ent, rt)
         self._sync_enemy_order()
         return spawned
 
@@ -663,4 +668,5 @@ def build_data_driven_stage(
     )
     director = DataDrivenStageDirector(sim, runner, ai_loader)
     director.attach_kits_to_entities(wave0_enemies, wave_index=0)
+    director._init_wave_monster_battle_events(wave0_enemies, wave_index=0)
     return sim, director

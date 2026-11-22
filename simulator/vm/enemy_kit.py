@@ -40,8 +40,26 @@ class DataDrivenEnemyKit(EnemyKit):
         self._turn_count: int = 0
         mrs = self.runner.get_enemy_state(owner_id)
         rank = getattr(mrs.blueprint, "rank", "")
-        # 官方 OneMorePerTurn 机制: 精英怪与首领初始具备额外行动特权（排除狂兽的胚芽等 MinionLv2 召唤物）
-        self.has_one_more: bool = rank in ("Elite", "Boss", "BigBoss")
+        # 官方 OneMorePerTurn 机制: 纯数据驱动检测该怪物 Ability 配置是否包含 OneMorePerTurn
+        self.has_one_more: bool = False
+        _json_cfg = str(getattr(mrs.blueprint, "json_config_path", "") or "")
+        if _json_cfg and rank in ("Elite", "LittleBoss", "Boss", "BigBoss"):
+            from pathlib import Path as _Path
+            _tbgd = getattr(getattr(self.runner.factory, "stage_loader", None), "tbgd_root", None)
+            if _tbgd is not None:
+                _stem = _Path(_json_cfg).name.replace("_Config.json", "_Ability.json")
+                _ab_path = _Path(_tbgd) / "Config" / "ConfigAbility" / "Monster" / _stem
+                if _ab_path.exists():
+                    try:
+                        self.has_one_more = "OneMorePerTurn" in _ab_path.read_text(encoding="utf-8")
+                    except OSError:
+                        self.has_one_more = rank in ("Elite", "Boss", "BigBoss")
+                else:
+                    self.has_one_more = rank in ("Elite", "Boss", "BigBoss")
+            else:
+                self.has_one_more = rank in ("Elite", "Boss", "BigBoss")
+        else:
+            self.has_one_more = rank in ("Boss", "BigBoss")
         # 官方 MCommon_FastAction (风行/如流星闪耀) 立即再动状态
         self.windwalk_ready: bool = False
         self.windwalk_target: Optional[str] = None
@@ -520,7 +538,8 @@ class DataDrivenEnemyKit(EnemyKit):
 
         action_idx = 0
         while action_idx < 2:
-            if action_idx == 1 and not can_one_more:
+            has_runtime_one_more = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
+            if action_idx == 1 and not can_one_more and not has_runtime_one_more:
                 break
             action_idx += 1
             if action_idx == 2 and rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore"):
@@ -576,6 +595,17 @@ class DataDrivenEnemyKit(EnemyKit):
                             nt = nodes.get("$type", "")
                             if nt == "RPG.GameCore.UseSkill" and nodes.get("SkillName"):
                                 resolved_skill_names.append(str(nodes["SkillName"]))
+                            elif nt in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier"):
+                                rt.executor.execute_task(nodes, ai_ctx)
+                                mn = nodes.get("ModifierName")
+                                mval = mn.get("Value") if isinstance(mn, Mapping) else mn
+                                if mval == "OneMorePerTurn":
+                                    nonlocal can_one_more, next_turn_one_more
+                                    if nt == "RPG.GameCore.RemoveModifier":
+                                        can_one_more = False
+                                        next_turn_one_more = False
+                                    elif nt == "RPG.GameCore.AddModifier":
+                                        next_turn_one_more = True
                             elif nt == "RPG.GameCore.PredicateTaskList":
                                 pred = nodes.get("Predicate")
                                 try:
@@ -641,6 +671,8 @@ class DataDrivenEnemyKit(EnemyKit):
                             if has_rem:
                                 can_one_more = False
                                 next_turn_one_more = False
+                                if rt is not None:
+                                    rt.modifier_engine.remove_modifier(self.owner_id, "OneMorePerTurn")
                             if has_add:
                                 next_turn_one_more = True
 
@@ -676,9 +708,14 @@ class DataDrivenEnemyKit(EnemyKit):
                                 sched._action_frame_depth = prev_depth
                     continue
 
-                # 索敌: 若技能在 Ability 中声明了 AllEnemy 或为全体横扫，则命中全体
+                # 索敌: 仅当官方 TargetInfo 声明 AllEnemy（或 GlobalTargetAlias 定义了专属 Skill02_Target）时命中全体
                 targets = self._select_targets(sim, sk.target_selector)
-                if sk.skill_trigger_key == "Skill02":
+                gl = getattr(self.runner.factory, "game_loader", None)
+                alias_def = None
+                if gl is not None and entry_ab and "_Skill02" in entry_ab:
+                    prefix = entry_ab.split("_Skill02", 1)[0]
+                    alias_def = gl.get_global_target_alias(f"{prefix}_Skill02_Target")
+                if bool(getattr(sk, "is_aoe", False)) or isinstance(alias_def, Mapping):
                     allies = [
                         e
                         for e in sim.entities
@@ -694,28 +731,24 @@ class DataDrivenEnemyKit(EnemyKit):
                     memos.sort(key=lambda m: avatar_rank.get(getattr(m, "master_name", "") or "", 99))
                     targets = avatars + memos
                     # 通用解析官方 GlobalTargetAlias 中定义的 Skill02_Target (如 TargetTake Count=3)
-                    gl = getattr(self.runner.factory, "game_loader", None)
-                    if gl is not None and entry_ab and "_Skill02" in entry_ab:
-                        prefix = entry_ab.split("_Skill02", 1)[0]
-                        alias_def = gl.get_global_target_alias(f"{prefix}_Skill02_Target")
-                        if isinstance(alias_def, Mapping) and alias_def.get("$type") == "RPG.GameCore.TargetSequence":
-                            seq = alias_def.get("Sequence") or []
-                            is_l2r = any(
-                                isinstance(s, Mapping) and "LeftToRightLightTeamTarget" in str(s.get("Alias", ""))
-                                for s in seq
-                            )
-                            take_cnt = 0
-                            for s in seq:
-                                if isinstance(s, Mapping) and s.get("$type") == "RPG.GameCore.TargetTake":
-                                    cnt_obj = s.get("Count") or {}
-                                    fv = cnt_obj.get("FixedValue") or {}
-                                    take_cnt = int(fv.get("Value", 0) or 0)
-                            if is_l2r:
-                                targets = list(reversed(targets))
-                            if take_cnt > 0:
-                                targets = targets[:take_cnt]
-                elif sk.skill_trigger_key == "Skill04":
-                    # Skill04 (六倍满月 / 赞美艾格勒) 优先锁定带标记的目标
+                    if isinstance(alias_def, Mapping) and alias_def.get("$type") == "RPG.GameCore.TargetSequence":
+                        seq = alias_def.get("Sequence") or []
+                        is_l2r = any(
+                            isinstance(s, Mapping) and "LeftToRightLightTeamTarget" in str(s.get("Alias", ""))
+                            for s in seq
+                        )
+                        take_cnt = 0
+                        for s in seq:
+                            if isinstance(s, Mapping) and s.get("$type") == "RPG.GameCore.TargetTake":
+                                cnt_obj = s.get("Count") or {}
+                                fv = cnt_obj.get("FixedValue") or {}
+                                take_cnt = int(fv.get("Value", 0) or 0)
+                        if is_l2r:
+                            targets = list(reversed(targets))
+                        if take_cnt > 0:
+                            targets = targets[:take_cnt]
+                elif bool(getattr(sk, "has_mark_target", False)):
+                    # 仅当官方 Ability 声明了标记索敌（且非 AllEnemy）时优先锁定带标记目标
                     marked = [
                         e
                         for e in sim.entities
@@ -739,34 +772,15 @@ class DataDrivenEnemyKit(EnemyKit):
                     if sk.sp_hit_base > 0.0
                     else getattr(attacker, "hit_energy", 5.0) or 5.0
                 )
-                hits = 1
-                adj_ratio = 1.0
-                is_blast = (sk.target_selector == "adjacent")
-                blast_prov = getattr(sim, "blast_target_provider", None)
-                if not is_blast and sk.skill_trigger_key != "Skill01" and blast_prov is not None and targets:
-                    living_allies = [
-                        e
-                        for e in sim.entities
-                        if not e.is_enemy
-                        and e.current_hp > 0.0
-                        and not getattr(e, "is_countdown", False)
-                    ]
-                    if bool(blast_prov(attacker, targets[0], living_allies)):
-                        is_blast = True
-
-                if sk.skill_trigger_key == "Skill04":
-                    mid = int(self.ai_spec.monster_template_id or 0)
-                    if mid == 4023020:
-                        # 4023020 Skill04: 3 段扩散攻击，总倍率 4.5
-                        hits = 3
-                        mult = mult / 3.0
-                        is_blast = True
-                    elif mid == 4023010:
-                        # 4023010 Skill04: 4 段扩散扑击，总倍率 4.0，扩散系数 0.75
-                        hits = 4
-                        mult = mult / 4.0
-                        is_blast = True
-                        adj_ratio = 0.75
+                is_aoe = bool(getattr(sk, "is_aoe", False)) or isinstance(alias_def, Mapping)
+                is_blast = (not is_aoe) and (
+                    bool(getattr(sk, "is_blast", False)) or (sk.target_selector == "adjacent")
+                )
+                hits = max(1, int(getattr(sk, "hit_count", 1) or 1))
+                p1 = sk.param(1, default=0.0)
+                adj_ratio = (p1 / mult) if (is_blast and mult > 0.0 and 0.0 < p1 < mult) else 1.0
+                if hits > 1:
+                    mult = mult / float(hits)
 
                 hit_energy = base_energy / hits
                 target_ids = tuple(t.name for t in targets)
@@ -781,6 +795,56 @@ class DataDrivenEnemyKit(EnemyKit):
                     adjacent_multiplier_ratio=adj_ratio,
                     increment_action_seq=True,
                 )
+                skill_audit_cb = getattr(sim, "on_enemy_skill_resolved", None)
+                if callable(skill_audit_cb):
+                    living_avatars = [
+                        e.name
+                        for e in sim.entities
+                        if not e.is_enemy
+                        and not getattr(e, "is_memosprite", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and e.current_hp > 0.0
+                    ]
+                    scope = "AllEnemy" if is_aoe else ("Blast" if is_blast else "Single")
+                    if is_aoe:
+                        expected_avatars = tuple(
+                            t.name for t in targets if not getattr(t, "is_memosprite", False)
+                        )
+                    elif is_blast and resolved:
+                        living_all = [
+                            e
+                            for e in sim.entities
+                            if not e.is_enemy
+                            and not getattr(e, "is_countdown", False)
+                            and not getattr(e, "is_unselectable", False)
+                            and e.current_hp > 0.0
+                        ]
+                        prim_name = resolved[0] if resolved else (target_ids[0] if target_ids else "")
+                        pidx = next((i for i, e in enumerate(living_all) if e.name == prim_name), -1)
+                        exp_set: list[str] = []
+                        if pidx >= 0:
+                            for idx_n in (pidx - 1, pidx, pidx + 1):
+                                if 0 <= idx_n < len(living_all):
+                                    ent_n = living_all[idx_n]
+                                    if not getattr(ent_n, "is_memosprite", False):
+                                        exp_set.append(ent_n.name)
+                        expected_avatars = tuple(exp_set)
+                    else:
+                        prim_name = resolved[0] if resolved else (target_ids[0] if target_ids else "")
+                        expected_avatars = (prim_name,) if prim_name in living_avatars else ()
+                    actual_avatars = tuple(
+                        sorted({t_name for t_name in resolved if t_name in living_avatars})
+                    )
+                    skill_audit_cb(
+                        av=round(float(getattr(sim, "current_av", 0.0)), 2),
+                        enemy_name=self.owner_id,
+                        skill_id=sk.skill_id,
+                        skill_key=sk.skill_trigger_key,
+                        expected_scope=scope,
+                        expected_hits=tuple(sorted(expected_avatars)),
+                        sim_hits=actual_avatars,
+                    )
                 if resolved and sk.skill_trigger_key in ("Skill01", "Skill03"):
                     self._marked_target = resolved[0]
                 if entry_ab and resolved:

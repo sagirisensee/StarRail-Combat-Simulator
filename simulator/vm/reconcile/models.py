@@ -119,6 +119,20 @@ class InferredMemospriteHit:
 
 
 @dataclass
+class EnemyHitMismatch:
+    """敌方回合现场三方（官方期望 / 日志实录 / 模拟实际）命中集合不一致的诊断项。"""
+
+    av: float
+    enemy_name: str
+    log_hits: Tuple[str, ...]
+    sim_hits: Tuple[str, ...]
+    skill_id: int = 0
+    skill_key: str = ""
+    expected_scope: str = ""
+    expected_hits: Tuple[str, ...] = ()
+
+
+@dataclass
 class LogMetadata:
     """从实机战斗日志提取的通用元信息。"""
 
@@ -138,6 +152,7 @@ class LogMetadata:
     windwalk_enemy_uids: Set[int] = field(default_factory=set)
     slow_hits: Set[Tuple[float, str]] = field(default_factory=set)
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = field(default_factory=dict)
+    enemy_spawns: List[Tuple[float, int, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -175,6 +190,7 @@ class ReconcileReport:
     inferred_memosprite_hits: List[InferredMemospriteHit] = field(default_factory=list)
     unresolved_ambiguous_slots: int = 0
     non_crits: Set[Tuple[int, int]] = field(default_factory=set)
+    enemy_hit_mismatches: List[EnemyHitMismatch] = field(default_factory=list)
 
 
 def _extract_tag(log_path: str) -> str:

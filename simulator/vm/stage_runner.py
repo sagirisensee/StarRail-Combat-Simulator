@@ -421,8 +421,9 @@ class StageRunner:
         new_hp = mrs.blueprint.phase_max_hps[new_phase - 1]
         mrs.entity.max_hp = new_hp
         mrs.entity.current_hp = new_hp
+        was_broken = bool(mrs.entity.is_broken or mrs.entity.current_toughness <= 0.0)
         self.execute_reset_stance(monster_name, forbid_when_empty=False)
-        if new_phase >= 2:
+        if new_phase >= 2 and was_broken:
             if not hasattr(mrs.entity, "_phase_saved_toughness_dmg_reduction"):
                 setattr(mrs.entity, "_phase_saved_toughness_dmg_reduction", getattr(mrs.entity, "toughness_dmg_reduction", 0.10))
             mrs.entity.toughness_dmg_reduction = 0.0
@@ -475,9 +476,17 @@ class StageRunner:
         *,
         dynamic_resolver: Optional[Callable[[int], float]] = None,
         max_slots: int = MAX_ENEMY_SLOTS,
+        summon_id_provider: Optional[Callable[[float, int, Sequence[int]], Optional[int]]] = None,
+        current_av: float = 0.0,
     ) -> List[Entity]:
         """Execute ``RPG.GameCore.SummonMonster`` from official ConfigAbility AST."""
-        caster_mrs = self.get_enemy_state(caster_name)
+        try:
+            caster_mrs = self.get_enemy_state(caster_name)
+        except KeyError:
+            living_mrs = [m for m in self._enemy_by_name.values() if m.entity.current_hp > 0]
+            if not living_mrs:
+                return []
+            caster_mrs = next((m for m in living_mrs if m.blueprint.is_boss), living_mrs[0])
         data_list = task.get("SummonMonsterDataList", [])
         delay_ratio_override = task.get("DelayRatio")
 
@@ -499,6 +508,13 @@ class StageRunner:
                 mid = caster_mrs.blueprint.summon_ids[0]
             if mid <= 0:
                 continue
+
+            if summon_id_provider is not None:
+                wave_summons = list(self.built_stage.source_spec.waves[self.state.wave_index].summon_monsters.keys())
+                cand_ids = list(caster_mrs.blueprint.summon_ids) or wave_summons
+                picked_mid = summon_id_provider(current_av, mid, cand_ids)
+                if picked_mid is not None and int(picked_mid) > 0:
+                    mid = int(picked_mid)
 
             bp = self.built_stage.get_summon_blueprint(mid, wave_index=self.state.wave_index)
             caster_mrs.summon_seq += 1

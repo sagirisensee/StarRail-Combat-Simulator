@@ -59,6 +59,7 @@ class VMRuntime:
         # 订阅 TurnSimulator 核心事实事件，转发给官方 Modifier 引擎
         self.control_skill_mapping: Dict[Tuple[str, str], str] = {}
         self.turn_control_skill_snapshot: Dict[str, str] = {}
+        self.dynamic_entity_params: Dict[Tuple[str, str], List[str]] = {}
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         self.sim.event_bus.subscribe(TurnEndEvent, self._on_turn_end)
         self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)

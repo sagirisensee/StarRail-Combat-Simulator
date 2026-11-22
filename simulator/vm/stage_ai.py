@@ -42,7 +42,7 @@ def _extract_use_skills_and_flag(
     elif t in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue"):
         dk = node.get("DynamicKey")
         dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
-        if dk_name == "AIFlag":
+        if dk_name == "AIFlag" or dk_name.endswith("_AIFlag"):
             val_spec = node.get("ResetValue") if "ResetValue" in node else node.get("Value")
             if isinstance(val_spec, Mapping) and not val_spec.get("IsDynamic", False):
                 fv = val_spec.get("FixedValue", {})
@@ -80,7 +80,7 @@ def _extract_axis_conditions(
     elif t == "RPG.GameCore.ByCompareDynamicValue":
         dk = pred.get("DynamicKey", {})
         dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
-        if dk_name == "AIFlag" and pred.get("CompareType", "Equal") == "Equal":
+        if (dk_name == "AIFlag" or dk_name.endswith("_AIFlag")) and pred.get("CompareType", "Equal") == "Equal":
             cv = pred.get("CompareValue", {})
             if isinstance(cv, Mapping) and not cv.get("IsDynamic", False):
                 fv = cv.get("FixedValue", {})
@@ -105,6 +105,10 @@ class AISkillActionSpec:
     effective_params: Tuple[float, ...]
     is_passive: bool
     target_selector: str = "Default"
+    is_blast: bool = False
+    is_aoe: bool = False
+    hit_count: int = 1
+    has_mark_target: bool = False
 
     @classmethod
     def from_compiled_skill(
@@ -123,6 +127,10 @@ class AISkillActionSpec:
             effective_params=sk.effective_params,
             is_passive=sk.is_passive,
             target_selector=target_selector,
+            is_blast=sk.is_blast,
+            is_aoe=sk.is_aoe,
+            hit_count=sk.hit_count,
+            has_mark_target=sk.has_mark_target,
         )
 
     def param(self, index: int, default: float = 0.0) -> float:
@@ -263,7 +271,15 @@ class MonsterAIExecutor:
         self.last_matched_decision = matched
         if matched.next_ai_flag is not None:
             self.ai_flag = matched.next_ai_flag
-        return matched.candidate_skills
+        if matched.candidate_skills:
+            return matched.candidate_skills
+        if self.spec.override_ai_skill_sequence:
+            seq = self.spec.override_ai_skill_sequence
+            sid = seq[(self.turn_count - 1) % len(seq)]
+            for sk in self.spec.skills_by_key.values():
+                if sk.skill_id == sid:
+                    return (sk,)
+        return ()
 
 
 class StageAILoader:
@@ -393,7 +409,16 @@ class StageAILoader:
             else 1
         )
         seq_raw = mrow.get("OverrideAISkillSequence") or trow.get("AISkillSequence") or []
-        override_seq = tuple(int(x) for x in seq_raw)
+        override_seq_list: List[int] = []
+        for x in seq_raw:
+            if isinstance(x, Mapping):
+                for v in x.values():
+                    if isinstance(v, (int, float, str)):
+                        override_seq_list.append(int(v))
+                        break
+            else:
+                override_seq_list.append(int(x))
+        override_seq = tuple(override_seq_list)
 
         skills_by_key: Dict[str, AISkillActionSpec] = {
             k: AISkillActionSpec.from_compiled_skill(sk)
