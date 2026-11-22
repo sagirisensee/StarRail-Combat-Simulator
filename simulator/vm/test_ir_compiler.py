@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 
+import pytest
+
 from simulator.vm.expr import dotnet_hash
 from simulator.vm.ir_compiler import (
     AbilityIRCompiler,
@@ -18,6 +20,7 @@ from simulator.vm.loader import GameDataLoader
 
 
 class TestIRCompiler(unittest.TestCase):
+    @pytest.mark.slow
     def test_global_symbol_registry_and_obfuscated_ops(self) -> None:
         reg = build_global_symbol_registry()
         for dom in ("Builtin", "Avatar", "LightCone", "Relic", "Monster", "Stage", "ConfigAI"):
@@ -37,7 +40,7 @@ class TestIRCompiler(unittest.TestCase):
             "ChangeActionDelayBit",
         )
 
-    def test_compile_ability_ir_and_fingerprint_cache(self) -> None:
+    def test_compile_ability_ir_core(self) -> None:
         loader = GameDataLoader()
         loader.ensure_ability_index()
         compiler = AbilityIRCompiler()
@@ -64,6 +67,8 @@ class TestIRCompiler(unittest.TestCase):
         self.assertTrue(synth_ir.instructions[0].is_obfuscated)
         self.assertEqual(synth_ir.obfuscated_types, ("RPG.GameCore.JDOLDFECMPL",))
 
+    @pytest.mark.slow
+    def test_compile_ability_ir_and_fingerprint_cache(self) -> None:
         # Fingerprint cache hit & miss verification
         sample_names = [
             "BattleEventAbility_Challenge_Month_49",

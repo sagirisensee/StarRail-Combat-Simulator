@@ -20,6 +20,10 @@ import tempfile
 import time
 import unittest
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 from simulator.core import Entity
 from simulator.vm.expr import BUILTIN_FUNC_HASHES, CompiledPostfixExpr
 from simulator.vm.ir_compiler import (

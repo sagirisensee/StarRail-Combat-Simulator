@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 from typing import Dict, List, Optional, Set, Tuple
 
-from simulator.vm.factory import UID_TO_NAME
 from .models import EnemyHitRecord, LogMetadata, ROOT_DIR, ReconcileReport
 
 
@@ -299,10 +298,14 @@ def emit_plugin(
         "",
     ])
 
+    team_uid_map: Dict[int, str] = {
+        uid: name.split("_", 1)[0]
+        for uid, name in zip(meta.team_uids, meta.team_names)
+    }
     retarget_pairs = [
-        (p_av, meta.enemy_uid_map.get(c_uid) or UID_TO_NAME.get(c_uid, ""), meta.enemy_uid_map.get(v_uid, ""))
+        (p_av, meta.enemy_uid_map.get(c_uid) or team_uid_map.get(c_uid, ""), meta.enemy_uid_map.get(v_uid, ""))
         for p_av, c_uid, v_uid in meta.enemy_retarget_picks
-        if (c_uid in meta.enemy_uid_map or c_uid in UID_TO_NAME) and v_uid in meta.enemy_uid_map
+        if (c_uid in meta.enemy_uid_map or c_uid in team_uid_map) and v_uid in meta.enemy_uid_map
     ]
     lines.extend([
         f"    def _enemy_retarget_{tag}(caster: Any, candidates: List[Any]) -> Optional[Any]:",

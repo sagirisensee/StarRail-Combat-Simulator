@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from simulator.db.character_db import CharacterDB
-from simulator.vm.factory import UID_TO_NAME
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DEFAULT_CHAR_DB_PATH = os.path.join(ROOT_DIR, "data", "character_db_export.json")
@@ -93,6 +92,7 @@ class AhaTurnRecord:
     ally_chip_hits: List[str] = field(default_factory=list)
     ally_sp_gain_counts: Dict[str, int] = field(default_factory=dict)
     lethal_enemy_uids: Set[int] = field(default_factory=set)
+    shielded_enemy_uids: Set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -137,6 +137,7 @@ class LogMetadata:
     aha_turns: List[AhaTurnRecord] = field(default_factory=list)
     windwalk_enemy_uids: Set[int] = field(default_factory=set)
     slow_hits: Set[Tuple[float, str]] = field(default_factory=set)
+    enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = field(default_factory=dict)
 
 
 @dataclass
@@ -185,8 +186,6 @@ def _extract_tag(log_path: str) -> str:
 
 
 def _resolve_uid_name(uid: int, db: CharacterDB) -> str:
-    if uid in UID_TO_NAME:
-        return UID_TO_NAME[uid]
     rp = db.get(uid)
     if rp is not None:
         return rp.name

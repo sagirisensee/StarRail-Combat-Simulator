@@ -1,9 +1,8 @@
 # coding: utf-8
 """官方 ConfigAbility VM 队伍与实体构建工厂。
 
-从 `vm_reconciliation.py` 抽离标准配队表 (`TEAM_VM_LOADOUT`) 与面板去重逻辑
-（扣除 `character_db_export.json` 中已预烘焙、但官方 VM 进场/局内会主动添加的被动属性），
-供 `VMReconciliationHarness` 与完整关卡对账 (`build_stage_30126122` + `run_trajectory_replay`) 共用。
+纯数据驱动：直接从 `CharacterDB` 角色档案动态推导 `(avatar_id, eidolon, light_cone, relic_sets)`
+并挂载官方 VM 适配器 (`ConfigAbilityKitAdapter` / `LightCone` / `Relic`)，零配队/角色名硬编码。
 """
 from __future__ import annotations
 
@@ -22,49 +21,24 @@ from simulator.vm.runtime import (
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_CHAR_DB_PATH = os.path.join(ROOT_DIR, "data", "character_db_export.json")
 
-UID_TO_NAME: Dict[int, str] = {
-    1403: "缇宝",
-    1409: "风堇",
-    1413: "长夜月",
-    1512: "知更鸟•晴歌",
-}
-
-NAME_TO_UID: Dict[str, int] = {
-    "缇宝": 1403,
-    "缇宝_旧": 1403,
-    "风堇": 1409,
-    "长夜月": 1413,
-    "知更鸟•晴歌": 1512,
-    "知更鸟•晴歌_旧": 1512,
-    "知更鸟•晴歌_爱如此刻永恒": 1512,
-}
-
-# 本队官方配置表: uid -> (avatar_id, eidolon, lc_id, lc_superimposition, relics)
-TEAM_VM_LOADOUT: Dict[int, Tuple[int, int, int, int, List[Tuple[int, int]]]] = {
-    1403: (1403, 6, 23038, 5, [(124, 4), (319, 2)]),
-    1409: (1409, 1, 23042, 1, [(125, 4), (320, 2)]),
-    1413: (1413, 2, 23040, 1, [(127, 4), (319, 2)]),
-    1512: (1512, 0, 23052, 1, [(127, 4), (323, 2)]),
-}
-
 
 def resolve_vm_uid(
     uid_or_name: Union[int, str],
     *,
     db: Optional[CharacterDB] = None,
 ) -> int:
-    """将角色 UID 或名称解析为标准 avatar_id（支持 CharacterDB 内任意角色）。"""
+    """将角色 UID 或名称解析为标准 avatar_id（支持 CharacterDB 内任意角色及变体档案）。"""
     if isinstance(uid_or_name, int):
         return uid_or_name
     text = str(uid_or_name).strip()
     if text.isdigit():
         return int(text)
-    if text in NAME_TO_UID:
-        return NAME_TO_UID[text]
-    if db is not None:
-        rp = db.get_by_name(text)
-        if rp is not None:
-            return int(rp.avatar_id)
+    char_db = db if db is not None else CharacterDB().load(DEFAULT_CHAR_DB_PATH)
+    rp = char_db.get_by_name(text)
+    if rp is None and "_" in text:
+        rp = char_db.get_by_name(text.split("_", 1)[0])
+    if rp is not None:
+        return int(rp.avatar_id)
     raise KeyError(f"未知 VM 角色标识: {uid_or_name!r}")
 
 
@@ -94,43 +68,29 @@ def build_vm_entity(
     *,
     db: Optional[CharacterDB] = None,
     loader: Optional[GameDataLoader] = None,
-    loadout: Optional[Tuple[int, int, int, int, List[Tuple[int, int]]]] = None,
+    loadout: Optional[Tuple[int, int, Optional[int], int, List[Tuple[int, int]]]] = None,
     db_path: str = DEFAULT_CHAR_DB_PATH,
 ) -> Entity:
     """构建单个挂载官方 VM 适配器 (`Kit`/`LightCone`/`Relic`) 的战斗实体。"""
     char_db = db if db is not None else CharacterDB().load(db_path)
     vm_loader = loader if loader is not None else GameDataLoader()
     uid = resolve_vm_uid(uid_or_name, db=char_db)
-    known_name = UID_TO_NAME.get(uid)
 
     raw_key = str(uid_or_name).strip() if isinstance(uid_or_name, str) else ""
-    use_profile_loadout = False
-    if raw_key == "缇宝_旧":
-        rp = char_db.get_by_name("缇宝_旧") or char_db.get_by_name("缇宝")
-    elif raw_key == "知更鸟•晴歌_旧":
-        rp = char_db.get_by_name("知更鸟•晴歌")
-        use_profile_loadout = True
-    elif known_name == "知更鸟•晴歌":
-        rp = char_db.get_by_name("知更鸟•晴歌_爱如此刻永恒") or char_db.get_by_name(known_name)
-    elif known_name is not None:
-        rp = char_db.get_by_name(known_name)
+    if raw_key and not raw_key.isdigit():
+        rp = char_db.get_by_name(raw_key) or char_db.get(uid)
     else:
-        rp = char_db.get(uid) or (
-            char_db.get_by_name(raw_key) if raw_key else None
-        )
+        rp = char_db.get(uid)
     if rp is None:
         raise KeyError(f"CharacterDB 中未找到角色档案: {uid_or_name!r} (uid={uid})")
 
-    name = known_name or rp.name
+    canonical = char_db.get(uid)
+    name = canonical.name if canonical is not None else rp.name.split("_", 1)[0]
     ent = char_db.to_combat_entity(rp)
     ent.name = name
 
     if loadout is not None:
         aid, eid, lc_id, lc_s, relics = loadout
-    elif use_profile_loadout:
-        aid, eid, lc_id, lc_s, relics = _infer_loadout_from_profile(rp)
-    elif uid in TEAM_VM_LOADOUT:
-        aid, eid, lc_id, lc_s, relics = TEAM_VM_LOADOUT[uid]
     else:
         aid, eid, lc_id, lc_s, relics = _infer_loadout_from_profile(rp)
 
@@ -146,7 +106,7 @@ def build_vm_team(
     *,
     db: Optional[CharacterDB] = None,
     loader: Optional[GameDataLoader] = None,
-    loadouts: Optional[Mapping[int, Tuple[int, int, int, int, List[Tuple[int, int]]]]] = None,
+    loadouts: Optional[Mapping[int, Tuple[int, int, Optional[int], int, List[Tuple[int, int]]]]] = None,
     db_path: str = DEFAULT_CHAR_DB_PATH,
 ) -> List[Entity]:
     """按传入顺序构建整支 VM 队伍，严格保留站位顺序。"""

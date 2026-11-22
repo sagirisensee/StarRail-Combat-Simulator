@@ -295,9 +295,22 @@ class CompiledCharacterSpec:
 
 
 class GameDataLoader:
-    """官方 TurnBasedGameData 按需索引与编译器（进程级单例友好）。"""
+    """官方 TurnBasedGameData 按需索引与编译器（按 data_root 进程级单例缓存）。"""
+
+    _SHARED_INSTANCES: Dict[str, "GameDataLoader"] = {}
+
+    def __new__(cls, data_root: str = DEFAULT_TBGD_ROOT) -> "GameDataLoader":
+        key = os.path.abspath(data_root)
+        inst = cls._SHARED_INSTANCES.get(key)
+        if inst is None:
+            inst = super().__new__(cls)
+            cls._SHARED_INSTANCES[key] = inst
+        return inst
 
     def __init__(self, data_root: str = DEFAULT_TBGD_ROOT) -> None:
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
         self.data_root = data_root
         self._excel_cache: Dict[str, Any] = {}
         self._ability_index_built = False

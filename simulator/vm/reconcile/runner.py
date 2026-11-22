@@ -181,10 +181,13 @@ def _run_single_pass(
     plugin_fn: Optional[Callable[[Any], None]],
     non_crits: Set[Any],
     av_budget: Optional[float],
+    loadouts: Optional[Dict[int, Any]] = None,
     memosprite_overrides: Optional[Dict[Tuple[float, int, str], Tuple[str, ...]]] = None,
+    aha_dmg_overrides: Optional[Dict[Tuple[int, str], float]] = None,
+    sim_enemy_hp_out: Optional[Dict[Tuple[float, str], float]] = None,
     record_crits: bool = False,
 ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
-    team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader)
+    team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader, loadouts=loadouts)
     sim, director, stage_mode = build_stage_for_id(
         meta.stage_id,
         team,
@@ -197,6 +200,17 @@ def _run_single_pass(
 
     attach_exact_crit_oracle(sim, log_path=log_path, non_crits=non_crits)
     crit_records = _attach_crit_hit_recorder(sim) if record_crits else []
+    if sim_enemy_hp_out is not None:
+        from simulator.events import BattleEvent, DamageAppliedEvent, TurnEndEvent
+
+        def _on_hp_snap(ev: BattleEvent) -> None:
+            if isinstance(ev, (DamageAppliedEvent, TurnEndEvent)):
+                av_k = round(float(getattr(sim, "current_av", 0.0)), 2)
+                for e in getattr(sim, "entities", ()):
+                    if getattr(e, "is_enemy", False) and getattr(e, "current_hp", 0.0) > 0.0:
+                        sim_enemy_hp_out[(av_k, e.name)] = float(e.current_hp)
+
+        sim.event_bus.subscribe(BattleEvent, _on_hp_snap)
     if not getattr(sim, "enemy_uid_map", None) and meta.enemy_uid_map:
         sim.enemy_uid_map = dict(meta.enemy_uid_map)
     if plugin_fn is not None:
@@ -207,6 +221,7 @@ def _run_single_pass(
             sim,
             meta,
             memosprite_overrides=memosprite_overrides,
+            aha_dmg_overrides=aha_dmg_overrides,
             ambiguous_out=ambiguous_slots,
             inferred_out=inferred_hits,
         )
@@ -309,6 +324,7 @@ def reconcile_log(
     db: Optional[CharacterDB] = None,
     loader: Optional[GameDataLoader] = None,
     team_override: Optional[Sequence[str]] = None,
+    loadouts: Optional[Dict[int, Any]] = None,
     force_data_driven: bool = False,
     use_existing_plugin: bool = True,
     resolve_memosprites: bool = True,
@@ -332,6 +348,9 @@ def reconcile_log(
         plugin_fn, non_crits = _try_load_existing_plugin(meta.tag)
 
     overrides: Dict[Tuple[float, int, str], Tuple[str, ...]] = {}
+    aha_dmg_overrides: Dict[Tuple[int, str], float] = {}
+    has_shielded_aha = any(a.shielded_enemy_uids for a in meta.aha_turns)
+    sim_enemy_hp: Dict[Tuple[float, str], float] = {}
     report, ambiguous_slots, crit_records = _run_single_pass(
         log_path,
         meta,
@@ -343,7 +362,10 @@ def reconcile_log(
         plugin_fn=plugin_fn,
         non_crits=non_crits,
         av_budget=av_budget,
+        loadouts=loadouts,
         memosprite_overrides=overrides,
+        aha_dmg_overrides=aha_dmg_overrides,
+        sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
         record_crits=True,
     )
 
@@ -353,6 +375,7 @@ def reconcile_log(
         if not newly_detected:
             break
         non_crits = set(non_crits) | newly_detected
+        sim_enemy_hp.clear()
         report, ambiguous_slots, crit_records = _run_single_pass(
             log_path,
             meta,
@@ -364,9 +387,58 @@ def reconcile_log(
             plugin_fn=plugin_fn,
             non_crits=non_crits,
             av_budget=av_budget,
+            loadouts=loadouts,
             memosprite_overrides=overrides,
+            aha_dmg_overrides=aha_dmg_overrides,
+            sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
             record_crits=True,
         )
+
+    # 被特殊护盾吸收的阿哈回合伤害：由首个破盾回合的 HP+盾 守恒反推精确吸收量
+    if plugin_fn is None and has_shielded_aha and report.max_turn_err >= threshold:
+        bad_turns = [td for td in report.turn_diffs if td.err >= threshold]
+        if bad_turns:
+            first_bad = bad_turns[0]
+            shielded_prec = [
+                (i, a) for i, a in enumerate(meta.aha_turns)
+                if a.av < first_bad.av and a.shielded_enemy_uids
+            ]
+            if shielded_prec:
+                aha_i, aha_rec = shielded_prec[-1]
+                calibrated = False
+                for euid in aha_rec.shielded_enemy_uids:
+                    ename = meta.enemy_uid_map.get(euid, "")
+                    if not ename:
+                        continue
+                    av_k = round(first_bad.av, 2)
+                    log_hp = meta.enemy_hp_at_turn_end.get((av_k, ename))
+                    sim_hp = sim_enemy_hp.get((av_k, ename))
+                    if log_hp is not None and sim_hp is not None and abs(sim_hp - log_hp) > 1.0:
+                        delta_aha = (sim_hp - log_hp) - (first_bad.gt_total - first_bad.sim_total)
+                        base_aha = sum(
+                            float(d) for eu, d in aha_rec.enemy_damages
+                            if meta.enemy_uid_map.get(eu) == ename
+                        )
+                        if abs(delta_aha) > 1.0 and base_aha + delta_aha > 0.0:
+                            aha_dmg_overrides[(aha_i, ename)] = base_aha + delta_aha
+                            calibrated = True
+                if calibrated:
+                    report, ambiguous_slots, crit_records = _run_single_pass(
+                        log_path,
+                        meta,
+                        g,
+                        tl,
+                        char_db=char_db,
+                        vm_loader=vm_loader,
+                        force_data_driven=force_data_driven,
+                        plugin_fn=None,
+                        non_crits=non_crits,
+                        av_budget=av_budget,
+                        loadouts=loadouts,
+                        memosprite_overrides=overrides,
+                        aha_dmg_overrides=aha_dmg_overrides,
+                        record_crits=True,
+                    )
 
     if plugin_fn is None and resolve_memosprites and ambiguous_slots:
         resolved_keys: Set[Tuple[float, int, str]] = set()
@@ -405,7 +477,9 @@ def reconcile_log(
                         plugin_fn=None,
                         non_crits=non_crits,
                         av_budget=av_budget,
+                        loadouts=loadouts,
                         memosprite_overrides=trial_ov,
+                        aha_dmg_overrides=aha_dmg_overrides,
                         record_crits=False,
                     )
                     trial_td = next((td for td in trial_rep.turn_diffs if abs(td.av - first_bad.av) < 0.05), None)
@@ -436,7 +510,9 @@ def reconcile_log(
                 plugin_fn=None,
                 non_crits=non_crits,
                 av_budget=av_budget,
+                loadouts=loadouts,
                 memosprite_overrides=overrides,
+                aha_dmg_overrides=aha_dmg_overrides,
                 record_crits=True,
             )
             for _nc_round in range(2):

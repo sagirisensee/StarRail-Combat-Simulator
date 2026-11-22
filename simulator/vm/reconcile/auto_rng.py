@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from simulator.vm.factory import UID_TO_NAME
 from simulator.vm.reconcile.models import (
     AmbiguousMemospriteSlot,
     EnemyHitRecord,
@@ -24,11 +23,13 @@ def attach_auto_rng_plugin(
     meta: LogMetadata,
     *,
     memosprite_overrides: Optional[Dict[Tuple[float, int, str], Tuple[str, ...]]] = None,
+    aha_dmg_overrides: Optional[Dict[Tuple[int, str], float]] = None,
     ambiguous_out: Optional[List[AmbiguousMemospriteSlot]] = None,
     inferred_out: Optional[List[InferredMemospriteHit]] = None,
 ) -> None:
     """挂载全自动 RNG 先知（敌方 UID 映射、辅助拉条、风行再动、阿哈弹射、差额忆灵反推与跳过回合判别）。"""
     overrides = memosprite_overrides or {}
+    aha_overrides = aha_dmg_overrides or {}
 
     # 1. 自动设置 enemy_uid_map
     if meta.enemy_uid_map:
@@ -42,8 +43,12 @@ def attach_auto_rng_plugin(
 
     sim.enemy_windwalk_provider = _enemy_windwalk_provider
 
-    # 3. 敌方非攻击/跳过回合判定（来自二次确认锁定的 SKIP_SENTINEL）
+    # 3. 敌方非攻击/跳过回合判定（自动从无掉血/无回能/无被动奶的敌方回合提取 + 二次确认锁定的 SKIP_SENTINEL）
     skip_av_names: Set[Tuple[float, str]] = set()
+    for h in meta.enemy_hits:
+        ename = meta.enemy_uid_map.get(h.enemy_uid, "")
+        if ename and not h.had_hp_drop and not h.sp_gain_counts and not h.had_passive_heal:
+            skip_av_names.add((h.av, ename))
     for (ov_av, ov_uid, ov_kind), ov_val in overrides.items():
         if ov_kind == "primary" and ov_val == (SKIP_SENTINEL,):
             ename = meta.enemy_uid_map.get(ov_uid, "")
@@ -93,9 +98,33 @@ def attach_auto_rng_plugin(
                         dmg_by_enemy[ename] = dmg_by_enemy.get(ename, 0.0) + float(dmg)
 
                     for ename, tot_d in dmg_by_enemy.items():
+                        if (idx, ename) in aha_overrides:
+                            tot_d = aha_overrides[(idx, ename)]
                         eff_d = (tot_d + 10000.0) if ename in lethal_names else tot_d
                         if hasattr(director, "apply_aha_hp_damage"):
                             director.apply_aha_hp_damage(ename, eff_d)
+                    for owner, sp_cnt in rec.ally_sp_gain_counts.items():
+                        hp_cnt = rec.ally_chip_hits.count(owner)
+                        extra_memo_chips = max(0, sp_cnt - hp_cnt)
+                        for _ in range(extra_memo_chips):
+                            living_memos = [
+                                e for e in getattr(sim, "entities", ())
+                                if getattr(e, "is_memosprite", False)
+                                and getattr(e, "current_hp", 0.0) > 0
+                            ]
+                            m_ent = next(
+                                (
+                                    e for e in living_memos
+                                    if owner in (
+                                        getattr(e, "master_name", None),
+                                        getattr(e, "summoner_name", None),
+                                        getattr(e, "owner_name", None),
+                                    )
+                                ),
+                                living_memos[0] if len(living_memos) == 1 else None,
+                            )
+                            if m_ent is not None and hasattr(director, "apply_aha_ally_chip_hit"):
+                                director.apply_aha_ally_chip_hit(m_ent.name)
                     for aname in rec.ally_chip_hits:
                         if hasattr(director, "apply_aha_ally_chip_hit"):
                             director.apply_aha_ally_chip_hit(aname)
@@ -110,8 +139,8 @@ def attach_auto_rng_plugin(
     for rec in meta.enemy_hits:
         recs_by_av.setdefault(rec.av, []).append(rec)
 
-    cursor_by_av: Dict[float, int] = {}
-    active_rec_by_av: Dict[float, EnemyHitRecord] = {}
+    cursor_by_av: Dict[Any, int] = {}
+    active_rec_by_av: Dict[Any, EnemyHitRecord] = {}
     ally_ult_cursor: Dict[str, int] = {}
     servant_cursor: Dict[Tuple[float, str], int] = {}
     recorded_ambig_keys: Set[Tuple[float, int, str]] = set()
@@ -258,13 +287,34 @@ def attach_auto_rng_plugin(
         if av_key is None:
             return None
         recs = recs_by_av[av_key]
+        name_matched = [r for r in recs if meta.enemy_uid_map.get(r.enemy_uid, "") == att_name]
+        pool = name_matched if name_matched else recs
+        cursor_key = (av_key, att_name) if name_matched else av_key
         if hit_idx == 0:
-            idx = min(cursor_by_av.get(av_key, 0), len(recs) - 1)
-            rec = recs[idx]
-            cursor_by_av[av_key] = cursor_by_av.get(av_key, 0) + 1
+            idx = min(cursor_by_av.get(cursor_key, 0), len(pool) - 1)
+            rec = pool[idx]
+            cursor_by_av[cursor_key] = cursor_by_av.get(cursor_key, 0) + 1
+            active_rec_by_av[cursor_key] = rec
             active_rec_by_av[av_key] = rec
         else:
-            rec = active_rec_by_av.get(av_key) or recs[min(max(0, cursor_by_av.get(av_key, 1) - 1), len(recs) - 1)]
+            rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
+
+        if hit_idx == 0 and rec.first_memo_owner:
+            m_first = next(
+                (
+                    e for e in living
+                    if _is_memosprite(e)
+                    and rec.first_memo_owner in (
+                        getattr(e, "master_name", None),
+                        getattr(e, "summoner_name", None),
+                        getattr(e, "owner_name", None),
+                    )
+                ),
+                None,
+            )
+            if m_first is not None:
+                _record_inf(rec.av, rec.enemy_uid, "primary", (m_first.name,), "passive_heal_o1")
+                return m_first
 
         hit_seq: List[str] = []
         for nm in rec.hit_allies:
@@ -272,6 +322,24 @@ def attach_auto_rng_plugin(
 
         if hit_idx < len(hit_seq):
             return _find_ally(living, hit_seq[hit_idx])
+
+        if hit_idx == 0 and not rec.had_hp_drop and rec.sp_gain_counts:
+            memo_owner = next(iter(rec.sp_gain_counts.keys()))
+            m_sp = next(
+                (
+                    e for e in living
+                    if _is_memosprite(e)
+                    and memo_owner in (
+                        getattr(e, "master_name", None),
+                        getattr(e, "summoner_name", None),
+                        getattr(e, "owner_name", None),
+                    )
+                ),
+                None,
+            )
+            if m_sp is not None:
+                _record_inf(rec.av, rec.enemy_uid, "primary", (m_sp.name,), "sp_gain_o1")
+                return m_sp
 
         memos = _living_memosprites(living)
         if memos:
@@ -284,22 +352,26 @@ def attach_auto_rng_plugin(
 
     def _blast_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
         av = float(getattr(sim, "current_av", 0.0))
+        att_name = str(getattr(attacker, "name", "") or "")
         av_key = _match_av_key(av)
         if av_key is None:
             return []
         recs = recs_by_av[av_key]
-        rec = active_rec_by_av.get(av_key) or recs[min(max(0, cursor_by_av.get(av_key, 1) - 1), len(recs) - 1)]
+        name_matched = [r for r in recs if meta.enemy_uid_map.get(r.enemy_uid, "") == att_name]
+        cursor_key = (av_key, att_name) if name_matched else av_key
+        pool = name_matched if name_matched else recs
+        rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
 
-        primary_name = getattr(primary, "name", None)
+        extra_chars = (
+            list(rec.hit_allies)
+            if rec.first_memo_owner
+            else (rec.hit_allies[1:] if len(rec.hit_allies) > 1 else [])
+        )
         known_blasts: List[Any] = []
-        for nm in rec.hit_allies:
-            if nm != primary_name:
-                ent = _find_ally(living, nm)
-                if ent is not None:
-                    known_blasts.append(ent)
-
-        if len(known_blasts) >= 2:
-            return known_blasts
+        for nm in extra_chars:
+            ent = _find_ally(living, nm)
+            if ent is not None and ent not in known_blasts:
+                known_blasts.append(ent)
 
         memos = _living_memosprites(living)
         if not memos:
@@ -353,6 +425,9 @@ def attach_auto_rng_plugin(
             if rec.first_memo_owner:
                 return known_blasts
 
+        if len(known_blasts) >= 2:
+            return known_blasts
+
         adj_memos: List[Any] = []
         try:
             pidx = living.index(primary)
@@ -375,11 +450,16 @@ def attach_auto_rng_plugin(
 
         return known_blasts
 
+    team_uid_map: Dict[int, str] = {
+        uid: name.split("_", 1)[0]
+        for uid, name in zip(meta.team_uids, meta.team_names)
+    }
+
     def _enemy_retarget_provider(caster: Any, candidates: List[Any]) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         cname = getattr(caster, "name", "")
         for p_av, c_uid, v_uid in meta.enemy_retarget_picks:
-            expected_cname = meta.enemy_uid_map.get(c_uid) or UID_TO_NAME.get(c_uid, "")
+            expected_cname = meta.enemy_uid_map.get(c_uid) or team_uid_map.get(c_uid, "")
             if abs(av - p_av) < 0.05 and expected_cname == cname:
                 vname = meta.enemy_uid_map.get(v_uid, "")
                 for ent in candidates:

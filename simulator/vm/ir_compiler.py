@@ -187,11 +187,19 @@ def _collect_symbols_from_json(node: Any, out: Set[str]) -> None:
             _collect_symbols_from_json(v, out)
 
 
+_SYMBOL_REGISTRY_CACHE: Dict[str, DynamicHashRegistry] = {}
+_FINGERPRINT_CACHE: Dict[str, str] = {}
+
+
 def build_global_symbol_registry(
     tbgd_root: Path | str = DEFAULT_TBGD_ROOT,
 ) -> DynamicHashRegistry:
     """Scan ``TurnBasedGameData`` across all domains to build ``DynamicHashRegistry``."""
     root = Path(tbgd_root)
+    cache_key = str(root.resolve())
+    cached = _SYMBOL_REGISTRY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     domain_symbols: Dict[str, Set[str]] = {
         "Builtin": set(BUILTIN_FUNCS.keys()) | set(COMMON_RUNTIME_SYMBOLS),
         "Avatar": set(),
@@ -304,18 +312,24 @@ def build_global_symbol_registry(
             else:
                 h2s[h] = sym
 
-    return DynamicHashRegistry(
+    reg = DynamicHashRegistry(
         hash_to_symbol=h2s,
         symbol_to_hash=s2h,
         domain_counts={dom: len(syms) for dom, syms in domain_symbols.items()},
         collisions={k: tuple(v) for k, v in collisions.items()},
         readinfo_labels=readinfo_labels,
     )
+    _SYMBOL_REGISTRY_CACHE[cache_key] = reg
+    return reg
 
 
 def compute_tbgd_fingerprint(tbgd_root: Path | str = DEFAULT_TBGD_ROOT) -> str:
     """Compute a deterministic fingerprint for ``TurnBasedGameData``."""
     root = Path(tbgd_root)
+    cache_key = str(root.resolve())
+    cached_fp = _FINGERPRINT_CACHE.get(cache_key)
+    if cached_fp is not None:
+        return cached_fp
     if (root / ".git").exists():
         try:
             res = subprocess.run(
@@ -326,7 +340,9 @@ def compute_tbgd_fingerprint(tbgd_root: Path | str = DEFAULT_TBGD_ROOT) -> str:
             )
             commit = res.stdout.strip()
             if commit:
-                return f"git:{commit}:v{IR_COMPILER_VERSION}"
+                fp = f"git:{commit}:v{IR_COMPILER_VERSION}"
+                _FINGERPRINT_CACHE[cache_key] = fp
+                return fp
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -343,7 +359,9 @@ def compute_tbgd_fingerprint(tbgd_root: Path | str = DEFAULT_TBGD_ROOT) -> str:
         if p.exists():
             st = p.stat()
             hasher.update(f"{rel}:{st.st_size}:{int(st.st_mtime_ns)}".encode("utf-8"))
-    return f"stat:{hasher.hexdigest()[:24]}"
+    fp = f"stat:{hasher.hexdigest()[:24]}"
+    _FINGERPRINT_CACHE[cache_key] = fp
+    return fp
 
 
 @dataclass(frozen=True)

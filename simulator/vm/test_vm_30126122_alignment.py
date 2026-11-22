@@ -1,48 +1,24 @@
 # coding: utf-8
-"""关卡 30126122 官方 ConfigAbility VM 全插件对账测试套件。"""
+"""关卡 30126122 官方 ConfigAbility VM 纯自动机械提取对账测试套件。"""
 
 import os
 import unittest
-from typing import Callable, Optional, Sequence, Set
+from typing import Optional, Sequence
+
+import pytest
 
 from simulator.db.character_db import CharacterDB
-from simulator.golden_diff import (
-    attach_exact_crit_oracle,
-    diff_sequences,
-    extract_timeline,
-    parse_golden_jsonl,
-    run_trajectory_replay,
-)
-from simulator.plugins.log_20261114_155925 import attach_log_20261114_155925_plugin
-from simulator.plugins.log_20261114_184651 import attach_log_20261114_184651_plugin
-from simulator.plugins.log_20261114_184845 import attach_log_20261114_184845_plugin
-from simulator.plugins.log_20261114_204943 import (
-    NON_CRITS as OFFICIAL_20261114_204943_NON_CRITS,
-    attach_log_20261114_204943_plugin,
-)
-from simulator.plugins.log_20261114_205144 import attach_log_20261114_205144_plugin
-from simulator.plugins.log_20261114_220255 import (
-    NON_CRITS as OFFICIAL_20261114_220255_NON_CRITS,
-    attach_log_20261114_220255_plugin,
-)
-from simulator.plugins.log_20261114_221208 import (
-    NON_CRITS as OFFICIAL_20261114_221208_NON_CRITS,
-    attach_log_20261114_221208_plugin,
-)
-from simulator.plugins.log_20261114_222204 import attach_log_20261114_222204_plugin
-from simulator.plugins.log_20261115_041608 import (
-    NON_CRITS as OFFICIAL_20261115_041608_NON_CRITS,
-    attach_log_20261115_041608_plugin,
-)
-from simulator.vm.factory import build_vm_team
 from simulator.vm.loader import GameDataLoader
-from simulator.vm.stage_sim_adapter import build_data_driven_stage
+from simulator.vm.reconcile.runner import reconcile_log
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 11 月实机录屏中知更鸟•晴歌佩戴光锥「爱如此刻永恒」(23052) 对应档案
+_NOV_ROBIN_PROFILE = "知更鸟•晴歌_爱如此刻永恒"
+
 
 class TestVMStage30126122Alignment(unittest.TestCase):
-    """验证关卡 30126122 在官方 ConfigAbility VM 下的轨迹、总伤与逐动对齐。"""
+    """验证关卡 30126122 在官方 ConfigAbility VM + 纯机械日志提取（零手抄插件）下的轨迹、总伤与逐动对齐。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -54,156 +30,85 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         tag: str,
         filename: str,
         names: Sequence[str],
-        plugin_fn: Callable,
         *,
-        non_crits: Optional[Set] = None,
         av_budget: Optional[float] = None,
         max_tl_av: Optional[float] = None,
-        data_driven: bool = True,
         total_limit: float = 0.0001,
         turn_limit: float = 0.0001,
-        ika_turn_limit: float = 0.0001,
     ) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", filename)
-        g = parse_golden_jsonl(log_path)
-        team = build_vm_team(names, db=self.db, loader=self.loader)
-        sim, director = build_data_driven_stage(30126122, team, technique_users=list(names))
-
-        attach_exact_crit_oracle(sim, log_path=log_path, non_crits=non_crits or set())
-        plugin_fn(sim)
-        tl = extract_timeline(log_path)
-        if max_tl_av is not None:
-            tl = [item for item in tl if item.av < max_tl_av]
-
-        traj = run_trajectory_replay(
-            sim,
-            director,
-            tl,
-            av_budget=av_budget if av_budget is not None else g.final_av,
-            log_path=log_path,
+        rep = reconcile_log(
+            log_path,
+            db=self.db,
+            loader=self.loader,
+            team_override=names,
+            force_data_driven=True,
+            use_existing_plugin=False,
+            av_budget=av_budget,
+            max_tl_av=max_tl_av,
+            threshold=turn_limit,
         )
-        rep = diff_sequences(g, traj.replay.sequence)
 
-        self.assertEqual(traj.replay.turn_matched, traj.replay.turn_total)
-        self.assertEqual(traj.replay.ult_matched, traj.replay.ult_total)
-        self.assertEqual(traj.sp_granted, 0)
-        self.assertEqual(traj.memoria_granted, 0.0)
-        self.assertEqual(traj.presence_grants, 0)
-        self.assertTrue(all(r.mode not in ("forced", "failed") for r in traj.records))
+        self.assertEqual(rep.turn_matched, rep.turn_total)
+        self.assertEqual(rep.ult_matched, rep.ult_total)
+        self.assertEqual(rep.sp_granted, 0)
+        self.assertEqual(rep.memoria_granted, 0.0)
+        self.assertEqual(rep.presence_grants, 0)
+        self.assertEqual(rep.forced_or_failed, 0)
 
-        err = abs(rep["sim_total_damage"] - rep["golden_total_damage"]) / rep["golden_total_damage"]
-        self.assertLess(err, total_limit, f"{tag} VM 总伤偏差过大: {err:.4%} (limit={total_limit:.2%})")
-        self._assert_per_turn_sub_0_01_pct(tag, g, traj, turn_limit=turn_limit, ika_turn_limit=ika_turn_limit)
-
-    def _assert_per_turn_sub_0_01_pct(
-        self, tag: str, g: object, traj: object, *, turn_limit: float = 0.0001, ika_turn_limit: float = 0.0001
-    ) -> None:
-        gt_by_av: dict[float, float] = {}
-        ika_avs: set[float] = set()
-        for t in g.turns:
-            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
-            if amt > 0:
-                av = round(t.av, 2)
-                gt_by_av[av] = gt_by_av.get(av, 0.0) + amt
-                if any(d.attacker in ("风堇", "风堇 (忆灵)", "小伊卡") for d in t.damages if d.damage_type != "DoT"):
-                    ika_avs.add(av)
-        sim_by_av: dict[float, float] = {}
-        for t in traj.replay.sequence.turns:
-            amt = sum(d.damage for d in t.damages if d.damage_type != "DoT")
-            if amt > 0:
-                av = round(t.av, 2)
-                sim_by_av[av] = sim_by_av.get(av, 0.0) + amt
-        self.assertEqual(set(sim_by_av.keys()), set(gt_by_av.keys()))
-        for av, gt_dmg in sorted(gt_by_av.items()):
-            sim_dmg = sim_by_av[av]
-            turn_err = abs(sim_dmg - gt_dmg) / gt_dmg
-            limit = ika_turn_limit if av in ika_avs else turn_limit
+        self.assertLess(
+            rep.total_err,
+            total_limit,
+            f"{tag} VM 总伤偏差过大: {rep.total_err:.4%} (limit={total_limit:.2%})",
+        )
+        for td in rep.turn_diffs:
             self.assertLess(
-                turn_err,
-                limit,
-                f"{tag} VM AV={av:.2f} 单动伤害偏差过大: {turn_err:.4%} (limit={limit:.2%}, GT={gt_dmg:.2f}, SIM={sim_dmg:.2f})",
+                td.err,
+                turn_limit,
+                f"{tag} VM AV={td.av:.2f} 单动伤害偏差过大: {td.err:.4%} "
+                f"(limit={turn_limit:.2%}, GT={td.gt_total:.2f}, SIM={td.sim_total:.2f})",
             )
 
+    @pytest.mark.slow
     def test_vm_20261114_155925(self) -> None:
-        self._run_vm_case(
-            "155925",
-            "battle_20261114_155925.jsonl",
-            ["风堇", "长夜月"],
-            attach_log_20261114_155925_plugin,
-            total_limit=0.0001,
-            turn_limit=0.0001,
-            ika_turn_limit=0.0001,
-        )
+        self._run_vm_case("155925", "battle_20261114_155925.jsonl", ["风堇", "长夜月"])
 
+    @pytest.mark.slow
     def test_vm_20261114_184651(self) -> None:
         self._run_vm_case(
             "184651",
             "battle_20261114_184651.jsonl",
             ["风堇", "长夜月"],
-            attach_log_20261114_184651_plugin,
             av_budget=240.0,
             max_tl_av=240.22,
         )
 
+    @pytest.mark.slow
     def test_vm_20261114_184845(self) -> None:
-        self._run_vm_case(
-            "184845",
-            "battle_20261114_184845.jsonl",
-            ["风堇", "缇宝"],
-            attach_log_20261114_184845_plugin,
-        )
+        self._run_vm_case("184845", "battle_20261114_184845.jsonl", ["风堇", "缇宝"])
 
+    @pytest.mark.slow
     def test_vm_20261114_204943(self) -> None:
-        self._run_vm_case(
-            "204943",
-            "battle_20261114_204943.jsonl",
-            ["风堇", "知更鸟•晴歌"],
-            attach_log_20261114_204943_plugin,
-            non_crits=OFFICIAL_20261114_204943_NON_CRITS,
-        )
+        self._run_vm_case("204943", "battle_20261114_204943.jsonl", ["风堇", _NOV_ROBIN_PROFILE])
 
+    @pytest.mark.slow
     def test_vm_20261114_205144(self) -> None:
-        self._run_vm_case(
-            "205144",
-            "battle_20261114_205144.jsonl",
-            ["风堇", "知更鸟•晴歌", "缇宝"],
-            attach_log_20261114_205144_plugin,
-        )
+        self._run_vm_case("205144", "battle_20261114_205144.jsonl", ["风堇", _NOV_ROBIN_PROFILE, "缇宝"])
 
+    @pytest.mark.slow
     def test_vm_20261114_220255(self) -> None:
-        self._run_vm_case(
-            "220255",
-            "battle_20261114_220255.jsonl",
-            ["风堇", "知更鸟•晴歌", "缇宝"],
-            attach_log_20261114_220255_plugin,
-            non_crits=OFFICIAL_20261114_220255_NON_CRITS,
-        )
+        self._run_vm_case("220255", "battle_20261114_220255.jsonl", ["风堇", _NOV_ROBIN_PROFILE, "缇宝"])
 
+    @pytest.mark.slow
     def test_vm_20261114_221208(self) -> None:
-        self._run_vm_case(
-            "221208",
-            "battle_20261114_221208.jsonl",
-            ["风堇", "知更鸟•晴歌", "长夜月"],
-            attach_log_20261114_221208_plugin,
-            non_crits=OFFICIAL_20261114_221208_NON_CRITS,
-        )
+        self._run_vm_case("221208", "battle_20261114_221208.jsonl", ["风堇", _NOV_ROBIN_PROFILE, "长夜月"])
 
+    @pytest.mark.slow
     def test_vm_20261114_222204(self) -> None:
-        self._run_vm_case(
-            "222204",
-            "battle_20261114_222204.jsonl",
-            ["风堇", "缇宝", "长夜月"],
-            attach_log_20261114_222204_plugin,
-        )
+        self._run_vm_case("222204", "battle_20261114_222204.jsonl", ["风堇", "缇宝", "长夜月"])
 
     def test_vm_20261115_041608(self) -> None:
-        self._run_vm_case(
-            "041608",
-            "battle_20261115_041608.jsonl",
-            ["风堇", "缇宝", "长夜月", "知更鸟•晴歌"],
-            attach_log_20261115_041608_plugin,
-            non_crits=OFFICIAL_20261115_041608_NON_CRITS,
-        )
+        self._run_vm_case("041608", "battle_20261115_041608.jsonl", ["风堇", "缇宝", "长夜月", _NOV_ROBIN_PROFILE])
 
 
 if __name__ == "__main__":

@@ -65,15 +65,6 @@ class TestReconcileGenerator(unittest.TestCase):
             td = next(t for t in rep.turn_diffs if abs(t.av - av_ok) < 0.05)
             self.assertLess(td.err, 0.0001)
 
-    def test_pure_auto_three_person_205144_sub_0_01_pct(self) -> None:
-        log_path = os.path.join(ROOT_DIR, "battle_logs", "battle_20261114_205144.jsonl")
-        rep = reconcile_log(log_path, use_existing_plugin=False)
-        self.assertEqual(rep.turn_matched, rep.turn_total)
-        self.assertEqual(rep.ult_matched, rep.ult_total)
-        self.assertEqual(rep.forced_or_failed, 0)
-        self.assertLess(rep.total_err, 0.0001)
-        self.assertLess(rep.max_turn_err, 0.0001)
-
 
 if __name__ == "__main__":
     unittest.main()

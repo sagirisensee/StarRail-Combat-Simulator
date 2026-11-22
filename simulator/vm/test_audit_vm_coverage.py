@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from simulator.vm.audit_vm_coverage import VMCoverageAuditor
 
 
+@pytest.mark.slow
 class TestAuditVMCoverage(unittest.TestCase):
     def test_audit_all_domains_and_markdown_report(self) -> None:
         auditor = VMCoverageAuditor()

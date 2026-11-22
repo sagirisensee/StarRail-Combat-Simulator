@@ -8,7 +8,6 @@ import os
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from simulator.db.character_db import CharacterDB
-from simulator.vm.factory import UID_TO_NAME
 from simulator.vm.reconcile.models import (
     DEFAULT_CHAR_DB_PATH,
     AhaTurnRecord,
@@ -141,6 +140,7 @@ def extract_log_metadata(
     last_player_spd: Dict[int, float] = {}
     slow_hits: Set[Tuple[float, str]] = set()
     last_enemy_hp: Dict[int, float] = {}
+    enemy_hp_at_turn_end_raw: Dict[Tuple[float, int], float] = {}
     pending_tie_highest_hp_euid: Optional[int] = None
     enemy_hits: List[EnemyHitRecord] = []
     aha_turns: List[AhaTurnRecord] = []
@@ -184,6 +184,11 @@ def extract_log_metadata(
                     lethal_enemy_uids=set(cur_none_lethal_euids),
                 )
             )
+        if cur_turn_owner_team == "Player" and last_enemy_hp:
+            av_k = round(cur_av, 2)
+            for eu, ehp in last_enemy_hp.items():
+                if ehp > 0.0:
+                    enemy_hp_at_turn_end_raw[(av_k, eu)] = ehp
         cur_enemy_uid = None
         cur_hit_order = []
         cur_hit_set = set()
@@ -452,7 +457,7 @@ def extract_log_metadata(
                         if (
                             in_aoe_heal_window
                             and not inferred_slot_uids
-                            and (uid in UID_TO_NAME or char_db.get(uid) is not None)
+                            and char_db.get(uid) is not None
                         ):
                             if uid not in aoe_heal_slot_uids:
                                 aoe_heal_slot_uids.append(uid)
@@ -570,6 +575,8 @@ def extract_log_metadata(
         pos_items = [(u, d) for u, d in a.enemy_damages if d > 1.0]
         new_dmgs: List[Tuple[int, float]] = []
         for u, d in a.enemy_damages:
+            if d <= 1.0:
+                a.shielded_enemy_uids.add(u)
             if d > 1.0:
                 new_dmgs.append((u, d))
                 bn = _base_enemy_name(u)
@@ -622,13 +629,11 @@ def extract_log_metadata(
         team_uids = []
         for n in team_names:
             rp = char_db.get_by_name(n)
-            if rp is not None:
-                team_uids.append(int(rp.avatar_id))
-            else:
-                matched = [u for u, nm in UID_TO_NAME.items() if nm == n]
-                team_uids.append(matched[0] if matched else 0)
+            if rp is None and "_" in n:
+                rp = char_db.get_by_name(n.split("_", 1)[0])
+            team_uids.append(int(rp.avatar_id) if rp is not None else 0)
     else:
-        valid_uids = [u for u in seen_uids if u in UID_TO_NAME or char_db.get(u) is not None]
+        valid_uids = [u for u in seen_uids if char_db.get(u) is not None]
         if len(aoe_heal_slot_uids) >= 2 and not inferred_slot_uids:
             inferred_slot_uids = list(aoe_heal_slot_uids)
         if inferred_slot_uids:
@@ -638,11 +643,13 @@ def extract_log_metadata(
         elif 1409 in valid_uids:
             valid_uids = [1409] + [u for u in valid_uids if u != 1409]
         team_uids = valid_uids
-        if stage_id == 30510021:
-            _oct_map = {1403: "缇宝_旧", 1512: "知更鸟•晴歌_旧"}
-            team_names = [_oct_map.get(u, _resolve_uid_name(u, char_db)) for u in valid_uids]
-        else:
-            team_names = [_resolve_uid_name(u, char_db) for u in valid_uids]
+        team_names = [_resolve_uid_name(u, char_db) for u in valid_uids]
+
+    enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = {
+        (av_k, enemy_uid_map[eu]): ehp
+        for (av_k, eu), ehp in enemy_hp_at_turn_end_raw.items()
+        if eu in enemy_uid_map
+    }
 
     return LogMetadata(
         log_path=os.path.abspath(log_path),
@@ -660,4 +667,5 @@ def extract_log_metadata(
         aha_turns=aha_turns,
         windwalk_enemy_uids=windwalk_enemy_uids,
         slow_hits=slow_hits,
+        enemy_hp_at_turn_end=enemy_hp_at_turn_end,
     )
