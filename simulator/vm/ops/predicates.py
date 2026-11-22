@@ -38,7 +38,11 @@ def _is_alive(sim: Any, eid: str) -> bool:
     e = sim.get_entity(eid)
     if e is None or getattr(e, "_vm_limbo_pending", False):
         return False
-    return bool(getattr(e, "current_hp", 0.0) > 0 or getattr(e, "is_infinite_hp", False))
+    return bool(
+        getattr(e, "current_hp", 0.0) > 0
+        or getattr(e, "is_infinite_hp", False)
+        or getattr(e, "_in_deathrattle_limbo", False)
+    )
 
 
 class PredicateOpsMixin:
@@ -125,7 +129,7 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByCompareStanceCount":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             ent = sim.get_entity(targets[0]) if targets else None
-            lhs = float(getattr(ent, "current_toughness", 0.0)) if ent else 0.0
+            lhs = float(getattr(ent, "current_stance_count", 1)) if ent else 0.0
             rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
@@ -474,8 +478,14 @@ class PredicateOpsMixin:
             val = bool(self.rt.get_dynamic_value(targets[0], h))
             return val == expected
 
-        if t == "NDFKINKPKHF":
+        if t in ("NDFKINKPKHF", "RPG.GameCore.ByCompareSomatoType"):
             return False
+
+        if t == "RPG.GameCore.ByCompareTurnActionEntityTeamType":
+            cur_ent = getattr(sim, "current_turn_entity", None)
+            is_dark = bool(cur_ent is not None and getattr(cur_ent, "is_enemy", False))
+            want_dark = str(pred.get("Team", "")) == "TeamDark"
+            return is_dark == want_dark
 
         if t == "RPG.GameCore.ByCompareMonsterTemplateID":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
@@ -485,6 +495,52 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByIsCharacterChangeTarget":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             return any(bool(getattr(sim.get_entity(tid), "_is_avatar_change_target", False)) for tid in targets)
+
+        if t == "DNILHDGHLGL":
+            # 官方贪饕侵蚀目标判定（HILNFHCPEAD = TargetType）
+            # 优先查官方 StageInvasionConfig.MonsterInvasionList（按 monster_id 与 LMEBOHHDIAG 周期序列），
+            # 再回退至 sim.gluttony_target_provider
+            targets = self._resolve_targets(pred.get("HILNFHCPEAD") or pred.get("TargetType"), ctx)
+            director = getattr(sim, "_stage_director", None)
+            inv_info = getattr(director, "_stage_invasion_info", None) if director is not None else None
+            if isinstance(inv_info, Mapping) and inv_info.get("monster_rules"):
+                rules = inv_info["monster_rules"]
+                seen_counts: dict[int, int] = getattr(director, "_invasion_spawn_counts", {})
+                if not hasattr(director, "_invasion_spawn_counts"):
+                    setattr(director, "_invasion_spawn_counts", seen_counts)
+                decided: dict[str, bool] = getattr(director, "_invasion_entity_decided", {})
+                if not hasattr(director, "_invasion_entity_decided"):
+                    setattr(director, "_invasion_entity_decided", decided)
+                for tid in targets:
+                    if tid in decided:
+                        if decided[tid]:
+                            return True
+                        continue
+                    ent = sim.get_entity(tid)
+                    if ent is None or not getattr(ent, "is_enemy", False):
+                        decided[tid] = False
+                        continue
+                    mid = int(getattr(ent, "monster_id", 0) or 0)
+                    mtid = int(getattr(ent, "monster_template_id", 0) or 0)
+                    rule_key = mid if mid in rules else (mtid if mtid in rules else 0)
+                    if not rule_key:
+                        decided[tid] = False
+                        continue
+                    pat = rules[rule_key]
+                    if not pat:
+                        decided[tid] = True
+                        return True
+                    idx = seen_counts.get(rule_key, 0)
+                    seen_counts[rule_key] = idx + 1
+                    hit = bool(pat[idx % len(pat)])
+                    decided[tid] = hit
+                    if hit:
+                        return True
+                return False
+            prov = getattr(sim, "gluttony_target_provider", None)
+            if callable(prov):
+                return any(bool(prov(tid)) for tid in targets)
+            return False
 
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None

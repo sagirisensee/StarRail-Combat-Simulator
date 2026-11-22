@@ -157,6 +157,26 @@ class DataDrivenEnemyKit(EnemyKit):
             setattr(mrs, "_limbo_pending", True)
             setattr(mrs.entity, "_vm_limbo_pending", True)
             raw_damage = max(0.0, cur_hp - 1.0)
+        elif cur_hp - raw_damage <= 0.0 and rt is not None:
+            rt.modifier_engine.dispatch_event(
+                "OnBeforeMortallyWonded",
+                owner_id=self.owner_id,
+                param_entity_id=self.owner_id,
+                change_value=-float(raw_damage),
+                param_flags=("IsHPChangeByDamage",),
+            )
+
+        locks = getattr(mrs.entity, "_locked_hp_thresholds", None)
+        if isinstance(locks, dict) and locks:
+            floor_hp = max(float(v) for v in locks.values())
+            if cur_hp >= floor_hp - 1e-6 and cur_hp - raw_damage < floor_hp:
+                raw_damage = max(0.0, cur_hp - floor_hp)
+                if rt is not None:
+                    rt.modifier_engine.dispatch_event(
+                        "OnLockHPThresholdReached",
+                        owner_id=self.owner_id,
+                        param_entity_id=self.owner_id,
+                    )
 
         return raw_damage
 
@@ -224,16 +244,29 @@ class DataDrivenEnemyKit(EnemyKit):
                         self._execute_ability_tasks(child_name, visited=visited)
                 elif tt == "RPG.GameCore.PredicateTaskList":
                     pred = t.get("Predicate")
-                    try:
-                        ok = (
-                            self.runner.eval_stage_predicate(
+                    ok = True
+                    if pred:
+                        try:
+                            ok = self.runner.eval_stage_predicate(
                                 pred, caster_name=self.owner_id, dynamic_resolver=dyn_resolver
                             )
-                            if pred
-                            else True
-                        )
-                    except NotImplementedError:
-                        ok = True
+                        except NotImplementedError:
+                            if rt is not None:
+                                from simulator.vm.executor import ExecutionContext
+
+                                p_ctx = ExecutionContext(
+                                    runtime=rt,
+                                    caster_id=self.owner_id,
+                                    ability_name=ability_name,
+                                    ability_target_ids=(self.owner_id,),
+                                    modifier_owner_id=self.owner_id,
+                                )
+                                try:
+                                    ok = rt.executor.eval_predicate(pred, p_ctx)
+                                except NotImplementedError:
+                                    ok = False
+                            else:
+                                ok = False
                     branch = t.get("SuccessTaskList", []) if ok else t.get("FailedTaskList", [])
                     _run_stage_tasks(branch or [])
                 else:
@@ -272,6 +305,11 @@ class DataDrivenEnemyKit(EnemyKit):
         floats = char_cfg.get("DynamicValues", {}).get("Floats", {})
         if not isinstance(floats, Mapping):
             return
+        from simulator.vm.expr import dotnet_hash
+
+        h_cp = dotnet_hash("ChangePhase")
+        if mrs.max_phase > 1 and str(h_cp) in floats and rt.get_dynamic_value(self.owner_id, h_cp) == 0.0:
+            rt.set_dynamic_value(self.owner_id, h_cp, 1.0)
         for h_str, entry in floats.items():
             if not isinstance(entry, Mapping):
                 continue
@@ -284,168 +322,80 @@ class DataDrivenEnemyKit(EnemyKit):
             if sk_spec is not None and 0 <= idx < len(sk_spec.effective_params):
                 rt.set_dynamic_value(self.owner_id, int(h_str), float(sk_spec.effective_params[idx]))
 
-    def _apply_enemy_skill_modifiers(
+    def _execute_vm_skill(
         self,
         entry_ab: str,
-        hit_targets: Sequence[str],
         sim: TurnSimulator,
-    ) -> None:
-        """通用执行敌方技能 AST 中施加给我方受击目标的 AddModifier（如印记叠加真伤、Debuff 等）。"""
-        rt = getattr(sim, "vm_runtime", None)
-        if rt is None or not hit_targets:
-            return
-        game_loader = getattr(self.runner.factory, "game_loader", None) or getattr(rt, "loader", None)
-        if game_loader is None:
-            return
-        game_loader.ensure_ability_index()
-        self._ensure_monster_dynamic_values(rt)
-
-        from simulator.vm.target_alias import ExecutionContext
-
-        visited: set[str] = set()
-        mod_tasks: List[Tuple[Mapping[str, Any], str, bool]] = []
-        dyn_tasks: List[Mapping[str, Any]] = []
-        saw_dmg = False
-        saw_finish = False
-
-        def _walk_ab(ab_doc: Mapping[str, Any], scope_alias: str) -> None:
-            _walk(ab_doc.get("OnStart", []), scope_alias)
-            for tpl in ab_doc.get("TaskListTemplate", []) or []:
-                if isinstance(tpl, Mapping):
-                    _walk(tpl.get("TaskList", []), scope_alias)
-
-        def _walk(tasks: Sequence[Any], scope_alias: str) -> None:
-            nonlocal saw_dmg, saw_finish
-            for t in tasks:
-                if not isinstance(t, Mapping):
-                    continue
-                tt = t.get("$type", "")
-                if tt == "RPG.GameCore.DamageByAttackProperty":
-                    saw_dmg = True
-                elif tt == "RPG.GameCore.DamagePerformFinish":
-                    if saw_dmg:
-                        saw_finish = True
-                elif tt == "RPG.GameCore.SetDynamicValue":
-                    dk = t.get("DynamicKey")
-                    dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
-                    if dk_name and dk_name != "AIFlag":
-                        dyn_tasks.append(t)
-                elif tt == "RPG.GameCore.TriggerAbility":
-                    cname = (t.get("AbilityName") or {}).get("Value", "")
-                    if cname and "Camera" not in cname and cname not in visited:
-                        visited.add(cname)
-                        child = game_loader.get_ability(cname)
-                        if child:
-                            _walk_ab(child, scope_alias)
-                elif tt == "RPG.GameCore.Retarget":
-                    ttype = t.get("TargetType") or {}
-                    alias = str(ttype.get("Alias", "")) if isinstance(ttype, Mapping) else ""
-                    _walk(t.get("TaskList", []), alias or scope_alias)
-                elif tt == "RPG.GameCore.PredicateTaskList":
-                    pred = t.get("Predicate") or {}
-                    # 仅在自定义开关为假（默认常规路径）时走 FailedTaskList，否则走 SuccessTaskList
-                    if pred.get("$type") == "RPG.GameCore.ByCheckCustomValueBool":
-                        _walk(t.get("FailedTaskList", []), scope_alias)
-                    else:
-                        _walk(t.get("SuccessTaskList", []), scope_alias)
-                elif tt == "RPG.GameCore.AddModifier":
-                    mname = str((t.get("ModifierName") or {}).get("Value", ""))
-                    if not mname or (
-                        "Debuff_Mark" not in mname
-                        and "Corrosion" not in mname
-                        and "BlackBlood" not in mname
-                    ):
-                        continue
-                    ttype = t.get("TargetType") or {}
-                    alias = str(ttype.get("Alias", "")) if isinstance(ttype, Mapping) else ""
-                    tt_kind = str(ttype.get("$type", "")) if isinstance(ttype, Mapping) else ""
-                    if (
-                        alias in (
-                            "ParamEntity",
-                            "AbilityTargetEntity",
-                            "AbilityTargetAndAdjoinEntity",
-                            "AbilityTargetAdjoinEntity",
-                            "AllEnemy",
-                        )
-                        or tt_kind == "RPG.GameCore.TargetSequence"
-                    ):
-                        if not any(str((mt.get("ModifierName") or {}).get("Value", "")) == mname for mt, _, _ in mod_tasks):
-                            mod_tasks.append((t, scope_alias or alias, saw_finish))
-
-        visited.add(entry_ab)
-        root_ab = game_loader.get_ability(entry_ab)
-        if root_ab:
-            _walk_ab(root_ab, "")
-
-        if not mod_tasks and not dyn_tasks:
-            return
-
-        ctx = ExecutionContext(
-            runtime=rt,
-            caster_id=self.owner_id,
-            ability_name=entry_ab,
-            ability_target_ids=(self.owner_id,),
-            modifier_owner_id=self.owner_id,
-        )
-        if dyn_tasks:
-            rt.executor.execute_tasks(dyn_tasks, ctx)
-
-        def _apply_mod_batch(batch: Sequence[Tuple[Mapping[str, Any], str, bool]]) -> None:
-            for task, scope_alias, _ in batch:
-                mname = str((task.get("ModifierName") or {}).get("Value", ""))
-                life = rt.executor._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
-                cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
-                cnt = int(round(rt.executor._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else 1
-                max_l = int(round(rt.executor._eval_num(task["MaxLayer"], ctx, 1.0))) if "MaxLayer" in task else None
-                inherit = str(task.get("InheritCaster", ""))
-                apply_tgts = list(hit_targets)
-                for tid in apply_tgts:
-                    eff_caster = tid if inherit == "TargetSelf" else self.owner_id
-                    rt.modifier_engine.add_modifier(
-                        owner_id=tid,
-                        caster_id=eff_caster,
-                        mod_name=mname,
-                        ability_name=entry_ab,
-                        dynamic_values=task.get("DynamicValues"),
-                        life_time=life,
-                        count=cnt,
-                        max_layer=max_l,
-                        ctx=ctx.clone(ability_target_ids=(tid,)),
-                    )
-
-        pre_mods = [m for m in mod_tasks if not m[2]]
-        post_mods = [m for m in mod_tasks if m[2]]
-        if pre_mods:
-            _apply_mod_batch(pre_mods)
-        if post_mods:
-            rt.end_being_attacked()
-            _apply_mod_batch(post_mods)
-
-    def _execute_vm_non_damage_skill(self, entry_ab: str, sim: TurnSimulator, *, sp_hit_base: float = 0.0) -> None:
-        """通用执行敌方非直伤/支援/吞噬技能 AST (如 HealHP、Retarget+ForceKill、AddModifier)。"""
+        sk: Any,
+        attacker: Any,
+    ) -> Tuple[str, ...]:
+        """统一通过官方 ConfigAbility VM 执行所有敌方技能（伤害/支援/扩散/群攻/动态倍率/吞噬），并统一上报三方命中审计。"""
         rt = getattr(sim, "vm_runtime", None)
         if rt is None or not entry_ab:
-            return
+            return ()
         self._ensure_monster_dynamic_values(rt)
         ab = rt.loader.get_ability(entry_ab)
         if not ab:
-            return
-        tinfo = str((ab.get("TargetInfo") or {}).get("TargetType", ""))
-        target_ids: Tuple[str, ...] = (self.owner_id,)
-        if tinfo in ("AllEnemy", "EnemySelect", "SkillTargetEntityList"):
-            living_allies = [
-                e.name
+            return ()
+
+        def _living_allies_ordered() -> List[Any]:
+            allies = [
+                e
                 for e in sim.entities
                 if not e.is_enemy
                 and not getattr(e, "is_countdown", False)
                 and not getattr(e, "is_unselectable", False)
                 and e.current_hp > 0.0
             ]
+            avatars = [e for e in allies if not getattr(e, "is_memosprite", False)]
+            avatar_rank = {e.name: idx for idx, e in enumerate(avatars)}
+            memos = [e for e in allies if getattr(e, "is_memosprite", False)]
+            memos.sort(key=lambda m: avatar_rank.get(getattr(m, "master_name", "") or "", 99))
+            return avatars + memos
+
+        def _ab_uses_target(ab_doc: Mapping[str, Any], seen: set[str]) -> bool:
+            import json as _json
+
+            txt = _json.dumps(ab_doc, ensure_ascii=False)
+            if "RPG.GameCore.DamageByAttackProperty" in txt:
+                return True
+
+            def _iter_triggered(node: Any) -> List[str]:
+                out: List[str] = []
+                if isinstance(node, Mapping):
+                    if node.get("$type") == "RPG.GameCore.TriggerAbility":
+                        cn = (node.get("AbilityName") or {}).get("Value", "")
+                        if cn and "Camera" not in cn:
+                            out.append(str(cn))
+                    for v in node.values():
+                        out.extend(_iter_triggered(v))
+                elif isinstance(node, list):
+                    for it in node:
+                        out.extend(_iter_triggered(it))
+                return out
+
+            for cn in _iter_triggered(ab_doc.get("OnStart", [])):
+                if cn not in seen:
+                    seen.add(cn)
+                    child = rt.loader.get_ability(cn)
+                    if child and _ab_uses_target(child, seen):
+                        return True
+            return False
+
+        tinfo = str((ab.get("TargetInfo") or {}).get("TargetType", ""))
+        target_ids: Tuple[str, ...] = (self.owner_id,)
+        living_allies = _living_allies_ordered()
+        has_dmg = _ab_uses_target(ab, {entry_ab})
+
+        if tinfo in ("Caster", "Self"):
+            target_ids = (self.owner_id,)
+        elif tinfo == "AllEnemy":
             if living_allies:
-                target_ids = tuple(living_allies)
+                target_ids = tuple(e.name for e in living_allies)
         elif tinfo == "SkillPointEntity":
             other_enemies = [
-                e for e in sim.entities
+                e
+                for e in sim.entities
                 if e.is_enemy
                 and not getattr(e, "is_countdown", False)
                 and e.current_hp > 0.0
@@ -457,8 +407,45 @@ class DataDrivenEnemyKit(EnemyKit):
                     reverse=True,
                 )
                 target_ids = (other_enemies[0].name,)
+        elif tinfo in ("SkillTargetEntityList", "EnemySelect", ""):
+            if has_dmg and living_allies:
+                picked = self._select_targets(sim, getattr(sk, "target_selector", "single"))
+                target_provider = getattr(sim, "target_provider", None)
+                if callable(target_provider):
+                    chosen = target_provider(attacker, living_allies, 0)
+                    if chosen is not None:
+                        picked = [chosen]
+                if picked:
+                    target_ids = (picked[0].name,)
+
+        sim._action_seq += 1
+        sp_base = float(
+            sk.sp_hit_base
+            if float(getattr(sk, "sp_hit_base", 0.0) or 0.0) > 0.0
+            else (getattr(attacker, "hit_energy", 5.0) or 5.0)
+        )
         prev_sp_base = getattr(rt, "_current_enemy_sp_hit_base", 0.0)
-        rt._current_enemy_sp_hit_base = float(sp_hit_base)
+        prev_has_dmg = getattr(rt, "_current_enemy_skill_has_damage", True)
+        rt._current_enemy_sp_hit_base = sp_base
+        rt._current_enemy_skill_has_damage = has_dmg
+
+        hit_targets: List[str] = []
+        hit_avatars: List[str] = []
+        from simulator.events import DamageAppliedEvent
+
+        def _on_vm_dmg(ev: Any) -> None:
+            if getattr(ev, "attacker_name", None) != self.owner_id:
+                return
+            tnm = str(getattr(ev, "target_name", ""))
+            tent = sim.get_entity(tnm)
+            if tent is not None and not tent.is_enemy and not getattr(tent, "is_countdown", False):
+                if tnm not in hit_targets:
+                    hit_targets.append(tnm)
+                if not getattr(tent, "is_memosprite", False) and tnm not in hit_avatars:
+                    hit_avatars.append(tnm)
+
+        sim.event_bus.subscribe(DamageAppliedEvent, _on_vm_dmg)
+        rt.begin_attack_scope()
         try:
             rt.trigger_ability(
                 caster_id=self.owner_id,
@@ -467,7 +454,30 @@ class DataDrivenEnemyKit(EnemyKit):
                 skill_target_ids=target_ids,
             )
         finally:
+            rt.end_being_attacked()
+            rt.end_attack_scope()
+            subs = sim.event_bus._subscribers.get(DamageAppliedEvent)
+            if isinstance(subs, list) and _on_vm_dmg in subs:
+                subs.remove(_on_vm_dmg)
             rt._current_enemy_sp_hit_base = prev_sp_base
+            rt._current_enemy_skill_has_damage = prev_has_dmg
+
+        skill_audit_cb = getattr(sim, "on_enemy_skill_resolved", None)
+        if callable(skill_audit_cb) and hit_avatars:
+            is_aoe = bool(getattr(sk, "is_aoe", False)) or tinfo == "AllEnemy"
+            is_blast = (not is_aoe) and bool(getattr(sk, "is_blast", False))
+            scope = "AllEnemy" if is_aoe else ("Blast" if is_blast else "Single")
+            skill_audit_cb(
+                av=round(float(getattr(sim, "current_av", 0.0)), 2),
+                enemy_name=self.owner_id,
+                skill_id=int(getattr(sk, "skill_id", 0) or 0),
+                skill_key=str(getattr(sk, "skill_trigger_key", "") or ""),
+                expected_scope=scope,
+                expected_hits=tuple(sorted(hit_avatars)),
+                sim_hits=tuple(sorted(hit_avatars)),
+            )
+
+        return tuple(hit_targets)
 
     def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
         sim: TurnSimulator = self.port.sim
@@ -537,22 +547,41 @@ class DataDrivenEnemyKit(EnemyKit):
         next_turn_one_more = can_one_more
 
         action_idx = 0
-        while action_idx < 2:
+        while action_idx < 3:
             has_runtime_one_more = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
             if action_idx == 1 and not can_one_more and not has_runtime_one_more:
                 break
+            if action_idx == 2 and not has_runtime_one_more:
+                break
             action_idx += 1
-            if action_idx == 2 and rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore"):
-                rt.modifier_engine.remove_modifier(self.owner_id, "OneMore")
+            if action_idx >= 2 and rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore"):
+                om_mods = rt.modifier_engine.get_modifiers(self.owner_id, "OneMore")
+                if action_idx == 2 and om_mods and getattr(om_mods[0], "life_time", None) is not None and om_mods[0].life_time >= 2:
+                    om_mods[0].life_time -= 1
+                else:
+                    rt.modifier_engine.remove_modifier(self.owner_id, "OneMore")
 
             if rt is not None:
                 from simulator.vm.expr import dotnet_hash
+                from simulator.vm.executor import ExecutionContext
 
                 vm_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
                 if vm_flag > 0:
                     self.ai_executor.ai_flag = int(round(vm_flag))
-
-            actions: Tuple[AISkillActionSpec, ...] = self.ai_executor.select_next_actions()
+                else:
+                    rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
+                eval_ctx = ExecutionContext(
+                    runtime=rt,
+                    caster_id=self.owner_id,
+                    ability_name="",
+                    ability_target_ids=(self.owner_id,),
+                    modifier_owner_id=self.owner_id,
+                )
+                actions: Tuple[AISkillActionSpec, ...] = self.ai_executor.select_next_actions(
+                    predicate_evaluator=lambda p: rt.executor.eval_predicate(p, eval_ctx)
+                )
+            else:
+                actions = self.ai_executor.select_next_actions()
             if not actions:
                 break
             if rt is not None:
@@ -574,7 +603,13 @@ class DataDrivenEnemyKit(EnemyKit):
                     ai_tasks = [
                         t for t in root_tasks
                         if isinstance(t, Mapping)
-                        and t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
+                        and (
+                            t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
+                            or (
+                                t.get("$type") == "RPG.GameCore.DefineDynamicValue"
+                                and (t.get("DynamicKey") or {}).get("Value") != "AIFlag"
+                            )
+                        )
                     ]
                     if ai_tasks:
                         rt.executor.execute_tasks(ai_tasks, ai_ctx)
@@ -606,6 +641,14 @@ class DataDrivenEnemyKit(EnemyKit):
                                         next_turn_one_more = False
                                     elif nt == "RPG.GameCore.AddModifier":
                                         next_turn_one_more = True
+                            elif nt in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue"):
+                                rt.executor.execute_task(nodes, ai_ctx)
+                                dk = nodes.get("DynamicKey")
+                                dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
+                                if dk_name == "AIFlag":
+                                    new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
+                                    if new_flag > 0:
+                                        self.ai_executor.ai_flag = int(round(new_flag))
                             elif nt == "RPG.GameCore.PredicateTaskList":
                                 pred = nodes.get("Predicate")
                                 try:
@@ -634,7 +677,8 @@ class DataDrivenEnemyKit(EnemyKit):
                 # 1. Execute official ConfigAbility AST tasks (e.g. SummonMonster)
                 entry_ab = self._get_entry_ability_name(sk.skill_trigger_key)
                 if entry_ab:
-                    self._execute_ability_tasks(entry_ab)
+                    if rt is None:
+                        self._execute_ability_tasks(entry_ab)
                     game_loader = getattr(self.runner.factory, "game_loader", None)
                     if game_loader:
                         ab_cands = [entry_ab]
@@ -681,188 +725,29 @@ class DataDrivenEnemyKit(EnemyKit):
                 if director and hasattr(director, "sync_spawned_entities"):
                     director.sync_spawned_entities()
 
-                # 3. Apply skill damage (or execute VM support/devour AST if non-damaging)
-                mult = sk.param(0, default=0.0)
+                # 3. 统一通过官方 ConfigAbility VM 执行技能（废除伤害/非伤害双轨分流）
                 if sk.is_passive or attacker is None:
                     continue
-                if mult <= 0.0 or sk.damage_type is None:
-                    if entry_ab:
-                        self._execute_vm_non_damage_skill(entry_ab, sim, sp_hit_base=float(getattr(sk, "sp_hit_base", 0.0) or 0.0))
-                    sched_pre = getattr(sim, "scheduler", None)
-                    if (action_idx == 1 and can_one_more) or (sched_pre is not None and sched_pre.has_pending()):
-                        rt_sub = getattr(sim, "vm_runtime", None)
-                        if rt_sub is not None:
-                            rt_sub.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=self.owner_id)
-                    sub_cb = getattr(sim, "on_enemy_sub_action_end", None)
-                    if callable(sub_cb) and action_idx == 1 and can_one_more and attacker is not None and attacker.current_hp > 0.0:
-                        sched = getattr(sim, "scheduler", None)
-                        prev_depth = getattr(sched, "_action_frame_depth", 0) if sched is not None else 0
-                        if sched is not None and prev_depth > 0:
-                            sched._action_frame_depth = 0
-                        try:
-                            sub_cb()
-                            if sched is not None and sched.has_pending():
-                                sched.drain()
-                        finally:
-                            if sched is not None and prev_depth > 0:
-                                sched._action_frame_depth = prev_depth
-                    continue
-
-                # 索敌: 仅当官方 TargetInfo 声明 AllEnemy（或 GlobalTargetAlias 定义了专属 Skill02_Target）时命中全体
-                targets = self._select_targets(sim, sk.target_selector)
-                gl = getattr(self.runner.factory, "game_loader", None)
-                alias_def = None
-                if gl is not None and entry_ab and "_Skill02" in entry_ab:
-                    prefix = entry_ab.split("_Skill02", 1)[0]
-                    alias_def = gl.get_global_target_alias(f"{prefix}_Skill02_Target")
-                if bool(getattr(sk, "is_aoe", False)) or isinstance(alias_def, Mapping):
-                    allies = [
-                        e
-                        for e in sim.entities
-                        if not e.is_enemy
-                        and not getattr(e, "is_countdown", False)
-                        and not getattr(e, "is_unselectable", False)
-                        and e.current_hp > 0.0
-                    ]
-                    # 按官方编队站位排序（本体按进场站位序，忆灵按其召唤者站位序排在本体之后）
-                    avatars = [e for e in allies if not getattr(e, "is_memosprite", False)]
-                    avatar_rank = {e.name: idx for idx, e in enumerate(avatars)}
-                    memos = [e for e in allies if getattr(e, "is_memosprite", False)]
-                    memos.sort(key=lambda m: avatar_rank.get(getattr(m, "master_name", "") or "", 99))
-                    targets = avatars + memos
-                    # 通用解析官方 GlobalTargetAlias 中定义的 Skill02_Target (如 TargetTake Count=3)
-                    if isinstance(alias_def, Mapping) and alias_def.get("$type") == "RPG.GameCore.TargetSequence":
-                        seq = alias_def.get("Sequence") or []
-                        is_l2r = any(
-                            isinstance(s, Mapping) and "LeftToRightLightTeamTarget" in str(s.get("Alias", ""))
-                            for s in seq
+                resolved: Tuple[str, ...] = ()
+                if entry_ab and rt is not None:
+                    resolved = self._execute_vm_skill(entry_ab, sim, sk, attacker)
+                else:
+                    # 仅无 VM / 无 ConfigAbility 的极简单元测试回退
+                    mult = sk.param(0, default=0.0)
+                    if mult > 0.0 and sk.damage_type is not None:
+                        targets = self._select_targets(sim, sk.target_selector)
+                        resolved = self.enemy_port.apply_enemy_attack(
+                            owner_id=self.owner_id,
+                            target_ids=tuple(t.name for t in targets),
+                            multiplier=mult,
+                            element=sk.element or "Physical",
+                            hit_energy=float(sk.sp_hit_base or getattr(attacker, "hit_energy", 5.0) or 5.0),
+                            hits=max(1, int(getattr(sk, "hit_count", 1) or 1)),
+                            blast=bool(getattr(sk, "is_blast", False)),
+                            increment_action_seq=True,
                         )
-                        take_cnt = 0
-                        for s in seq:
-                            if isinstance(s, Mapping) and s.get("$type") == "RPG.GameCore.TargetTake":
-                                cnt_obj = s.get("Count") or {}
-                                fv = cnt_obj.get("FixedValue") or {}
-                                take_cnt = int(fv.get("Value", 0) or 0)
-                        if is_l2r:
-                            targets = list(reversed(targets))
-                        if take_cnt > 0:
-                            targets = targets[:take_cnt]
-                elif bool(getattr(sk, "has_mark_target", False)):
-                    # 仅当官方 Ability 声明了标记索敌（且非 AllEnemy）时优先锁定带标记目标
-                    marked = [
-                        e
-                        for e in sim.entities
-                        if not e.is_enemy
-                        and e.current_hp > 0.0
-                        and getattr(e, "is_memosprite", False)
-                    ]
-                    if not marked:
-                        marked = [
-                            e
-                            for e in sim.entities
-                            if not e.is_enemy and e.current_hp > 0.0
-                        ]
-                    if marked:
-                        targets = [marked[0]]
-
-                elem = sk.element or "Physical"
-                # 受击回能: 优先采用技能原生 SPHitBase
-                base_energy = (
-                    sk.sp_hit_base
-                    if sk.sp_hit_base > 0.0
-                    else getattr(attacker, "hit_energy", 5.0) or 5.0
-                )
-                is_aoe = bool(getattr(sk, "is_aoe", False)) or isinstance(alias_def, Mapping)
-                is_blast = (not is_aoe) and (
-                    bool(getattr(sk, "is_blast", False)) or (sk.target_selector == "adjacent")
-                )
-                hits = max(1, int(getattr(sk, "hit_count", 1) or 1))
-                p1 = sk.param(1, default=0.0)
-                adj_ratio = (p1 / mult) if (is_blast and mult > 0.0 and 0.0 < p1 < mult) else 1.0
-                if hits > 1:
-                    mult = mult / float(hits)
-
-                hit_energy = base_energy / hits
-                target_ids = tuple(t.name for t in targets)
-                resolved = self.enemy_port.apply_enemy_attack(
-                    owner_id=self.owner_id,
-                    target_ids=target_ids,
-                    multiplier=mult,
-                    element=elem,
-                    hit_energy=hit_energy,
-                    hits=hits,
-                    blast=is_blast,
-                    adjacent_multiplier_ratio=adj_ratio,
-                    increment_action_seq=True,
-                )
-                skill_audit_cb = getattr(sim, "on_enemy_skill_resolved", None)
-                if callable(skill_audit_cb):
-                    living_avatars = [
-                        e.name
-                        for e in sim.entities
-                        if not e.is_enemy
-                        and not getattr(e, "is_memosprite", False)
-                        and not getattr(e, "is_countdown", False)
-                        and not getattr(e, "is_unselectable", False)
-                        and e.current_hp > 0.0
-                    ]
-                    scope = "AllEnemy" if is_aoe else ("Blast" if is_blast else "Single")
-                    if is_aoe:
-                        expected_avatars = tuple(
-                            t.name for t in targets if not getattr(t, "is_memosprite", False)
-                        )
-                    elif is_blast and resolved:
-                        living_all = [
-                            e
-                            for e in sim.entities
-                            if not e.is_enemy
-                            and not getattr(e, "is_countdown", False)
-                            and not getattr(e, "is_unselectable", False)
-                            and e.current_hp > 0.0
-                        ]
-                        prim_name = resolved[0] if resolved else (target_ids[0] if target_ids else "")
-                        pidx = next((i for i, e in enumerate(living_all) if e.name == prim_name), -1)
-                        exp_set: list[str] = []
-                        if pidx >= 0:
-                            for idx_n in (pidx - 1, pidx, pidx + 1):
-                                if 0 <= idx_n < len(living_all):
-                                    ent_n = living_all[idx_n]
-                                    if not getattr(ent_n, "is_memosprite", False):
-                                        exp_set.append(ent_n.name)
-                        expected_avatars = tuple(exp_set)
-                    else:
-                        prim_name = resolved[0] if resolved else (target_ids[0] if target_ids else "")
-                        expected_avatars = (prim_name,) if prim_name in living_avatars else ()
-                    actual_avatars = tuple(
-                        sorted({t_name for t_name in resolved if t_name in living_avatars})
-                    )
-                    skill_audit_cb(
-                        av=round(float(getattr(sim, "current_av", 0.0)), 2),
-                        enemy_name=self.owner_id,
-                        skill_id=sk.skill_id,
-                        skill_key=sk.skill_trigger_key,
-                        expected_scope=scope,
-                        expected_hits=tuple(sorted(expected_avatars)),
-                        sim_hits=actual_avatars,
-                    )
                 if resolved and sk.skill_trigger_key in ("Skill01", "Skill03"):
                     self._marked_target = resolved[0]
-                if entry_ab and resolved:
-                    self._apply_enemy_skill_modifiers(entry_ab, resolved, sim)
-                rt_after_hit = getattr(sim, "vm_runtime", None)
-                if rt_after_hit is not None:
-                    rt_after_hit.end_being_attacked()
-                    if resolved:
-                        rt_after_hit.modifier_engine.dispatch_event(
-                            "OnAfterAttack",
-                            owner_id=self.owner_id,
-                            attack_target_ids=tuple(resolved),
-                        )
-                        rt_after_hit.modifier_engine.dispatch_event(
-                            "OnListenAfterAttack",
-                            param_entity_id=self.owner_id,
-                            attack_target_ids=tuple(resolved),
-                        )
 
                 sched_pre = getattr(sim, "scheduler", None)
                 if (action_idx == 1 and can_one_more) or (sched_pre is not None and sched_pre.has_pending()):

@@ -104,6 +104,8 @@ class EnemyEntityBlueprint:
     summon_ids: Tuple[int, ...]
     skills_by_key: Mapping[str, CompiledMonsterSkillSpec]
     ability_list: Tuple[str, ...] = ()
+    stance_count: int = 1
+    stance_type: Optional[str] = None
 
     @classmethod
     def from_compiled_monster(cls, spec: CompiledMonsterSpec) -> "EnemyEntityBlueprint":
@@ -140,6 +142,8 @@ class EnemyEntityBlueprint:
             summon_ids=spec.summon_ids,
             skills_by_key=dict(spec.skills_by_key),
             ability_list=spec.ability_list,
+            stance_count=max(1, int(getattr(spec, "stance_count", 1) or 1)),
+            stance_type=normalize_element(getattr(spec, "stance_type", None)) or None,
         )
 
     def to_entity(
@@ -179,6 +183,9 @@ class EnemyEntityBlueprint:
         ent.debuff_resist = dict(self.debuff_resist)  # type: ignore[attr-defined]
         ent.status_probability = self.status_probability  # type: ignore[attr-defined]
         ent.monster_rank = self.rank  # type: ignore[attr-defined]
+        ent.max_stance_count = max(1, int(self.stance_count))  # type: ignore[attr-defined]
+        ent.current_stance_count = max(1, int(self.stance_count))  # type: ignore[attr-defined]
+        ent.stance_type = self.stance_type  # type: ignore[attr-defined]
         return ent
 
 

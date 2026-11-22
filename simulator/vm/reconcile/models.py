@@ -153,6 +153,7 @@ class LogMetadata:
     slow_hits: Set[Tuple[float, str]] = field(default_factory=set)
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = field(default_factory=dict)
     enemy_spawns: List[Tuple[float, int, str]] = field(default_factory=list)
+    gluttony_enemy_names: Set[str] = field(default_factory=set)
 
 
 @dataclass

@@ -406,6 +406,8 @@ def extract_player_target_plan(path: str) -> List[Tuple[int, Tuple[str, ...], Tu
             stype = s.get("type")
             if av.get("team") == "Player" and stype in ("Normal", "BPSkill", "Ultra"):
                 sid = s.get("skill_config_id")
+                if sid in SPIRIT_TRAJECTORY_SKILLS:
+                    continue
                 hit_uids = []
                 if stype == "Ultra" and sid == 151203:
                     caster_uid = av.get("uid")
@@ -504,13 +506,20 @@ def extract_timeline(path: str) -> List[TimelineItem]:
                     t_ids = None
                     t_uids = None
                     if target_idx < len(target_plan):
-                        p_sid, p_targets, p_uids = target_plan[target_idx]
-                        if p_sid == s.config_id and (kind == "basic" or (kind == "ult" and s.config_id == 151203)):
-                            if p_targets:
-                                t_ids = p_targets
-                            if p_uids:
-                                t_uids = p_uids
-                        target_idx += 1
+                        match_idx = target_idx
+                        if target_plan[match_idx][0] != s.config_id:
+                            for k in range(target_idx + 1, min(target_idx + 6, len(target_plan))):
+                                if target_plan[k][0] == s.config_id:
+                                    match_idx = k
+                                    break
+                        p_sid, p_targets, p_uids = target_plan[match_idx]
+                        if p_sid == s.config_id:
+                            if kind == "basic" or (kind == "ult" and s.config_id == 151203):
+                                if p_targets:
+                                    t_ids = p_targets
+                                if p_uids:
+                                    t_uids = p_uids
+                            target_idx = match_idx + 1
                     is_between = (kind == "ult" and (round(float(t.av), 2), int(s.config_id)) in between_sub_ults)
                     items.append(TimelineItem(float(t.av), kind, s.actor, s.config_id, s.name, target_ids=t_ids, turn_owner=t.owner, turn_seq=turn_seq, target_uids=t_uids, between_enemy_sub_actions=is_between))
     items.sort(key=lambda x: x.av)

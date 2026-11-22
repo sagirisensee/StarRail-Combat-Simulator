@@ -446,6 +446,7 @@ class StageRunner:
         if forbid_when_empty and mrs.entity.current_toughness <= 0.0:
             return
         mrs.entity.current_toughness = mrs.entity.max_toughness
+        mrs.entity.current_stance_count = getattr(mrs.entity, "max_stance_count", 1)
         mrs.entity.is_broken = False
 
     # ------------------------------------------------------------------

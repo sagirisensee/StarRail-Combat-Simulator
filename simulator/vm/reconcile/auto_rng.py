@@ -142,6 +142,7 @@ def attach_auto_rng_plugin(
     cursor_by_av: Dict[Any, int] = {}
     active_rec_by_av: Dict[Any, EnemyHitRecord] = {}
     active_turn_seq_by_key: Dict[Any, int] = {}
+    active_action_seq_by_key: Dict[Any, int] = {}
     sub_hit_offset_by_key: Dict[Any, int] = {}
     turn_seq = [0]
     from simulator.events import BattleEvent as _BE, TurnBeginEvent as _TBE
@@ -300,14 +301,17 @@ def attach_auto_rng_plugin(
         name_matched = [r for r in recs if meta.enemy_uid_map.get(r.enemy_uid, "") == att_name]
         pool = name_matched if name_matched else recs
         cursor_key = (av_key, att_name) if name_matched else av_key
+        cur_act_seq = int(getattr(sim, "_action_seq", 0))
         if hit_idx == 0:
             if (
                 active_turn_seq_by_key.get(cursor_key) == turn_seq[0]
                 and cursor_key in active_rec_by_av
             ):
-                # 同一敌方回合内的第 2 动（OneMorePerTurn）：复用本回合 EnemyHitRecord，推进子目标偏移
                 rec = active_rec_by_av[cursor_key]
-                sub_hit_offset_by_key[cursor_key] = sub_hit_offset_by_key.get(cursor_key, 0) + 1
+                if active_action_seq_by_key.get(cursor_key) != cur_act_seq:
+                    # 同一敌方回合内的第 2 动（OneMorePerTurn）：复用本回合 EnemyHitRecord，推进子目标偏移
+                    sub_hit_offset_by_key[cursor_key] = sub_hit_offset_by_key.get(cursor_key, 0) + 1
+                    active_action_seq_by_key[cursor_key] = cur_act_seq
             else:
                 idx = min(cursor_by_av.get(cursor_key, 0), len(pool) - 1)
                 rec = pool[idx]
@@ -315,6 +319,7 @@ def attach_auto_rng_plugin(
                 active_rec_by_av[cursor_key] = rec
                 active_rec_by_av[av_key] = rec
                 active_turn_seq_by_key[cursor_key] = turn_seq[0]
+                active_action_seq_by_key[cursor_key] = cur_act_seq
                 sub_hit_offset_by_key[cursor_key] = 0
         else:
             rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
@@ -515,3 +520,5 @@ def attach_auto_rng_plugin(
     sim.blast_target_provider = _blast_provider
     sim.enemy_retarget_provider = _enemy_retarget_provider
     sim.summon_id_provider = _summon_id_provider
+    if meta.gluttony_enemy_names:
+        sim.gluttony_target_provider = lambda name: name in meta.gluttony_enemy_names

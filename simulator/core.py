@@ -64,7 +64,8 @@ class TurnSimulator:
         use_techniques: bool = False,
         technique_users: Optional[List[str]] = None,
         auto_ult: bool = True,
-        stage_mechanics: Optional[List[str]] = None
+        stage_mechanics: Optional[List[str]] = None,
+        pre_technique_hook: Optional[Any] = None,
     ):
         self.entities: List[Entity] = []
         self.current_av: float = 0.0
@@ -125,6 +126,9 @@ class TurnSimulator:
                     sp_cap = e.kit.get_initial_sp_cap()
                     if sp_cap:
                         self.port.set_sp_cap(sp_cap)
+
+            if pre_technique_hook is not None:
+                pre_technique_hook(self)
 
             # 1. 战前秘技 (Techniques 在入场前按 priority 排序生效)
             self._in_technique_phase = True
@@ -433,12 +437,20 @@ class TurnSimulator:
             if active_entity.is_enemy and active_entity.is_broken:
                 active_entity.is_broken = False
                 active_entity.current_toughness = active_entity.max_toughness
+                active_entity.current_stance_count = getattr(active_entity, "max_stance_count", 1)
                 self.event_bus.publish(ToughnessRecoverEvent(
                     av=round(self.current_av, 2),
                     cycle=self.current_cycle,
                     target_name=active_entity.name,
                     max_toughness=active_entity.max_toughness
                 ))
+                vm_rt = getattr(self, "vm_runtime", None)
+                if vm_rt is not None:
+                    vm_rt.modifier_engine.dispatch_event(
+                        "OnEndBreak",
+                        owner_id=active_entity.name,
+                        param_entity_id=active_entity.name,
+                    )
             self.event_bus.publish(TurnBeginEvent(
                 av=round(self.current_av, 2),
                 cycle=self.current_cycle,

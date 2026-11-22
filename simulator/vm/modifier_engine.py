@@ -41,6 +41,7 @@ PROPERTY_TO_STAT: Dict[str, Tuple[StatType, ModifierOp, bool]] = {
     "AttackAddedRatio": (StatType.ATK_PERCENT, ModifierOp.PERCENT, False),
     "AttackDelta": (StatType.ATK_BASE, ModifierOp.ADD, False),
     "DefenceAddedRatio": (StatType.DEF_PERCENT, ModifierOp.PERCENT, False),
+    "DefenceDelta": (StatType.DEF, ModifierOp.ADD, False),
     "BreakDamageAddedRatioBase": (StatType.BREAK_EFFECT, ModifierOp.ADD, False),
     "SPRatioBase": (StatType.ERR, ModifierOp.ADD, False),
     "AggroAddedRatio": (StatType.AGGRO, ModifierOp.PERCENT, False),
@@ -121,6 +122,11 @@ class ModifierEngine:
             sim = getattr(self.rt, "sim", None)
             port = getattr(sim, "port", None)
             if port is not None and port.is_action_suppressed(owner_id):
+                return True
+        if flag == "Break":
+            sim = getattr(self.rt, "sim", None)
+            ent = sim.get_entity(owner_id) if sim is not None else None
+            if ent is not None and getattr(ent, "is_broken", False):
                 return True
         for m in self.get_modifiers(owner_id):
             if flag in m.behavior_flags:
@@ -230,7 +236,7 @@ class ModifierEngine:
                     self.destroy_modifier(existing_list[0], reason="EXPIRED")
                 else:
                     return existing_list[0]
-        elif stacking in ("Replace", "Refresh"):
+        elif stacking in ("Replace", "Refresh", "Merge"):
             if existing_list:
                 target_existing = existing_list[0]
         elif stacking == "Stack":
@@ -545,6 +551,14 @@ class ModifierEngine:
             if not m._destroyed and m.caster_id == owner_id and "RemoveWhenCasterDead" in m.behavior_flags:
                 self.destroy_modifier(m)
 
+    def strip_for_deathrattle(self, owner_id: str) -> None:
+        """亡语阶段清理非 KeepOnDeathrattle 的状态与光环子修饰符。"""
+        if self.has_behavior_flag(owner_id, "KeepAllModifierOnDeathRattle"):
+            return
+        for m in list(self.get_modifiers(owner_id)):
+            if "KeepOnDeathrattle" not in m.behavior_flags:
+                self.destroy_modifier(m)
+
     def stack_property(
         self,
         mod: VMModifierInstance,
@@ -631,7 +645,10 @@ class ModifierEngine:
 
     def _recompute_dirty_hp_ratio(self, owner_id: str) -> None:
         ent = self.rt.sim.get_entity(owner_id)
-        if ent is None or getattr(ent, "is_enemy", False) or self.has_behavior_flag(owner_id, "ImmuneDebuff"):
+        if ent is None:
+            return
+        is_enemy = bool(getattr(ent, "is_enemy", False))
+        if not is_enemy and self.has_behavior_flag(owner_id, "ImmuneDebuff"):
             return
         total_dirty = sum(
             float(m.properties.get("DirtyHPRatio", 0.0))
@@ -639,19 +656,22 @@ class ModifierEngine:
             if not m._destroyed
         )
         old_hp = float(getattr(ent, "current_hp", 0.0))
-        ent.hp_lock_ratio = max(0.0, min(0.50, total_dirty))
-        ent.clamp_hp()
-        lost = old_hp - float(getattr(ent, "current_hp", 0.0))
-        if lost > 1e-6:
-            from simulator.events import HPLostEvent
-            self.rt.sim.event_bus.publish(HPLostEvent(
-                av=self.rt.sim.current_av,
-                cycle=self.rt.sim.current_cycle,
-                entity_name=ent.name,
-                amount=lost,
-                hp_left=float(ent.current_hp),
-                cause="DirtyHPRatio",
-            ))
+        cap_ratio = 1.0 if is_enemy else 0.50
+        ent.hp_lock_ratio = max(0.0, min(cap_ratio, total_dirty))
+        self._dirty_apc_entities.add(owner_id)
+        if not is_enemy:
+            ent.clamp_hp()
+            lost = old_hp - float(getattr(ent, "current_hp", 0.0))
+            if lost > 1e-6:
+                from simulator.events import HPLostEvent
+                self.rt.sim.event_bus.publish(HPLostEvent(
+                    av=self.rt.sim.current_av,
+                    cycle=self.rt.sim.current_cycle,
+                    entity_name=ent.name,
+                    amount=lost,
+                    hp_left=float(ent.current_hp),
+                    cause="DirtyHPRatio",
+                ))
 
     def get_entity_property(self, entity_id: str, prop_name: str) -> float:
         """读取实体在官方引擎口径下的实时属性值（含 SpeedConvert / CriticalDamageConvert 等转化部分）。"""
@@ -667,6 +687,24 @@ class ModifierEngine:
             return sum(m.convert_properties.get("Speed", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "MaxHP":
             return float(port.max_hp(entity_id))
+        if prop_name == "BaseHP":
+            return float(ent.base_max_hp)
+        if prop_name == "DirtyHPRatio":
+            return sum(
+                float(m.properties.get("DirtyHPRatio", 0.0))
+                for m in self.get_modifiers(entity_id)
+                if not m._destroyed
+            )
+        if prop_name == "DirtyHPDelta":
+            return sum(
+                float(m.properties.get("DirtyHPDelta", 0.0))
+                for m in self.get_modifiers(entity_id)
+                if not m._destroyed
+            )
+        if prop_name == "HPDelta":
+            return sum(m.properties.get("HPDelta", 0.0) for m in self.get_modifiers(entity_id))
+        if prop_name == "RallyHP":
+            return sum(m.properties.get("RallyHP", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "HPConvert":
             return sum(m.convert_properties.get("MaxHP", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "CurrentHP":

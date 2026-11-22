@@ -77,15 +77,17 @@ class CombatOpsMixin:
 
         targets = self._resolve_targets(task.get("TargetType"), ctx)
         healer = sim.get_entity(ctx.caster_id)
-        if healer is None or not targets:
+        ftype = str(task.get("FormulaType", "HealByHealerMaxHP"))
+        if not targets:
+            return
+        if healer is None and ftype not in ("HealByTargetMaxHP", "HealByTargetLostHP", "HealByBaseValue"):
             return
 
-        ftype = str(task.get("FormulaType", "HealByHealerMaxHP"))
         pct = self._eval_num(task.get("HealPercentage"), ctx, 0.0)
         flat = self._eval_num(task.get("ModifyValue"), ctx, 0.0)
 
-        snap_healer_max_hp = float(sim.port.max_hp(healer.name))
-        snap_healer_def = float(healer.defense)
+        snap_healer_max_hp = float(sim.port.max_hp(healer.name)) if healer is not None else 0.0
+        snap_healer_def = float(healer.defense) if healer is not None else 0.0
 
         for tid in targets:
             tgt = sim.get_entity(tid)
@@ -127,7 +129,7 @@ class CombatOpsMixin:
                 heal_data=heal_data,
             )
 
-            cur_outgoing = float(sim.port.stat(healer.name, StatType.OUTGOING_HEALING))
+            cur_outgoing = float(sim.port.stat(healer.name, StatType.OUTGOING_HEALING)) if healer is not None else 0.0
             outgoing = cur_outgoing + heal_data["HealRatioAdded"]
             final_heal = max(0.0, base_heal * (1.0 + outgoing))
             hp_before = float(tgt.current_hp)
@@ -196,6 +198,16 @@ class CombatOpsMixin:
             ab_l = ctx.ability_name
             caster_ent_st = sim.get_entity(ctx.caster_id)
             caster_aid = getattr(caster_ent_st, "avatar_id", None) if caster_ent_st is not None else None
+            if (
+                (not caster_aid)
+                and caster_ent_st is not None
+                and getattr(caster_ent_st, "is_memosprite", False)
+                and ab_l.startswith("Avatar_")
+            ):
+                owner_nm = getattr(caster_ent_st, "owner_name", None)
+                owner_e = sim.get_entity(owner_nm) if owner_nm else None
+                if owner_e is not None:
+                    caster_aid = getattr(owner_e, "avatar_id", None)
             if caster_aid is not None:
                 sk_idx = 0
                 if "Skill01" in ab_l or atk_type == "Normal":
@@ -209,10 +221,54 @@ class CombatOpsMixin:
                     sk_row = (rt.loader._avatar_skills or {}).get((int(caster_aid) * 100 + sk_idx, 1))
                     if isinstance(sk_row, dict):
                         ssl = sk_row.get("ShowStanceList") or []
-                        if ssl:
-                            v0 = ssl[0].get("Value", 0.0) if isinstance(ssl[0], dict) else ssl[0]
-                            if float(v0) > 0.0:
-                                stance = float(v0)
+                        for sv in ssl:
+                            v_raw = sv.get("Value", 0.0) if isinstance(sv, dict) else sv
+                            if float(v_raw) > 0.0:
+                                stance = float(v_raw)
+                                break
+            if stance <= 0.0 and caster_ent_st is not None and getattr(caster_ent_st, "is_memosprite", False):
+                import re as _re_st
+
+                m_sk = _re_st.search(r"(Skill\d+)", ab_l)
+                tkey_st = m_sk.group(1) if m_sk else ""
+                sv_aid = getattr(caster_ent_st, "avatar_id", None)
+                if not sv_aid:
+                    owner_nm = getattr(caster_ent_st, "owner_name", None)
+                    owner_e = sim.get_entity(owner_nm) if owner_nm else None
+                    if owner_e is not None and getattr(owner_e, "avatar_id", None):
+                        sv_aid = int(owner_e.avatar_id) + 10000
+                if sv_aid and tkey_st:
+                    rt.loader._ensure_servant_skills()
+                    prefix = str(int(sv_aid))
+                    tgt_alias_st = str((task.get("TargetType") or {}).get("Alias", "")) if isinstance(task.get("TargetType"), Mapping) else ""
+                    is_sub_target_st = ("-" in tgt_alias_st) or ("Adjoin" in tgt_alias_st)
+
+                    def _pick_ssl(srow_in: Mapping[str, Any]) -> float:
+                        ssl_in = srow_in.get("ShowStanceList") or []
+                        vals_in = [float(sv.get("Value", 0.0) if isinstance(sv, dict) else sv) for sv in ssl_in]
+                        if is_sub_target_st and len(vals_in) > 1 and vals_in[1] > 0.0:
+                            return vals_in[1]
+                        for v_in in vals_in:
+                            if v_in > 0.0:
+                                return v_in
+                        return 0.0
+
+                    cand_rows = [
+                        srow
+                        for (sid_k, lv_k), srow in (rt.loader._servant_skills or {}).items()
+                        if lv_k == 1 and str(sid_k).startswith(prefix)
+                    ]
+                    for srow in cand_rows:
+                        if srow.get("SkillTriggerKey") == tkey_st:
+                            stance = _pick_ssl(srow)
+                            if stance > 0.0:
+                                break
+                    if stance <= 0.0 and tkey_st not in ("Skill01",):
+                        for srow in cand_rows:
+                            if srow.get("SkillTriggerKey") not in ("Skill01",):
+                                stance = _pick_ssl(srow)
+                                if stance > 0.0:
+                                    break
             if stance <= 0.0:
                 if "Skill01" in ab_l or atk_type in ("Normal", "Servant"):
                     stance = 30.0
@@ -230,9 +286,15 @@ class CombatOpsMixin:
             scaling_stat = "def"
 
         is_equip_sub = ctx.ability_name.startswith(("Ability2", "Ability5"))
+        is_self_break_pursued = (
+            atk_type == "Pursued"
+            and ctx.modifier_instance is not None
+            and ctx.caster_id == ctx.modifier_owner_id
+            and bool(getattr(sim.get_entity(ctx.caster_id), "is_enemy", False))
+        )
         is_additional_pursued = (
             atk_type == "Pursued"
-            and getattr(rt, "_in_after_attack", False)
+            and (getattr(rt, "_in_after_attack", False) or is_self_break_pursued)
         )
         dtype_map = {
             "Normal": DamageType.BASIC,
@@ -356,7 +418,11 @@ class CombatOpsMixin:
                         eff_pct = (pct * base_mult_ratio if base_mult_ratio > 0 else pct) * hit_split
                         eff_flat = (flat * base_mult_ratio if base_mult_ratio > 0 else flat) * hit_split
                 tgt_ent = sim.get_entity(tid)
-                was_alive = bool(tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) > 0.0)
+                was_alive = bool(
+                    tgt_ent is not None
+                    and (getattr(tgt_ent, "current_hp", 0.0) > 0.0 or getattr(tgt_ent, "_in_deathrattle_limbo", False))
+                )
+                was_strictly_alive = bool(tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) > 0.0)
                 prev_tgt_hp = float(getattr(tgt_ent, "current_hp", 0.0)) if tgt_ent is not None else 0.0
                 prev_dmg_red = getattr(tgt_ent, "damage_reduction", 0.0) if tgt_ent is not None else 0.0
                 applied_def_red = False
@@ -426,12 +492,14 @@ class CombatOpsMixin:
                     sim.resolver.resolve_all()
                     if applied_def_red and tgt_ent is not None:
                         tgt_ent.damage_reduction = prev_dmg_red
-                    if was_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
+                    if was_strictly_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
                         any_died_mid_aoe = True
                 else:
                     sim.resolver.resolve_all()
-                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and float(getattr(tgt_ent, "current_hp", 0.0)) < prev_tgt_hp:
-                    me.dispatch_event("OnHPChange", owner_id=tid, param_entity_id=ctx.caster_id)
+                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and (
+                    float(getattr(tgt_ent, "current_hp", 0.0)) < prev_tgt_hp
+                    or getattr(tgt_ent, "_in_deathrattle_limbo", False)
+                ):
                     director = getattr(sim, "_stage_director", None)
                     runner = getattr(director, "runner", None) if director is not None else None
                     if runner is not None:
@@ -445,7 +513,11 @@ class CombatOpsMixin:
                                     pending_limbo.append(tid)
                         except KeyError:
                             pass
-                    if was_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
+                    if was_strictly_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
+                        if me.has_behavior_flag(tid, "Deathrattle"):
+                            summoner_id = getattr(tgt_ent, "summoner_name", None)
+                            if not summoner_id or not me.has_behavior_flag(summoner_id, "Break"):
+                                setattr(tgt_ent, "_in_deathrattle_limbo", True)
                         if tid not in pending_dying:
                             pending_dying.append(tid)
                         pending_dead = getattr(rt, "_pending_dead_enemies", None)
@@ -467,6 +539,10 @@ class CombatOpsMixin:
                 else:
                     for d_tid in pending_dying:
                         me.dispatch_event("OnBeforeDying", owner_id=d_tid, param_entity_id=ctx.caster_id)
+                        d_ent = sim.get_entity(d_tid)
+                        if d_ent is not None and getattr(d_ent, "_in_deathrattle_limbo", False):
+                            me.strip_for_deathrattle(d_tid)
+                        me.dispatch_event("OnDeathrattle", owner_id=d_tid, param_entity_id=ctx.caster_id)
             for l_tid in pending_limbo:
                 if not rt.trigger_or_defer_limbo(l_tid, ctx.caster_id):
                     me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=ctx.caster_id)
@@ -528,13 +604,25 @@ class CombatOpsMixin:
                                 damage_data=dmg_data,
                                 current_attack_type=atk_type,
                             )
+                            me.dispatch_event(
+                                "OnAfterBeingAttackedEnd",
+                                owner_id=tid,
+                                param_entity_id=ctx.caster_id,
+                                damage_data=dmg_data,
+                                current_attack_type=atk_type,
+                            )
                     finally:
                         rt._in_after_attack = False
                     pending_dead = getattr(rt, "_pending_dead_enemies", None)
                     if pending_dead:
+                        remaining_dead = []
                         for dead_tid in list(pending_dead):
-                            me.destroy_all_for_entity(dead_tid)
-                        pending_dead.clear()
+                            dead_ent = sim.get_entity(dead_tid)
+                            if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
+                                remaining_dead.append(dead_tid)
+                            else:
+                                me.destroy_all_for_entity(dead_tid)
+                        pending_dead[:] = remaining_dead
 
     def _execute_lose_hp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -580,6 +668,23 @@ class CombatOpsMixin:
                             setattr(mrs, "_limbo_pending", True)
                             setattr(mrs.entity, "_vm_limbo_pending", True)
                             raw_loss = max(0.0, cur_hp - 1.0)
+                        elif cur_hp - raw_loss <= 0.0:
+                            me.dispatch_event(
+                                "OnBeforeMortallyWonded",
+                                owner_id=tid,
+                                param_entity_id=ctx.caster_id,
+                                change_value=-float(raw_loss),
+                            )
+                        locks = getattr(mrs.entity, "_locked_hp_thresholds", None)
+                        if isinstance(locks, dict) and locks:
+                            floor_hp = max(float(v) for v in locks.values())
+                            if cur_hp >= floor_hp - 1e-6 and cur_hp - raw_loss < floor_hp:
+                                raw_loss = max(0.0, cur_hp - floor_hp)
+                                me.dispatch_event(
+                                    "OnLockHPThresholdReached",
+                                    owner_id=tid,
+                                    param_entity_id=tid,
+                                )
                     except Exception:
                         pass
                 eff_floor = self._eval_num(task.get("Floor"), ctx, 0.0) if "Floor" in task else 0.0
@@ -612,7 +717,12 @@ class CombatOpsMixin:
                         except KeyError:
                             pass
                     if ent.current_hp <= 0.0:
-                        me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
+                        has_dr = False
+                        if me.has_behavior_flag(tid, "Deathrattle"):
+                            summoner_id = getattr(ent, "summoner_name", None)
+                            if not summoner_id or not me.has_behavior_flag(summoner_id, "Break"):
+                                has_dr = True
+                                setattr(ent, "_in_deathrattle_limbo", True)
                         from simulator.events import EnemyDefeatedEvent
                         sim.event_bus.publish(
                             EnemyDefeatedEvent(
@@ -622,7 +732,26 @@ class CombatOpsMixin:
                                 target_name=tid,
                             )
                         )
-                        me.destroy_all_for_entity(tid)
-                        if runner is not None:
-                            runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
-                        sim.entities[:] = [e for e in sim.entities if e.name != tid]
+                        if getattr(rt, "_attack_scope_depth", 0) > 0:
+                            q = getattr(rt, "_pending_dying_enemies", None)
+                            if q is None:
+                                q = []
+                                rt._pending_dying_enemies = q
+                            if not any(x[0] == tid for x in q):
+                                q.append((tid, ctx.caster_id))
+                            pending_dead = getattr(rt, "_pending_dead_enemies", None)
+                            if pending_dead is None:
+                                pending_dead = []
+                                rt._pending_dead_enemies = pending_dead
+                            if tid not in pending_dead:
+                                pending_dead.append(tid)
+                        else:
+                            me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
+                            if has_dr:
+                                me.strip_for_deathrattle(tid)
+                            me.dispatch_event("OnDeathrattle", owner_id=tid, param_entity_id=ctx.caster_id)
+                            if not has_dr:
+                                me.destroy_all_for_entity(tid)
+                                if runner is not None:
+                                    runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
+                                sim.entities[:] = [e for e in sim.entities if e.name != tid]

@@ -523,7 +523,7 @@ class StatusManager:
                 elif stat_type in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE) and mod.stat in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE):
                     total_mod_val = mod.value * status.stacks
                     if mod.op == ModifierOp.ADD:
-                        pct_sum += total_mod_val
+                        flat_sum += total_mod_val
                     elif mod.op == ModifierOp.PERCENT:
                         pct_sum += total_mod_val
 

@@ -538,8 +538,8 @@ class StageDataLoader:
 
     def _inspect_monster_skill_abilities(
         self, json_config_path: str
-    ) -> dict[str, tuple[int, bool, bool]]:
-        """从官方 Monster_*_Ability.json 通用提取每个技能的 (hit_count, ability_is_blast, has_mark_target)。"""
+    ) -> dict[str, tuple[int, bool, bool, bool]]:
+        """从官方 Monster_*_Ability.json 通用提取每个技能的 (hit_count, ability_is_blast, has_mark_target, ability_is_aoe)。"""
         if not json_config_path:
             return {}
         cache = getattr(self, "_monster_ab_skill_meta_cache", None)
@@ -551,7 +551,7 @@ class StageDataLoader:
 
         stem = Path(json_config_path).name.replace("_Config.json", "_Ability.json")
         ab_path = self.tbgd_root / "Config" / "ConfigAbility" / "Monster" / stem
-        out: dict[str, tuple[int, bool, bool]] = {}
+        out: dict[str, tuple[int, bool, bool, bool]] = {}
         if not ab_path.exists():
             cache[json_config_path] = out
             return out
@@ -578,8 +578,19 @@ class StageDataLoader:
             hs_fixed: list[float] = []
             hs_dyn_total: list[float] = []
             retarget_max: list[int] = []
+            ab_is_aoe = False
+
+            def _contains_damage(sub: Any) -> bool:
+                if isinstance(sub, Mapping):
+                    if sub.get("$type") == "RPG.GameCore.DamageByAttackProperty":
+                        return True
+                    return any(_contains_damage(v) for v in sub.values())
+                if isinstance(sub, list):
+                    return any(_contains_damage(x) for x in sub)
+                return False
 
             def _walk(node: Any) -> None:
+                nonlocal ab_is_aoe
                 if isinstance(node, Mapping):
                     nt = node.get("$type", "")
                     if nt == "RPG.GameCore.DamageByAttackProperty":
@@ -603,6 +614,14 @@ class StageDataLoader:
                             mv = (mn.get("FixedValue") or {}).get("Value")
                             if isinstance(mv, (int, float)) and int(mv) > 1:
                                 retarget_max.append(int(mv))
+                        else:
+                            tt = node.get("TargetType")
+                            if (
+                                isinstance(tt, Mapping)
+                                and tt.get("Alias") == "AllEnemy"
+                                and _contains_damage(node.get("TaskList"))
+                            ):
+                                ab_is_aoe = True
                     for v in node.values():
                         _walk(v)
                 elif isinstance(node, list):
@@ -617,11 +636,12 @@ class StageDataLoader:
                 hit_cnt = max(1, int(round(hs_dyn_total[0] / retarget_max[0])))
 
             prev = out.get(sk_key)
-            if prev is None or hit_cnt > prev[0] or ab_is_blast or has_mark:
+            if prev is None or hit_cnt > prev[0] or ab_is_blast or has_mark or ab_is_aoe:
                 out[sk_key] = (
                     max(hit_cnt, prev[0] if prev else 1),
                     ab_is_blast or (prev[1] if prev else False),
                     has_mark or (prev[2] if prev else False),
+                    ab_is_aoe or (prev[3] if prev else False),
                 )
 
         cache[json_config_path] = out
@@ -861,8 +881,8 @@ class StageDataLoader:
                 effective_params = base_params
 
             tkey = str(srow.get("SkillTriggerKey", ""))
-            is_aoe_sk = (tkey in aoe_trigger_keys)
-            ab_hits, ab_blast, ab_mark = ab_skill_meta.get(tkey, (1, False, False))
+            ab_hits, ab_blast, ab_mark, ab_aoe = ab_skill_meta.get(tkey, (1, False, False, False))
+            is_aoe_sk = (tkey in aoe_trigger_keys) or ab_aoe
             spec = CompiledMonsterSkillSpec(
                 skill_id=sid,
                 name=self.resolve_text(srow.get("SkillName")),
@@ -1255,7 +1275,15 @@ class StageDataLoader:
                             tag_ids.append(int(tid))
         if not tag_ids:
             return ()
-        mb_path = excel_dir / "MazeBuff.json"
+        return self.resolve_maze_buff_abilities(tag_ids)
+
+    def resolve_maze_buff_abilities(
+        self, buff_ids: Sequence[int]
+    ) -> tuple[tuple[str, tuple[float, ...]], ...]:
+        """将任意 MazeBuff ID 列表解析为 (InBattleBindingKey, ParamList) 列表。"""
+        if not buff_ids:
+            return ()
+        mb_path = self.tbgd_root / "ExcelOutput" / "MazeBuff.json"
         if not mb_path.exists():
             return ()
         try:
@@ -1264,8 +1292,8 @@ class StageDataLoader:
             return ()
         mb_by_id = {int(r.get("ID") or 0): r for r in mb_rows}
         out: list[tuple[str, tuple[float, ...]]] = []
-        for tid in tag_ids:
-            row = mb_by_id.get(tid)
+        for tid in buff_ids:
+            row = mb_by_id.get(int(tid))
             if not row:
                 continue
             ab_key = str(row.get("InBattleBindingKey") or "")
@@ -1277,6 +1305,60 @@ class StageDataLoader:
             )
             out.append((ab_key, params))
         return tuple(out)
+
+    def resolve_stage_invasion(self, stage_id: int) -> dict[str, Any] | None:
+        """从官方 StageInvasionConfig / StageInvasionBuff / StageMonsterInvasionParam 读取关卡贪饕侵蚀配置。"""
+        excel_dir = self.tbgd_root / "ExcelOutput"
+        cfg_path = excel_dir / "StageInvasionConfig.json"
+        if not cfg_path.exists():
+            return None
+        try:
+            cfg_rows = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        matched = None
+        for row in cfg_rows:
+            if int(row.get("StageID") or 0) == int(stage_id):
+                matched = row
+                break
+        if matched is None:
+            return None
+        inv_id = int(matched.get("InvasionID") or 0)
+        maze_buff_id = 0
+        buff_path = excel_dir / "StageInvasionBuff.json"
+        if buff_path.exists():
+            try:
+                for brow in json.loads(buff_path.read_text(encoding="utf-8")):
+                    if int(brow.get("InvasionID") or 0) == inv_id:
+                        maze_buff_id = int(brow.get("MazeBuffID") or 0)
+                        break
+            except Exception:
+                pass
+        monster_params: tuple[float, ...] = ()
+        param_path = excel_dir / "StageMonsterInvasionParam.json"
+        if param_path.exists():
+            try:
+                for prow in json.loads(param_path.read_text(encoding="utf-8")):
+                    if int(prow.get("InvasionID") or 0) == inv_id:
+                        monster_params = tuple(
+                            float(p.get("Value", 0.0)) if isinstance(p, Mapping) else float(p)
+                            for p in (prow.get("ParamList") or ())
+                        )
+                        break
+            except Exception:
+                pass
+        monster_rules: dict[int, tuple[int, ...]] = {}
+        for item in matched.get("MonsterInvasionList") or ():
+            mid = int(item.get("DBLDCKODNEN") or 0)
+            pat = tuple(int(x) for x in (item.get("LMEBOHHDIAG") or ()))
+            if mid:
+                monster_rules[mid] = pat
+        return {
+            "invasion_id": inv_id,
+            "maze_buff_id": maze_buff_id,
+            "monster_params": monster_params,
+            "monster_rules": monster_rules,
+        }
 
     def _collect_summons(
         self,

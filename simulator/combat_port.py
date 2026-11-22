@@ -389,7 +389,7 @@ class SimulatorCombatPort:
             e.name for e in self.sim.entities
             if e.is_enemy != actor.is_enemy
             and not getattr(e, "unspawned", False)
-            and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False))
+            and (e.current_hp > 0 or getattr(e, "is_infinite_hp", False) or getattr(e, "_in_deathrattle_limbo", False))
         )
 
     def count_allies_by_path(self, actor_id: str, path_name: str) -> int:

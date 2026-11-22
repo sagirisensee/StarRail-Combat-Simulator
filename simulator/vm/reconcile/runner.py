@@ -53,12 +53,14 @@ def build_stage_for_id(
     *,
     technique_users: Sequence[str],
     force_data_driven: bool = True,
+    extra_maze_buff_ids: Sequence[int] = (),
 ) -> Tuple[Any, Any, str]:
     """统一走纯数据驱动 DataDrivenStageDirector 底座（零手写关卡硬编码）。"""
     sim, director = build_data_driven_stage(
         stage_id,
         team,
         technique_users=list(technique_users),
+        extra_maze_buff_ids=extra_maze_buff_ids,
     )
     return sim, director, f"data_driven({stage_id})"
 
@@ -187,6 +189,7 @@ def _run_single_pass(
     aha_dmg_overrides: Optional[Dict[Tuple[int, str], float]] = None,
     sim_enemy_hp_out: Optional[Dict[Tuple[float, str], float]] = None,
     record_crits: bool = False,
+    extra_maze_buff_ids: Sequence[int] = (),
 ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
     team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader, loadouts=loadouts)
     sim, director, stage_mode = build_stage_for_id(
@@ -194,6 +197,7 @@ def _run_single_pass(
         team,
         technique_users=[e.name for e in team],
         force_data_driven=force_data_driven,
+        extra_maze_buff_ids=extra_maze_buff_ids,
     )
 
     ambiguous_slots: List[AmbiguousMemospriteSlot] = []
@@ -360,7 +364,12 @@ def _run_single_pass(
     for h in meta.enemy_hits:
         if not h.hit_allies:
             continue
-        log_set = set(h.hit_allies)
+        log_set = {nm for nm in h.hit_allies if not str(nm).startswith("UID_")}
+        # 多段低额全体 AoE（如呼雷 Skill03）可能因单段扣血小未全入 hit_allies，但日志 sp_gain_counts 完整记录了受击回能全员
+        if h.had_hp_drop and len(h.sp_gain_counts) >= 3:
+            log_set |= {nm for nm, cnt in h.sp_gain_counts.items() if cnt > 0 and not str(nm).startswith("UID_")}
+        if not log_set:
+            continue
         expected_name = meta.enemy_uid_map.get(h.enemy_uid, f"UID_{h.enemy_uid}")
         best_idx: Optional[int] = None
         best_dt = 0.25
@@ -376,7 +385,8 @@ def _run_single_pass(
                         break
         if best_idx is not None:
             used_sim_rec.add(best_idx)
-            _tseq, _s_av, s_atk, sim_set, (sk_id, sk_key, exp_scope, exp_hits) = sim_enemy_turn_records[best_idx]
+            _tseq, _s_av, s_atk, raw_sim_set, (sk_id, sk_key, exp_scope, exp_hits) = sim_enemy_turn_records[best_idx]
+            sim_set = {nm for nm in raw_sim_set if not str(nm).startswith("UID_")}
             if sim_set != log_set:
                 enemy_hit_mismatches.append(
                     EnemyHitMismatch(
@@ -437,6 +447,7 @@ def reconcile_log(
     av_budget: Optional[float] = None,
     max_tl_av: Optional[float] = None,
     threshold: float = 0.0001,
+    extra_maze_buff_ids: Sequence[int] = (),
 ) -> ReconcileReport:
     """对任意官方战斗日志执行端到端 VM 对账并返回逐动诊断报告。"""
     char_db = db if db is not None else CharacterDB().load(DEFAULT_CHAR_DB_PATH)
@@ -473,6 +484,7 @@ def reconcile_log(
         aha_dmg_overrides=aha_dmg_overrides,
         sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
         record_crits=True,
+        extra_maze_buff_ids=extra_maze_buff_ids,
     )
 
     # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，无新检出立即 break）
@@ -498,6 +510,7 @@ def reconcile_log(
             aha_dmg_overrides=aha_dmg_overrides,
             sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
             record_crits=True,
+            extra_maze_buff_ids=extra_maze_buff_ids,
         )
 
     # 被特殊护盾吸收的阿哈回合伤害：由首个破盾回合的 HP+盾 守恒反推精确吸收量
@@ -544,6 +557,7 @@ def reconcile_log(
                         memosprite_overrides=overrides,
                         aha_dmg_overrides=aha_dmg_overrides,
                         record_crits=True,
+                        extra_maze_buff_ids=extra_maze_buff_ids,
                     )
 
     if plugin_fn is None and resolve_memosprites and ambiguous_slots:
@@ -587,6 +601,7 @@ def reconcile_log(
                         memosprite_overrides=trial_ov,
                         aha_dmg_overrides=aha_dmg_overrides,
                         record_crits=False,
+                        extra_maze_buff_ids=extra_maze_buff_ids,
                     )
                     trial_td = next((td for td in trial_rep.turn_diffs if abs(td.av - first_bad.av) < 0.05), None)
                     trial_err = trial_td.err if trial_td is not None else 1.0
@@ -637,8 +652,11 @@ def reconcile_log(
                     plugin_fn=None,
                     non_crits=non_crits,
                     av_budget=av_budget,
+                    loadouts=loadouts,
                     memosprite_overrides=overrides,
+                    aha_dmg_overrides=aha_dmg_overrides,
                     record_crits=True,
+                    extra_maze_buff_ids=extra_maze_buff_ids,
                 )
 
     report.non_crits = set(non_crits)

@@ -190,6 +190,10 @@ class DamageCalculator:
             target_def_base = req.target.defense
         elif not is_target_enemy and hasattr(req.target, "base_def"):
             target_def_base = req.target.base_def
+            _sim_def = getattr(req.target, "simulator", None) or getattr(req.attacker, "simulator", None)
+            _sm_def = getattr(_sim_def, "status_mgr", None) if _sim_def is not None else None
+            if _sm_def is not None:
+                target_def_base = _sm_def.calculate_stat(req.target.name, target_def_base, StatType.DEF_PERCENT)
         else:
             target_def_base = target_lvl * 10 + 200
 
@@ -213,7 +217,13 @@ class DamageCalculator:
 
         # 7. 韧性减伤区 (敌方未破韧按目标实体的 toughness_dmg_reduction 减免，标准规则为 0.10 对应 0.90x 承伤;
         # 破韧固定 1.0x; 我方角色无韧性减免条固定 1.0x; 特殊关卡首领若形态配置为 0.0 则承伤 1.00x)
-        if not is_target_enemy or req.target_is_broken:
+        _sim_red = getattr(req.target, "simulator", None) or getattr(req.attacker, "simulator", None)
+        _vm_red = getattr(_sim_red, "vm_runtime", None) if _sim_red is not None else None
+        _in_deathrattle_bypass = bool(
+            getattr(req.target, "_in_deathrattle_limbo", False)
+            and not getattr(_vm_red, "_in_after_attack", False)
+        )
+        if not is_target_enemy or req.target_is_broken or _in_deathrattle_bypass:
             reduction_mult = 1.0
         else:
             tough_red = getattr(req.target, "toughness_dmg_reduction", 0.10)

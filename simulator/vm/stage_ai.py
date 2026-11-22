@@ -153,6 +153,7 @@ class AIDecisionRule:
     condition_predicates: Tuple[Mapping[str, Any], ...]
     root_task: Mapping[str, Any]
     phase_compare_type: str = "Equal"
+    success_score: float = 1.0
 
     def matches_phase(self, phase: int) -> bool:
         if self.phase_condition is None:
@@ -245,17 +246,47 @@ class MonsterAIExecutor:
         self.phase = phase
         self.ai_flag = reset_ai_flag
 
-    def select_next_actions(self) -> Tuple[AISkillActionSpec, ...]:
+    def select_next_actions(
+        self,
+        *,
+        predicate_evaluator: Optional[Any] = None,
+    ) -> Tuple[AISkillActionSpec, ...]:
         """Select the next turn's skill action(s) based on current ``phase`` & ``ai_flag``."""
         self.turn_count += 1
         matched: Optional[AIDecisionRule] = None
 
-        for dec in self.spec.decisions:
-            if not dec.matches_phase(self.phase):
-                continue
-            if dec.ai_flag_condition is not None and dec.ai_flag_condition == self.ai_flag:
-                matched = dec
-                break
+        if callable(predicate_evaluator) and self.spec.decisions:
+            best_score = -1.0
+            for dec in self.spec.decisions:
+                if not dec.matches_phase(self.phase):
+                    continue
+                if dec.ai_flag_condition is not None and dec.ai_flag_condition != self.ai_flag:
+                    continue
+                if dec.condition_predicates:
+                    ok = True
+                    for pred in dec.condition_predicates:
+                        try:
+                            if not predicate_evaluator(pred):
+                                ok = False
+                                break
+                        except NotImplementedError:
+                            ok = False
+                            break
+                    if not ok:
+                        continue
+                elif dec.ai_flag_condition is None:
+                    continue
+                if dec.success_score > best_score:
+                    best_score = dec.success_score
+                    matched = dec
+
+        if matched is None:
+            for dec in self.spec.decisions:
+                if not dec.matches_phase(self.phase):
+                    continue
+                if dec.ai_flag_condition is not None and dec.ai_flag_condition == self.ai_flag:
+                    matched = dec
+                    break
 
         if matched is None and self.spec.decisions:
             # Fallback to first decision matching current phase (e.g. modifier-driven AI)
@@ -437,10 +468,16 @@ class StageAILoader:
             phase_conds: List[Tuple[str, int]] = []
             flag_conds: List[int] = []
             cond_preds: List[Mapping[str, Any]] = []
+            axis_scores: List[float] = []
             for ax in dec.get("ConsiderAxisList", []):
                 if isinstance(ax, Mapping) and isinstance(ax.get("Predicate"), Mapping):
                     cond_preds.append(ax["Predicate"])
                     _extract_axis_conditions(ax["Predicate"], phase_conds, flag_conds)
+                if isinstance(ax, Mapping) and isinstance(ax.get("SuccessScore"), Mapping):
+                    try:
+                        axis_scores.append(float(ax["SuccessScore"].get("Value", 1.0)))
+                    except (TypeError, ValueError):
+                        pass
 
             sel_str = selectors[0] if selectors else "Default"
             cand_skills = tuple(
@@ -463,6 +500,7 @@ class StageAILoader:
                     candidate_skills=cand_skills,
                     condition_predicates=tuple(cond_preds),
                     root_task=root_task,
+                    success_score=max(axis_scores) if axis_scores else 1.0,
                 )
             )
 

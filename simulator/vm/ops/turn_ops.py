@@ -53,12 +53,19 @@ class TurnOpsMixin:
     def _execute_turn_insert(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
         sim = rt.sim
-        prio = str(task.get("InsertAbilityPriority") or task.get("InsertActionPriority") or "Character_ChainSkill")
+        cond_prio = task.get("InsertConditionPriority")
+        override_prio = cond_prio.get("OverridePriority") if isinstance(cond_prio, Mapping) else None
+        prio = str(
+            task.get("InsertAbilityPriority")
+            or task.get("InsertActionPriority")
+            or override_prio
+            or "Character_ChainSkill"
+        )
         ab_name = _str_val(task.get("AbilityName"))
         if task.get("TargetType") is not None:
             targets = self._resolve_targets(task.get("TargetType"), ctx)
         elif ctx.modifier_owner_id and (
-            prio == "MonsterForceKill"
+            prio in ("MonsterForceKill", "MonsterDeathRattle")
             or (
                 ctx.caster_id
                 and (sim.get_entity(ctx.caster_id) is None or getattr(sim.get_entity(ctx.caster_id), "current_hp", 0.0) <= 0.0)

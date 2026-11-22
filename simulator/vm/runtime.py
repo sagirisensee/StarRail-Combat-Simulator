@@ -16,6 +16,7 @@ from ..events import (
     ActionEndEvent,
     ActionExecuteEvent,
     EnemyDefeatedEvent,
+    HealAppliedEvent,
     HPLostEvent,
     SpiritDespawnEvent,
     SpiritSummonedEvent,
@@ -65,6 +66,7 @@ class VMRuntime:
         self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)
         self.sim.event_bus.subscribe(ActionEndEvent, self._on_action_end)
         self.sim.event_bus.subscribe(HPLostEvent, self._on_hp_lost)
+        self.sim.event_bus.subscribe(HealAppliedEvent, self._on_heal_applied)
         self.sim.event_bus.subscribe(SpiritDespawnEvent, self._on_spirit_despawn)
         self.sim.event_bus.subscribe(EnemyDefeatedEvent, self._on_enemy_defeated)
 
@@ -128,6 +130,13 @@ class VMRuntime:
                             damage_data=dmg_data,
                             current_attack_type=atk_type,
                         )
+                        self.modifier_engine.dispatch_event(
+                            "OnAfterBeingAttackedEnd",
+                            owner_id=tid,
+                            param_entity_id=caster_id,
+                            damage_data=dmg_data,
+                            current_attack_type=atk_type,
+                        )
                 finally:
                     self._in_after_attack = False
         pending_dying = getattr(self, "_pending_dying_enemies", None)
@@ -139,6 +148,10 @@ class VMRuntime:
             try:
                 for dead_tid, killer_id in dying_batch:
                     self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
+                    dead_ent = self.sim.get_entity(dead_tid)
+                    if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
+                        self.modifier_engine.strip_for_deathrattle(dead_tid)
+                    self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
             finally:
                 self._in_dying_batch = prev_in_dying
         if not getattr(self, "_in_dying_batch", False):
@@ -163,9 +176,14 @@ class VMRuntime:
                     )
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
+            remaining_dead = []
             for dead_tid in list(pending_dead):
-                self.modifier_engine.destroy_all_for_entity(dead_tid)
-            pending_dead.clear()
+                dead_ent = self.sim.get_entity(dead_tid)
+                if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
+                    remaining_dead.append(dead_tid)
+                else:
+                    self.modifier_engine.destroy_all_for_entity(dead_tid)
+            pending_dead[:] = remaining_dead
 
     def end_attack_scope(self) -> None:
         self._attack_scope_depth = max(0, self._attack_scope_depth - 1)
@@ -370,7 +388,7 @@ class VMRuntime:
         master_white_hp = float(getattr(master, "base_white_hp", 0.0) or master_base_hp)
         sv_max_hp = inh["hp_base"] + master_base_hp * inh["hp_inherit"]
         sv_white_hp = master_white_hp * inh["hp_inherit"]
-        sv_speed = inh["speed_base"] + float(master.speed) * inh["speed_inherit"]
+        sv_speed = inh["speed_base"] + float(master.base_speed) * inh["speed_inherit"]
         sv_white_speed = float(inh["speed_base"]) + float(getattr(master, "base_white_speed", 0.0) or 0.0) * float(inh["speed_inherit"])
 
         sv_entity = self.sim.get_entity(sv_name)
@@ -599,6 +617,11 @@ class VMRuntime:
         self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.entity_name, change_value=-evt.amount)
         self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.entity_name, change_value=-evt.amount)
 
+    def _on_heal_applied(self, evt: HealAppliedEvent) -> None:
+        if evt.amount > 0.0:
+            self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.target_name, change_value=float(evt.amount))
+            self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.target_name, change_value=float(evt.amount))
+
     def _on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
         if self.modifier_engine.has_modifier(evt.spirit_name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=evt.spirit_name, param_entity_id=evt.spirit_name)
@@ -609,14 +632,16 @@ class VMRuntime:
     def _on_enemy_defeated(self, evt: EnemyDefeatedEvent) -> None:
         killer_id = str(getattr(evt, "attacker_name", ""))
         dead_id = str(getattr(evt, "target_name", ""))
+        killer_ent = self.sim.get_entity(killer_id) if killer_id else None
         if (
-            killer_id
-            and self.sim.get_entity(killer_id) is not None
+            killer_ent is not None
             and self.modifier_engine.has_modifier(killer_id, "MMonster_W4_Griffin_00_Debuff_Avatar_Status")
         ):
             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=killer_id, param_entity_id=dead_id)
+        elif killer_ent is not None and getattr(killer_ent, "is_enemy", False):
+            self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=killer_id, param_entity_id=dead_id)
         else:
-            if killer_id and self.sim.get_entity(killer_id) is not None:
+            if killer_ent is not None:
                 self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=killer_id, param_entity_id=dead_id)
             owner_prov = getattr(self.sim, "on_trigger_death_owner_provider", None)
             picked_owner = owner_prov(killer_id, dead_id) if callable(owner_prov) else None

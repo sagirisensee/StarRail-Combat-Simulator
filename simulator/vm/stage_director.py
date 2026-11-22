@@ -77,15 +77,25 @@ class DataDrivenStageDirector:
         setattr(self.sim, "_stage_director", self)
         self._init_stage_affix_abilities()
 
-    def _init_stage_affix_abilities(self) -> None:
-        """挂载官方 ChallengePeakConfig -> MazeBuff 声明的关卡环境词条（如血噬、洞穿）。"""
-        affixes = getattr(self.runner.built_stage.source_spec, "stage_affix_abilities", ())
+    def _init_stage_affix_abilities(
+        self, extra_maze_buff_ids: Sequence[int] = ()
+    ) -> None:
+        """挂载官方 ChallengePeakConfig -> MazeBuff 及可选额外 MazeBuff（如贪饕临时增益）。"""
+        affixes = list(getattr(self.runner.built_stage.source_spec, "stage_affix_abilities", ()))
+        stage_loader = getattr(self.runner.factory, "stage_loader", None)
+        if stage_loader is not None and hasattr(stage_loader, "resolve_stage_invasion"):
+            stage_id = int(getattr(self.runner.built_stage.source_spec, "stage_id", 0) or 0)
+            if stage_id:
+                self._stage_invasion_info = stage_loader.resolve_stage_invasion(stage_id)
+        if extra_maze_buff_ids:
+            if stage_loader is not None and hasattr(stage_loader, "resolve_maze_buff_abilities"):
+                affixes.extend(stage_loader.resolve_maze_buff_abilities(extra_maze_buff_ids))
         if not affixes:
             return
         rt = getattr(self.sim, "vm_runtime", None)
         if rt is None:
             return
-        maze_buff_param_hashes = (462955996, 59671469)
+        maze_buff_param_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
         rt.loader.ensure_ability_index()
         for ab_name, params in affixes:
             ab = rt.loader.get_ability(ab_name)
@@ -448,16 +458,36 @@ class DataDrivenStageDirector:
             return 0.0
         kit = getattr(ent, "kit", None)
         effective_dmg = dmg
+        vm_rt = getattr(self.sim, "vm_runtime", None)
+        gluttony_div = 1.0
+        if vm_rt is not None:
+            from simulator.vm.expr import dotnet_hash
+
+            h_ft = dotnet_hash("MDF_FirstTriggered")
+            h_p4 = dotnet_hash("MDF_Param4")
+            for mod in vm_rt.modifier_engine.get_modifiers(ent.name):
+                if "Gluttony" in mod.name and float(mod.dynamic_values.get(h_ft, 0.0)) == 1.0:
+                    p4 = float(mod.dynamic_values.get(h_p4, 0.0))
+                    if p4 > 0.0:
+                        gluttony_div = 1.0 + p4
+                        break
+        raw_aha_dmg = effective_dmg / gluttony_div
         if kit is not None and hasattr(kit, "intercept_incoming_damage"):
-            effective_dmg = kit.intercept_incoming_damage(ent.name, dmg)
-        actual = min(ent.current_hp, effective_dmg)
-        ent.current_hp = max(0.0, ent.current_hp - effective_dmg)
+            raw_aha_dmg = kit.intercept_incoming_damage(ent.name, raw_aha_dmg)
+        actual = min(ent.current_hp, raw_aha_dmg)
+        ent.current_hp = max(0.0, ent.current_hp - raw_aha_dmg)
         self.aha_special_damage += dmg
         if actual > 0.0:
             self._break_helper.add_quantum_stack(ent.name)
-            vm_rt = getattr(self.sim, "vm_runtime", None)
             if vm_rt is not None:
-                vm_rt.modifier_engine.dispatch_event("OnHPChange", owner_id=ent.name, param_entity_id="阿哈")
+                vm_rt.modifier_engine.dispatch_event(
+                    "OnHPChange",
+                    owner_id=ent.name,
+                    param_entity_id="阿哈",
+                    change_value=-float(actual),
+                    current_attack_type="ElationDamage",
+                    param_flags=("IsHPChangeByDamage",),
+                )
                 try:
                     mrs = self.runner.get_enemy_state(ent.name)
                     if getattr(mrs, "_limbo_pending", False):
@@ -544,6 +574,19 @@ class DataDrivenStageDirector:
         ent = self.sim.get_entity(monster_name)
         if ent is not None and isinstance(getattr(ent, "kit", None), DataDrivenEnemyKit):
             ent.kit.sync_phase(new_phase)
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is not None:
+            rt.modifier_engine.dispatch_event(
+                "OnMonsterPhaseChanged",
+                owner_id=monster_name,
+                param_entity_id=monster_name,
+            )
+            if rt.modifier_engine.has_behavior_flag(monster_name, "CustomEvent_MonsterChangePhaseTrigger"):
+                rt.modifier_engine.dispatch_event(
+                    "OnCustomEvent",
+                    owner_id=monster_name,
+                    param_entity_id=monster_name,
+                )
         return new_phase
 
     def after_step(self) -> None:
@@ -633,6 +676,7 @@ def build_data_driven_stage(
     *,
     technique_users: Optional[Sequence[str]] = None,
     auto_ult: bool = True,
+    extra_maze_buff_ids: Sequence[int] = (),
 ) -> Tuple[TurnSimulator, DataDrivenStageDirector]:
     """Build a ``(TurnSimulator, DataDrivenStageDirector)`` purely from official stage tables."""
     for member in team:
@@ -660,13 +704,62 @@ def build_data_driven_stage(
         if technique_users is not None
         else None
     )
+    def _apply_pre_tech_maze_buffs(sim_inst: TurnSimulator) -> None:
+        if not extra_maze_buff_ids:
+            return
+        from simulator.vm.runtime import ensure_vm_runtime
+
+        rt = ensure_vm_runtime(sim_inst, loader=runner.factory.game_loader)
+        stage_loader = getattr(runner.factory, "stage_loader", None)
+        if stage_loader is None or not hasattr(stage_loader, "resolve_maze_buff_abilities"):
+            return
+        affixes = stage_loader.resolve_maze_buff_abilities(extra_maze_buff_ids)
+        if not affixes:
+            return
+        maze_buff_param_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
+        rt.loader.ensure_ability_index()
+        from simulator.vm.target_alias import ExecutionContext
+
+        for ab_name, params in affixes:
+            ab = rt.loader.get_ability(ab_name)
+            if not ab:
+                continue
+            on_add = ab.get("OnAdd") or []
+            if on_add:
+                ctx = ExecutionContext(
+                    runtime=rt,
+                    caster_id="__LEVEL__",
+                    ability_name=ab_name,
+                    ability_target_ids=("__LEVEL__",),
+                    modifier_owner_id="__LEVEL__",
+                )
+                rt.executor.execute_tasks(on_add, ctx)
+            for mod in rt.modifier_engine.get_modifiers("__LEVEL__"):
+                if mod.ability_name == ab_name:
+                    for idx, val in enumerate(params):
+                        if idx < len(maze_buff_param_hashes):
+                            mod.dynamic_values[maze_buff_param_hashes[idx]] = float(val)
+        for ent in list(sim_inst.entities):
+            if getattr(ent, "is_countdown", False) or getattr(ent, "is_enemy", False):
+                continue
+            rt.modifier_engine.dispatch_event("OnListenCharacterCreate", param_entity_id=ent.name)
+            new_mhp = float(ent.max_hp)
+            if new_mhp > ent.current_hp:
+                ent.current_hp = new_mhp
+
     sim = TurnSimulator(
         entities=list(team) + list(wave0_enemies),
         use_techniques=bool(norm_tech_users),
         technique_users=norm_tech_users,
         auto_ult=auto_ult,
+        pre_technique_hook=_apply_pre_tech_maze_buffs if extra_maze_buff_ids else None,
     )
     director = DataDrivenStageDirector(sim, runner, ai_loader)
     director.attach_kits_to_entities(wave0_enemies, wave_index=0)
     director._init_wave_monster_battle_events(wave0_enemies, wave_index=0)
+    if extra_maze_buff_ids:
+        rt_post = getattr(sim, "vm_runtime", None)
+        if rt_post is not None:
+            for e in wave0_enemies:
+                rt_post.modifier_engine.dispatch_event("OnListenCharacterCreate", param_entity_id=e.name)
     return sim, director

@@ -46,6 +46,13 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
     def _on_weakness_break(self, evt: WeaknessBreakEvent) -> None:
         if self._damage_capture_stack:
             self._damage_capture_stack[-1][0] += float(evt.break_damage)
+        t_ent = self.rt.sim.get_entity(evt.target_name)
+        if t_ent is not None and getattr(t_ent, "is_broken", False):
+            self.rt.modifier_engine.dispatch_event(
+                "OnBeingBreak",
+                owner_id=evt.target_name,
+                param_entity_id=evt.breaker_name,
+            )
 
     def _resolve_targets(self, target_spec: Any, ctx: ExecutionContext) -> List[str]:
         """解析 TargetType（支持 GlobalTargetAlias 查表与 TargetSequence.Sequence 管道）。"""
@@ -184,7 +191,7 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
         if ctx.modifier_instance is not None:
             if scope in ("Modifier", "ContextModifier"):
                 mod_target = ctx.modifier_instance
-            elif scope not in ("ContextCaster", "SummonerEntity"):
+            elif scope not in ("ContextCaster", "SummonerEntity", "TargetEntity"):
                 mod_floats = ctx.modifier_instance.config.get("DynamicValues", {}).get("Floats", {})
                 if str(key_h) in mod_floats or key_h in ctx.modifier_instance.dynamic_values:
                     if "TargetType" not in task or target_id == ctx.modifier_instance.owner_id:
@@ -259,6 +266,12 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             if tpl_name in ("PursuedDamage_PerformanceDelay", "PursuedDamage_PerformanceDelay_ForSnapshotEntity"):
                 return
             tpl_tasks = rt.find_template(tpl_name, ctx.ability_name)
+            if tpl_tasks is None and ctx.modifier_instance is not None:
+                mod_cfg = getattr(ctx.modifier_instance, "config", None) or {}
+                for t_item in mod_cfg.get("TaskListTemplate") or ():
+                    if isinstance(t_item, Mapping) and str(t_item.get("Name") or "") == tpl_name:
+                        tpl_tasks = t_item.get("TaskList") or []
+                        break
             if tpl_tasks is None:
                 if self.strict:
                     raise KeyError(f"找不到 TaskListTemplate: {tpl_name}")
@@ -376,6 +389,8 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                             cand_ents = [sim.get_entity(cid) for cid in out]
                             cand_ents = [e for e in cand_ents if e is not None and not getattr(e, "is_enemy", False)]
                             if cand_ents and callable(t_prov):
+                                if not getattr(rt, "_current_enemy_skill_has_damage", True):
+                                    return []
                                 picked_order: List[str] = []
                                 p0 = t_prov(caster_ent, cand_ents, 0)
                                 if p0 is not None and p0.name in out:
@@ -405,6 +420,9 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     matched = _match_retarget()
                 finally:
                     self.rt._include_limbo = False
+            if not matched:
+                self.execute_tasks(task.get("FailedTaskList", []), ctx)
+                return
             if len(matched) > 1 and sim is not None and hasattr(sim, "notify_entity_ready") and not getattr(sim, "_in_retarget_ready_batch", False):
                 orig_notify = sim.notify_entity_ready
                 deferred_ready: List[str] = []
@@ -436,6 +454,30 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     self.execute_tasks(task.get("TaskList", []), t_ctx)
             return
 
+        if t == "RPG.GameCore.RetargetList":
+            prev_limbo = getattr(rt, "_include_limbo", False)
+            if task.get("IncludeLimbo"):
+                rt._include_limbo = True
+            try:
+                candidates = self._resolve_targets(task.get("TargetType"), ctx)
+            finally:
+                rt._include_limbo = prev_limbo
+            pred = task.get("Predicate")
+            matched_list: List[str] = []
+            for cid in candidates:
+                p_ctx = ctx.clone(param_entity_id=cid)
+                if self.eval_predicate(pred, p_ctx):
+                    matched_list.append(cid)
+            if not matched_list:
+                self.execute_tasks(task.get("FailedTaskList", []), ctx)
+                return
+            t_ctx = ctx.clone(
+                param_entity_id=matched_list[0] if matched_list else ctx.param_entity_id,
+                template_param_targets=tuple(matched_list),
+            )
+            self.execute_tasks(task.get("TaskList", []), t_ctx)
+            return
+
         if t in ("RPG.GameCore.FireProjectile", "RPG.GameCore.NewFireProjectile"):
             self.execute_tasks(task.get("OnProjectileHit", []), ctx)
             self.execute_tasks(task.get("OnHit", []), ctx)
@@ -448,6 +490,12 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
                 val = self._eval_num(val_spec, ctx, 0.0)
                 self._write_dyn(task, ctx, key_h, val)
+            else:
+                target_id = self._dyn_scope_entity(task, ctx)
+                t_ent = sim.get_entity(target_id)
+                if t_ent is not None and getattr(t_ent, "is_enemy", False):
+                    key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+                    self._write_dyn(task, ctx, key_h, 0.0)
             return
 
         if t == "RPG.GameCore.SetDynamicValue":
@@ -470,10 +518,10 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             self._write_dyn(task, ctx, key_h, nxt)
             return
 
-        if t == "RPG.GameCore.SetDynamicValueByProperty":
+        if t in ("RPG.GameCore.SetDynamicValueByProperty", "RPG.GameCore.SetDynamicValueByHPRatio"):
             key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
             read_targets = self._resolve_targets(task.get("ReadTargetType") or {"Alias": "ModifierOwnerEntity"}, ctx)
-            prop_name = str(task.get("Value", ""))
+            prop_name = "HPRatio" if t == "RPG.GameCore.SetDynamicValueByHPRatio" else str(task.get("Value", ""))
             val = me.get_entity_property(read_targets[0], prop_name) if read_targets else 0.0
             self._write_dyn(task, ctx, key_h, val)
             return
@@ -520,8 +568,19 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
 
         if t == "RPG.GameCore.SetDynamicValueByCharacterCount":
             targets = self._resolve_targets(task.get("ReadTargetType") or task.get("TargetType"), ctx)
-            if task.get("AliveOnly", True):
-                targets = [tid for tid in targets if _is_alive(sim, tid)]
+            if bool(task.get("AliveOnly", False)):
+                alive_targets = []
+                for tid in targets:
+                    e_cnt = sim.get_entity(tid)
+                    if e_cnt is None:
+                        continue
+                    if getattr(e_cnt, "_in_deathrattle_limbo", False):
+                        continue
+                    if getattr(e_cnt, "_vm_limbo_pending", False) and self.rt.modifier_engine.has_behavior_flag(tid, "Deathrattle"):
+                        continue
+                    if getattr(e_cnt, "current_hp", 0.0) > 0 or getattr(e_cnt, "is_infinite_hp", False):
+                        alive_targets.append(tid)
+                targets = alive_targets
             sub_pred = task.get("Predicate")
             if sub_pred:
                 targets = [tid for tid in targets if self.eval_predicate(sub_pred, ctx.clone(param_entity_id=tid, caster_id=tid))]
@@ -555,7 +614,20 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
         if t == "RPG.GameCore.SetDynamicValueByVariateType":
             key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
             vtype = str(task.get("VariateType", "ParamValue"))
-            val = float(ctx.change_value) if vtype == "ParamValue" else 0.0
+            if vtype == "ParamValue":
+                val = float(ctx.change_value)
+            elif vtype == "MaxMonsterPhase":
+                owner_tid = ctx.modifier_owner_id or ctx.caster_id
+                director = getattr(sim, "_stage_director", None)
+                runner = getattr(director, "runner", None) if director is not None else None
+                val = 1.0
+                if runner is not None:
+                    try:
+                        val = float(runner.get_enemy_state(owner_tid).max_phase)
+                    except KeyError:
+                        val = 1.0
+            else:
+                val = 0.0
             self._write_dyn(task, ctx, key_h, val)
             return
 
@@ -891,24 +963,25 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     )
                 prev_hp = getattr(ent, "current_hp", 0.0)
                 ent.current_hp = 0.0
-                if getattr(ent, "is_enemy", False) and prev_hp > 0.0:
-                    from simulator.events import EnemyDefeatedEvent
-                    sim.event_bus.publish(
-                        EnemyDefeatedEvent(
-                            av=float(sim.current_av),
-                            cycle=int(sim.current_cycle),
-                            attacker_name=ctx.caster_id or "",
-                            target_name=tid,
+                me.destroy_all_for_entity(tid)
+                if getattr(ent, "is_enemy", False):
+                    if prev_hp > 0.0:
+                        from simulator.events import EnemyDefeatedEvent
+                        sim.event_bus.publish(
+                            EnemyDefeatedEvent(
+                                av=float(sim.current_av),
+                                cycle=int(sim.current_cycle),
+                                attacker_name=ctx.caster_id or "",
+                                target_name=tid,
+                            )
                         )
-                    )
                     director = getattr(sim, "_stage_director", None)
                     runner = getattr(director, "runner", None) if director is not None else None
                     if runner is not None:
                         runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
                     sim.entities[:] = [e for e in sim.entities if e.name != tid]
-                elif not mute_death:
+                elif not mute_death and prev_hp > 0.0:
                     me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
-                me.destroy_all_for_entity(tid)
                 if getattr(ent, "is_memosprite", False) or getattr(ent, "is_countdown", False):
                     sim.port.despawn_spirit(tid, reason="ForceKill")
                 be_list = rt.named_targets.get("BattleEventEntityList")
@@ -922,17 +995,25 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
 
         if t == "RPG.GameCore.ModifyCurrentSkillDelayCost":
             val = self._eval_num(task.get("NormalizedValue") or task.get("Value"), ctx, 0.0)
+            mfunc = str(task.get("ModifyFunction", "Add") or "Add")
             cur_turn = getattr(sim, "_current_turn_entity", None)
             if cur_turn is not None:
                 cur_d = getattr(sim, "_pending_turn_reset_distance", None)
                 base_d = 10000.0 if cur_d is None else float(cur_d)
-                new_d = max(0.0, base_d + val * 10000.0)
+                if mfunc == "Set":
+                    new_d = max(0.0, val * 10000.0)
+                elif mfunc == "Mul":
+                    new_d = max(0.0, base_d * val)
+                else:
+                    new_d = max(0.0, base_d + val * 10000.0)
                 sim._pending_turn_reset_distance = new_d
                 if new_d <= 0.0:
                     setattr(cur_turn, "_vm_immediate_jump", True)
             return
 
         if t == "RPG.GameCore.SummonMonster":
+            if getattr(rt, "_skip_vm_summon_monster", False):
+                return
             director = getattr(sim, "_stage_director", None)
             if director is not None and hasattr(director, "flush_ally_talent_heals"):
                 director.flush_ally_talent_heals()
@@ -1067,13 +1148,60 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             return
 
         if t == "RPG.GameCore.DamageStance":
-            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            tgt_spec = task.get("DefenderTargetType") or task.get("TargetType")
+            targets = self._resolve_targets(tgt_spec, ctx) or [ctx.modifier_owner_id or ctx.caster_id]
             sval = self._eval_num(task.get("StanceValue"), ctx, 0.0)
             if sval > 0.0:
                 for tid in targets:
                     ent = sim.get_entity(tid)
-                    if ent is not None and getattr(ent, "current_toughness", 0.0) > 0.0:
-                        ent.current_toughness = max(0.0, float(ent.current_toughness) - sval)
+                    rem_s = float(sval)
+                    while (
+                        rem_s > 0.0
+                        and ent is not None
+                        and getattr(ent, "current_toughness", 0.0) > 0.0
+                        and not getattr(ent, "is_broken", False)
+                        and not getattr(ent, "toughness_locked", False)
+                    ):
+                        cur_t = float(ent.current_toughness)
+                        if rem_s < cur_t:
+                            ent.current_toughness = cur_t - rem_s
+                            rem_s = 0.0
+                            break
+                        rem_s -= cur_t
+                        ent.current_toughness = 0.0
+                        cur_sc = int(getattr(ent, "current_stance_count", 1) or 1)
+                        if cur_sc > 1:
+                            ent.current_stance_count = cur_sc - 1
+                            if task.get("TriggerCountDown", False):
+                                lvl = int(getattr(ent, "level", 95) or 95)
+                                base_break = 7494.3716 if lvl >= 95 else 3767.5535
+                                st_elem = str(getattr(ent, "stance_type", None) or "Imaginary")
+                                elem_mult = 2.0 if st_elem in ("Physical", "Fire") else (1.5 if st_elem == "Wind" else (0.5 if st_elem in ("Quantum", "Imaginary") else 1.0))
+                                tough_mult = 0.5 + (float(ent.max_toughness) / 120.0)
+                                sm = getattr(sim, "status_mgr", None)
+                                def_shred = sm.calculate_stat(tid, 0.0, StatType.DEF_SHRED) if sm else 0.0
+                                def_mult = (lvl + 20.0) / ((lvl + 20.0) * max(0.0, 1.0 - def_shred) + (lvl + 20.0))
+                                base_res = float((getattr(ent, "damage_res", {}) or {}).get(st_elem, 0.0))
+                                res_mult = 1.0 - base_res
+                                vuln = sm.calculate_stat(tid, 0.0, StatType.VULNERABILITY) if sm else 0.0
+                                vuln_mult = 1.0 + vuln
+                                red_mult = 1.0 - max(0.0, min(1.0, float(getattr(ent, "damage_reduction", 0.0))))
+                                for m_def in me.get_modifiers(tid):
+                                    m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
+                                    if m_red > 0.0:
+                                        red_mult *= max(0.0, 1.0 - m_red)
+                                tough_red = max(0.0, 1.0 - float(getattr(ent, "toughness_dmg_reduction", 0.10)))
+                                cd_dmg = base_break * elem_mult * tough_mult * def_mult * res_mult * vuln_mult * tough_red * red_mult
+                                kit = getattr(ent, "kit", None)
+                                actual_loss = kit.intercept_incoming_damage(tid, cd_dmg) if kit is not None and hasattr(kit, "intercept_incoming_damage") else cd_dmg
+                                ent.current_hp = max(0.0, float(ent.current_hp) - actual_loss)
+                            ent.current_toughness = float(ent.max_toughness)
+                        else:
+                            ent.current_stance_count = 0
+                            ent.is_broken = True
+                            ent.delay_action(0.25)
+                            me.dispatch_event("OnBeingBreak", owner_id=tid, param_entity_id=ctx.caster_id)
+                            break
             return
 
         if t == "RPG.GameCore.DestroyBattleCharacter":
@@ -1111,6 +1239,84 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     self.execute_tasks(chosen, ctx)
             return
 
+        if t == "RPG.GameCore.LockTargetHP":
+            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            lock_key = str(task.get("LockKey") or "default")
+            thresh = self._eval_num(task.get("Threshold"), ctx, 1.0)
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is not None:
+                    locks = getattr(ent, "_locked_hp_thresholds", None)
+                    if locks is None:
+                        locks = {}
+                        setattr(ent, "_locked_hp_thresholds", locks)
+                    locks[lock_key] = max(1.0, float(thresh))
+            return
+
+        if t == "RPG.GameCore.UnlockTargetHP":
+            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            lock_key = str(task.get("LockKey") or "default")
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is not None:
+                    locks = getattr(ent, "_locked_hp_thresholds", None)
+                    if isinstance(locks, dict):
+                        locks.pop(lock_key, None)
+            return
+
+        if t == "FBCGHKLKHJN":
+            if str(task.get("MEPFOEEGBEA", "")) == "Disable":
+                targets = self._resolve_targets(task.get("HILNFHCPEAD"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+                for tid in targets:
+                    ent = sim.get_entity(tid)
+                    if ent is not None:
+                        locks = getattr(ent, "_locked_hp_thresholds", None)
+                        if isinstance(locks, dict):
+                            locks.clear()
+            return
+
+        if t == "IJJGPIPMNAE":
+            # 官方贪饕参数读取: 优先从 StageMonsterInvasionParam[InvasionID].ParamList[idx] 读取，回退至 MazeBuff ParamList
+            key_str = str(task.get("FHLJGDGMMHK") or "")
+            idx = int(round(self._eval_num(task.get("DKJFDABPLCO"), ctx, 0.0)))
+            val = 0.0
+            inv_params = None
+            director = getattr(sim, "_stage_director", None)
+            if director is not None:
+                inv_info = getattr(director, "_stage_invasion_info", None)
+                if isinstance(inv_info, Mapping):
+                    inv_params = inv_info.get("monster_params")
+            if inv_params and 0 <= idx < len(inv_params):
+                val = float(inv_params[idx])
+            else:
+                maze_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
+                if 0 <= idx < len(maze_hashes) and ctx.modifier_instance is not None:
+                    val = float(ctx.modifier_instance.dynamic_values.get(maze_hashes[idx], 0.0))
+            if key_str:
+                h_key = dotnet_hash(key_str)
+                if ctx.modifier_instance is not None:
+                    ctx.modifier_instance.dynamic_values[h_key] = val
+                targets = self._resolve_targets(task.get("OLPAJJAEEHH"), ctx)
+                for tid in targets:
+                    rt.set_dynamic_value(tid, h_key, val)
+            return
+
+        if t == "RPG.GameCore.ReinitProperty":
+            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            prop = str(task.get("Property") or "")
+            val = self._eval_num(task.get("InitValue"), ctx, 0.0)
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is not None and prop == "BaseHP" and val > 0.0:
+                    ent.base_max_hp = val
+                    ent.max_hp = val
+                    if ent.current_hp > ent.max_hp:
+                        ent.current_hp = ent.max_hp
+            return
+
+        if t in ("FBCGHKLKHJN", "LMKKFPJBAFD", "BIEFKHPDHPI"):
+            return
+
         if t == "RPG.GameCore.AttachAvatarChange":
             self._execute_attach_avatar_change(task, ctx)
             return
@@ -1119,8 +1325,19 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             self._execute_detach_avatar_change(task, ctx)
             return
 
+        if t == "RPG.GameCore.SetDieImmediately":
+            targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is not None and getattr(ent, "_in_deathrattle_limbo", False):
+                    setattr(ent, "_in_deathrattle_limbo", False)
+                    ent.current_hp = 0.0
+                    me.destroy_all_for_entity(tid)
+            return
+
         if t in (
             "RPG.GameCore.AttachEntityUnselectable",
+            "RPG.GameCore.SetLocalOffsetAsMoveTarget",
             "RPG.GameCore.SetMonsterEnergyBarState",
             "RPG.GameCore.TriggerCustomString",
             "RPG.GameCore.AttachEntityDeparted",
@@ -1129,8 +1346,8 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             "RPG.GameCore.SetTeamFormation",
             "RPG.GameCore.SetEntityForbidCameraDither",
             "RPG.GameCore.SetEntityVisible",
-            "RPG.GameCore.SetDieImmediately",
             "RPG.GameCore.OwnerEntityAddAbility",
+            "RPG.GameCore.TutorialTaskUnlock",
             "OOCOGGMJLBN",
             "RPG.GameCore.StackStatusResistance",
             "RPG.GameCore.SetResilience",

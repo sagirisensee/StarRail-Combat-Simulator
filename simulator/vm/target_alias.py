@@ -84,7 +84,11 @@ def _dedup_preserve(items: Sequence[str]) -> List[str]:
 def _is_alive_entity(sim: Any, ent: Any) -> bool:
     if ent is None or getattr(ent, "_vm_limbo_pending", False):
         return False
-    return bool(getattr(ent, "current_hp", 0.0) > 0 or getattr(ent, "is_infinite_hp", False))
+    return bool(
+        getattr(ent, "current_hp", 0.0) > 0
+        or getattr(ent, "is_infinite_hp", False)
+        or getattr(ent, "_in_deathrattle_limbo", False)
+    )
 
 
 def _is_battle_event(ent: Any) -> bool:
@@ -170,10 +174,12 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
 
     def _summoner_of(eid: str) -> List[str]:
         ent = sim.get_entity(eid)
-        if ent is not None and getattr(ent, "master_name", None):
-            m = sim.get_entity(ent.master_name)
-            if m is not None:
-                return [m.name]
+        if ent is not None:
+            owner_name = getattr(ent, "master_name", None) or getattr(ent, "summoner_name", None)
+            if owner_name:
+                m = sim.get_entity(owner_name)
+                if m is not None:
+                    return [m.name]
         return []
 
     # 1. 基础锚点求值
@@ -190,22 +196,32 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
     elif base == "CasterServant":
         cur = _servants_of(ctx.caster_id) if ctx.caster_id else []
     elif base in ("CasterSummonedMinions", "CasterSummonMonster"):
+        include_limbo = bool(getattr(rt, "_include_limbo", False))
         cur = [
             e.name
             for e in sim.entities
             if getattr(e, "is_enemy", False)
             and getattr(e, "summoner_name", None) == ctx.caster_id
-            and _is_alive_entity(sim, e)
+            and (
+                _is_alive_entity(sim, e)
+                or (include_limbo and any(m.owner_id == e.name for m in rt.modifier_engine.all_modifiers()))
+            )
         ]
     elif base == "ParamEntity":
         cur = [ctx.param_entity_id] if ctx.param_entity_id else []
+    elif base == "ProjectileHitEntity":
+        cur = [ctx.param_entity_id] if ctx.param_entity_id else list(ctx.ability_target_ids)
     elif base == "ParamEntity2":
         cur = [ctx.param_entity2_id] if ctx.param_entity2_id else []
     elif base == "AbilityTargetEntity":
         cur = list(ctx.ability_target_ids) if ctx.ability_target_ids else ([ctx.caster_id] if ctx.caster_id else [])
     elif base == "AbilityTargetGroup":
         cur = list(ctx.ability_target_ids)
-    elif base == "AbilityTargetAdjoinEntity":
+    elif base == "AbilityTargetAndAdjoinEntity":
+        prim_list = _resolve_single_token("AbilityTargetEntity", ctx)
+        adj_list = _resolve_single_token("AbilityTargetAdjoinEntity", ctx)
+        cur = _dedup_preserve(prim_list + adj_list)
+    elif base in ("AbilityTargetAdjoinEntity", "AbilityTargetLeftEntity", "AbilityTargetRightEntity"):
         # 相邻目标（在敌/友阵营列表里取主目标左右相邻存活单位）
         if not ctx.ability_target_ids:
             cur = []
@@ -216,6 +232,8 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             else:
                 blast_fn = getattr(sim, "blast_target_provider", None)
                 caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
+                pool = _alive_enemies(spatial_order=True) if primary.is_enemy else _alive_allies(include_countdown=False)
+                p_idx = pool.index(primary.name) if primary.name in pool else -1
                 if (
                     not primary.is_enemy
                     and caster_ent is not None
@@ -228,36 +246,32 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                     ]
                     provided = blast_fn(caster_ent, primary, living_allies)
                     if provided is not None:
-                        cur = [e.name for e in provided if e is not None and getattr(e, "current_hp", 0.0) > 0.0]
+                        adjoin = [e.name for e in provided if e is not None and getattr(e, "current_hp", 0.0) > 0.0]
                     else:
-                        pool = _alive_allies(include_countdown=False)
-                        if primary.name in pool:
-                            idx = pool.index(primary.name)
-                            adj = []
-                            if idx - 1 >= 0:
-                                adj.append(pool[idx - 1])
-                            if idx + 1 < len(pool):
-                                adj.append(pool[idx + 1])
-                            cur = adj
-                        else:
-                            cur = []
+                        adjoin = []
+                        if p_idx >= 0:
+                            if p_idx - 1 >= 0:
+                                adjoin.append(pool[p_idx - 1])
+                            if p_idx + 1 < len(pool):
+                                adjoin.append(pool[p_idx + 1])
                 else:
-                    pool = _alive_enemies(spatial_order=True) if primary.is_enemy else _alive_allies(include_countdown=False)
-                    if primary.name in pool:
-                        idx = pool.index(primary.name)
-                        adj = []
-                        if idx - 1 >= 0:
-                            adj.append(pool[idx - 1])
-                        if idx + 1 < len(pool):
-                            adj.append(pool[idx + 1])
-                        cur = adj
-                    else:
-                        cur = []
+                    adjoin = []
+                    if p_idx >= 0:
+                        if p_idx - 1 >= 0:
+                            adjoin.append(pool[p_idx - 1])
+                        if p_idx + 1 < len(pool):
+                            adjoin.append(pool[p_idx + 1])
+                if base == "AbilityTargetAdjoinEntity" or p_idx < 0:
+                    cur = adjoin
+                elif base == "AbilityTargetLeftEntity":
+                    cur = [n for n in adjoin if n in pool and pool.index(n) < p_idx]
+                else:
+                    cur = [n for n in adjoin if n in pool and pool.index(n) > p_idx]
     elif base in ("SkillTargetEntityList",):
         cur = list(ctx.skill_target_ids or ctx.ability_target_ids)
     elif base == "ParamEntitySkillTargetEntityList":
         cur = list(ctx.param_skill_targets or ctx.skill_target_ids)
-    elif base == "TemplateParamEntityList":
+    elif base in ("TemplateParamEntityList", "ParamEntityList"):
         if ctx.template_param_targets:
             cur = list(ctx.template_param_targets)
         else:
@@ -284,29 +298,14 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         else:
             team_list = _alive_allies(include_unselectable=False, include_countdown=False)
         cur = [eid for eid in team_list if eid != ctx.caster_id]
-    elif base == "LeftToRightLightTeamTarget":
+    elif base in ("LeftToRightLightTeamTarget", "RightToLeftLightTeamTarget"):
         allies = _alive_allies(include_unselectable=False, include_countdown=False)
         avatars = [n for n in allies if not getattr(sim.get_entity(n), "is_memosprite", False)]
+        avatar_rank = {n: idx for idx, n in enumerate(avatars)}
         memos = [n for n in allies if getattr(sim.get_entity(n), "is_memosprite", False)]
-        # 崩铁阵型：第1个忆灵站最右，第2个忆灵站最左（后续交替左右）
-        ordered = list(avatars)
-        for idx, m in enumerate(memos):
-            if idx % 2 == 0:
-                ordered.append(m)
-            else:
-                ordered.insert(0, m)
-        cur = ordered
-    elif base == "RightToLeftLightTeamTarget":
-        allies = _alive_allies(include_unselectable=False, include_countdown=False)
-        avatars = [n for n in allies if not getattr(sim.get_entity(n), "is_memosprite", False)]
-        memos = [n for n in allies if getattr(sim.get_entity(n), "is_memosprite", False)]
-        ordered = list(avatars)
-        for idx, m in enumerate(memos):
-            if idx % 2 == 0:
-                ordered.append(m)
-            else:
-                ordered.insert(0, m)
-        cur = list(reversed(ordered))
+        memos.sort(key=lambda m: avatar_rank.get(getattr(sim.get_entity(m), "master_name", "") or "", 99))
+        ordered = avatars + memos
+        cur = list(reversed(ordered)) if base == "LeftToRightLightTeamTarget" else ordered
     elif base == "LeftToRightDarkTeamTarget":
         cur = _alive_enemies(include_unselectable=False, include_countdown=False, spatial_order=True)
     elif base == "RightToLeftDarkTeamTarget":
@@ -369,8 +368,12 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         if named:
             cur = [n for n in named if sim.get_entity(n) is not None]
         else:
-            ent = sim.get_entity(base)
-            cur = [ent.name] if ent is not None else []
+            global_alias = rt.loader.get_global_target_alias(base) if hasattr(rt, "loader") else None
+            if global_alias is not None:
+                cur = rt.executor._resolve_targets(global_alias, ctx)
+            else:
+                ent = sim.get_entity(base)
+                cur = [ent.name] if ent is not None else []
 
     # 2. 链式后缀变换
     for mod in parts[1:]:
@@ -434,6 +437,15 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         elif mod == "GetDummyCharacter":
             # 若存在配套 dummy/partner 实体则补充，否则空集
             cur = [eid for eid in cur if getattr(sim.get_entity(eid), "is_dummy", False)]
+        elif mod == "WithSummoner":
+            nxt = list(cur)
+            for eid in cur:
+                ent = sim.get_entity(eid)
+                if ent is not None:
+                    summoner = getattr(ent, "master_name", None) or getattr(ent, "summoner_name", None)
+                    if summoner and sim.get_entity(summoner) is not None:
+                        nxt.append(summoner)
+            cur = _dedup_preserve(nxt)
         else:
             raise ValueError(f"未支持的 TargetAlias 后缀修饰符: .{mod} (完整表达式: {token})")
 
@@ -493,6 +505,8 @@ def resolve_target_type(target_spec: Any, ctx: ExecutionContext) -> List[str]:
                         out.append(e.name)
         return _dedup_preserve(out)
     if t == "RPG.GameCore.TargetSequence":
+        if "Sequence" in target_spec and hasattr(ctx.runtime, "executor"):
+            return ctx.runtime.executor._resolve_targets(target_spec, ctx)
         for sub in target_spec.get("Targets", []):
             r = resolve_target_type(sub, ctx)
             if r:

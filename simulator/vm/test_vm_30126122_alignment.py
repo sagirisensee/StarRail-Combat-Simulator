@@ -33,8 +33,7 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         *,
         av_budget: Optional[float] = None,
         max_tl_av: Optional[float] = None,
-        total_limit: float = 0.0001,
-        turn_limit: float = 0.0001,
+        turn_limit: float = 1e-6,
     ) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", filename)
         rep = reconcile_log(
@@ -55,18 +54,18 @@ class TestVMStage30126122Alignment(unittest.TestCase):
         self.assertEqual(rep.memoria_granted, 0.0)
         self.assertEqual(rep.presence_grants, 0)
         self.assertEqual(rep.forced_or_failed, 0)
-
-        self.assertLess(
-            rep.total_err,
-            total_limit,
-            f"{tag} VM 总伤偏差过大: {rep.total_err:.4%} (limit={total_limit:.2%})",
+        self.assertEqual(
+            rep.enemy_hit_mismatches,
+            [],
+            f"{tag} 存在敌方三方命中审计错配: {rep.enemy_hit_mismatches}",
         )
+
         for td in rep.turn_diffs:
             self.assertLess(
                 td.err,
                 turn_limit,
-                f"{tag} VM AV={td.av:.2f} 单动伤害偏差过大: {td.err:.4%} "
-                f"(limit={turn_limit:.2%}, GT={td.gt_total:.2f}, SIM={td.sim_total:.2f})",
+                f"{tag} VM AV={td.av:.2f} 单动伤害偏差过大: {td.err:.6%} "
+                f"(limit={turn_limit:.4%}, GT={td.gt_total:.2f}, SIM={td.sim_total:.2f})",
             )
 
     @pytest.mark.slow

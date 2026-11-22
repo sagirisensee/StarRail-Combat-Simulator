@@ -230,6 +230,7 @@ class EffectResolver:
                 weaknesses = getattr(target, "weaknesses", [])
                 if effect.ignore_weakness or (effect.element in weaknesses):
                     cut = min(target.current_toughness, effect.amount)
+                    overflow = max(0.0, float(effect.amount) - float(cut))
                     target.current_toughness -= cut
                     bus.publish(ToughnessReduceEvent(
                         av=round(av, 2),
@@ -241,14 +242,21 @@ class EffectResolver:
                         max_toughness=target.max_toughness
                     ))
 
-                    # 检查是否触发弱点击破 (Weakness Break)
+                    # 检查是否触发弱点击破 (Weakness Break) 或多层韧性扣减 (StanceCountDown)
                     if target.current_toughness <= 0.0:
-                        target.is_broken = True
-                        self.enqueue(DelayActionEffect(
-                            source_name="弱点击破",
-                            target=target,
-                            percent=0.25
-                        ))
+                        cur_sc = int(getattr(target, "current_stance_count", 1) or 1)
+                        is_sub_stance = cur_sc > 1
+                        if is_sub_stance:
+                            target.current_stance_count = cur_sc - 1
+                            target.current_toughness = max(0.0, float(target.max_toughness) - overflow)
+                        else:
+                            target.current_stance_count = 0
+                            target.is_broken = True
+                            self.enqueue(DelayActionEffect(
+                                source_name="弱点击破",
+                                target=target,
+                                percent=0.25
+                            ))
 
                         base_break = 3767.5533
                         elem_mult = 1.0  # 雷/冰为 1.0, 物理/火为 2.0
@@ -296,9 +304,13 @@ class EffectResolver:
 
                         break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr) * vm_base_multi
                         if hasattr(target, "current_hp"):
-                            target.current_hp = max(0.0, target.current_hp - break_dmg)
+                            actual_break_loss = break_dmg
+                            kit = getattr(target, "kit", None)
+                            if kit is not None and hasattr(kit, "intercept_incoming_damage"):
+                                actual_break_loss = kit.intercept_incoming_damage(target.name, break_dmg)
+                            target.current_hp = max(0.0, target.current_hp - actual_break_loss)
 
-                        if effect.element == "Quantum":
+                        if not is_sub_stance and effect.element == "Quantum":
                             self.enqueue(DelayActionEffect(
                                 source_name="量子纠缠推条",
                                 target=target,
@@ -311,7 +323,7 @@ class EffectResolver:
                             target_name=target.name,
                             element=effect.element,
                             break_damage=break_dmg,
-                            action_delay_pct=0.25
+                            action_delay_pct=0.0 if is_sub_stance else 0.25
                         ))
                         scheduler = getattr(self.simulator, "scheduler", None)
                         if scheduler is not None:
@@ -361,7 +373,8 @@ class EffectResolver:
                 target.shield -= absorbed
                 raw_dmg -= absorbed
 
-            was_alive = getattr(target, "current_hp", 0.0) > 0
+            was_alive = getattr(target, "current_hp", 0.0) > 0 or getattr(target, "_in_deathrattle_limbo", False)
+            was_strictly_alive = getattr(target, "current_hp", 0.0) > 0
             notify_vm_being_hit = bool(
                 vm_rt is not None
                 and getattr(req_attacker, "is_enemy", False)
@@ -397,7 +410,7 @@ class EffectResolver:
                 )
 
             target_killed = bool(
-                was_alive
+                was_strictly_alive
                 and hp_left == 0.0
                 and not getattr(target, "is_infinite_hp", False)
             )

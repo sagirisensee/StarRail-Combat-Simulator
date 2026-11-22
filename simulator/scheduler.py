@@ -343,7 +343,11 @@ class ActionScheduler:
         ent = self.sim.get_entity(actor_id)
         if ent is None:
             return True
-        return getattr(ent, "current_hp", 1.0) > 0 or getattr(ent, "is_infinite_hp", False)
+        return (
+            getattr(ent, "current_hp", 1.0) > 0
+            or getattr(ent, "is_infinite_hp", False)
+            or getattr(ent, "_in_deathrattle_limbo", False)
+        )
 
     def _discard_dead_heads(self) -> None:
         """清理各队列队首已阵亡实体的失效动作意图，防止阵亡角色造成死锁阻塞。"""
