@@ -13,22 +13,25 @@
 """
 from __future__ import annotations
 
-import glob
+import hashlib
 import json
 import os
+import pickle
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .expr import dotnet_hash
 
-_REPO_TBGD_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "data", "TurnBasedGameData")
-)
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_REPO_TBGD_ROOT = os.path.join(_REPO_ROOT, "data", "TurnBasedGameData")
 DEFAULT_TBGD_ROOT = (
     _REPO_TBGD_ROOT
     if os.path.isdir(os.path.join(_REPO_TBGD_ROOT, "ExcelOutput"))
     else "/tmp/tbgd"
 )
+
+_ABILITY_INDEX_CACHE_VERSION = 1
+_ABILITY_INDEX_MEM_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
 # 经实证确认的纯表现/客户端无逻辑副作用节点，加载期裁剪以压缩 AST 体积
 PRUNABLE_PRESENTATION_TYPES: Set[str] = {
@@ -336,6 +339,8 @@ class GameDataLoader:
         self._global_mod_by_name: Dict[str, Dict[str, Any]] = {}
         self._global_target_alias_by_name: Dict[str, Dict[str, Any]] = {}
         self._global_tpl_by_name: Dict[str, List[Dict[str, Any]]] = {}
+        self._symbol_sources: Dict[str, str] = {}
+        self._ability_mod_index: Dict[str, Tuple[str, str]] = {}
         self._file_cache: Dict[str, Dict[str, Any]] = {}
 
         # Excel 索引（按需惰性构建）
@@ -442,45 +447,159 @@ class GameDataLoader:
         data = self._read_json(path)
         if not isinstance(data, dict):
             return
+        rel_path = os.path.relpath(path, self.data_root).replace("\\", "/")
         for ab in data.get("AbilityList", []):
             name = ab.get("Name")
             if name and name not in self._ability_by_name:
-                self._ability_by_name[name] = prune_ability(ab)
+                pruned_ab = prune_ability(ab)
+                self._ability_by_name[name] = pruned_ab
+                self._symbol_sources.setdefault(name, rel_path)
+                mods = pruned_ab.get("Modifiers")
+                if isinstance(mods, dict):
+                    for inner_mname in mods.keys():
+                        if inner_mname and inner_mname not in self._ability_mod_index:
+                            self._ability_mod_index[inner_mname] = (name, rel_path)
         for mname, mval in data.get("GlobalModifiers", {}).items():
             if mname and mname not in self._global_mod_by_name and isinstance(mval, dict):
                 self._global_mod_by_name[mname] = prune_modifier_dict(mval)
+                self._symbol_sources.setdefault(mname, rel_path)
         for aname, aval in data.get("GlobalTargetAlias", {}).items():
             if aname and aname not in self._global_target_alias_by_name and isinstance(aval, dict):
                 self._global_target_alias_by_name[aname] = aval
+                self._symbol_sources.setdefault(aname, rel_path)
         for tpl in data.get("GlobalTemplates", []):
             tname = tpl.get("Name")
             if tname and tname not in self._global_tpl_by_name:
                 self._global_tpl_by_name[tname] = prune_task_list(tpl.get("TaskList", []))
+                self._symbol_sources.setdefault(tname, rel_path)
         # ConfigGlobalTaskListTemplate 独立文件（单条或 TaskListTemplate 列表）
         if "TaskList" in data and "Name" in data:
             tname = data["Name"]
             if tname not in self._global_tpl_by_name:
                 self._global_tpl_by_name[tname] = prune_task_list(data["TaskList"])
+                self._symbol_sources.setdefault(tname, rel_path)
         for tpl in data.get("TaskListTemplate", []):
             if isinstance(tpl, dict) and tpl.get("Name"):
                 tname = tpl["Name"]
                 if tname not in self._global_tpl_by_name:
                     self._global_tpl_by_name[tname] = prune_task_list(tpl.get("TaskList", []))
+                    self._symbol_sources.setdefault(tname, rel_path)
         # ConfigGlobalModifier 独立文件
         if "ModifierMap" in data and isinstance(data["ModifierMap"], dict):
             for mname, mval in data["ModifierMap"].items():
                 if mname and mname not in self._global_mod_by_name and isinstance(mval, dict):
                     self._global_mod_by_name[mname] = prune_modifier_dict(mval)
+                    self._symbol_sources.setdefault(mname, rel_path)
+
+    def _ability_cache_path(self) -> str:
+        abs_root = os.path.abspath(self.data_root)
+        cache_dir = os.path.join(_REPO_ROOT, ".cache")
+        if abs_root == os.path.abspath(_REPO_TBGD_ROOT):
+            fname = "vm_ability_index_v1.pkl"
+        else:
+            digest = hashlib.sha1(abs_root.encode("utf-8")).hexdigest()[:10]
+            fname = f"vm_ability_index_v1_{digest}.pkl"
+        return os.path.join(cache_dir, fname)
+
+    def _scan_ability_files(self) -> Tuple[List[str], int, int]:
+        """扫描 ConfigAbility / ConfigGlobalModifier / ConfigGlobalTaskListTemplate 下 JSON 文件及 mtime 指纹。"""
+        paths: List[str] = []
+        max_mtime_ns = 0
+        stack = [
+            os.path.join(self.data_root, "Config", sub)
+            for sub in ("ConfigAbility", "ConfigGlobalModifier", "ConfigGlobalTaskListTemplate")
+        ]
+        while stack:
+            cur = stack.pop()
+            try:
+                with os.scandir(cur) as it:
+                    for entry in it:
+                        try:
+                            if entry.is_dir(follow_symlinks=True):
+                                stack.append(entry.path)
+                            elif entry.is_file(follow_symlinks=True):
+                                name = entry.name
+                                if name.endswith(".json") and not name.endswith(".layout.json"):
+                                    st = entry.stat()
+                                    if st.st_mtime_ns > max_mtime_ns:
+                                        max_mtime_ns = st.st_mtime_ns
+                                    paths.append(entry.path)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        paths.sort()
+        return paths, len(paths), max_mtime_ns
+
+    def _ability_index_fingerprint(self, file_count: int, max_mtime_ns: int) -> Tuple[Any, ...]:
+        try:
+            lst = os.stat(__file__)
+            loader_sig = (int(lst.st_mtime_ns), int(lst.st_size))
+        except OSError:
+            loader_sig = (0, 0)
+        return (
+            _ABILITY_INDEX_CACHE_VERSION,
+            os.path.abspath(self.data_root),
+            loader_sig[0],
+            loader_sig[1],
+            int(file_count),
+            int(max_mtime_ns),
+        )
+
+    def _apply_ability_payload(self, payload: Mapping[str, Any]) -> None:
+        self._ability_by_name = dict(payload.get("abilities") or {})
+        self._global_mod_by_name = dict(payload.get("global_mods") or {})
+        self._global_target_alias_by_name = dict(payload.get("global_target_aliases") or {})
+        self._global_tpl_by_name = dict(payload.get("global_tpls") or {})
+        self._symbol_sources = dict(payload.get("symbol_sources") or {})
+        self._ability_mod_index = dict(payload.get("ability_mod_index") or {})
 
     def ensure_ability_index(self) -> None:
         if self._ability_index_built:
             return
-        for sub in ("ConfigAbility", "ConfigGlobalModifier", "ConfigGlobalTaskListTemplate"):
-            pattern = os.path.join(self.data_root, "Config", sub, "**", "*.json")
-            for p in glob.glob(pattern, recursive=True):
-                if p.endswith(".layout.json"):
-                    continue
-                self._ingest_ability_file(p)
+        paths, file_count, max_mtime_ns = self._scan_ability_files()
+        fingerprint = self._ability_index_fingerprint(file_count, max_mtime_ns)
+
+        mem_hit = _ABILITY_INDEX_MEM_CACHE.get(fingerprint)
+        if mem_hit is not None:
+            self._apply_ability_payload(mem_hit)
+            self._ability_index_built = True
+            return
+
+        cache_path = self._ability_cache_path()
+        if os.path.isfile(cache_path):
+            try:
+                with open(cache_path, "rb") as f:
+                    disk_payload = pickle.load(f)
+                if isinstance(disk_payload, dict) and disk_payload.get("fingerprint") == fingerprint:
+                    _ABILITY_INDEX_MEM_CACHE[fingerprint] = disk_payload
+                    self._apply_ability_payload(disk_payload)
+                    self._ability_index_built = True
+                    return
+            except (OSError, pickle.UnpicklingError, EOFError, ValueError, AttributeError):
+                pass
+
+        for p in paths:
+            self._ingest_ability_file(p)
+
+        payload = {
+            "fingerprint": fingerprint,
+            "abilities": dict(self._ability_by_name),
+            "global_mods": dict(self._global_mod_by_name),
+            "global_target_aliases": dict(self._global_target_alias_by_name),
+            "global_tpls": dict(self._global_tpl_by_name),
+            "symbol_sources": dict(self._symbol_sources),
+            "ability_mod_index": dict(self._ability_mod_index),
+        }
+        _ABILITY_INDEX_MEM_CACHE[fingerprint] = payload
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            tmp_path = f"{cache_path}.tmp.{os.getpid()}"
+            with open(tmp_path, "wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp_path, cache_path)
+        except OSError:
+            pass
         self._ability_index_built = True
 
     def get_ability(self, name: str) -> Optional[Dict[str, Any]]:
@@ -502,6 +621,25 @@ class GameDataLoader:
         if name not in self._global_target_alias_by_name:
             self.ensure_ability_index()
         return self._global_target_alias_by_name.get(name)
+
+    def get_inner_modifier(self, mod_name: str) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+        """按内嵌 Modifier 名称返回 (ability_name, rel_path, modifier_dict)。"""
+        if mod_name not in self._ability_mod_index:
+            self.ensure_ability_index()
+        entry = self._ability_mod_index.get(mod_name)
+        if not entry:
+            return None
+        ability_name, rel_path = entry
+        ab = self._ability_by_name.get(ability_name)
+        if not isinstance(ab, Mapping):
+            return None
+        mods = ab.get("Modifiers")
+        if not isinstance(mods, Mapping):
+            return None
+        mdef = mods.get(mod_name)
+        if not isinstance(mdef, dict):
+            return None
+        return ability_name, rel_path, mdef
 
     def get_modifier_status_type(self, mod_name: str) -> str:
         """从官方 StatusConfig 系列表按 ModifierName 解析官方 StatusType（Buff/Debuff/Other）。"""

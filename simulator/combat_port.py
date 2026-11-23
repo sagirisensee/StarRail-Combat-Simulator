@@ -152,6 +152,7 @@ class CombatPort(Protocol):
         extra_vuln: float = 0.0,
         extra_crit_dmg: float = 0.0,
         vm_hit_hooks_applied: bool = False,
+        source_entity: Optional[Any] = None,
     ) -> None: ...
     def schedule_follow_up(
         self,
@@ -899,10 +900,11 @@ class SimulatorCombatPort:
         extra_vuln: float = 0.0,
         extra_crit_dmg: float = 0.0,
         vm_hit_hooks_applied: bool = False,
+        source_entity: Optional[Any] = None,
     ) -> None:
         resolved_damage_type = damage_type or DamageType.from_tag(damage_tag)
         tgt = self._get_entity(target_id)
-        src = self._get_entity(source_id)
+        src = self._get_entity(source_id) or source_entity
         if not tgt or not src:
             return
         eff_multiplier = atk_multiplier

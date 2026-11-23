@@ -95,6 +95,7 @@ class VMRuntime:
         return False
 
     def flush_pending_after_attack(self) -> None:
+        after_end_payload: Optional[Tuple[Tuple[str, ...], str, Dict[str, Any], str]] = None
         if self._pending_after_attack is not None:
             pending = self._pending_after_attack
             atk_seq, caster_id, dmg_data, atk_type = pending[:4]
@@ -108,6 +109,7 @@ class VMRuntime:
             after_key = (atk_seq, caster_id)
             if after_key not in after_set:
                 after_set.add(after_key)
+                after_end_payload = (all_targets, caster_id, dmg_data, atk_type)
                 self._in_after_attack = True
                 try:
                     self.modifier_engine.dispatch_event(
@@ -134,13 +136,6 @@ class VMRuntime:
                             damage_data=dmg_data,
                             current_attack_type=atk_type,
                         )
-                        self.modifier_engine.dispatch_event(
-                            "OnAfterBeingAttackedEnd",
-                            owner_id=tid,
-                            param_entity_id=caster_id,
-                            damage_data=dmg_data,
-                            current_attack_type=atk_type,
-                        )
                 finally:
                     self._in_after_attack = False
         pending_dying = getattr(self, "_pending_dying_enemies", None)
@@ -158,6 +153,17 @@ class VMRuntime:
                     self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
             finally:
                 self._in_dying_batch = prev_in_dying
+        pending_listen = getattr(self, "_pending_listen_die", None)
+        if pending_listen:
+            self._flushing_listen_die = True
+            try:
+                while pending_listen:
+                    listen_batch = list(pending_listen)
+                    pending_listen.clear()
+                    for dead_id in listen_batch:
+                        self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+            finally:
+                self._flushing_listen_die = False
         if not getattr(self, "_in_dying_batch", False):
             pending_limbo = getattr(self, "_pending_limbo_after_dying", None)
             if pending_limbo:
@@ -197,6 +203,20 @@ class VMRuntime:
                 )
                 self.modifier_engine.destroy_all_for_entity(dead_tid)
                 self.sim.entities[:] = [e for e in self.sim.entities if e.name != dead_tid]
+        if after_end_payload is not None:
+            end_targets, end_caster, end_dmg_data, end_atk_type = after_end_payload
+            self._in_after_attack = True
+            try:
+                for tid in end_targets:
+                    self.modifier_engine.dispatch_event(
+                        "OnAfterBeingAttackedEnd",
+                        owner_id=tid,
+                        param_entity_id=end_caster,
+                        damage_data=end_dmg_data,
+                        current_attack_type=end_atk_type,
+                    )
+            finally:
+                self._in_after_attack = False
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
             remaining_dead = []
@@ -683,7 +703,19 @@ class VMRuntime:
                         if self.modifier_engine.has_modifier(e.name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
                             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=e.name, param_entity_id=dead_id)
                             break
-        self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+        if (
+            getattr(self, "_attack_scope_depth", 0) > 0
+            and not getattr(self, "_in_after_attack", False)
+            and not getattr(self, "_flushing_listen_die", False)
+        ):
+            q = getattr(self, "_pending_listen_die", None)
+            if q is None:
+                q = []
+                self._pending_listen_die = q
+            if dead_id and dead_id not in q:
+                q.append(dead_id)
+        else:
+            self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
 
 
 def ensure_vm_runtime(sim: Any, *, loader: Optional[GameDataLoader] = None, strict: bool = True) -> VMRuntime:

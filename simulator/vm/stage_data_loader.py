@@ -25,8 +25,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fractions import Fraction
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Optional
+
+_SHARED_EXCEL_CACHE: dict[tuple[str, str], tuple[tuple[int, int], Any]] = {}
+_SHARED_TEXTMAP_CACHE: dict[str, tuple[tuple[int, int], dict[str, str]]] = {}
 
 
 DEFAULT_TBGD_ROOT = (
@@ -342,11 +346,34 @@ class StageDataLoader:
         self._infinite_monster_group_by_id: Optional[dict[int, dict[str, Any]]] = None
         self._textmap: Optional[dict[str, str]] = None
         self._char_config_cache: dict[str, dict[str, Any]] = {}
+        self._compiled_monster_cache: dict[tuple[Any, ...], CompiledMonsterSpec] = {}
 
     def _read_excel_json(self, filename: str) -> list[dict[str, Any]]:
         path = self.excel_root / filename
+        key = (os.path.abspath(str(self.tbgd_root)), filename)
+        try:
+            st = path.stat()
+            sig = (int(st.st_mtime_ns), int(st.st_size))
+        except OSError:
+            sig = None
+        if sig is not None:
+            cached = _SHARED_EXCEL_CACHE.get(key)
+            if cached is not None and cached[0] == sig:
+                return cached[1]
         with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        if sig is not None:
+            _SHARED_EXCEL_CACHE[key] = (sig, data)
+        return data
+
+    def _try_read_excel_json(self, filename: str) -> list[dict[str, Any]]:
+        if not (self.excel_root / filename).exists():
+            return []
+        try:
+            rows = self._read_excel_json(filename)
+            return rows if isinstance(rows, list) else []
+        except Exception:
+            return []
 
     @property
     def stages(self) -> dict[int, dict[str, Any]]:
@@ -470,8 +497,21 @@ class StageDataLoader:
             else:
                 tm_path = self.tbgd_root / "TextMap" / "TextMapCHS.json"
                 if tm_path.exists():
+                    root_key = os.path.abspath(str(self.tbgd_root))
+                    try:
+                        st = tm_path.stat()
+                        sig = (int(st.st_mtime_ns), int(st.st_size))
+                    except OSError:
+                        sig = None
+                    if sig is not None:
+                        cached = _SHARED_TEXTMAP_CACHE.get(root_key)
+                        if cached is not None and cached[0] == sig:
+                            self._textmap = cached[1]
+                            return self._textmap
                     with tm_path.open("r", encoding="utf-8") as f:
                         self._textmap = json.load(f)
+                    if sig is not None and isinstance(self._textmap, dict):
+                        _SHARED_TEXTMAP_CACHE[root_key] = (sig, self._textmap)
                 else:
                     self._textmap = {}
         return self._textmap
@@ -754,6 +794,17 @@ class StageDataLoader:
         prefer_infinite_elite: bool = False,
     ) -> CompiledMonsterSpec:
         """Compile a ``MonsterConfig`` + ``MonsterTemplateConfig`` at a target stage level."""
+        cache_key = (
+            int(monster_id),
+            int(level),
+            int(stage_hard_level_group) if stage_hard_level_group is not None else None,
+            int(stage_elite_group) if stage_elite_group is not None else None,
+            bool(prefer_infinite_elite),
+        )
+        cached = self._compiled_monster_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         mrow = self.monsters.get(int(monster_id))
         if mrow is None:
             raise KeyError(f"MonsterID {monster_id} not found in MonsterConfig.json")
@@ -980,7 +1031,7 @@ class StageDataLoader:
             trow.get("MonsterName")
         )
 
-        return CompiledMonsterSpec(
+        spec = CompiledMonsterSpec(
             monster_id=int(monster_id),
             monster_template_id=template_id,
             name=name,
@@ -1027,6 +1078,8 @@ class StageDataLoader:
             ability_list=ability_list,
             battle_events=monster_bes,
         )
+        self._compiled_monster_cache[cache_key] = spec
+        return spec
 
     def load_stage(self, stage_id: int) -> CompiledStageSpec:
         """Load and compile a complete ``CompiledStageSpec`` by ``StageID``."""
@@ -1216,12 +1269,8 @@ class StageDataLoader:
             ("ChallengePeakBossConfig.json", ("EventIDList", "HardEventIDList"), "Peak"),
         )
         for fn, ev_keys, mode in table_specs:
-            fp = excel_dir / fn
-            if not fp.exists():
-                continue
-            try:
-                rows = json.loads(fp.read_text(encoding="utf-8"))
-            except Exception:
+            rows = self._try_read_excel_json(fn)
+            if not rows:
                 continue
             for row in rows:
                 for ek in ev_keys:
@@ -1268,45 +1317,26 @@ class StageDataLoader:
         self, stage_id: int
     ) -> tuple[tuple[str, tuple[float, ...]], ...]:
         """从官方 ChallengePeakConfig / ChallengePeakBossConfig / ChallengeStoryMazeConfig + MazeBuff.json 解析关卡环境词条。"""
-        excel_dir = self.tbgd_root / "ExcelOutput"
         tag_ids: list[int] = []
         for fn, ev_key, tag_key in (
             ("ChallengePeakConfig.json", "EventIDList", "TagList"),
             ("ChallengePeakBossConfig.json", "HardEventIDList", "HardTagList"),
         ):
-            fp = excel_dir / fn
-            if not fp.exists():
-                continue
-            try:
-                rows = json.loads(fp.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            for row in rows:
+            for row in self._try_read_excel_json(fn):
                 if stage_id in (row.get(ev_key) or ()):
                     for tid in row.get(tag_key) or ():
                         if int(tid) not in tag_ids:
                             tag_ids.append(int(tid))
 
-        csm_fp = excel_dir / "ChallengeStoryMazeConfig.json"
-        if csm_fp.exists():
-            try:
-                rows = json.loads(csm_fp.read_text(encoding="utf-8"))
-            except Exception:
-                rows = []
-            for row in rows:
-                if stage_id in (row.get("EventIDList1") or ()) or stage_id in (row.get("EventIDList2") or ()):
-                    mb_id = int(row.get("MazeBuffID") or 0)
-                    if mb_id > 0 and mb_id not in tag_ids:
-                        tag_ids.append(mb_id)
+        for row in self._try_read_excel_json("ChallengeStoryMazeConfig.json"):
+            if stage_id in (row.get("EventIDList1") or ()) or stage_id in (row.get("EventIDList2") or ()):
+                mb_id = int(row.get("MazeBuffID") or 0)
+                if mb_id > 0 and mb_id not in tag_ids:
+                    tag_ids.append(mb_id)
 
-        csmt_fp = excel_dir / "ChallengeStoryMazeTierce.json"
-        csg_fp = excel_dir / "ChallengeStoryGroupConfig.json"
-        if csmt_fp.exists() and csg_fp.exists():
-            try:
-                t_rows = json.loads(csmt_fp.read_text(encoding="utf-8"))
-                g_rows = json.loads(csg_fp.read_text(encoding="utf-8"))
-            except Exception:
-                t_rows, g_rows = [], []
+        t_rows = self._try_read_excel_json("ChallengeStoryMazeTierce.json")
+        g_rows = self._try_read_excel_json("ChallengeStoryGroupConfig.json") if t_rows else []
+        if t_rows and g_rows:
             for row in t_rows:
                 if stage_id in (row.get("HFIAAGAKFMD") or ()):
                     tierce_id = int(row.get("PHFMCACHFIJ") or 0)
@@ -1327,12 +1357,8 @@ class StageDataLoader:
         """将任意 MazeBuff ID 列表解析为 (InBattleBindingKey, ParamList) 列表。"""
         if not buff_ids:
             return ()
-        mb_path = self.tbgd_root / "ExcelOutput" / "MazeBuff.json"
-        if not mb_path.exists():
-            return ()
-        try:
-            mb_rows = json.loads(mb_path.read_text(encoding="utf-8"))
-        except Exception:
+        mb_rows = self._try_read_excel_json("MazeBuff.json")
+        if not mb_rows:
             return ()
         mb_by_id = {int(r.get("ID") or 0): r for r in mb_rows}
         out: list[tuple[str, tuple[float, ...]]] = []
@@ -1352,13 +1378,8 @@ class StageDataLoader:
 
     def resolve_stage_invasion(self, stage_id: int) -> dict[str, Any] | None:
         """从官方 StageInvasionConfig / StageInvasionBuff / StageMonsterInvasionParam 读取关卡贪饕侵蚀配置。"""
-        excel_dir = self.tbgd_root / "ExcelOutput"
-        cfg_path = excel_dir / "StageInvasionConfig.json"
-        if not cfg_path.exists():
-            return None
-        try:
-            cfg_rows = json.loads(cfg_path.read_text(encoding="utf-8"))
-        except Exception:
+        cfg_rows = self._try_read_excel_json("StageInvasionConfig.json")
+        if not cfg_rows:
             return None
         matched = None
         for row in cfg_rows:
@@ -1369,28 +1390,18 @@ class StageDataLoader:
             return None
         inv_id = int(matched.get("InvasionID") or 0)
         maze_buff_id = 0
-        buff_path = excel_dir / "StageInvasionBuff.json"
-        if buff_path.exists():
-            try:
-                for brow in json.loads(buff_path.read_text(encoding="utf-8")):
-                    if int(brow.get("InvasionID") or 0) == inv_id:
-                        maze_buff_id = int(brow.get("MazeBuffID") or 0)
-                        break
-            except Exception:
-                pass
+        for brow in self._try_read_excel_json("StageInvasionBuff.json"):
+            if int(brow.get("InvasionID") or 0) == inv_id:
+                maze_buff_id = int(brow.get("MazeBuffID") or 0)
+                break
         monster_params: tuple[float, ...] = ()
-        param_path = excel_dir / "StageMonsterInvasionParam.json"
-        if param_path.exists():
-            try:
-                for prow in json.loads(param_path.read_text(encoding="utf-8")):
-                    if int(prow.get("InvasionID") or 0) == inv_id:
-                        monster_params = tuple(
-                            float(p.get("Value", 0.0)) if isinstance(p, Mapping) else float(p)
-                            for p in (prow.get("ParamList") or ())
-                        )
-                        break
-            except Exception:
-                pass
+        for prow in self._try_read_excel_json("StageMonsterInvasionParam.json"):
+            if int(prow.get("InvasionID") or 0) == inv_id:
+                monster_params = tuple(
+                    float(p.get("Value", 0.0)) if isinstance(p, Mapping) else float(p)
+                    for p in (prow.get("ParamList") or ())
+                )
+                break
         monster_rules: dict[int, tuple[int, ...]] = {}
         for item in matched.get("MonsterInvasionList") or ():
             mid = int(item.get("DBLDCKODNEN") or 0)

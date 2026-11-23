@@ -107,6 +107,13 @@ class TurnOpsMixin:
                 ins_skill_id, ins_sp_base = (0, 0.0) if is_level_caster else self._resolve_insert_skill_meta(tid, ab_name)
                 preset_targets = tuple(self._resolve_targets(ability_tgt_spec, ctx)) if ability_tgt_spec is not None else ()
 
+                if prio == "MonsterDeathRattle" and ent is not None:
+                    setattr(
+                        ent,
+                        "_pending_deathrattle_actions",
+                        int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) + 1,
+                    )
+
                 def _run_insert(
                     a_id: str = tid,
                     ab: str = ab_name,
@@ -114,62 +121,83 @@ class TurnOpsMixin:
                     _tgts: Tuple[str, ...] = preset_targets,
                     _sp: float = ins_sp_base,
                     _is_en: bool = is_enemy_caster,
+                    _prio: str = prio,
                 ) -> None:
-                    sim._action_seq += 1
-                    sk_t = "Insert" if _c == ActionScheduleCategory.FOLLOW_UP else "Talent"
-                    me = rt.modifier_engine
-                    if _tgts:
-                        eff_tgts = _tgts
-                    elif _is_en:
-                        eff_tgts = tuple(
-                            e.name for e in sim.entities
-                            if not e.is_enemy and not getattr(e, "is_countdown", False) and e.current_hp > 0
-                        )
-                    else:
-                        eff_tgts = tuple(e.name for e in sim.entities if e.is_enemy and e.current_hp > 0)
-                    me.dispatch_event("OnListenInsertAbilityStart", param_entity_id=a_id)
-                    if sk_t == "Insert":
-                        me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, current_skill_type=sk_t)
-                        me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
-                    prev_sp_base = rt._active_skill_sp_base
-                    prev_sp_granted = rt._skill_sp_ratio_granted
-                    rt._active_skill_sp_base = _sp
-                    rt._skill_sp_ratio_granted = False
-                    rt.begin_attack_scope()
                     try:
-                        rt.trigger_ability(
-                            caster_id=a_id,
-                            ability_name=ab,
-                            target_ids=eff_tgts,
-                            skill_target_ids=eff_tgts,
-                            current_skill_type=sk_t,
-                            current_attack_type=sk_t,
+                        sim._action_seq += 1
+                        sk_t = "Insert" if _c == ActionScheduleCategory.FOLLOW_UP else "Talent"
+                        me = rt.modifier_engine
+                        if _tgts:
+                            eff_tgts = _tgts
+                        elif _is_en:
+                            eff_tgts = tuple(
+                                e.name for e in sim.entities
+                                if not e.is_enemy and not getattr(e, "is_countdown", False) and e.current_hp > 0
+                            )
+                        else:
+                            eff_tgts = tuple(
+                                e.name
+                                for e in sim.entities
+                                if e.is_enemy and (e.current_hp > 0 or getattr(e, "_in_deathrattle_limbo", False))
+                            )
+                        me.dispatch_event("OnListenInsertAbilityStart", param_entity_id=a_id)
+                        if sk_t == "Insert":
+                            me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, current_skill_type=sk_t)
+                            me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
+                        prev_sp_base = rt._active_skill_sp_base
+                        prev_sp_granted = rt._skill_sp_ratio_granted
+                        rt._active_skill_sp_base = _sp
+                        rt._skill_sp_ratio_granted = False
+                        rt.begin_attack_scope()
+                        try:
+                            rt.trigger_ability(
+                                caster_id=a_id,
+                                ability_name=ab,
+                                target_ids=eff_tgts,
+                                skill_target_ids=eff_tgts,
+                                current_skill_type=sk_t,
+                                current_attack_type=sk_t,
+                            )
+                        finally:
+                            rt.end_attack_scope()
+                            sp_granted = rt._skill_sp_ratio_granted
+                            rt._active_skill_sp_base = prev_sp_base
+                            rt._skill_sp_ratio_granted = prev_sp_granted
+                        if _sp > 0 and not sp_granted and sim.port and a_id != "__LEVEL__":
+                            ep_recipient = a_id
+                            a_ent = sim.get_entity(a_id)
+                            if a_ent is not None and getattr(a_ent, "is_memosprite", False) and getattr(a_ent, "master_name", None):
+                                ep_recipient = a_ent.master_name
+                            err = sim.port.stat(ep_recipient, StatType.ERR) or 1.0
+                            sim.port.gain_energy(ep_recipient, _sp * err, cause=f"追击回能 {ab}")
+                        me.dispatch_event("OnAfterSkillUse", owner_id=a_id, current_skill_type=sk_t)
+                        me.dispatch_event("OnActionEnd", owner_id=a_id)
+                        me.dispatch_event("OnListenAfterSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
+                        me.dispatch_event("OnListenActionEnd", param_entity_id=a_id)
+                        me.dispatch_event("OnAfterAction", owner_id=a_id)
+                        me.dispatch_event("OnListenAfterAction", param_entity_id=a_id)
+                        me.dispatch_event("OnListenInsertAbilityFinish", param_entity_id=a_id)
+                        me.dispatch_event("OnListenInsertActionFinish", param_entity_id=a_id)
+                        me.dispatch_event(
+                            "CheckParamFlagCallBack",
+                            param_entity_id=a_id,
+                            param_flags=("CallBack_SettleSkillOrInsertAbility",),
                         )
                     finally:
-                        rt.end_attack_scope()
-                        sp_granted = rt._skill_sp_ratio_granted
-                        rt._active_skill_sp_base = prev_sp_base
-                        rt._skill_sp_ratio_granted = prev_sp_granted
-                    if _sp > 0 and not sp_granted and sim.port and a_id != "__LEVEL__":
-                        ep_recipient = a_id
-                        a_ent = sim.get_entity(a_id)
-                        if a_ent is not None and getattr(a_ent, "is_memosprite", False) and getattr(a_ent, "master_name", None):
-                            ep_recipient = a_ent.master_name
-                        err = sim.port.stat(ep_recipient, StatType.ERR) or 1.0
-                        sim.port.gain_energy(ep_recipient, _sp * err, cause=f"追击回能 {ab}")
-                    me.dispatch_event("OnAfterSkillUse", owner_id=a_id, current_skill_type=sk_t)
-                    me.dispatch_event("OnActionEnd", owner_id=a_id)
-                    me.dispatch_event("OnListenAfterSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
-                    me.dispatch_event("OnListenActionEnd", param_entity_id=a_id)
-                    me.dispatch_event("OnAfterAction", owner_id=a_id)
-                    me.dispatch_event("OnListenAfterAction", param_entity_id=a_id)
-                    me.dispatch_event("OnListenInsertAbilityFinish", param_entity_id=a_id)
-                    me.dispatch_event("OnListenInsertActionFinish", param_entity_id=a_id)
-                    me.dispatch_event(
-                        "CheckParamFlagCallBack",
-                        param_entity_id=a_id,
-                        param_flags=("CallBack_SettleSkillOrInsertAbility",),
-                    )
+                        if _prio == "MonsterDeathRattle":
+                            dr_ent = sim.get_entity(a_id)
+                            if dr_ent is not None:
+                                rem_dr = max(0, int(getattr(dr_ent, "_pending_deathrattle_actions", 0) or 0) - 1)
+                                setattr(dr_ent, "_pending_deathrattle_actions", rem_dr)
+                                if rem_dr == 0 and getattr(dr_ent, "_die_immediately_after_deathrattle", False):
+                                    setattr(dr_ent, "_die_immediately_after_deathrattle", False)
+                                    if getattr(dr_ent, "_in_deathrattle_limbo", False):
+                                        setattr(dr_ent, "_in_deathrattle_limbo", False)
+                                        dr_ent.current_hp = 0.0
+                                        rt.modifier_engine.destroy_all_for_entity(a_id)
+                                        pending_dead = getattr(rt, "_pending_dead_enemies", None)
+                                        if pending_dead and a_id in pending_dead:
+                                            pending_dead[:] = [x for x in pending_dead if x != a_id]
 
                 sim.scheduler.enqueue(
                     tid,
@@ -178,8 +206,8 @@ class TurnOpsMixin:
                     category=cat,
                     action_kind=act_kind,
                     skill_id=ins_skill_id,
-                    preempt_follow_up=(prio in ("AvatarBuffSelf", "MonsterChangeState", "MonsterChangePhase", "MonsterDeathRattle", "MonsterForceKill")),
-                    immediate_priority=(5 if prio == "MonsterSummon" else 10),
+                    preempt_follow_up=(prio in ("AvatarBuffSelf", "MonsterChangeState", "MonsterChangePhase", "MonsterForceKill")),
+                    immediate_priority=(3 if prio == "MonsterDeathRattle" else (5 if prio == "MonsterSummon" else 10)),
                     allow_limbo=allow_limbo,
                 )
             elif getattr(ent, "is_memosprite", False):
@@ -345,6 +373,9 @@ class TurnOpsMixin:
 
         for ab_name in ab_names:
             rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
+        on_create = task.get("OnBattleEventCreate")
+        if isinstance(on_create, list) and on_create:
+            self.execute_tasks(on_create, ctx.clone(param_entity_id=be_name))
 
     def _execute_attach_avatar_change(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt

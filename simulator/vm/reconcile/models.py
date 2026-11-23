@@ -140,6 +140,7 @@ class EnemyHitRecord:
     had_passive_heal: bool = False
     sp_gain_counts: Dict[str, int] = field(default_factory=dict)
     first_memo_owner: Optional[str] = None
+    sub_records: List["EnemyHitRecord"] = field(default_factory=list, repr=False)
 
 
 @dataclass

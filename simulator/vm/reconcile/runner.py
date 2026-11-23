@@ -641,6 +641,7 @@ def reconcile_log(
                 memosprite_overrides=overrides,
                 aha_dmg_overrides=aha_dmg_overrides,
                 record_crits=True,
+                extra_maze_buff_ids=extra_maze_buff_ids,
             )
             for _nc_round in range(2):
                 newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits

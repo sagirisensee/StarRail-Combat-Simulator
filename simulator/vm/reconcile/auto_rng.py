@@ -260,6 +260,15 @@ def attach_auto_rng_plugin(
             _record_ambig(rec.av, rec.enemy_uid, kind, cands, (chosen.name,))
         return chosen
 
+    def _resolve_sub_rec(rec: EnemyHitRecord, sub_offset: int) -> Tuple[EnemyHitRecord, bool]:
+        if len(rec.sub_records) >= 2:
+            if len(set(rec.sub_records[0].hit_allies)) >= 3 and any(
+                len(set(sr.hit_allies)) == 1 for sr in rec.sub_records[1:]
+            ):
+                return rec, False
+            return rec.sub_records[min(sub_offset, len(rec.sub_records) - 1)], True
+        return rec, False
+
     def _target_provider(attacker: Any, living: List[Any], hit_idx: int) -> Optional[Any]:
         att_name = str(getattr(attacker, "name", "") or "")
         av = float(getattr(sim, "current_av", 0.0))
@@ -324,13 +333,15 @@ def attach_auto_rng_plugin(
         else:
             rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
 
-        eff_hit_idx = hit_idx + sub_hit_offset_by_key.get(cursor_key, 0)
-        if eff_hit_idx == 0 and rec.first_memo_owner:
+        sub_offset = sub_hit_offset_by_key.get(cursor_key, 0)
+        active_rec, is_sub = _resolve_sub_rec(rec, sub_offset)
+        eff_hit_idx = hit_idx if is_sub else (hit_idx + sub_offset)
+        if eff_hit_idx == 0 and active_rec.first_memo_owner:
             m_first = next(
                 (
                     e for e in living
                     if _is_memosprite(e)
-                    and rec.first_memo_owner in (
+                    and active_rec.first_memo_owner in (
                         getattr(e, "master_name", None),
                         getattr(e, "summoner_name", None),
                         getattr(e, "owner_name", None),
@@ -339,19 +350,19 @@ def attach_auto_rng_plugin(
                 None,
             )
             if m_first is not None:
-                _record_inf(rec.av, rec.enemy_uid, "primary", (m_first.name,), "passive_heal_o1")
+                _record_inf(active_rec.av, active_rec.enemy_uid, "primary", (m_first.name,), "passive_heal_o1")
                 return m_first
 
         hit_seq: List[str] = []
-        for nm in rec.hit_allies:
-            hit_seq.extend([nm] * max(1, rec.hit_counts.get(nm, 1)))
+        for nm in active_rec.hit_allies:
+            hit_seq.extend([nm] * max(1, active_rec.hit_counts.get(nm, 1)))
 
-        seq_idx = eff_hit_idx - 1 if (rec.first_memo_owner and eff_hit_idx > 0) else eff_hit_idx
+        seq_idx = eff_hit_idx - 1 if (active_rec.first_memo_owner and eff_hit_idx > 0) else eff_hit_idx
         if 0 <= seq_idx < len(hit_seq):
             return _find_ally(living, hit_seq[seq_idx])
 
-        if hit_idx == 0 and not rec.had_hp_drop and rec.sp_gain_counts:
-            memo_owner = next(iter(rec.sp_gain_counts.keys()))
+        if hit_idx == 0 and not active_rec.had_hp_drop and active_rec.sp_gain_counts:
+            memo_owner = next(iter(active_rec.sp_gain_counts.keys()))
             m_sp = next(
                 (
                     e for e in living
@@ -365,16 +376,16 @@ def attach_auto_rng_plugin(
                 None,
             )
             if m_sp is not None:
-                _record_inf(rec.av, rec.enemy_uid, "primary", (m_sp.name,), "sp_gain_o1")
+                _record_inf(active_rec.av, active_rec.enemy_uid, "primary", (m_sp.name,), "sp_gain_o1")
                 return m_sp
 
         memos = _living_memosprites(living)
         if memos:
             kind = "primary" if hit_idx == 0 else "bounce"
-            return _pick_memosprite_by_passive_signal(rec, memos, kind)
+            return _pick_memosprite_by_passive_signal(active_rec, memos, kind)
 
-        if rec.hit_allies:
-            return _find_ally(living, rec.hit_allies[0])
+        if active_rec.hit_allies:
+            return _find_ally(living, active_rec.hit_allies[0])
         return None
 
     def _blast_provider(attacker: Any, primary: Any, living: List[Any]) -> List[Any]:
@@ -388,6 +399,7 @@ def attach_auto_rng_plugin(
         cursor_key = (av_key, att_name) if name_matched else av_key
         pool = name_matched if name_matched else recs
         rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
+        rec, _ = _resolve_sub_rec(rec, sub_hit_offset_by_key.get(cursor_key, 0))
 
         extra_chars = (
             list(rec.hit_allies)

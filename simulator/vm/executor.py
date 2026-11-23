@@ -123,7 +123,11 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                         prop = str(step.get("PropertyType", "CurrentHP"))
                         highest = bool(step.get("HighestFirst", True))
                         if step.get("AliveOnly", True):
-                            cur = [tid for tid in cur if _is_alive(sim, tid)]
+                            cur = [
+                                tid for tid in cur
+                                if (e_al := sim.get_entity(tid)) is not None
+                                and (getattr(e_al, "current_hp", 0.0) > 0.0 or getattr(e_al, "is_infinite_hp", False))
+                            ]
                         cur = sorted(cur, key=lambda tid: me.get_entity_property(tid, prop), reverse=highest)
                     elif st == "RPG.GameCore.TargetTake":
                         cnt = max(0, int(round(self._eval_num(step.get("Count"), ctx, 1.0))))
@@ -704,7 +708,18 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             cnt = int(round(self._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else None
             max_l = int(round(self._eval_num(task["MaxLayer"], ctx, 1.0))) if "MaxLayer" in task else None
             inherit = str(task.get("InheritCaster", ""))
+            alive_only = bool(task.get("AliveOnly", True))
             for tid in targets:
+                if alive_only and tid != "__LEVEL__":
+                    t_chk = sim.get_entity(tid)
+                    if (
+                        t_chk is None
+                        or (
+                            float(getattr(t_chk, "current_hp", 0.0)) <= 0.0
+                            and not getattr(t_chk, "is_infinite_hp", False)
+                        )
+                    ):
+                        continue
                 eff_caster = tid if inherit == "TargetSelf" else ctx.caster_id
                 if chance_val is not None:
                     caster_ent = sim.get_entity(eff_caster)
@@ -788,7 +803,7 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                         m for m in mods
                         if (
                             (
-                                m.config.get("StatusType") == "Debuff"
+                                me.get_modifier_status_type(m) == "Debuff"
                                 or ("STAT_CTRL" in m.behavior_flags)
                                 or ("DisableAction" in m.behavior_flags)
                                 or (float(m.properties.get("AllDamageTypeTakenRatio", 0.0)) > 0.0)
@@ -1363,9 +1378,12 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             for tid in targets:
                 ent = sim.get_entity(tid)
                 if ent is not None and getattr(ent, "_in_deathrattle_limbo", False):
-                    setattr(ent, "_in_deathrattle_limbo", False)
-                    ent.current_hp = 0.0
-                    me.destroy_all_for_entity(tid)
+                    if int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) > 0:
+                        setattr(ent, "_die_immediately_after_deathrattle", True)
+                    else:
+                        setattr(ent, "_in_deathrattle_limbo", False)
+                        ent.current_hp = 0.0
+                        me.destroy_all_for_entity(tid)
             return
 
         if t == "RPG.GameCore.OwnerEntityAddAbility":

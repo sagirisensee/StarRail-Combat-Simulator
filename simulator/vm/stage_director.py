@@ -90,6 +90,14 @@ class DataDrivenStageDirector:
             stage_id = int(getattr(self.runner.built_stage.source_spec, "stage_id", 0) or 0)
             if stage_id:
                 self._stage_invasion_info = stage_loader.resolve_stage_invasion(stage_id)
+                if isinstance(self._stage_invasion_info, Mapping):
+                    inv_mb_id = int(self._stage_invasion_info.get("maze_buff_id") or 0)
+                    if inv_mb_id and hasattr(stage_loader, "resolve_maze_buff_abilities"):
+                        seen_abs = {ab for ab, _ in affixes}
+                        for inv_ab, inv_params in stage_loader.resolve_maze_buff_abilities((inv_mb_id,)):
+                            if inv_ab not in seen_abs:
+                                affixes.append((inv_ab, inv_params))
+                                seen_abs.add(inv_ab)
         if extra_maze_buff_ids:
             if stage_loader is not None and hasattr(stage_loader, "resolve_maze_buff_abilities"):
                 affixes.extend(stage_loader.resolve_maze_buff_abilities(extra_maze_buff_ids))
@@ -100,10 +108,16 @@ class DataDrivenStageDirector:
             return
         maze_buff_param_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
         rt.loader.ensure_ability_index()
+        mounted_level_abs = {
+            m.ability_name for m in rt.modifier_engine.get_modifiers("__LEVEL__")
+        }
         for ab_name, params in affixes:
+            if ab_name in mounted_level_abs:
+                continue
             ab = rt.loader.get_ability(ab_name)
             if not ab:
                 continue
+            mounted_level_abs.add(ab_name)
             init_dyn = {}
             for idx, val in enumerate(params):
                 if idx < len(maze_buff_param_hashes):

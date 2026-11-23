@@ -27,5 +27,6 @@ video_inspection/
 video_artifacts/
 video_keyframes/
 scratch/
+.cache/
 
 

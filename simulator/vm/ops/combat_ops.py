@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from ...actions import DamageType
 from ...events import HPLostEvent
@@ -14,6 +14,67 @@ from ..target_alias import ExecutionContext
 
 class CombatOpsMixin:
     """ModifySPNew / HealHP / DamageByAttackProperty / LoseHPByRatio 算子实现。"""
+
+    def _clamp_enemy_direct_hp_loss(
+        self,
+        tid: str,
+        tgt_ent: Any,
+        raw_loss: float,
+        *,
+        max_hp: float,
+        caster_id: str,
+        param_flags: Tuple[str, ...] = (),
+    ) -> Tuple[float, Optional[Any]]:
+        """对敌方直接扣血（ByBaseDamage / LoseHP）执行锁血阈值与转阶段保护，返回裁剪后的扣血量与 mrs。"""
+        rt = self.rt
+        me = rt.modifier_engine
+        cur_hp = float(tgt_ent.current_hp)
+        mrs = None
+        kit = getattr(tgt_ent, "kit", None)
+        runner = getattr(kit, "runner", None) if kit is not None else None
+        if runner is not None:
+            try:
+                mrs = runner.get_enemy_state(tid)
+            except KeyError:
+                mrs = None
+
+        if mrs is not None:
+            if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:
+                fl = max_hp * float(mrs.lock_hp_ratio)
+                if cur_hp >= fl - 1e-6 and cur_hp - raw_loss < fl:
+                    raw_loss = max(0.0, cur_hp - fl)
+            if mrs.phase < mrs.max_phase and cur_hp - raw_loss <= 0.0:
+                setattr(mrs, "_limbo_pending", True)
+                setattr(mrs.entity, "_vm_limbo_pending", True)
+                raw_loss = max(0.0, cur_hp - 1.0)
+            elif cur_hp - raw_loss <= 0.0:
+                me.dispatch_event(
+                    "OnBeforeMortallyWonded",
+                    owner_id=tid,
+                    param_entity_id=caster_id,
+                    change_value=-float(raw_loss),
+                    param_flags=param_flags,
+                )
+        elif cur_hp - raw_loss <= 0.0:
+            me.dispatch_event(
+                "OnBeforeMortallyWonded",
+                owner_id=tid,
+                param_entity_id=caster_id,
+                change_value=-float(raw_loss),
+                param_flags=param_flags,
+            )
+
+        locks = getattr(tgt_ent, "_locked_hp_thresholds", None)
+        if isinstance(locks, dict) and locks:
+            floor_hp = max(float(v) for v in locks.values())
+            if cur_hp >= floor_hp - 1e-6 and cur_hp - raw_loss < floor_hp:
+                raw_loss = max(0.0, cur_hp - floor_hp)
+                me.dispatch_event(
+                    "OnLockHPThresholdReached",
+                    owner_id=tid,
+                    param_entity_id=tid,
+                )
+        return raw_loss, mrs
 
     def _execute_modify_sp_new(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -305,10 +366,12 @@ class CombatOpsMixin:
             "Servant": DamageType.SERVANT,
             "ElementDamage": DamageType.ADDITIONAL,
             "TrueDamage": DamageType.TRUE,
+            "DOT": DamageType.DOT,
         }
         damage_type = dtype_map.get(atk_type, DamageType.BASIC)
         is_true_dmg = (damage_type == DamageType.TRUE)
-        is_nested_sub = is_true_dmg or getattr(rt, "_in_after_attack", False) or is_equip_sub
+        is_dot_dmg = (damage_type == DamageType.DOT)
+        is_nested_sub = is_true_dmg or is_dot_dmg or getattr(rt, "_in_after_attack", False) or is_equip_sub
 
         atk_seq = int(getattr(sim, "_action_seq", 0))
         atk_key = (atk_seq, ctx.caster_id)
@@ -402,10 +465,21 @@ class CombatOpsMixin:
                 tgt_ent = sim.get_entity(tid)
                 if tgt_ent is None or tgt_ent.current_hp <= 0.0:
                     continue
+                max_hp = float(sim.port.max_hp(tid))
                 if formula_type == "ByMaxHP":
-                    raw_dmg = float(sim.port.max_hp(tid)) * float(eff_pct) + float(eff_flat)
+                    raw_dmg = max_hp * float(eff_pct) + float(eff_flat)
                 else:
                     raw_dmg = float(eff_flat)
+                mrs_direct = None
+                if getattr(tgt_ent, "is_enemy", False):
+                    raw_dmg, mrs_direct = self._clamp_enemy_direct_hp_loss(
+                        tid,
+                        tgt_ent,
+                        raw_dmg,
+                        max_hp=max_hp,
+                        caster_id=hp_change_param,
+                        param_flags=("IsHPChangeByDamage",),
+                    )
                 actual = min(float(tgt_ent.current_hp), max(0.0, raw_dmg))
                 if actual <= 0.0:
                     continue
@@ -423,6 +497,10 @@ class CombatOpsMixin:
                     param_entity_id=tid,
                     change_value=-float(actual),
                 )
+                if mrs_direct is not None and getattr(mrs_direct, "_limbo_pending", False):
+                    if not rt.trigger_or_defer_limbo(tid, eff_killer_limbo := (last_killer if can_last_kill else hp_change_param)):
+                        setattr(mrs_direct, "_limbo_pending", False)
+                        me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=eff_killer_limbo)
                 if tgt_ent.current_hp <= 0.0:
                     if can_last_kill:
                         if is_level_base_dmg:
@@ -531,6 +609,11 @@ class CombatOpsMixin:
                     if abs(combined_red - prev_dmg_red) > 1e-9:
                         tgt_ent.damage_reduction = combined_red
                         applied_def_red = True
+                    setattr(tgt_ent, "_vm_damage_reduction_active", True)
+                    setattr(tgt_ent, "_vm_last_def_red", def_red)
+                    setattr(tgt_ent, "_vm_last_tgt_vuln", tgt_extra_vuln)
+                    setattr(tgt_ent, "_vm_last_tgt_def_ignore", tgt_extra_def_ignore)
+                    setattr(tgt_ent, "_vm_last_tgt_res_pen", tgt_extra_res_pen)
                 if not is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
@@ -549,14 +632,20 @@ class CombatOpsMixin:
                     toughness_damage=eff_stance,
                     scaling_stat=scaling_stat,
                     damage_type=damage_type,
+                    force_crit=(False if is_dot_dmg else None),
                     extra_dmg_boost=extra_dmg_boost,
                     extra_def_ignore=extra_def_ignore + tgt_extra_def_ignore,
                     extra_res_pen=extra_res_pen + tgt_extra_res_pen,
                     extra_vuln=extra_vuln + tgt_extra_vuln,
                     extra_crit_dmg=extra_crit_dmg,
                     vm_hit_hooks_applied=not is_true_dmg,
+                    source_entity=(
+                        getattr(ctx.modifier_instance, "caster_snapshot_entity", None)
+                        if ctx.modifier_instance is not None
+                        else None
+                    ),
                 )
-                if not is_true_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
+                if not is_true_dmg and not is_dot_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
                     caster_ent = sim.get_entity(ctx.caster_id)
                     if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
                         sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
@@ -572,14 +661,20 @@ class CombatOpsMixin:
                         if sp_hit > 0.0:
                             energy_tid = (getattr(tgt_ent, "master_name", None) or tid) if getattr(tgt_ent, "is_memosprite", False) else tid
                             sim.port.gain_hit_energy(energy_tid, base_amount=sp_hit)
-                if len(real_targets) > 1 or applied_def_red:
+                try:
                     sim.resolver.resolve_all()
-                    if applied_def_red and tgt_ent is not None:
-                        tgt_ent.damage_reduction = prev_dmg_red
+                finally:
+                    if tgt_ent is not None:
+                        if applied_def_red:
+                            tgt_ent.damage_reduction = prev_dmg_red
+                        setattr(tgt_ent, "_vm_damage_reduction_active", False)
+                        setattr(tgt_ent, "_vm_last_def_red", 0.0)
+                        setattr(tgt_ent, "_vm_last_tgt_vuln", 0.0)
+                        setattr(tgt_ent, "_vm_last_tgt_def_ignore", 0.0)
+                        setattr(tgt_ent, "_vm_last_tgt_res_pen", 0.0)
+                if len(real_targets) > 1 or applied_def_red:
                     if was_strictly_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
                         any_died_mid_aoe = True
-                else:
-                    sim.resolver.resolve_all()
                 if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and (
                     float(getattr(tgt_ent, "current_hp", 0.0)) < prev_tgt_hp
                     or getattr(tgt_ent, "_in_deathrattle_limbo", False)
@@ -745,37 +840,14 @@ class CombatOpsMixin:
                 kit = getattr(ent, "kit", None)
                 if consume_shield and kit is not None and hasattr(kit, "intercept_incoming_damage"):
                     raw_loss = kit.intercept_incoming_damage(tid, raw_loss, allow_overflow=False)
-                elif not consume_shield and kit is not None:
-                    try:
-                        mrs = kit.runner.get_enemy_state(tid)
-                        cur_hp = float(mrs.entity.current_hp)
-                        if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:
-                            fl = max_hp * float(mrs.lock_hp_ratio)
-                            if cur_hp >= fl - 1e-6 and cur_hp - raw_loss < fl:
-                                raw_loss = max(0.0, cur_hp - fl)
-                        if mrs.phase < mrs.max_phase and cur_hp - raw_loss <= 0.0:
-                            setattr(mrs, "_limbo_pending", True)
-                            setattr(mrs.entity, "_vm_limbo_pending", True)
-                            raw_loss = max(0.0, cur_hp - 1.0)
-                        elif cur_hp - raw_loss <= 0.0:
-                            me.dispatch_event(
-                                "OnBeforeMortallyWonded",
-                                owner_id=tid,
-                                param_entity_id=ctx.caster_id,
-                                change_value=-float(raw_loss),
-                            )
-                        locks = getattr(mrs.entity, "_locked_hp_thresholds", None)
-                        if isinstance(locks, dict) and locks:
-                            floor_hp = max(float(v) for v in locks.values())
-                            if cur_hp >= floor_hp - 1e-6 and cur_hp - raw_loss < floor_hp:
-                                raw_loss = max(0.0, cur_hp - floor_hp)
-                                me.dispatch_event(
-                                    "OnLockHPThresholdReached",
-                                    owner_id=tid,
-                                    param_entity_id=tid,
-                                )
-                    except Exception:
-                        pass
+                elif not consume_shield:
+                    raw_loss, _ = self._clamp_enemy_direct_hp_loss(
+                        tid,
+                        ent,
+                        raw_loss,
+                        max_hp=max_hp,
+                        caster_id=ctx.caster_id,
+                    )
                 eff_floor = self._eval_num(task.get("Floor"), ctx, 0.0) if "Floor" in task else 0.0
             else:
                 eff_floor = hp_floor

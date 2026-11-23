@@ -212,8 +212,8 @@ class DamageCalculator:
         eff_res = target_base_res - res_pen
         res_mult = max(0.0, min(2.0, 1.0 - eff_res))
 
-        # 6. 易伤区
-        vuln_mult = 1.0 + vuln
+        # 6. 易伤区（实机易伤乘区上限为 3.5x，即 +250%）
+        vuln_mult = max(0.0, min(3.5, 1.0 + vuln))
 
         # 7. 韧性减伤区 (敌方未破韧按目标实体的 toughness_dmg_reduction 减免，标准规则为 0.10 对应 0.90x 承伤;
         # 破韧固定 1.0x; 我方角色无韧性减免条固定 1.0x; 特殊关卡首领若形态配置为 0.0 则承伤 1.00x)

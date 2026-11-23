@@ -58,6 +58,10 @@ def extract_log_metadata(
     cur_hit_dmgs: Dict[str, float] = {}
     cur_sub_hits: List[str] = []
     cur_sub_actions: List[List[str]] = []
+    cur_sub_sp_gains: Dict[str, int] = {}
+    cur_sub_first_memo: Optional[str] = None
+    cur_sub_pending_sp_owner: Optional[str] = None
+    cur_sub_action_details: List[Tuple[List[str], Dict[str, int], Optional[str]]] = []
     cur_small_heal_uids: Set[int] = set()
     cur_sp_gain_counts: Dict[str, int] = {}
     cur_first_memo_owner: Optional[str] = None
@@ -166,15 +170,31 @@ def extract_log_metadata(
     enemy_hits: List[EnemyHitRecord] = []
     aha_turns: List[AhaTurnRecord] = []
 
+    def _flush_sub_action() -> None:
+        nonlocal cur_sub_hits, cur_sub_sp_gains, cur_sub_first_memo, cur_sub_pending_sp_owner
+        if cur_sub_hits or cur_sub_sp_gains:
+            if cur_sub_pending_sp_owner is not None and not cur_sub_hits and cur_sub_first_memo is None:
+                cur_sub_first_memo = cur_sub_pending_sp_owner
+            if cur_sub_hits:
+                cur_sub_actions.append(list(cur_sub_hits))
+            cur_sub_action_details.append((
+                list(cur_sub_hits),
+                dict(cur_sub_sp_gains),
+                cur_sub_first_memo,
+            ))
+        cur_sub_hits = []
+        cur_sub_sp_gains = {}
+        cur_sub_first_memo = None
+        cur_sub_pending_sp_owner = None
+
     def _flush_turn() -> None:
-        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_hit_dmgs, cur_sub_hits, cur_sub_actions, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, pending_first_sp_owner, last_enemy_hit_sp
+        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_hit_dmgs, cur_sub_hits, cur_sub_actions, cur_sub_sp_gains, cur_sub_first_memo, cur_sub_pending_sp_owner, cur_sub_action_details, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, pending_first_sp_owner, last_enemy_hit_sp
         nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts, cur_none_pending_hp_chip_uid
         if cur_enemy_uid is not None:
             if pending_first_sp_owner is not None and not cur_hit_order and cur_first_memo_owner is None:
                 cur_first_memo_owner = pending_first_sp_owner
             pending_first_sp_owner = None
-            if cur_sub_hits:
-                cur_sub_actions.append(list(cur_sub_hits))
+            _flush_sub_action()
             eff_hit_order = list(cur_hit_order)
             # 敌方多动中若先放全体 AoE 再放单体点名（如 Skill02 + Skill01 [+ Skill04]），将单体目标放在首位供 target_provider 精准锁定
             if len(cur_sub_actions) >= 2 and len(set(cur_sub_actions[0])) >= 2:
@@ -192,6 +212,30 @@ def extract_log_metadata(
                     if prim in eff_hit_order:
                         eff_hit_order.remove(prim)
                     eff_hit_order.insert(0, prim)
+            sub_recs: List[EnemyHitRecord] = []
+            if len(cur_sub_action_details) >= 2:
+                had_pheal = len(cur_small_heal_uids) >= 2
+                for sub_hits, sub_sp, sub_fm in cur_sub_action_details:
+                    sub_order: List[str] = []
+                    sub_seen: Set[str] = set()
+                    sub_counts: Dict[str, int] = {}
+                    for nm in sub_hits:
+                        if nm not in sub_seen:
+                            sub_seen.add(nm)
+                            sub_order.append(nm)
+                        sub_counts[nm] = sub_counts.get(nm, 0) + 1
+                    sub_recs.append(
+                        EnemyHitRecord(
+                            av=round(cur_av, 2),
+                            enemy_uid=cur_enemy_uid,
+                            hit_allies=sub_order,
+                            hit_counts=sub_counts,
+                            had_hp_drop=bool(sub_hits),
+                            had_passive_heal=had_pheal,
+                            sp_gain_counts=dict(sub_sp),
+                            first_memo_owner=sub_fm,
+                        )
+                    )
             enemy_hits.append(
                 EnemyHitRecord(
                     av=round(cur_av, 2),
@@ -202,6 +246,7 @@ def extract_log_metadata(
                     had_passive_heal=len(cur_small_heal_uids) >= 2,
                     sp_gain_counts=dict(cur_sp_gain_counts),
                     first_memo_owner=cur_first_memo_owner,
+                    sub_records=sub_recs,
                 )
             )
         elif cur_turn_owner_team is None and not cur_none_had_skill and cur_none_ally_chips:
@@ -228,6 +273,10 @@ def extract_log_metadata(
         cur_hit_dmgs = {}
         cur_sub_hits = []
         cur_sub_actions = []
+        cur_sub_sp_gains = {}
+        cur_sub_first_memo = None
+        cur_sub_pending_sp_owner = None
+        cur_sub_action_details = []
         cur_small_heal_uids = set()
         cur_sp_gain_counts = {}
         cur_first_memo_owner = None
@@ -244,8 +293,16 @@ def extract_log_metadata(
         nonlocal paused_enemy_ctx
         if cur_enemy_uid is not None:
             _paused_sub_actions = list(cur_sub_actions)
-            if cur_sub_hits:
-                _paused_sub_actions.append(list(cur_sub_hits))
+            _paused_sub_details = list(cur_sub_action_details)
+            if cur_sub_hits or cur_sub_sp_gains:
+                _sub_fm = (
+                    cur_sub_pending_sp_owner
+                    if (cur_sub_pending_sp_owner is not None and not cur_sub_hits and cur_sub_first_memo is None)
+                    else cur_sub_first_memo
+                )
+                if cur_sub_hits:
+                    _paused_sub_actions.append(list(cur_sub_hits))
+                _paused_sub_details.append((list(cur_sub_hits), dict(cur_sub_sp_gains), _sub_fm))
             _snap = {
                 "av": round(cur_av, 2),
                 "euid": cur_enemy_uid,
@@ -254,6 +311,7 @@ def extract_log_metadata(
                 "hit_counts": dict(cur_hit_counts),
                 "hit_dmgs": dict(cur_hit_dmgs),
                 "sub_actions": _paused_sub_actions,
+                "sub_details": _paused_sub_details,
                 "small_heal": set(cur_small_heal_uids),
                 "sp_gains": dict(cur_sp_gain_counts),
                 "first_memo": cur_first_memo_owner,
@@ -418,7 +476,11 @@ def extract_log_metadata(
                             cur_hit_counts = dict(paused_enemy_ctx["hit_counts"])
                             cur_hit_dmgs = dict(paused_enemy_ctx.get("hit_dmgs") or {})
                             cur_sub_actions = list(paused_enemy_ctx["sub_actions"])
+                            cur_sub_action_details = list(paused_enemy_ctx.get("sub_details") or [])
                             cur_sub_hits = []
+                            cur_sub_sp_gains = {}
+                            cur_sub_first_memo = None
+                            cur_sub_pending_sp_owner = None
                             cur_small_heal_uids = set(paused_enemy_ctx["small_heal"])
                             cur_sp_gain_counts = dict(paused_enemy_ctx["sp_gains"])
                             cur_first_memo_owner = paused_enemy_ctx["first_memo"]
@@ -428,9 +490,8 @@ def extract_log_metadata(
                             if pending_first_sp_owner is not None and not cur_hit_order and cur_first_memo_owner is None:
                                 cur_first_memo_owner = pending_first_sp_owner
                             pending_first_sp_owner = None
-                        if cur_enemy_uid is not None and uid == cur_enemy_uid and val <= 1e-6 and cur_sub_hits:
-                            cur_sub_actions.append(list(cur_sub_hits))
-                            cur_sub_hits = []
+                            if val <= 1e-6:
+                                _flush_sub_action()
                         last_enemy_hit_sp = val if val > 0.0 else 0.0
                     elif ptype == "MaxHP" and uid in gluttony_locked_euids:
                         gluttony_revived_euids.add(uid)
@@ -504,7 +565,10 @@ def extract_log_metadata(
                         if is_enemy_hit_sp:
                             if not cur_hit_order and cur_first_memo_owner is None and pending_first_sp_owner is None:
                                 pending_first_sp_owner = cname
+                            if not cur_sub_hits and cur_sub_first_memo is None and cur_sub_pending_sp_owner is None:
+                                cur_sub_pending_sp_owner = cname
                             cur_sp_gain_counts[cname] = cur_sp_gain_counts.get(cname, 0) + 1
+                            cur_sub_sp_gains[cname] = cur_sub_sp_gains.get(cname, 0) + 1
                         elif cur_turn_owner_team is None and not cur_none_had_skill:
                             sp_delta = (val - prev_sp) if prev_sp is not None else val
                             if cur_none_pending_hp_chip_uid == uid:
@@ -546,9 +610,7 @@ def extract_log_metadata(
                                     cur_hit_counts[name] = cur_hit_counts.get(name, 0) + 1
                             elif 120.0 <= val <= 550.0 and val < prev * 0.35:
                                 cur_small_heal_uids.add(uid)
-                                if cur_sub_hits:
-                                    cur_sub_actions.append(list(cur_sub_hits))
-                                    cur_sub_hits = []
+                                _flush_sub_action()
                             elif val < prev - 1e-3 and (prev - val) < prev * 0.60:
                                 delta = prev - val
                                 # 过滤敌方回合结束时的 1% 伴生微伤/DoT，避免误将未受直接攻击的队友计入受击/扩散目标
@@ -558,6 +620,10 @@ def extract_log_metadata(
                                         if pending_first_sp_owner != name and cur_first_memo_owner is None:
                                             cur_first_memo_owner = pending_first_sp_owner
                                         pending_first_sp_owner = None
+                                    if cur_sub_pending_sp_owner is not None:
+                                        if cur_sub_pending_sp_owner != name and cur_sub_first_memo is None:
+                                            cur_sub_first_memo = cur_sub_pending_sp_owner
+                                        cur_sub_pending_sp_owner = None
                                     if name not in cur_hit_set:
                                         cur_hit_set.add(name)
                                         cur_hit_order.append(name)

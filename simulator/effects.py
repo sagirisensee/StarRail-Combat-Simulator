@@ -7,7 +7,7 @@
 4. 严格限制最大结算步数 (MAX_EFFECT_STEPS)，彻底防止追击/触发产生无限死循环递归。
 """
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from .events import (
     ActionAdvanceEvent, ActionDelayEvent, SPChangeEvent, StatusApplyEvent, 
     ActionExecuteEvent, DamageAppliedEvent, EnemyDefeatedEvent,
@@ -133,6 +133,36 @@ class EffectResolver:
         scheduler = getattr(self.simulator, "scheduler", None)
         if scheduler is not None and scheduler.can_auto_drain() and scheduler.has_pending():
             scheduler.drain()
+
+    def _handle_enemy_defeated(self, attacker: Any, target: Any, av: float, cycle: int) -> None:
+        """击败敌方时结算击杀回能并发布 EnemyDefeatedEvent。"""
+        if not getattr(target, "is_enemy", False) or getattr(attacker, "is_enemy", False):
+            return
+        killer_name = attacker.name
+        if getattr(attacker, "is_memosprite", False) and getattr(attacker, "master_name", None):
+            killer_name = attacker.master_name
+        vm_rt = getattr(self.simulator, "vm_runtime", None)
+        vm_handles_kill_sp = bool(
+            vm_rt is not None
+            and vm_rt.modifier_engine.has_modifier(killer_name, "Local_SPAdd")
+        )
+        if not vm_handles_kill_sp and hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
+            self.simulator.port.gain_hit_energy(
+                killer_name,
+                10.0,
+                cause=f"击败【{target.name}】击杀回能 (基础 10.0, 受 ERR 放大)",
+            )
+        self.simulator.event_bus.publish(
+            EnemyDefeatedEvent(
+                av=round(av, 2),
+                cycle=cycle,
+                attacker_name=killer_name,
+                target_name=target.name,
+            )
+        )
+        scheduler = getattr(self.simulator, "scheduler", None)
+        if scheduler is not None:
+            scheduler.commit_reserved_wave()
 
     def _resolve_one(self, effect: EffectRequest):
         av = self.simulator.current_av
@@ -289,26 +319,54 @@ class EffectResolver:
                         base_res = getattr(target, "damage_res", {}).get(effect.element, 0.0) if isinstance(getattr(target, "damage_res", None), dict) else 0.0
                         res_pen = sm.calculate_stat(effect.attacker.name, 0.0, StatType.RES_PEN) if sm else 0.0
                         vuln = sm.calculate_stat(target.name, 0.0, StatType.VULNERABILITY) if sm else 0.0
+                        dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
                         vm_rt = getattr(self.simulator, "vm_runtime", None)
                         vm_base_multi = 1.0
-                        if vm_rt is not None and effect.attacker.name in vm_rt.entity_specs:
-                            dmg_data = vm_rt.collect_hit_modifiers(effect.attacker.name, (target.name,), attack_type="Break")
-                            def_ignore += -float(dmg_data.get("Defender_DefenceAddedRatio", 0.0))
-                            res_pen += float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
-                            vuln += float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
-                            vm_base_multi = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 1.0))
+                        if vm_rt is not None:
+                            if effect.attacker.name in vm_rt.entity_specs:
+                                dmg_data = vm_rt.collect_hit_modifiers(effect.attacker.name, (target.name,), attack_type="Break")
+                                def_ignore += -float(dmg_data.get("Defender_DefenceAddedRatio", 0.0))
+                                res_pen += float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
+                                vuln += float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                                vm_base_multi = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 1.0))
+                            if getattr(target, "is_enemy", False):
+                                me = vm_rt.modifier_engine
+                                dr_already_active = getattr(target, "_vm_damage_reduction_active", False)
+                                vuln += float(getattr(target, "_vm_last_tgt_vuln", 0.0))
+                                def_ignore += float(getattr(target, "_vm_last_tgt_def_ignore", 0.0))
+                                res_pen += float(getattr(target, "_vm_last_tgt_res_pen", 0.0))
+                                red_mult = 1.0 - dr
+                                if not dr_already_active:
+                                    def_red = float(getattr(target, "_vm_last_def_red", 0.0))
+                                    if def_red > 0.0:
+                                        red_mult *= max(0.0, 1.0 - def_red)
+                                tgt_res_mod = 0.0
+                                for m_def in me.get_modifiers(target.name):
+                                    if not dr_already_active:
+                                        m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
+                                        if m_red > 0.0:
+                                            red_mult *= max(0.0, 1.0 - m_red)
+                                        tgt_res_mod += float(m_def.properties.get("AllDamageTypeResistance", 0.0))
+                                res_pen += -tgt_res_mod
+                                dr = max(0.0, min(1.0, 1.0 - red_mult))
                         def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred - def_ignore) + (atk_lvl + 20.0))
                         res_mult = 1.0 - (base_res - res_pen)
                         vuln_mult = 1.0 + vuln
-                        dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
 
                         break_dmg = base_break * elem_mult * tough_mult * (1.0 + be) * def_mult * res_mult * vuln_mult * 0.9 * (1.0 - dr) * vm_base_multi
+                        break_killed = False
                         if hasattr(target, "current_hp"):
+                            was_strictly_alive = float(getattr(target, "current_hp", 0.0)) > 0.0
                             actual_break_loss = break_dmg
                             kit = getattr(target, "kit", None)
                             if kit is not None and hasattr(kit, "intercept_incoming_damage"):
                                 actual_break_loss = kit.intercept_incoming_damage(target.name, break_dmg)
                             target.current_hp = max(0.0, target.current_hp - actual_break_loss)
+                            break_killed = bool(
+                                was_strictly_alive
+                                and target.current_hp == 0.0
+                                and not getattr(target, "is_infinite_hp", False)
+                            )
 
                         if not is_sub_stance and effect.element == "Quantum":
                             self.enqueue(DelayActionEffect(
@@ -325,6 +383,8 @@ class EffectResolver:
                             break_damage=break_dmg,
                             action_delay_pct=0.0 if is_sub_stance else 0.25
                         ))
+                        if break_killed:
+                            self._handle_enemy_defeated(effect.attacker, target, av, cycle)
                         scheduler = getattr(self.simulator, "scheduler", None)
                         if scheduler is not None:
                             scheduler.commit_reserved_wave()
@@ -373,6 +433,8 @@ class EffectResolver:
                 target.shield -= absorbed
                 raw_dmg -= absorbed
 
+            resolved_damage_type = getattr(effect, "damage_type", None) or DamageType.from_tag(getattr(effect, "damage_tag", "direct"))
+            vm_atk_type = "DOT" if resolved_damage_type == DamageType.DOT else ""
             was_alive = getattr(target, "current_hp", 0.0) > 0 or getattr(target, "_in_deathrattle_limbo", False)
             was_strictly_alive = getattr(target, "current_hp", 0.0) > 0
             notify_vm_being_hit = bool(
@@ -385,6 +447,7 @@ class EffectResolver:
                     "OnBeforeBeingHitAll",
                     owner_id=target.name,
                     param_entity_id=req_attacker.name,
+                    current_attack_type=vm_atk_type,
                 )
             if hasattr(target, "current_hp"):
                 old_hp = target.current_hp
@@ -407,6 +470,7 @@ class EffectResolver:
                     "OnAfterBeingHitAll",
                     owner_id=target.name,
                     param_entity_id=req_attacker.name,
+                    current_attack_type=vm_atk_type,
                 )
 
             target_killed = bool(
@@ -414,7 +478,6 @@ class EffectResolver:
                 and hp_left == 0.0
                 and not getattr(target, "is_infinite_hp", False)
             )
-            resolved_damage_type = getattr(effect, "damage_type", None) or DamageType.from_tag(getattr(effect, "damage_tag", "direct"))
             eff_action_id = getattr(effect, "action_id", 0) or getattr(self.simulator, "current_action_id", 0)
             if hasattr(self.simulator, "effect_counter"):
                 self.simulator.effect_counter += 1
@@ -459,31 +522,8 @@ class EffectResolver:
                         self.simulator.port.gain_hit_energy(energy_recipient, hit_base)
 
             # 4.5 击杀回能与击败事件: 击败敌方目标时, 击杀者恢复 10 点能量 (受 ERR 放大); 忆灵击杀归其主人
-            if (
-                target_killed
-                and getattr(target, "is_enemy", False)
-                and not getattr(effect.request.attacker, "is_enemy", False)
-            ):
-                killer = effect.request.attacker
-                killer_name = killer.name
-                if getattr(killer, "is_memosprite", False) and getattr(killer, "master_name", None):
-                    killer_name = killer.master_name
-                vm_rt = getattr(self.simulator, "vm_runtime", None)
-                vm_handles_kill_sp = bool(
-                    vm_rt is not None
-                    and vm_rt.modifier_engine.has_modifier(killer_name, "Local_SPAdd")
-                )
-                if not vm_handles_kill_sp and hasattr(self.simulator, "port") and hasattr(self.simulator.port, "gain_hit_energy"):
-                    self.simulator.port.gain_hit_energy(killer_name, 10.0, cause=f"击败【{target.name}】击杀回能 (基础 10.0, 受 ERR 放大)")
-                bus.publish(EnemyDefeatedEvent(
-                    av=round(av, 2),
-                    cycle=cycle,
-                    attacker_name=killer_name,
-                    target_name=target.name
-                ))
-                if scheduler is not None:
-                    # 介入点 3 (on_kill): 击杀时提交击杀触发的动作波次 (如希儿再现追加回合)
-                    scheduler.commit_reserved_wave()
+            if target_killed:
+                self._handle_enemy_defeated(effect.request.attacker, target, av, cycle)
 
             # 5. 如果携带削韧属性，入队削韧请求
             if effect.toughness_reduction > 0:

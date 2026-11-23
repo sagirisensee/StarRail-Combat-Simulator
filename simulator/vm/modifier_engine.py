@@ -77,6 +77,7 @@ class VMModifierInstance:
     is_halo: bool = False
     halo_parent_uid: Optional[int] = None
     range_states: Dict[Tuple[str, int, int], bool] = field(default_factory=dict)
+    caster_snapshot_entity: Optional[Any] = None
     _spawn_order: int = 0
     _destroyed: bool = False
 
@@ -252,8 +253,11 @@ class ModifierEngine:
                     break
 
         is_new = target_existing is None
+        caster_snap = self.rt.sim.get_entity(caster_id) if caster_id != "__LEVEL__" else None
         if target_existing is not None:
             mod = target_existing
+            if caster_snap is not None:
+                mod.caster_snapshot_entity = caster_snap
             if max_layer is None and cfg_max_layer is None and mod.max_layer > 1:
                 eff_max_layer = mod.max_layer
             if count is not None:
@@ -297,6 +301,7 @@ class ModifierEngine:
                 caster_id=caster_id,
                 owner_id=owner_id,
                 ability_name=ability_name,
+                caster_snapshot_entity=caster_snap,
                 config=cfg,
                 dynamic_values=parsed_dyn,
                 layer=init_layer,
