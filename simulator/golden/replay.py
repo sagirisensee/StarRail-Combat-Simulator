@@ -393,7 +393,28 @@ def run_trajectory_replay(
             )
         ):
             return True
-        if u_owner and u_owner not in _sim_player_actors(sim) and abs(now_av - u_item.av) <= 0.5:
+        _cur_matches_owner = (
+            allow_cur_enemy
+            and cur_turn is not None
+            and getattr(cur_turn, "is_enemy", False)
+            and bool(u_owner)
+            and (
+                getattr(cur_turn, "name", "").replace("_", "") == u_owner.replace("_", "")
+                if u_owner[-1:].isdigit()
+                else getattr(cur_turn, "name", "").startswith(u_owner)
+            )
+        )
+        _u_actor_ent = sim.get_entity(u_item.actor) if getattr(u_item, "actor", None) else None
+        _u_actor_full = (
+            _u_actor_ent is not None
+            and float(getattr(_u_actor_ent, "energy", 0.0)) >= float(getattr(_u_actor_ent, "max_energy", 1e9)) - 1e-6
+        )
+        if (
+            u_owner
+            and u_owner not in _sim_player_actors(sim)
+            and abs(now_av - u_item.av) <= 0.5
+            and not (_cur_matches_owner and _u_actor_full)
+        ):
             if any(
                 e is not cur_turn
                 and getattr(e, "is_enemy", False)

@@ -53,6 +53,13 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 owner_id=evt.target_name,
                 param_entity_id=evt.breaker_name,
             )
+            if evt.action_delay_pct > 0.0 and evt.element:
+                self.rt.modifier_engine.add_modifier(
+                    owner_id=evt.target_name,
+                    caster_id=evt.breaker_name,
+                    mod_name=f"MCommon_BreakDebuff_{evt.element}",
+                    ability_name="BreakDebuff",
+                )
 
     def _resolve_targets(self, target_spec: Any, ctx: ExecutionContext) -> List[str]:
         """解析 TargetType（支持 GlobalTargetAlias 查表与 TargetSequence.Sequence 管道）。"""
@@ -196,12 +203,13 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 if str(key_h) in mod_floats or key_h in ctx.modifier_instance.dynamic_values:
                     if "TargetType" not in task or target_id == ctx.modifier_instance.owner_id:
                         mod_target = ctx.modifier_instance
+        eff_ab = "" if (target_id == "__LEVEL__" and scope != "ContextAbility") else ctx.ability_name
         self.rt.set_dynamic_value(
             target_id,
             key_h,
             value,
             modifier=mod_target,
-            ability_name=ctx.ability_name,
+            ability_name=eff_ab,
         )
 
     # ------------------------------------------------------------------
@@ -493,9 +501,11 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             else:
                 target_id = self._dyn_scope_entity(task, ctx)
                 t_ent = sim.get_entity(target_id)
-                if t_ent is not None and getattr(t_ent, "is_enemy", False):
+                if target_id == "__LEVEL__" or (t_ent is not None and getattr(t_ent, "is_enemy", False)):
                     key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
-                    self._write_dyn(task, ctx, key_h, 0.0)
+                    scope = task.get("ContextScope", "")
+                    if scope == "TargetEntity" or key_h not in rt.entity_dynamics.get(target_id, {}):
+                        self._write_dyn(task, ctx, key_h, 0.0)
             return
 
         if t == "RPG.GameCore.SetDynamicValue":
@@ -691,7 +701,7 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     return
             life = self._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
             cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
-            cnt = int(round(self._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else 1
+            cnt = int(round(self._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else None
             max_l = int(round(self._eval_num(task["MaxLayer"], ctx, 1.0))) if "MaxLayer" in task else None
             inherit = str(task.get("InheritCaster", ""))
             for tid in targets:
@@ -965,19 +975,27 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 ent.current_hp = 0.0
                 me.destroy_all_for_entity(tid)
                 if getattr(ent, "is_enemy", False):
+                    eff_attacker = ctx.caster_id or ""
+                    c_ent = sim.get_entity(eff_attacker) if eff_attacker and eff_attacker != "__LEVEL__" else None
+                    if eff_attacker in ("", "__LEVEL__") or (c_ent is not None and getattr(c_ent, "monster_id", 0) == 8003060):
+                        eff_attacker = getattr(rt, "_last_enemy_killer_id", "") or getattr(rt, "_current_attacker_id", "") or eff_attacker
                     if prev_hp > 0.0:
                         from simulator.events import EnemyDefeatedEvent
                         sim.event_bus.publish(
                             EnemyDefeatedEvent(
                                 av=float(sim.current_av),
                                 cycle=int(sim.current_cycle),
-                                attacker_name=ctx.caster_id or "",
+                                attacker_name=eff_attacker,
                                 target_name=tid,
                             )
                         )
                     director = getattr(sim, "_stage_director", None)
                     runner = getattr(director, "runner", None) if director is not None else None
-                    if runner is not None:
+                    is_inf_stage = bool(
+                        runner is not None
+                        and getattr(getattr(runner.built_stage, "source_spec", None), "stage_infinite_group_id", None) is not None
+                    )
+                    if runner is not None and not is_inf_stage:
                         runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
                     sim.entities[:] = [e for e in sim.entities if e.name != tid]
                 elif not mute_death and prev_hp > 0.0:
@@ -1017,6 +1035,21 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             director = getattr(sim, "_stage_director", None)
             if director is not None and hasattr(director, "flush_ally_talent_heals"):
                 director.flush_ally_talent_heals()
+            data_list = task.get("SummonMonsterDataList") or []
+            if data_list and isinstance(data_list[0], Mapping) and data_list[0].get("LocationType") == "FormationRecord":
+                runner = getattr(director, "runner", None) if director is not None else None
+                if runner is not None and hasattr(runner, "refill_next_infinite_monster"):
+                    slot_spec = data_list[0].get("MonsterSlot")
+                    slot_val = int(round(self._eval_num(slot_spec, ctx, -1.0))) if slot_spec is not None else -1
+                    dr_spec = task.get("DelayRatio")
+                    dr_val = self._eval_num(dr_spec, ctx, 0.3) if dr_spec is not None else None
+                    ent = runner.refill_next_infinite_monster(
+                        formation_slot=(slot_val if slot_val >= 0 else None),
+                        delay_ratio=dr_val,
+                    )
+                    if ent is not None and director is not None:
+                        director.sync_spawned_entities()
+                return
             if director is not None and hasattr(director, "summon_enemy"):
                 director.summon_enemy(
                     ctx.caster_id,
@@ -1335,8 +1368,180 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     me.destroy_all_for_entity(tid)
             return
 
+        if t == "RPG.GameCore.OwnerEntityAddAbility":
+            ab_name = _str_val(task.get("AbilityName"))
+            if ab_name:
+                targets = (
+                    self._resolve_targets(task.get("TargetType"), ctx)
+                    if "TargetType" in task
+                    else [ctx.modifier_owner_id or ctx.caster_id]
+                )
+                init_dyn: Dict[int, float] = {}
+                for dk, dv in (task.get("DynamicValues") or {}).items():
+                    init_dyn[dotnet_hash(str(dk))] = self._eval_num(dv, ctx, 0.0)
+                rt.loader.ensure_ability_index()
+                ab_doc = rt.loader.get_ability(ab_name)
+                for tid in targets:
+                    for kh, val in init_dyn.items():
+                        rt.set_dynamic_value(tid, kh, val, ability_name=ab_name)
+                    if ab_doc:
+                        sub_ctx = ctx.clone(
+                            caster_id=tid,
+                            ability_name=ab_name,
+                            ability_target_ids=(tid,),
+                            modifier_owner_id=tid,
+                            local_dynamics=dict(init_dyn),
+                        )
+                        on_add = ab_doc.get("OnAdd")
+                        if on_add:
+                            self.execute_tasks(on_add, sub_ctx)
+            return
+
+        if t == "RPG.GameCore.SetDynamicValueByMazeBuffConfig":
+            qlist = task.get("QueryList") or {}
+            if isinstance(qlist, Mapping):
+                mb_map = getattr(rt.loader, "_maze_buff_by_id", None)
+                if mb_map is None:
+                    mb_map = {}
+                    try:
+                        for row in rt.loader._read_excel("MazeBuff.json"):
+                            mid = int(row.get("ID", 0) or 0)
+                            if mid and mid not in mb_map:
+                                mb_map[mid] = row
+                    except Exception:
+                        pass
+                    rt.loader._maze_buff_by_id = mb_map
+                for dk, qspec in qlist.items():
+                    if not isinstance(qspec, Mapping):
+                        continue
+                    mb_id = int(qspec.get("MazeBuffID", 0) or 0)
+                    idx = int(qspec.get("Index", 1) or 1)
+                    row = mb_map.get(mb_id)
+                    val = 0.0
+                    if row is not None:
+                        plist = row.get("ParamList") or []
+                        if 1 <= idx <= len(plist):
+                            p = plist[idx - 1]
+                            val = float(p.get("Value", 0.0) if isinstance(p, Mapping) else (p or 0.0))
+                    kh = dotnet_hash(str(dk))
+                    if ctx.modifier_instance is not None:
+                        ctx.modifier_instance.dynamic_values[kh] = val
+                    self._write_dyn(task, ctx, kh, val)
+            return
+
+        if t == "RPG.GameCore.SetDynamicValueByHardLevelProperty":
+            key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
+            prop = str(task.get("Property") or "HPRatio")
+            val = 1.0
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None:
+                hlc = getattr(getattr(runner.built_stage, "source_spec", None), "hard_level_curve", None)
+                if hlc is not None:
+                    prop_map = {
+                        "HPRatio": "hp_ratio",
+                        "AttackRatio": "attack_ratio",
+                        "DefenceRatio": "defence_ratio",
+                        "SpeedRatio": "speed_ratio",
+                        "StanceRatio": "stance_ratio",
+                    }
+                    attr = prop_map.get(prop)
+                    if attr and hasattr(hlc, attr):
+                        val = float(getattr(hlc, attr))
+            self._write_dyn(task, ctx, key_h, val)
+            return
+
+        if t == "RPG.GameCore.SetDynamicValueByStatusCount":
+            key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
+            read_targets = self._resolve_targets(task.get("ReadTargetType") or task.get("TargetType"), ctx)
+            want_st = str(task.get("StatusType") or "Debuff")
+            cnt = 0.0
+            if read_targets:
+                tid = read_targets[0]
+                cnt = float(
+                    sum(
+                        1
+                        for m in me.get_modifiers(tid)
+                        if not m._destroyed and me.get_modifier_status_type(m) == want_st
+                    )
+                )
+            self._write_dyn(task, ctx, key_h, cnt)
+            return
+
+        if t == "RPG.GameCore.IncludeGlobalTaskListTemplate":
+            tpl_name = _str_val(task.get("Name"))
+            if tpl_name:
+                rt.loader.ensure_ability_index()
+                tpl_tasks = rt.loader._global_tpl_by_name.get(tpl_name)
+                if isinstance(tpl_tasks, list):
+                    self.execute_tasks(tpl_tasks, ctx)
+            return
+
+        if t == "RPG.GameCore.InfiniteWaveAddCurWaveMaxCount":
+            delta = int(round(self._eval_num(task.get("AddDelta"), ctx, 0.0)))
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None:
+                runner.state.infinite_wave_max_count = max(
+                    0, runner.state.infinite_wave_max_count + delta
+                )
+            return
+
+        if t == "RPG.GameCore.RecordEntityFormationIndex":
+            targets = self._resolve_targets(task.get("TargetType"), ctx)
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None:
+                for tid in targets:
+                    for idx, mrs in enumerate(runner.state.enemies):
+                        if mrs.entity.name == tid:
+                            if idx not in runner.state.recorded_formation_slots:
+                                runner.state.recorded_formation_slots.append(idx)
+                            break
+            return
+
+        if t == "RPG.GameCore.InfiniteWaveNextMonsterId":
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None:
+                wave_bp = runner.built_stage.waves[runner.state.wave_index]
+                cur = runner.state.infinite_wave_cursor
+                limit = min(len(wave_bp.enemies), runner.state.infinite_wave_max_count)
+                next_mid = float(wave_bp.enemies[cur].monster_id) if cur < limit else 0.0
+                next_eg = float(wave_bp.enemies[cur].elite_group) if cur < limit else 0.0
+                slot = (
+                    float(runner.state.recorded_formation_slots.pop(0))
+                    if runner.state.recorded_formation_slots
+                    else -1.0
+                )
+                for key_field, val in (
+                    ("MonsterIDKey", next_mid),
+                    ("EliteGroupKey", next_eg),
+                    ("MonsterSlotKey", slot),
+                ):
+                    kname = _str_val(task.get(key_field))
+                    if kname:
+                        kh = dotnet_hash(kname)
+                        ctx.local_dynamics[kh] = val
+                        rt.set_dynamic_value(ctx.caster_id, kh, val, ability_name=ctx.ability_name)
+            return
+
+        if t == "RPG.GameCore.ClearRecordEntityFormation":
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None:
+                runner.state.recorded_formation_slots.clear()
+            return
+
+        if t == "RPG.GameCore.AttackData":
+            tgt_spec = task.get("TargetType") or {"Alias": "AbilityTargetEntity"}
+            self._execute_damage({"TargetType": tgt_spec, "AttackProperty": task}, ctx)
+            return
+
         if t in (
             "RPG.GameCore.AttachEntityUnselectable",
+            "RPG.GameCore.OverrideMonsterRankScore",
+            "RPG.GameCore.SetCharacterVisibleInViewMode",
             "RPG.GameCore.SetLocalOffsetAsMoveTarget",
             "RPG.GameCore.SetMonsterEnergyBarState",
             "RPG.GameCore.TriggerCustomString",
@@ -1346,7 +1551,6 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             "RPG.GameCore.SetTeamFormation",
             "RPG.GameCore.SetEntityForbidCameraDither",
             "RPG.GameCore.SetEntityVisible",
-            "RPG.GameCore.OwnerEntityAddAbility",
             "RPG.GameCore.TutorialTaskUnlock",
             "OOCOGGMJLBN",
             "RPG.GameCore.StackStatusResistance",
@@ -1358,12 +1562,30 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             "RPG.GameCore.Remodifier",
             "RPG.GameCore.TriggerModifierCustomEvent",
             "RPG.GameCore.SetStanceCount",
+            "RPG.GameCore.AudioSetRTPCValueByRatio",
+            "RPG.GameCore.DisableHeadLookAtOverride",
+            "RPG.GameCore.PerformDelayExecute",
+            "RPG.GameCore.RemoveEntityFromRelationGroup",
+            "RPG.GameCore.SetCharacterAlwaysIdleState",
+            "RPG.GameCore.SetCharacterAtlasFaceEmotion",
+            "RPG.GameCore.SetCharacterFormation",
+            "RPG.GameCore.SetEntityForceVisible",
+            "RPG.GameCore.SetEntityRelationGroup",
+            "RPG.GameCore.ShowBattleScreenEffect",
+            "RPG.GameCore.StartAim",
+            "RPG.GameCore.SwitchCaseByAttackDamageType",
+            "RPG.GameCore.TargetFetchUniqueNameEntity",
+            "RPG.GameCore.TargetFilterAliveState",
+            "RPG.GameCore.TriggerBreak",
+            "JDOLDFECMPL",
+            "MJHAGGNNBIK",
             "FOIBLOANLCJ",
             "CKCOFEAAJII",
             "KADCLBEPFPL",
             "NDFKINKPKHF",
             "EOPFECKEAIK",
             "GFODFDCBFJF",
+            "IKAHOOLKHDN",
         ):
             return
 

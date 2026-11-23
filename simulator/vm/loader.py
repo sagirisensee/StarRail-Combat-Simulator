@@ -38,7 +38,6 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.WaitAnimEvent",
     "RPG.GameCore.TriggerAnimState",
     "RPG.GameCore.TriggerAnimStateWithCallback",
-    "RPG.GameCore.TriggerAnimStateWithMove",
     "RPG.GameCore.TriggerEffect",
     "RPG.GameCore.TriggerEffectList",
     "RPG.GameCore.RemoveEffect",
@@ -177,6 +176,18 @@ def prune_task_list(tasks: Any) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         t = item.get("$type", "")
+        if t == "RPG.GameCore.TriggerAnimStateWithMove":
+            events = item.get("EventList")
+            if isinstance(events, list) and events:
+                def _ev_time(ev: Any) -> float:
+                    if isinstance(ev, Mapping):
+                        nt = ev.get("NormalizedTime")
+                        if isinstance(nt, Mapping) and not nt.get("IsDynamic"):
+                            return float((nt.get("FixedValue") or {}).get("Value", 0.0) or 0.0)
+                    return 0.0
+                for ev in sorted((e for e in events if isinstance(e, Mapping)), key=_ev_time):
+                    out.extend(prune_task_list(ev.get("TaskList", [])))
+            continue
         if t in PRUNABLE_PRESENTATION_TYPES or t.endswith("ClientOnly"):
             continue
         cloned = dict(item)
@@ -341,6 +352,7 @@ class GameDataLoader:
         self._relic_skills: Optional[Dict[Tuple[int, int], Dict[str, Any]]] = None
         self._monsters: Optional[Dict[int, Dict[str, Any]]] = None
         self._monster_skills: Optional[Dict[int, Dict[str, Any]]] = None
+        self._status_type_by_mod: Optional[Dict[str, str]] = None
 
     def _read_json(self, rel_or_abs: str) -> Any:
         path = rel_or_abs if os.path.isabs(rel_or_abs) else os.path.join(self.data_root, rel_or_abs)
@@ -490,6 +502,33 @@ class GameDataLoader:
         if name not in self._global_target_alias_by_name:
             self.ensure_ability_index()
         return self._global_target_alias_by_name.get(name)
+
+    def get_modifier_status_type(self, mod_name: str) -> str:
+        """从官方 StatusConfig 系列表按 ModifierName 解析官方 StatusType（Buff/Debuff/Other）。"""
+        if getattr(self, "_status_type_by_mod", None) is None:
+            table: Dict[str, str] = {}
+            excel_dir = os.path.join(self.data_root, "ExcelOutput")
+            for fn in (
+                "AvatarStatusConfig.json",
+                "MonsterStatusConfig.json",
+                "StatusConfig.json",
+                "StatusConfigLD.json",
+            ):
+                path = os.path.join(excel_dir, fn)
+                if not os.path.exists(path):
+                    continue
+                rows = self._read_excel(fn)
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if not isinstance(row, Mapping):
+                        continue
+                    mn = str(row.get("ModifierName") or "")
+                    st = str(row.get("StatusType") or "")
+                    if mn and st and mn not in table:
+                        table[mn] = st
+            self._status_type_by_mod = table
+        return self._status_type_by_mod.get(mod_name, "")
 
     # --- 角色/忆灵/光锥/遗器参数解析 ---
     def compute_effective_skill_levels(

@@ -38,6 +38,7 @@ class ExecutionContext:
     heal_data: Optional[Dict[str, Any]] = None
     callback_modifier_name: str = ""
     callback_behavior_flags: Tuple[str, ...] = ()
+    callback_status_type: str = ""
     change_value: float = 0.0
     param_flags: Tuple[str, ...] = ()
     current_skill_type: str = ""
@@ -62,6 +63,7 @@ class ExecutionContext:
             "heal_data": self.heal_data,
             "callback_modifier_name": self.callback_modifier_name,
             "callback_behavior_flags": self.callback_behavior_flags,
+            "callback_status_type": self.callback_status_type,
             "change_value": self.change_value,
             "param_flags": self.param_flags,
             "current_skill_type": self.current_skill_type,
@@ -182,6 +184,37 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                     return [m.name]
         return []
 
+    def _adjoin_of(anchor_id: str, direction: str = "both") -> List[str]:
+        anchor = sim.get_entity(anchor_id) if anchor_id else None
+        if anchor is None:
+            return []
+        pool = (
+            _alive_enemies(spatial_order=True)
+            if getattr(anchor, "is_enemy", False)
+            else _alive_allies(include_countdown=False)
+        )
+        if anchor.name not in pool:
+            rel_idx = 0
+            found_anchor = False
+            pool_set = set(pool)
+            for e in sim.entities:
+                if e.name == anchor.name:
+                    found_anchor = True
+                    break
+                if e.name in pool_set:
+                    rel_idx += 1
+            if not found_anchor:
+                return []
+            pool.insert(rel_idx, anchor.name)
+        idx = pool.index(anchor.name)
+        left = pool[idx - 1] if idx - 1 >= 0 else ""
+        right = pool[idx + 1] if idx + 1 < len(pool) else ""
+        if direction == "left":
+            return [left] if left else []
+        if direction == "right":
+            return [right] if right else []
+        return [x for x in (left, right) if x]
+
     # 1. 基础锚点求值
     if base == "Caster":
         cur = [ctx.caster_id] if ctx.caster_id else []
@@ -285,6 +318,65 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = list(ctx.ability_target_ids[:1])
     elif base == "AllLightTeam":
         cur = _alive_allies(include_unselectable=False, include_countdown=False)
+    elif base == "AllLightTeamIgnoreServant":
+        cur = _alive_avatars(include_unselectable=False)
+    elif base == "AllDarkTeamDyingCharacter":
+        cur = [
+            e.name
+            for e in sim.entities
+            if getattr(e, "is_enemy", False)
+            and (getattr(e, "_in_deathrattle_limbo", False) or getattr(e, "_vm_limbo_pending", False))
+        ]
+    elif base == "CurrentTurnActionEntity":
+        t = getattr(sim, "current_turn_entity", None)
+        cur = [t.name] if t is not None else []
+    elif base == "DamageAttackerEntity":
+        cur = [ctx.caster_id] if ctx.caster_id else []
+    elif base == "DarkTeamEntity":
+        cur = _alive_enemies(include_unselectable=False, include_countdown=False)[:1]
+    elif base == "BattleAllEntity":
+        cur = _dedup_preserve(
+            _alive_allies(include_unselectable=True, include_countdown=True)
+            + _alive_enemies(include_unselectable=True, include_countdown=True)
+        )
+    elif base == "LightTeamLeftWithoutServant":
+        cur = _alive_avatars(include_unselectable=False)[:1]
+    elif base == "DarkTeamLeft":
+        cur = _alive_enemies(include_unselectable=False, include_countdown=False, spatial_order=True)[:1]
+    elif base == "DarkTeamRight":
+        cur = _alive_enemies(include_unselectable=False, include_countdown=False, spatial_order=True)[-1:]
+    elif base == "ModifierOwnerSummonedMinions":
+        own_id = ctx.modifier_owner_id or ctx.caster_id
+        cur = [
+            e.name
+            for e in sim.entities
+            if getattr(e, "is_enemy", False)
+            and getattr(e, "summoner_name", None) == own_id
+            and _is_alive_entity(sim, e)
+        ]
+    elif base == "ParamEntityActualOwner":
+        pid = ctx.param_entity_id
+        if pid:
+            pe = sim.get_entity(pid)
+            mname = getattr(pe, "master_name", None) if pe is not None else None
+            cur = [mname] if mname and sim.get_entity(mname) is not None else [pid]
+        else:
+            cur = []
+    elif base == "CasterAdjoinEntity":
+        cur = _adjoin_of(ctx.caster_id, "both")
+    elif base == "CasterLeftEntity":
+        cur = _adjoin_of(ctx.caster_id, "left")
+    elif base == "CasterRightEntity":
+        cur = _adjoin_of(ctx.caster_id, "right")
+    elif base in ("ModifierOwnerAdjoinEntity", "ModifierOwnerEntityAdjoinEntity"):
+        cur = _adjoin_of(ctx.modifier_owner_id or ctx.caster_id, "both")
+    elif base == "ModifierOwnerEntityAndAdjoinEntity":
+        oid = ctx.modifier_owner_id or ctx.caster_id
+        cur = _dedup_preserve(([oid] if oid else []) + _adjoin_of(oid, "both"))
+    elif base in ("ParamEntityAdjoinEntity", "ProjectileHitEntityAdjoinEntity"):
+        cur = _adjoin_of(ctx.param_entity_id, "both")
+    elif base == "GridFight_AllBackEnd":
+        cur = []
     elif base == "AllTeamMember":
         caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
         if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
@@ -382,7 +474,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             for eid in cur:
                 nxt.extend(_servants_of(eid))
             cur = _dedup_preserve(nxt)
-        elif mod == "GetSummoner":
+        elif mod in ("GetSummoner", "GetCreator"):
             nxt = []
             for eid in cur:
                 nxt.extend(_summoner_of(eid))

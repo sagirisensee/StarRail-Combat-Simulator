@@ -254,7 +254,7 @@ class StatusManager:
                 target.current_hp = min(cap, target.current_hp * (new_max / old_max))
             elif hp_delta < 0:
                 if (
-                    not getattr(target, "is_enemy", False)
+                    not getattr(target, "is_countdown", False)
                     and old_max > 0
                     and getattr(target, "current_hp", 0.0) > 0
                 ):
@@ -336,12 +336,11 @@ class StatusManager:
             old_max, old_hp = old_hp_map.get(id(tgt), (0.0, 0.0))
             new_max = self._calc_entity_max_hp(tgt)
             cap = tgt.effective_hp_cap(new_max) if hasattr(tgt, "effective_hp_cap") else new_max
-            is_valid_ally = (
-                not getattr(tgt, "is_enemy", False)
-                and not getattr(tgt, "is_countdown", False)
+            is_valid_entity = (
+                not getattr(tgt, "is_countdown", False)
                 and (self.simulator and self.simulator.get_entity(getattr(tgt, "name", "")) is not None)
             )
-            if reason in ("EXPIRED", "EXPLICIT") and is_valid_ally and 0 < new_max < old_max and old_hp > 1.0:
+            if reason in ("EXPIRED", "EXPLICIT") and is_valid_entity and 0 < new_max < old_max and old_hp > 1.0:
                 scaled_hp = old_hp * (new_max / old_max)
                 tgt.current_hp = max(1.0, min(cap, scaled_hp))
             elif 0 < cap != float("inf") and getattr(tgt, "current_hp", 0.0) > cap:

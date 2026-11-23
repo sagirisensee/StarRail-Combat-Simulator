@@ -65,7 +65,7 @@ class TurnOpsMixin:
         if task.get("TargetType") is not None:
             targets = self._resolve_targets(task.get("TargetType"), ctx)
         elif ctx.modifier_owner_id and (
-            prio in ("MonsterForceKill", "MonsterDeathRattle")
+            prio in ("MonsterForceKill", "MonsterDeathRattle", "MonsterSummon")
             or (
                 ctx.caster_id
                 and (sim.get_entity(ctx.caster_id) is None or getattr(sim.get_entity(ctx.caster_id), "current_hp", 0.0) <= 0.0)
@@ -77,27 +77,34 @@ class TurnOpsMixin:
         ability_tgt_spec = task.get("AbilityTarget")
 
         for tid in targets:
-            if hasattr(sim.port, "get_active_proxy"):
+            is_level_caster = (tid == "__LEVEL__")
+            if not is_level_caster and hasattr(sim.port, "get_active_proxy"):
                 proxy_id = sim.port.get_active_proxy(tid)
                 if proxy_id:
                     tid = proxy_id
-            ent = sim.get_entity(tid)
-            allow_limbo = "Limbo" in str(task.get("OwnerAliveState", ""))
-            if ent is None or (ent.current_hp <= 0 and not allow_limbo):
+            ent = None if is_level_caster else sim.get_entity(tid)
+            allow_limbo = "Limbo" in str(task.get("OwnerAliveState", "")) or str(task.get("OwnerAliveState", "")) == "Anyone"
+            if not is_level_caster and (ent is None or (ent.current_hp <= 0 and not allow_limbo)):
                 continue
-            if getattr(ent, "_avatar_change_target_id", None) is not None and not getattr(ent, "is_enemy", False):
+            if ent is not None and getattr(ent, "_avatar_change_target_id", None) is not None and not getattr(ent, "is_enemy", False):
                 continue
-            is_enemy_caster = bool(getattr(ent, "is_enemy", False))
-            if not is_enemy_caster and not sim.port.enemies(tid):
+            is_enemy_caster = bool(ent is not None and getattr(ent, "is_enemy", False))
+            can_run_unselectable = bool(task.get("CanRunOnUnselectableTarget", False))
+            if not is_level_caster and not is_enemy_caster and not can_run_unselectable and not sim.port.enemies(tid):
                 continue
             if ab_name:
+                pre_check = task.get("PreCheck")
+                if isinstance(pre_check, Mapping) and pre_check.get("Type") == "AbilityOwnerInsertUnusedCount":
+                    max_unused = int(round(self._eval_num(pre_check.get("Count"), ctx, 1.0)))
+                    if sim.scheduler.count_pending_actions(tid, ab_name) >= max_unused:
+                        continue
                 cat = (
                     ActionScheduleCategory.FOLLOW_UP
                     if prio in ("Character_ChainSkill", "AvatarInsertAttackSelf", "MonsterBuffOthers")
                     else ActionScheduleCategory.IMMEDIATE_EXTRA_TURN
                 )
                 act_kind = ActionKind.FOLLOW_UP if cat == ActionScheduleCategory.FOLLOW_UP else ActionKind.TALENT
-                ins_skill_id, ins_sp_base = self._resolve_insert_skill_meta(tid, ab_name)
+                ins_skill_id, ins_sp_base = (0, 0.0) if is_level_caster else self._resolve_insert_skill_meta(tid, ab_name)
                 preset_targets = tuple(self._resolve_targets(ability_tgt_spec, ctx)) if ability_tgt_spec is not None else ()
 
                 def _run_insert(
@@ -120,6 +127,7 @@ class TurnOpsMixin:
                         )
                     else:
                         eff_tgts = tuple(e.name for e in sim.entities if e.is_enemy and e.current_hp > 0)
+                    me.dispatch_event("OnListenInsertAbilityStart", param_entity_id=a_id)
                     if sk_t == "Insert":
                         me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, current_skill_type=sk_t)
                         me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, current_skill_type=sk_t)
@@ -142,7 +150,7 @@ class TurnOpsMixin:
                         sp_granted = rt._skill_sp_ratio_granted
                         rt._active_skill_sp_base = prev_sp_base
                         rt._skill_sp_ratio_granted = prev_sp_granted
-                    if _sp > 0 and not sp_granted and sim.port:
+                    if _sp > 0 and not sp_granted and sim.port and a_id != "__LEVEL__":
                         ep_recipient = a_id
                         a_ent = sim.get_entity(a_id)
                         if a_ent is not None and getattr(a_ent, "is_memosprite", False) and getattr(a_ent, "master_name", None):
@@ -155,6 +163,8 @@ class TurnOpsMixin:
                     me.dispatch_event("OnListenActionEnd", param_entity_id=a_id)
                     me.dispatch_event("OnAfterAction", owner_id=a_id)
                     me.dispatch_event("OnListenAfterAction", param_entity_id=a_id)
+                    me.dispatch_event("OnListenInsertAbilityFinish", param_entity_id=a_id)
+                    me.dispatch_event("OnListenInsertActionFinish", param_entity_id=a_id)
                     me.dispatch_event(
                         "CheckParamFlagCallBack",
                         param_entity_id=a_id,
@@ -168,7 +178,9 @@ class TurnOpsMixin:
                     category=cat,
                     action_kind=act_kind,
                     skill_id=ins_skill_id,
-                    preempt_follow_up=(prio in ("AvatarBuffSelf", "MonsterChangeState", "MonsterChangePhase")),
+                    preempt_follow_up=(prio in ("AvatarBuffSelf", "MonsterChangeState", "MonsterChangePhase", "MonsterDeathRattle", "MonsterForceKill")),
+                    immediate_priority=(5 if prio == "MonsterSummon" else 10),
+                    allow_limbo=allow_limbo,
                 )
             elif getattr(ent, "is_memosprite", False):
                 kit = getattr(ent, "kit", None)
@@ -249,8 +261,11 @@ class TurnOpsMixin:
                                 break
 
         robin_spd = float(init_dyn.get(dotnet_hash("BattleEvent_RobinS_00_BaseSpeed"), 0.0) or 0.0)
+        dv_be_spd = float(init_dyn.get(dotnet_hash("DV_BE_BaseSpeed"), 0.0) or 0.0)
         if robin_spd > 0.0:
             spd = robin_spd
+        elif dv_be_spd > 0.0:
+            spd = dv_be_spd
         elif compiled_be is not None and float(getattr(compiled_be, "effective_speed", 0.0) or 0.0) > 0.0:
             spd = float(compiled_be.effective_speed)
         else:

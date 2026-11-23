@@ -14,7 +14,9 @@ from simulator.vm.reconcile.models import (
     EnemyHitRecord,
     LogMetadata,
     _extract_tag,
+    _get_avatar_damage_types,
     _get_avatar_skill_effects,
+    _get_avatar_skill_stances,
     _get_servant_skill_effects,
     _resolve_uid_name,
 )
@@ -82,6 +84,7 @@ def extract_log_metadata(
     pending_player_atk: Optional[Tuple[float, str]] = None
     pending_player_hit_euids: List[int] = []
     pending_player_hit_dmgs: Dict[int, float] = {}
+    last_player_hit_euid: Optional[int] = None
     pending_player_primary_dmg_hits = 0
     pending_player_is_servant = False
     pending_player_skill_id = 0
@@ -93,6 +96,10 @@ def extract_log_metadata(
     in_aoe_heal_window = False
     aoe_heal_slot_uids: List[int] = []
     inferred_slot_uids: List[int] = []
+    robin_s_init_ad: float = 0.0
+    first_skill_info: Optional[Tuple[int, int]] = None
+    first_skill_done: bool = False
+    first_skill_stance_obs: Dict[int, float] = {}
 
     def _servant_primary_euid() -> Optional[int]:
         """单体忆灵技主目标：仅在官方技能表为 SingleAttack 且全段命中同一个敌方时提取。"""
@@ -105,7 +112,7 @@ def extract_log_metadata(
         return None
 
     def _flush_pending_player_atk() -> None:
-        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits
+        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits, last_player_hit_euid
         nonlocal pending_player_is_servant, pending_player_skill_id, pending_player_skill_type
         if pending_player_atk is not None:
             if pending_player_is_servant:
@@ -144,6 +151,7 @@ def extract_log_metadata(
         pending_player_atk = None
         pending_player_hit_euids = []
         pending_player_hit_dmgs = {}
+        last_player_hit_euid = None
         pending_player_primary_dmg_hits = 0
         pending_player_is_servant = False
         pending_player_skill_id = 0
@@ -307,6 +315,8 @@ def extract_log_metadata(
                 pending_ally_ult_sid = 0
                 pending_ally_ult_uid = 0
                 pending_ally_ult_sp_fallback = None
+                if first_skill_info is not None and not first_skill_done:
+                    first_skill_done = True
                 _flush_pending_player_atk()
             elif ev == "OnUseSkill":
                 _flush_pending_player_atk()
@@ -324,6 +334,11 @@ def extract_log_metadata(
                     skill = data.get("skill") or {}
                     sk_type = str(skill.get("type") or "")
                     sk_id = int(skill.get("skill_config_id") or 0)
+                    if not first_skill_done:
+                        if first_skill_info is None and sk_id > 0:
+                            first_skill_info = (sk_id, uid)
+                        elif first_skill_info is not None:
+                            first_skill_done = True
                     cname = _resolve_uid_name(uid, char_db)
                     if not inferred_slot_uids and sk_id in (140902, 140903):
                         in_aoe_heal_window = True
@@ -351,6 +366,11 @@ def extract_log_metadata(
                 if pending_player_atk is not None:
                     if dtype in ("Basic", "Normal", "Skill", "BPSkill", "Ultimate", "Ultra"):
                         pending_player_primary_dmg_hits += 1
+                    if last_player_hit_euid is not None:
+                        dmg_val = float(data.get("damage") or 0.0)
+                        if dmg_val > pending_player_hit_dmgs.get(last_player_hit_euid, 0.0):
+                            pending_player_hit_dmgs[last_player_hit_euid] = dmg_val
+                        last_player_hit_euid = None
                 atk_ent = data.get("attacker") or {}
                 if (
                     atk_ent.get("team") == "Player"
@@ -374,6 +394,14 @@ def extract_log_metadata(
                     if not saw_first_init_enemy and uid not in seen_init_enemy_uids:
                         seen_init_enemy_uids.add(uid)
                         initial_enemy_uids.append(uid)
+                    if (
+                        ptype == "CurrentStance"
+                        and first_skill_info is not None
+                        and not first_skill_done
+                        and val > 0.0
+                        and uid not in first_skill_stance_obs
+                    ):
+                        first_skill_stance_obs[uid] = val
                     if ptype == "CurrentSP":
                         if (
                             cur_enemy_uid is None
@@ -429,12 +457,16 @@ def extract_log_metadata(
                             or (pending_player_atk[1].startswith("UID_") and abs(val - prev) <= 1.0 and val > 1e-3)
                         ):
                             pending_player_hit_euids.append(uid)
-                            if prev is not None and val < prev - 1.0 and uid not in pending_player_hit_dmgs:
-                                pending_player_hit_dmgs[uid] = prev - val
+                            if prev is not None and val < prev - 1.0:
+                                last_player_hit_euid = uid
+                                if uid not in pending_player_hit_dmgs:
+                                    pending_player_hit_dmgs[uid] = prev - val
                         elif cur_enemy_uid is not None and uid != cur_enemy_uid and prev is not None and prev > 0.0 and val <= 0.0:
                             enemy_retarget_picks.append((round(cur_av, 2), cur_enemy_uid, uid))
                         last_enemy_hp[uid] = val
                 elif team_tag == "Player" and uid:
+                    if uid == 1512 and ptype == "ActionDelay" and robin_s_init_ad <= 0.0 and val > 0.0:
+                        robin_s_init_ad = val
                     if uid not in seen_uid_set:
                         seen_uid_set.add(uid)
                         seen_uids.append(uid)
@@ -544,9 +576,14 @@ def extract_log_metadata(
     _flush_pending_player_atk()
     _flush_turn()
 
+    # 排除已在 OnInitializeEnemy 登记的后续生成怪（其属性初始化 OnStatChange 可能早于 OnInitializeEnemy 发出）
+    spawn_euids = {u for u, _ in spawn_events_raw}
+    initial_enemy_uids = [u for u in initial_enemy_uids if u not in spawn_euids]
+
     # 基于官方 StageDataLoader 通用映射任意关卡的初始敌方与召唤物 UID（零关卡硬编码）
     summon_monster_names: Set[str] = set()
     wave0_names: List[str] = []
+    stage_spec = None
     if stage_id > 0:
         try:
             stage_spec = StageDataLoader().load_stage(stage_id)
@@ -556,28 +593,53 @@ def extract_log_metadata(
         except Exception:
             pass
 
-    if wave0_names and initial_enemy_uids:
-        name_totals: Dict[str, int] = {}
-        for nm in wave0_names:
-            name_totals[nm] = name_totals.get(nm, 0) + 1
-        seen_init_name_cnt: Dict[str, int] = {}
-        for euid, nm in zip(sorted(initial_enemy_uids), wave0_names):
-            if name_totals[nm] > 1:
-                seen_init_name_cnt[nm] = seen_init_name_cnt.get(nm, 0) + 1
-                enemy_uid_map.setdefault(euid, f"{nm}_{seen_init_name_cnt[nm]}")
+    is_infinite_stage = bool(stage_spec is not None and stage_spec.stage_infinite_group_id is not None)
+    if is_infinite_stage and stage_spec is not None and stage_spec.waves and initial_enemy_uids:
+        w0_monsters = stage_spec.waves[0].monsters
+        sorted_init = sorted(initial_enemy_uids)
+        max_field = stage_spec.waves[0].max_teammate_count or 5
+        if w0_monsters and w0_monsters[0].monster_id == 8003060:
+            if len(sorted_init) > max_field:
+                enemy_uid_map.setdefault(sorted_init[0], w0_monsters[0].name)
+                formation_init_uids = sorted_init[1:]
             else:
-                enemy_uid_map.setdefault(euid, nm)
-
-    raw_name_totals: Dict[str, int] = {}
-    for _, ename in spawn_events_raw:
-        raw_name_totals[ename] = raw_name_totals.get(ename, 0) + 1
-    spawn_seq_by_name: Dict[str, int] = {}
-    for euid, ename in spawn_events_raw:
-        if ename in summon_monster_names or raw_name_totals[ename] > 1:
-            spawn_seq_by_name[ename] = spawn_seq_by_name.get(ename, 0) + 1
-            enemy_uid_map[euid] = f"{ename}_{spawn_seq_by_name[ename]}"
+                enemy_uid_map.setdefault(sorted_init[0] - 2, w0_monsters[0].name)
+                formation_init_uids = sorted_init
         else:
-            enemy_uid_map[euid] = ename
+            formation_init_uids = sorted_init
+        init_names = [m.name for m in w0_monsters if m.monster_id != 8003060][:len(formation_init_uids)]
+        inf_seen_cnt: Dict[str, int] = {}
+        for euid, nm in zip(formation_init_uids, init_names):
+            inf_seen_cnt[nm] = inf_seen_cnt.get(nm, 0) + 1
+            cnt = inf_seen_cnt[nm]
+            enemy_uid_map.setdefault(euid, nm if cnt == 1 else f"{nm}_{cnt}")
+        for euid, ename in spawn_events_raw:
+            inf_seen_cnt[ename] = inf_seen_cnt.get(ename, 0) + 1
+            cnt = inf_seen_cnt[ename]
+            enemy_uid_map[euid] = ename if cnt == 1 else f"{ename}_{cnt}"
+    else:
+        if wave0_names and initial_enemy_uids:
+            name_totals: Dict[str, int] = {}
+            for nm in wave0_names:
+                name_totals[nm] = name_totals.get(nm, 0) + 1
+            seen_init_name_cnt: Dict[str, int] = {}
+            for euid, nm in zip(sorted(initial_enemy_uids), wave0_names):
+                if name_totals[nm] > 1:
+                    seen_init_name_cnt[nm] = seen_init_name_cnt.get(nm, 0) + 1
+                    enemy_uid_map.setdefault(euid, f"{nm}_{seen_init_name_cnt[nm]}")
+                else:
+                    enemy_uid_map.setdefault(euid, nm)
+
+        raw_name_totals: Dict[str, int] = {}
+        for _, ename in spawn_events_raw:
+            raw_name_totals[ename] = raw_name_totals.get(ename, 0) + 1
+        spawn_seq_by_name: Dict[str, int] = {}
+        for euid, ename in spawn_events_raw:
+            if ename in summon_monster_names or raw_name_totals[ename] > 1:
+                spawn_seq_by_name[ename] = spawn_seq_by_name.get(ename, 0) + 1
+                enemy_uid_map[euid] = f"{ename}_{spawn_seq_by_name[ename]}"
+            else:
+                enemy_uid_map[euid] = ename
 
     # 对阿哈回合被特殊护盾全额吸收（delta_hp <= 1.0）的命中段：
     # 1) 同回合有其他未带盾敌方扣血时，按同日志实测同回合双目标基础伤害比（抗性比）缩放置换；
@@ -689,7 +751,34 @@ def extract_log_metadata(
         elif 1409 in valid_uids:
             valid_uids = [1409] + [u for u in valid_uids if u != 1409]
         team_uids = valid_uids
-        team_names = [_resolve_uid_name(u, char_db) for u in valid_uids]
+        team_names = []
+        for u in valid_uids:
+            nm = _resolve_uid_name(u, char_db)
+            if (
+                u == 1512
+                and 0.0 < robin_s_init_ad < 44.3
+                and char_db.get_by_name("知更鸟•晴歌_爱如此刻永恒") is not None
+            ):
+                nm = "知更鸟•晴歌_爱如此刻永恒"
+            team_names.append(nm)
+
+    entry_element: Optional[str] = None
+    entry_toughness: float = 10.0
+    if first_skill_info is not None and first_skill_stance_obs and stage_spec is not None and stage_spec.waves:
+        sk_id, sk_caster_uid = first_skill_info
+        sk_stance = _get_avatar_skill_stances().get(sk_id, 0.0)
+        if sk_stance > 0.0:
+            w0_by_name = {m.name: m for m in stage_spec.waves[0].monsters}
+            av_elems = _get_avatar_damage_types()
+            for euid, new_stance in first_skill_stance_obs.items():
+                base_nm = _base_enemy_name(euid)
+                m_spec = w0_by_name.get(base_nm)
+                if m_spec is not None and m_spec.toughness > 0.0:
+                    missing = float(m_spec.toughness) - float(sk_stance) - float(new_stance)
+                    if missing >= 15.0:
+                        entry_toughness = round(missing, 1)
+                        entry_element = av_elems.get(sk_caster_uid)
+                        break
 
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = {
         (av_k, enemy_uid_map[eu]): ehp
@@ -716,4 +805,6 @@ def extract_log_metadata(
         enemy_hp_at_turn_end=enemy_hp_at_turn_end,
         enemy_spawns=enemy_spawns,
         gluttony_enemy_names={enemy_uid_map[u] for u in gluttony_revived_euids if u in enemy_uid_map},
+        entry_element=entry_element,
+        entry_toughness=entry_toughness,
     )

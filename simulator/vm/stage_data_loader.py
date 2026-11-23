@@ -246,6 +246,9 @@ class CompiledWaveSpec:
     infinite_monster_group_ids: tuple[int, ...] = ()
     max_monster_count: Optional[int] = None
     max_teammate_count: Optional[int] = None
+    wave_ability: Optional[str] = None
+    wave_ability_params: tuple[float, ...] = ()
+    clear_previous_ability: bool = False
     summon_monsters: Mapping[int, CompiledMonsterSpec] = field(default_factory=dict)
 
 
@@ -1100,6 +1103,12 @@ class StageDataLoader:
                     if sid not in summon_monsters:
                         summon_monsters[sid] = sm
 
+                wave_ab = str(inf_wave.get("Ability") or "").strip() or None
+                wave_ab_params = tuple(
+                    _unwrap_value(p, 0.0) for p in (inf_wave.get("ParamList") or ())
+                )
+                clear_prev_ab = bool(inf_wave.get("ClearPreviousAbility", False))
+
                 waves.append(
                     CompiledWaveSpec(
                         wave_index=w_idx,
@@ -1111,6 +1120,9 @@ class StageDataLoader:
                         infinite_monster_group_ids=mg_ids,
                         max_monster_count=int(inf_wave.get("MaxMonsterCount", 0)) or None,
                         max_teammate_count=int(inf_wave.get("MaxTeammateCount", 0)) or None,
+                        wave_ability=wave_ab,
+                        wave_ability_params=wave_ab_params,
+                        clear_previous_ability=clear_prev_ab,
                         summon_monsters=wave_summons,
                     )
                 )
@@ -1198,6 +1210,7 @@ class StageDataLoader:
         table_specs = (
             ("ChallengeMazeConfig.json", ("EventIDList1", "EventIDList2"), "MoC"),
             ("ChallengeStoryMazeConfig.json", ("EventIDList1", "EventIDList2"), "PF"),
+            ("ChallengeStoryMazeTierce.json", ("HFIAAGAKFMD",), "PF"),
             ("ChallengeBossMazeConfig.json", ("EventIDList1", "EventIDList2"), "AS"),
             ("ChallengePeakConfig.json", ("EventIDList",), "Peak"),
             ("ChallengePeakBossConfig.json", ("EventIDList", "HardEventIDList"), "Peak"),
@@ -1254,7 +1267,7 @@ class StageDataLoader:
     def _load_stage_affix_abilities(
         self, stage_id: int
     ) -> tuple[tuple[str, tuple[float, ...]], ...]:
-        """从官方 ChallengePeakConfig / ChallengePeakBossConfig + MazeBuff.json 解析关卡环境词条。"""
+        """从官方 ChallengePeakConfig / ChallengePeakBossConfig / ChallengeStoryMazeConfig + MazeBuff.json 解析关卡环境词条。"""
         excel_dir = self.tbgd_root / "ExcelOutput"
         tag_ids: list[int] = []
         for fn, ev_key, tag_key in (
@@ -1273,6 +1286,37 @@ class StageDataLoader:
                     for tid in row.get(tag_key) or ():
                         if int(tid) not in tag_ids:
                             tag_ids.append(int(tid))
+
+        csm_fp = excel_dir / "ChallengeStoryMazeConfig.json"
+        if csm_fp.exists():
+            try:
+                rows = json.loads(csm_fp.read_text(encoding="utf-8"))
+            except Exception:
+                rows = []
+            for row in rows:
+                if stage_id in (row.get("EventIDList1") or ()) or stage_id in (row.get("EventIDList2") or ()):
+                    mb_id = int(row.get("MazeBuffID") or 0)
+                    if mb_id > 0 and mb_id not in tag_ids:
+                        tag_ids.append(mb_id)
+
+        csmt_fp = excel_dir / "ChallengeStoryMazeTierce.json"
+        csg_fp = excel_dir / "ChallengeStoryGroupConfig.json"
+        if csmt_fp.exists() and csg_fp.exists():
+            try:
+                t_rows = json.loads(csmt_fp.read_text(encoding="utf-8"))
+                g_rows = json.loads(csg_fp.read_text(encoding="utf-8"))
+            except Exception:
+                t_rows, g_rows = [], []
+            for row in t_rows:
+                if stage_id in (row.get("HFIAAGAKFMD") or ()):
+                    tierce_id = int(row.get("PHFMCACHFIJ") or 0)
+                    if tierce_id > 0:
+                        for grow in g_rows:
+                            if int(grow.get("TierceID") or 0) == tierce_id:
+                                mb_id = int(grow.get("MazeBuffID") or 0)
+                                if mb_id > 0 and mb_id not in tag_ids:
+                                    tag_ids.append(mb_id)
+
         if not tag_ids:
             return ()
         return self.resolve_maze_buff_abilities(tag_ids)

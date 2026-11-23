@@ -111,6 +111,10 @@ class StageRuntimeState:
     current_turn_actor: Optional[str] = None
     unique_name_map: Dict[str, List[str]] = field(default_factory=dict)
     special_outcome: Optional[str] = None
+    infinite_wave_cursor: int = 0
+    infinite_wave_max_count: int = 0
+    recorded_formation_slots: List[int] = field(default_factory=list)
+    infinite_seen_names: Dict[str, int] = field(default_factory=dict)
 
 
 class StageRunner:
@@ -204,6 +208,10 @@ class StageRunner:
         self.state.current_turn_actor = None
         self.state.unique_name_map.clear()
         self.state.special_outcome = None
+        self.state.infinite_wave_cursor = 0
+        self.state.infinite_wave_max_count = 0
+        self.state.recorded_formation_slots.clear()
+        self.state.infinite_seen_names.clear()
 
         for be in self.built_stage.battle_events:
             dyn: Dict[int, float] = {}
@@ -219,12 +227,45 @@ class StageRunner:
 
         return self._spawn_wave(0)
 
+    def _alloc_infinite_name(self, base_name: str) -> str:
+        cnt = self.state.infinite_seen_names.get(base_name, 0) + 1
+        self.state.infinite_seen_names[base_name] = cnt
+        return base_name if cnt == 1 else f"{base_name}_{cnt}"
+
     def _spawn_wave(self, wave_index: int) -> List[Entity]:
         self.state.wave_index = wave_index
         self.state.enemies.clear()
         self._enemy_by_name.clear()
 
         wave = self.built_stage.waves[wave_index]
+        if self.built_stage.source_spec.stage_infinite_group_id is not None:
+            src_wave = self.built_stage.source_spec.waves[wave_index]
+            self.state.infinite_wave_cursor = 0
+            self.state.infinite_wave_max_count = src_wave.max_monster_count or len(wave.enemies)
+            self.state.recorded_formation_slots.clear()
+            max_field = src_wave.max_teammate_count or MAX_ENEMY_SLOTS
+            formation_count = 0
+            entities: List[Entity] = []
+            limit = min(len(wave.enemies), self.state.infinite_wave_max_count)
+            while self.state.infinite_wave_cursor < limit and formation_count < max_field:
+                bp = wave.enemies[self.state.infinite_wave_cursor]
+                self.state.infinite_wave_cursor += 1
+                is_controller = (
+                    bp.monster_id == 8003060
+                    or "Monster_XP_MonsterGroup_00_PassiveSkillInitiate" in bp.ability_list
+                )
+                if is_controller:
+                    ent = bp.to_entity(name=bp.name)
+                    ent.is_unselectable = True
+                    setattr(ent, "_not_in_formation", True)
+                    ent.distance_remaining = 1e12
+                else:
+                    ent = bp.to_entity(name=self._alloc_infinite_name(bp.name))
+                    formation_count += 1
+                self._register_enemy(ent, bp)
+                entities.append(ent)
+            return entities
+
         entities = wave.spawn_entities()
         for ent, bp in zip(entities, wave.enemies):
             self._register_enemy(ent, bp)
@@ -343,7 +384,10 @@ class StageRunner:
     # ------------------------------------------------------------------
     def advance_wave_if_cleared(self, *, current_av: Optional[float] = None) -> Optional[List[Entity]]:
         """Advance to the next wave when all living enemies are defeated."""
-        if any(mrs.entity.current_hp > 0.0 for mrs in self.state.enemies):
+        if any(
+            mrs.entity.current_hp > 0.0 and not getattr(mrs.entity, "_not_in_formation", False)
+            for mrs in self.state.enemies
+        ):
             return None
         next_idx = self.state.wave_index + 1
         if next_idx >= self.built_stage.num_waves:
@@ -356,6 +400,43 @@ class StageRunner:
         for cb in self._wave_transition_handlers:
             cb(next_idx, self.state)
         return entities
+
+    def refill_next_infinite_monster(
+        self,
+        *,
+        formation_slot: Optional[int] = None,
+        delay_ratio: Optional[float] = None,
+    ) -> Optional[Entity]:
+        """Spawn the next queued monster from the current infinite wave pool."""
+        if self.built_stage.source_spec.stage_infinite_group_id is None:
+            return None
+        wave_bp = self.built_stage.waves[self.state.wave_index]
+        limit = min(len(wave_bp.enemies), self.state.infinite_wave_max_count)
+        if self.state.infinite_wave_cursor >= limit:
+            return None
+        bp = wave_bp.enemies[self.state.infinite_wave_cursor]
+        self.state.infinite_wave_cursor += 1
+        init_dist = (
+            10000.0 * float(delay_ratio)
+            if delay_ratio is not None
+            else bp.initial_distance
+        )
+        ent = bp.to_entity(
+            name=self._alloc_infinite_name(bp.name),
+            initial_distance=init_dist,
+        )
+        self._spawn_counter = getattr(self, "_spawn_counter", 0) + 1
+        setattr(ent, "_runner_spawn_order", self._spawn_counter)
+        mrs = self._register_enemy(ent, bp)
+        # If formation_slot points to a defeated placeholder slot, replace it in-place to preserve spatial order
+        if (
+            formation_slot is not None
+            and 0 <= formation_slot < len(self.state.enemies) - 1
+            and self.state.enemies[formation_slot].entity.current_hp <= 0.0
+        ):
+            self.state.enemies.pop()
+            self.state.enemies[formation_slot] = mrs
+        return ent
 
     def refill_infinite_wave_slot(self, max_slots: Optional[int] = None) -> List[Entity]:
         """Spawn replacement enemies in infinite waves using the current wave's EliteGroup."""

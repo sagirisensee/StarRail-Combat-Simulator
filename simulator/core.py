@@ -82,6 +82,7 @@ class TurnSimulator:
         self._current_turn_entity: Optional[Entity] = None
         self._turn_id: int = 0
         self._action_seq: int = 0
+        self._av_batch_seq: int = 0
         self._turn_owner_sp_consumed: int = 0
         self._turn_primary_action_done: bool = False
         # 行动就绪队列 (Ready Queue): 存放当前 AV 到达终点 (距离为 0) 的待行动实体
@@ -230,6 +231,8 @@ class TurnSimulator:
             seq = getattr(self, "_next_spawn_seq", 0) + 1
             self._next_spawn_seq = seq
             entity._spawn_seq = seq
+        if getattr(entity, "_av_tie_epoch", None) is None:
+            entity._av_tie_epoch = self._av_batch_seq if self.battle_started else 0
         entity.simulator = self
         self.entities.append(entity)
         if getattr(entity, "kit", None) is not None:
@@ -279,8 +282,16 @@ class TurnSimulator:
         def sort_key(e: Entity):
             is_current = 0 if (current and e.name == current.name) else 1
             if e.name in queued_rank:
-                return (is_current, 0, queued_rank[e.name], 0.0)
-            return (is_current, 1, 0, round(e.remaining_av, 4))
+                return (is_current, 0, queued_rank[e.name], 0.0, 0.0, 0, 0)
+            return (
+                is_current,
+                1,
+                0,
+                round(e.remaining_av, 4),
+                -e.speed,
+                -getattr(e, "_av_tie_epoch", 0),
+                getattr(e, "_spawn_seq", 0),
+            )
         return sorted(alive, key=sort_key)
 
     @property
@@ -338,7 +349,14 @@ class TurnSimulator:
         ]
         if not due:
             return
-        due.sort(key=lambda e: (round(e.remaining_av, 4), -e.speed))
+        due.sort(
+            key=lambda e: (
+                round(e.remaining_av, 4),
+                -e.speed,
+                -getattr(e, "_av_tie_epoch", 0),
+                getattr(e, "_spawn_seq", 0),
+            )
+        )
         for e in due:
             self._ready_queue.append(e.name)
             self._natural_due_names.add(e.name)
@@ -387,7 +405,15 @@ class TurnSimulator:
             self._scan_due_turns(alive)
         if self._ready_queue:
             return self.get_entity(self._ready_queue[0])
-        return min(alive, key=lambda e: round(e.remaining_av, 4))
+        return min(
+            alive,
+            key=lambda e: (
+                round(e.remaining_av, 4),
+                -e.speed,
+                -getattr(e, "_av_tie_epoch", 0),
+                getattr(e, "_spawn_seq", 0),
+            ),
+        )
 
     def advance_to_next_turn(self) -> Optional[Entity]:
         """服务行动队列中的下一行动:
@@ -504,6 +530,7 @@ class TurnSimulator:
 
         with self.scheduler.action_frame():
             self._action_seq += 1
+            self._av_batch_seq += 1
             intent = active_entity.get_next_action_intent()
             from simulator.vm.enemy_port import EnemyKit, EnemyActionContext
             is_char_kit = getattr(active_entity, "kit", None) is not None and not isinstance(active_entity.kit, EnemyKit)
@@ -858,6 +885,7 @@ class TurnSimulator:
 
         with self.scheduler.action_frame():
             self._action_seq += 1
+            self._av_batch_seq += 1
             if should_publish:
                 self.event_bus.publish(ActionExecuteEvent(
                     av=round(self.current_av, 2),

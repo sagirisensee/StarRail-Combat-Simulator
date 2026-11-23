@@ -75,7 +75,10 @@ class DataDrivenStageDirector:
         self.sim.event_bus.subscribe(DamageAppliedEvent, self._break_helper.on_damage_applied)
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         setattr(self.sim, "_stage_director", self)
+        self._active_wave_ability: Optional[str] = None
         self._init_stage_affix_abilities()
+        self._init_stage_battle_events()
+        self._apply_wave_ability(self.runner.state.wave_index)
 
     def _init_stage_affix_abilities(
         self, extra_maze_buff_ids: Sequence[int] = ()
@@ -101,6 +104,12 @@ class DataDrivenStageDirector:
             ab = rt.loader.get_ability(ab_name)
             if not ab:
                 continue
+            init_dyn = {}
+            for idx, val in enumerate(params):
+                if idx < len(maze_buff_param_hashes):
+                    h = maze_buff_param_hashes[idx]
+                    init_dyn[h] = float(val)
+                    rt.set_dynamic_value("__LEVEL__", h, float(val), ability_name=ab_name)
             on_add = ab.get("OnAdd") or []
             if on_add:
                 from simulator.vm.target_alias import ExecutionContext
@@ -111,6 +120,7 @@ class DataDrivenStageDirector:
                     ability_name=ab_name,
                     ability_target_ids=("__LEVEL__",),
                     modifier_owner_id="__LEVEL__",
+                    local_dynamics=dict(init_dyn),
                 )
                 rt.executor.execute_tasks(on_add, ctx)
             # 将每个 MazeBuff 专属的 ParamList 写入其对应的 Modifier 实例 dynamic_values，避免多个关卡词条共用 __LEVEL__[462955996] 互相覆盖
@@ -123,11 +133,150 @@ class DataDrivenStageDirector:
         for ent in list(self.sim.entities):
             if getattr(ent, "is_countdown", False):
                 continue
-            rt.modifier_engine.dispatch_event(
-                "OnListenCharacterCreate",
-                owner_id="__LEVEL__",
-                param_entity_id=ent.name,
+            prev_max = float(self.sim.port.max_hp(ent.name)) if hasattr(self.sim, "port") else float(ent.max_hp)
+            was_full = abs(float(ent.current_hp) - prev_max) <= 1.0
+            if not getattr(self.sim, "battle_started", False):
+                rt.modifier_engine.dispatch_event(
+                    "OnListenCharacterCreate",
+                    owner_id="__LEVEL__",
+                    param_entity_id=ent.name,
+                )
+            if was_full and hasattr(self.sim, "port"):
+                new_max = float(self.sim.port.max_hp(ent.name))
+                if new_max > ent.current_hp:
+                    ent.current_hp = new_max
+                    ent.max_hp = new_max
+        if getattr(rt, "_battle_entered", False):
+            rt.modifier_engine.dispatch_event("OnEnterBattle", owner_id="__LEVEL__")
+
+    def _init_stage_battle_events(self) -> None:
+        """挂载关卡级 BattleEvent（如虚构叙事 31001 无限波次补怪与击杀回能修正）。"""
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is None:
+            return
+        battle_events = list(getattr(self.runner.built_stage, "battle_events", ()))
+        if not battle_events:
+            return
+        rt.loader.ensure_ability_index()
+        from simulator.vm.target_alias import ExecutionContext
+
+        for be in battle_events:
+            param_list = [float(p) for p in getattr(be, "param_list", ())]
+            for ab_name in getattr(be, "ability_names", ()):
+                ab = rt.loader.get_ability(ab_name)
+                if not ab:
+                    continue
+                for check_ab_name in (ab_name, f"{ab_name}_Insert"):
+                    chk_doc = rt.loader.get_ability(check_ab_name)
+                    if not isinstance(chk_doc, dict):
+                        continue
+                    floats = (chk_doc.get("DynamicValues") or {}).get("Floats") or {}
+                    if isinstance(floats, Mapping):
+                        for h_str, entry in floats.items():
+                            if not isinstance(entry, Mapping):
+                                continue
+                            ri = entry.get("ReadInfo") or {}
+                            if ri.get("Type") == "BattleEvent":
+                                idx = int(ri.get("Index", 0) or 0)
+                                if 0 <= idx < len(param_list):
+                                    rt.set_dynamic_value("__LEVEL__", int(h_str), param_list[idx], ability_name=check_ab_name)
+                on_add = ab.get("OnAdd") or []
+                if on_add:
+                    ctx = ExecutionContext(
+                        runtime=rt,
+                        caster_id="__LEVEL__",
+                        ability_name=ab_name,
+                        ability_target_ids=("__LEVEL__",),
+                        modifier_owner_id="__LEVEL__",
+                    )
+                    rt.executor.execute_tasks(on_add, ctx)
+        for ent in list(self.sim.entities):
+            if getattr(ent, "is_countdown", False):
+                continue
+            prev_max = float(self.sim.port.max_hp(ent.name)) if hasattr(self.sim, "port") else float(ent.max_hp)
+            was_full = abs(float(ent.current_hp) - prev_max) <= 1.0
+            if not getattr(self.sim, "battle_started", False):
+                rt.modifier_engine.dispatch_event(
+                    "OnListenCharacterCreate",
+                    owner_id="__LEVEL__",
+                    param_entity_id=ent.name,
+                )
+            if was_full and hasattr(self.sim, "port"):
+                new_max = float(self.sim.port.max_hp(ent.name))
+                if new_max > ent.current_hp:
+                    ent.current_hp = new_max
+                    ent.max_hp = new_max
+
+    def _apply_wave_ability(self, wave_index: int) -> None:
+        """挂载当前波次配置的 Wave Ability（如 FantasticStory_Wave_Ability_0001）。"""
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is None:
+            return
+        waves = getattr(self.runner.built_stage.source_spec, "waves", ())
+        if not (0 <= wave_index < len(waves)):
+            return
+        src_wave = waves[wave_index]
+        if getattr(src_wave, "clear_previous_ability", False) and self._active_wave_ability:
+            prev_ab = self._active_wave_ability
+            for m in list(rt.modifier_engine.get_modifiers("__LEVEL__")):
+                if m.ability_name == prev_ab:
+                    rt.modifier_engine.destroy_modifier(m)
+            for ent in list(self.sim.entities):
+                for m in list(rt.modifier_engine.get_modifiers(ent.name)):
+                    if m.ability_name == prev_ab:
+                        rt.modifier_engine.destroy_modifier(m)
+            self._active_wave_ability = None
+
+        ab_name = getattr(src_wave, "wave_ability", None)
+        if not ab_name:
+            return
+        rt.loader.ensure_ability_index()
+        ab = rt.loader.get_ability(ab_name)
+        if not ab:
+            return
+        self._active_wave_ability = ab_name
+        params = getattr(src_wave, "wave_ability_params", ()) or ()
+        maze_buff_param_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
+        init_dyn = {}
+        for idx, val in enumerate(params):
+            if idx < len(maze_buff_param_hashes):
+                h = maze_buff_param_hashes[idx]
+                init_dyn[h] = float(val)
+                rt.set_dynamic_value("__LEVEL__", h, float(val), ability_name=ab_name)
+        on_add = ab.get("OnAdd") or []
+        if on_add:
+            from simulator.vm.target_alias import ExecutionContext
+
+            ctx = ExecutionContext(
+                runtime=rt,
+                caster_id="__LEVEL__",
+                ability_name=ab_name,
+                ability_target_ids=("__LEVEL__",),
+                modifier_owner_id="__LEVEL__",
+                local_dynamics=dict(init_dyn),
             )
+            rt.executor.execute_tasks(on_add, ctx)
+        for mod in rt.modifier_engine.get_modifiers("__LEVEL__"):
+            if mod.ability_name == ab_name:
+                for idx, val in enumerate(params):
+                    if idx < len(maze_buff_param_hashes):
+                        mod.dynamic_values[maze_buff_param_hashes[idx]] = float(val)
+        for ent in list(self.sim.entities):
+            if getattr(ent, "is_countdown", False):
+                continue
+            prev_max = float(self.sim.port.max_hp(ent.name)) if hasattr(self.sim, "port") else float(ent.max_hp)
+            was_full = abs(float(ent.current_hp) - prev_max) <= 1.0
+            if not getattr(self.sim, "battle_started", False):
+                rt.modifier_engine.dispatch_event(
+                    "OnListenCharacterCreate",
+                    owner_id="__LEVEL__",
+                    param_entity_id=ent.name,
+                )
+            if was_full and hasattr(self.sim, "port"):
+                new_max = float(self.sim.port.max_hp(ent.name))
+                if new_max > ent.current_hp:
+                    ent.current_hp = new_max
+                    ent.max_hp = new_max
 
     def _current_wave_cycle(self) -> int:
         return self._wave_mode.current_wave_cycle(self.sim)
@@ -370,6 +519,17 @@ class DataDrivenStageDirector:
                     if rt is not None and hasattr(ent.kit, "_ensure_monster_dynamic_values"):
                         ent.kit._ensure_monster_dynamic_values(rt)
                 if rt is not None:
+                    if not getattr(self.sim, "battle_started", False):
+                        rt.modifier_engine.dispatch_event(
+                            "OnListenCharacterCreate",
+                            owner_id="__LEVEL__",
+                            param_entity_id=ent.name,
+                        )
+                    if getattr(ent, "is_enemy", False) and hasattr(self.sim, "port"):
+                        new_max = float(self.sim.port.max_hp(ent.name))
+                        if new_max > ent.current_hp:
+                            ent.current_hp = new_max
+                            ent.max_hp = new_max
                     self._trigger_monster_passive_abilities(ent, rt)
             self._sync_enemy_order()
         return new_entities
@@ -618,10 +778,11 @@ class DataDrivenStageDirector:
             if mrs.lock_hp_ratio is not None and mrs.entity.current_hp > 0.0:
                 self.runner.enforce_lock_hp(mrs.entity.name)
 
-        # 3. Infinite wave slot refill if wave not yet cleared
+        # 3. Infinite wave slot refill if wave not yet cleared (legacy fallback when BattleEvent 31001 is not present)
         src_wave = self.runner.built_stage.source_spec.waves[self.runner.state.wave_index]
         if (
             self.runner.built_stage.source_spec.stage_infinite_group_id is not None
+            and 31001 not in self.runner.state.battle_events
             and src_wave.max_monster_count > 0
             and 0 < len(self.runner.living_enemies()) < src_wave.max_monster_count
         ):
@@ -631,7 +792,17 @@ class DataDrivenStageDirector:
                 self.sim.add_entity(ent, trigger_battle_start=True)
 
         # 4. Wave clearance & transition
-        if not self.runner.living_enemies():
+        living_formation_enemies = [
+            e for e in self.runner.living_enemies() if not getattr(e, "_not_in_formation", False)
+        ]
+        if not living_formation_enemies:
+            # 清理非参战控制器实体（如 8003060 虚构集合体）
+            rt_clr = getattr(self.sim, "vm_runtime", None)
+            for mrs in list(self.runner.state.enemies):
+                if getattr(mrs.entity, "_not_in_formation", False):
+                    mrs.entity.current_hp = 0.0
+                    if rt_clr is not None:
+                        rt_clr.modifier_engine.destroy_all_for_entity(mrs.entity.name)
             # Remove defeated enemies from TurnSimulator's active entities before spawning next wave
             next_wave_entities = self.runner.advance_wave_if_cleared(current_av=self.sim.current_av)
             if next_wave_entities is not None:
@@ -655,6 +826,7 @@ class DataDrivenStageDirector:
                     self.sim.add_entity(ent, trigger_battle_start=True)
                     if getattr(ent, "kit", None) is not None:
                         ent.kit.port = self.port
+                self._apply_wave_ability(self.runner.state.wave_index)
                 rt = getattr(self.sim, "vm_runtime", None)
                 if rt is not None:
                     # 官方 AST 规范（如 Tribbie OnWaveMonster 监听）：波次怪物入场时派发 OnWaveMonster，
@@ -677,6 +849,8 @@ def build_data_driven_stage(
     technique_users: Optional[Sequence[str]] = None,
     auto_ult: bool = True,
     extra_maze_buff_ids: Sequence[int] = (),
+    entry_element: Optional[str] = None,
+    entry_toughness: float = 10.0,
 ) -> Tuple[TurnSimulator, DataDrivenStageDirector]:
     """Build a ``(TurnSimulator, DataDrivenStageDirector)`` purely from official stage tables."""
     for member in team:
@@ -692,12 +866,12 @@ def build_data_driven_stage(
     wave0_enemies = runner.start_stage()
 
     if team:
-        raw_elem = getattr(team[0], "element", None)
+        raw_elem = entry_element if entry_element else getattr(team[0], "element", None)
         entry_elem = str(raw_elem).capitalize() if raw_elem else None
-        if entry_elem:
+        if entry_elem and entry_toughness > 0.0:
             for e in wave0_enemies:
                 if entry_elem in getattr(e, "weaknesses", ()):
-                    e.current_toughness = max(0.0, e.current_toughness - 10.0)
+                    e.current_toughness = max(0.0, e.current_toughness - float(entry_toughness))
 
     norm_tech_users = (
         [u[:-2] if isinstance(u, str) and u.endswith("_旧") else u for u in technique_users]
@@ -724,6 +898,12 @@ def build_data_driven_stage(
             ab = rt.loader.get_ability(ab_name)
             if not ab:
                 continue
+            init_dyn = {}
+            for idx, val in enumerate(params):
+                if idx < len(maze_buff_param_hashes):
+                    h = maze_buff_param_hashes[idx]
+                    init_dyn[h] = float(val)
+                    rt.set_dynamic_value("__LEVEL__", h, float(val), ability_name=ab_name)
             on_add = ab.get("OnAdd") or []
             if on_add:
                 ctx = ExecutionContext(
@@ -732,6 +912,7 @@ def build_data_driven_stage(
                     ability_name=ab_name,
                     ability_target_ids=("__LEVEL__",),
                     modifier_owner_id="__LEVEL__",
+                    local_dynamics=dict(init_dyn),
                 )
                 rt.executor.execute_tasks(on_add, ctx)
             for mod in rt.modifier_engine.get_modifiers("__LEVEL__"):

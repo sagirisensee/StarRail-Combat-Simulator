@@ -204,5 +204,7 @@ class ScheduledActionIntent:
     enqueue_seq: int = 0
     publish_execute_event: bool = True
     preempt_follow_up: bool = False
+    immediate_priority: int = 10
+    allow_limbo: bool = False
     owner_turn_id: Optional[int] = None
     owner_turn_actor_id: Optional[str] = None

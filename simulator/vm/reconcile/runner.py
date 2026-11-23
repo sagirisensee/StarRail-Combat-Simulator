@@ -54,6 +54,8 @@ def build_stage_for_id(
     technique_users: Sequence[str],
     force_data_driven: bool = True,
     extra_maze_buff_ids: Sequence[int] = (),
+    entry_element: Optional[str] = None,
+    entry_toughness: float = 10.0,
 ) -> Tuple[Any, Any, str]:
     """统一走纯数据驱动 DataDrivenStageDirector 底座（零手写关卡硬编码）。"""
     sim, director = build_data_driven_stage(
@@ -61,6 +63,8 @@ def build_stage_for_id(
         team,
         technique_users=list(technique_users),
         extra_maze_buff_ids=extra_maze_buff_ids,
+        entry_element=entry_element,
+        entry_toughness=entry_toughness,
     )
     return sim, director, f"data_driven({stage_id})"
 
@@ -198,6 +202,8 @@ def _run_single_pass(
         technique_users=[e.name for e in team],
         force_data_driven=force_data_driven,
         extra_maze_buff_ids=extra_maze_buff_ids,
+        entry_element=meta.entry_element,
+        entry_toughness=meta.entry_toughness,
     )
 
     ambiguous_slots: List[AmbiguousMemospriteSlot] = []

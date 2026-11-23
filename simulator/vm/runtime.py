@@ -96,7 +96,9 @@ class VMRuntime:
 
     def flush_pending_after_attack(self) -> None:
         if self._pending_after_attack is not None:
-            atk_seq, caster_id, dmg_data, atk_type = self._pending_after_attack
+            pending = self._pending_after_attack
+            atk_seq, caster_id, dmg_data, atk_type = pending[:4]
+            skill_type = pending[4] if len(pending) > 4 else atk_type
             self._pending_after_attack = None
             all_targets = tuple(self._attack_targets_by_key.get((atk_seq, caster_id), ()))
             after_set = getattr(self, "_after_attack_fired", None)
@@ -113,6 +115,7 @@ class VMRuntime:
                         owner_id=caster_id,
                         attack_target_ids=all_targets,
                         damage_data=dmg_data,
+                        current_skill_type=skill_type,
                         current_attack_type=atk_type,
                     )
                     self.modifier_engine.dispatch_event(
@@ -120,6 +123,7 @@ class VMRuntime:
                         param_entity_id=caster_id,
                         attack_target_ids=all_targets,
                         damage_data=dmg_data,
+                        current_skill_type=skill_type,
                         current_attack_type=atk_type,
                     )
                     for tid in all_targets:
@@ -174,6 +178,25 @@ class VMRuntime:
                         owner_id=limbo_tid,
                         param_entity_id=limbo_killer,
                     )
+        pending_lvl = getattr(self, "_pending_level_kills", None)
+        while pending_lvl:
+            lvl_batch = list(pending_lvl)
+            pending_lvl.clear()
+            for dead_tid, eff_killer in lvl_batch:
+                ent = self.sim.get_entity(dead_tid)
+                if ent is None:
+                    continue
+                self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=eff_killer)
+                self.sim.event_bus.publish(
+                    EnemyDefeatedEvent(
+                        av=float(self.sim.current_av),
+                        cycle=int(self.sim.current_cycle),
+                        attacker_name=eff_killer,
+                        target_name=dead_tid,
+                    )
+                )
+                self.modifier_engine.destroy_all_for_entity(dead_tid)
+                self.sim.entities[:] = [e for e in self.sim.entities if e.name != dead_tid]
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
             remaining_dead = []
@@ -248,6 +271,13 @@ class VMRuntime:
             m_dyn = self.entity_dynamics.get(ent.master_name)
             if m_dyn and hash_val in m_dyn:
                 return m_dyn[hash_val]
+        # 若为由其他实体（如 __LEVEL__）挂载光环/Modifier 产生的子状态，回溯至 modifier caster_id
+        if local_ctx is not None and local_ctx.modifier_instance is not None:
+            mod_caster = getattr(local_ctx.modifier_instance, "caster_id", None)
+            if mod_caster:
+                mc_dyn = self.entity_dynamics.get(mod_caster)
+                if mc_dyn and hash_val in mc_dyn:
+                    return mc_dyn[hash_val]
         return 0.0
 
     def get_dynamic_value(

@@ -417,8 +417,74 @@ class PredicateOpsMixin:
 
         if t == "RPG.GameCore.ByCompareMonsterID":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            if "TargetMonsterID" in pred:
+                want_mid = int(round(self._eval_num(pred.get("TargetMonsterID"), ctx, 0.0)))
+                return any(int(getattr(sim.get_entity(tid), "monster_id", 0) or 0) == want_mid for tid in targets)
             mid = str(pred.get("MonsterID", ""))
             return any(str(getattr(sim.get_entity(tid), "monster_id", "")) == mid for tid in targets)
+
+        if t == "RPG.GameCore.ByCompareBattleEventID":
+            want_be_id = int(round(self._eval_num(pred.get("TargetBattleEventID"), ctx, 0.0)))
+            if "TargetType" in pred:
+                targets = self._resolve_targets(pred.get("TargetType"), ctx)
+                return any(int(getattr(sim.get_entity(tid), "avatar_id", 0) or 0) == want_be_id for tid in targets)
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            return bool(runner is not None and want_be_id in runner.state.battle_events)
+
+        if t == "RPG.GameCore.ByInfiniteMonsterWaveLeft":
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is None:
+                return False
+            src_spec = getattr(runner.built_stage, "source_spec", None)
+            if getattr(src_spec, "stage_infinite_group_id", None) is not None:
+                widx = runner.state.wave_index
+                wave_bp = runner.built_stage.waves[widx]
+                src_wave = src_spec.waves[widx]
+                limit = min(len(wave_bp.enemies), runner.state.infinite_wave_max_count)
+                if runner.state.infinite_wave_cursor >= limit:
+                    return False
+                if runner.state.recorded_formation_slots:
+                    return True
+                max_field = src_wave.max_teammate_count or 5
+                living_fmt = sum(
+                    1 for e in runner.living_enemies() if not getattr(e, "_not_in_formation", False)
+                )
+                return living_fmt < max_field
+            waves_left = max(0, runner.built_stage.num_waves - 1 - runner.state.wave_index)
+            if "CompareValue" in pred:
+                rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+                return _compare_values(float(waves_left), rhs, str(pred.get("CompareType", "Greater")))
+            return waves_left > 0
+
+        if t == "RPG.GameCore.ByIsTargetUnselectable":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            return any(bool(getattr(sim.get_entity(tid), "is_unselectable", False)) for tid in targets)
+
+        if t == "RPG.GameCore.ByCurrentTurnState":
+            states = set(str(s) for s in (pred.get("TurnStates") or []))
+            if "InsertUltraSkillExecuting" in states:
+                return ctx.current_skill_type == "Ultra" or bool(getattr(sim, "_in_ultra", False))
+            return False
+
+        if t == "RPG.GameCore.ByCompareRedStanceCount":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            ent = sim.get_entity(targets[0]) if targets else None
+            lhs = float(getattr(ent, "red_stance_count", 0)) if ent else 0.0
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
+
+        if t in (
+            "RPG.GameCore.ByCharacterSomatoWidthType",
+            "RPG.GameCore.ByCompareDamageTag",
+            "RPG.GameCore.ByDistance",
+        ):
+            return False
+
+        if t == "RPG.GameCore.ByCheckModifierCallBackStatusType":
+            want = str(pred.get("TargetStatusType") or "")
+            return bool(want and ctx.callback_status_type == want)
 
         if t == "RPG.GameCore.ByCompareCharacterID":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)

@@ -146,6 +146,23 @@ class ActionScheduler:
                 return True
         return False
 
+    def count_pending_actions(self, actor_id: str, name: str) -> int:
+        """统计指定实体当前已挂起但尚未执行的同名派生动作数量（用于 TurnInsertAbilityCondition PreCheck）。"""
+        ent = self.sim.get_entity(actor_id)
+        resolved = ent.name if ent is not None else actor_id
+        cnt = 0
+        for q in (
+            self._staging_intents,
+            self._immediate_queue,
+            self._followup_queue,
+            self._reserved_queue,
+            self._voyage_queue,
+        ):
+            for intent in q:
+                if intent.actor_id == resolved and intent.name == name:
+                    cnt += 1
+        return cnt
+
     def _party_slot(self, actor_id: str) -> int:
         for idx, ent in enumerate(self.sim.entities):
             if ent.name == actor_id or str(getattr(ent, "avatar_id", "")) == str(actor_id):
@@ -206,6 +223,8 @@ class ActionScheduler:
         skill_id: int = 0,
         publish_execute_event: bool = True,
         preempt_follow_up: bool = False,
+        immediate_priority: int = 10,
+        allow_limbo: bool = False,
     ) -> ScheduledActionIntent:
         """将一个派生动作意图挂入当前介入波次的暂存列表 (`_staging_intents`)。"""
         ent = self.sim.get_entity(actor_id)
@@ -257,6 +276,8 @@ class ActionScheduler:
             enqueue_seq=self._seq_counter,
             publish_execute_event=publish_execute_event,
             preempt_follow_up=preempt_follow_up,
+            immediate_priority=immediate_priority,
+            allow_limbo=allow_limbo,
             owner_turn_id=owner_turn_id,
             owner_turn_actor_id=owner_turn_actor,
         )
@@ -291,7 +312,7 @@ class ActionScheduler:
 
         if immediates:
             merged_immediates = list(self._immediate_queue) + immediates
-            merged_immediates.sort(key=lambda i: (0 if i.preempt_follow_up else 1, i.enqueue_seq))
+            merged_immediates.sort(key=lambda i: (0 if i.preempt_follow_up else 1, i.immediate_priority, i.enqueue_seq))
             self._immediate_queue = deque(merged_immediates)
 
         if reserved:
@@ -352,7 +373,7 @@ class ActionScheduler:
     def _discard_dead_heads(self) -> None:
         """清理各队列队首已阵亡实体的失效动作意图，防止阵亡角色造成死锁阻塞。"""
         for q in (self._immediate_queue, self._followup_queue, self._reserved_queue, self._voyage_queue):
-            while q and not self._is_entity_alive(q[0].actor_id):
+            while q and not (q[0].allow_limbo or self._is_entity_alive(q[0].actor_id)):
                 q.popleft()
 
     def _pop_next_intent(self) -> object:
@@ -364,7 +385,26 @@ class ActionScheduler:
             return self._immediate_queue.popleft()
 
         # 2. Tier 1 (_followup_queue): 真正追加攻击队列
+        # 若场上已无任何存活敌方且存在高优补怪动作 (MonsterSummon: immediate_priority < 10)，
+        # 先补齐新怪再执行我方追击，避免追击对空挥空 (如 Pure Fiction 团灭波次)
         if self._followup_queue:
+            if (
+                self._immediate_queue
+                and self._immediate_queue[0].immediate_priority < 10
+                and self._followup_queue[0].actor_id != "__LEVEL__"
+            ):
+                fu_ent = self.sim.get_entity(self._followup_queue[0].actor_id)
+                if fu_ent is not None and not getattr(fu_ent, "is_enemy", False):
+                    has_living_enemy = any(
+                        getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_battle_event", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and (getattr(e, "current_hp", 0.0) > 0 or getattr(e, "is_infinite_hp", False))
+                        for e in getattr(self.sim, "entities", ())
+                    )
+                    if not has_living_enemy:
+                        return self._immediate_queue.popleft()
             return self._followup_queue.popleft()
 
         # 3. Tier 0 (preempt_follow_up=False, 如乱破大招、风堇小伊卡): _followup_queue 排空后立即抢占 _reserved_queue
@@ -417,7 +457,7 @@ class ActionScheduler:
                     break
 
                 intent: ScheduledActionIntent = popped  # type: ignore[assignment]
-                if not self._is_entity_alive(intent.actor_id):
+                if not (intent.allow_limbo or self._is_entity_alive(intent.actor_id)):
                     continue
                 if (
                     intent.action_kind == ActionKind.MEMOSPRITE_SKILL
@@ -440,6 +480,8 @@ class ActionScheduler:
                 self.active_intent = intent
                 try:
                     with self.action_frame():
+                        if hasattr(self.sim, "_av_batch_seq"):
+                            self.sim._av_batch_seq += 1
                         if intent.publish_execute_event:
                             if intent.category == ActionScheduleCategory.FOLLOW_UP:
                                 desc = f"【{intent.actor_id}】触发追加攻击【{intent.name}】"

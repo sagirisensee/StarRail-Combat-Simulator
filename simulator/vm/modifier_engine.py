@@ -133,7 +133,13 @@ class ModifierEngine:
                 return True
         return False
 
+    def get_modifier_status_type(self, mod: VMModifierInstance) -> str:
+        """返回 Modifier 的官方 StatusType（先读自身/合成配置，再查官方 StatusConfig 系列表）。"""
+        return str(mod.config.get("StatusType") or "") or self.rt.loader.get_modifier_status_type(mod.name)
+
     def _lookup_modifier_config(self, mod_name: str, ability_name: str = "") -> Dict[str, Any]:
+        if mod_name.startswith("MCommon_BreakDebuff_"):
+            return {"StatusType": "Debuff", "Stacking": "Replace", "LifeTime": 1, "LifeStepMoment": "TurnStart"}
         # 1. 先查来源 Ability 的本地 Modifiers
         if ability_name:
             ab = self.rt.loader.get_ability(ability_name)
@@ -164,7 +170,7 @@ class ModifierEngine:
         ability_name: str = "",
         dynamic_values: Optional[Mapping[str, Any]] = None,
         life_time: Optional[float] = None,
-        count: int = 1,
+        count: Optional[int] = None,
         max_layer: Optional[int] = None,
         ctx: Optional[ExecutionContext] = None,
         halo_parent_uid: Optional[int] = None,
@@ -195,7 +201,7 @@ class ModifierEngine:
                 1.0,
             )))
         if eff_max_layer is None:
-            if stacking == "Stack" or count > 1 or cfg.get("LayerAddWhenStack") is not None:
+            if stacking == "Stack" or (count is not None and count > 1) or cfg.get("LayerAddWhenStack") is not None:
                 eff_max_layer = 99
             else:
                 eff_max_layer = 1
@@ -250,12 +256,22 @@ class ModifierEngine:
             mod = target_existing
             if max_layer is None and cfg_max_layer is None and mod.max_layer > 1:
                 eff_max_layer = mod.max_layer
-            if count < 0:
-                mod.layer = max(0, mod.layer + count)
-            elif eff_max_layer > 1:
-                mod.layer = min(eff_max_layer, mod.layer + max(1, count))
+            if count is not None:
+                eff_count = count
+            elif cfg.get("LayerAddWhenStack") is not None:
+                eff_count = int(round(eval_dynamic_float(
+                    cfg["LayerAddWhenStack"],
+                    lambda h: self.rt.resolve_hash(caster_id, h, ability_name=ability_name, local_ctx=ctx),
+                    1.0,
+                )))
             else:
-                mod.layer = max(1, count)
+                eff_count = 1
+            if eff_count < 0:
+                mod.layer = max(0, mod.layer + eff_count)
+            elif eff_max_layer > 1:
+                mod.layer = min(eff_max_layer, mod.layer + max(1, eff_count))
+            else:
+                mod.layer = max(1, eff_count)
             mod.max_layer = eff_max_layer
             if eff_life is not None:
                 mod.life_time = eff_life
@@ -274,6 +290,7 @@ class ModifierEngine:
             self._next_uid += 1
             order = self._next_order
             self._next_order += 1
+            init_layer = min(eff_max_layer, max(1, count if count is not None else 1))
             mod = VMModifierInstance(
                 uid=uid,
                 name=mod_name,
@@ -282,7 +299,7 @@ class ModifierEngine:
                 ability_name=ability_name,
                 config=cfg,
                 dynamic_values=parsed_dyn,
-                layer=min(eff_max_layer, max(1, count)),
+                layer=init_layer,
                 max_layer=eff_max_layer,
                 life_time=eff_life,
                 life_step_moment=str(cfg.get("LifeStepMoment") or "TurnEnd"),
@@ -331,21 +348,36 @@ class ModifierEngine:
             self.dispatch_modifier_callbacks(mod, "OnStack", mod_ctx)
             self._sync_modifier_to_status_mgr(mod)
 
-            # 触发全局 OnModifierAdd / OnListenModifierAdd
+            # 触发全局 OnModifierAdd / OnListenModifierAdd / OnModifierOnStack
+            mod_status_type = self.get_modifier_status_type(mod)
             if is_new:
                 self.dispatch_event(
                     "OnModifierAdd",
                     owner_id=owner_id,
                     param_entity_id=owner_id,
+                    param_entity2_id=caster_id,
                     callback_modifier_name=mod_name,
                     callback_behavior_flags=tuple(mod.behavior_flags),
+                    callback_status_type=mod_status_type,
                 )
                 self.dispatch_event(
                     "OnListenModifierAdd",
                     param_entity_id=owner_id,
+                    param_entity2_id=caster_id,
                     callback_modifier_name=mod_name,
                     callback_behavior_flags=tuple(mod.behavior_flags),
+                    callback_status_type=mod_status_type,
                 )
+            self.dispatch_event(
+                "OnModifierOnStack",
+                owner_id=owner_id,
+                param_entity_id=owner_id,
+                param_entity2_id=caster_id,
+                callback_modifier_name=mod_name,
+                callback_behavior_flags=tuple(mod.behavior_flags),
+                callback_status_type=mod_status_type,
+                exclude_modifier_uid=mod.uid,
+            )
             self._dirty_apc_entities.add(owner_id)
         finally:
             self._apc_defer_depth -= 1
@@ -405,8 +437,12 @@ class ModifierEngine:
                         mod.sub_modifier_links.append(link)
 
     def attach_halos_to_new_entity(self, new_entity_id: str) -> None:
-        """仅向新入场实体补发带有 IsHaloStatus 的 SubModifierList（不触发 OnListenCharacterCreate）。"""
-        for mod in list(self.by_uid.values()):
+        """仅向新入场实体补发带有 IsHaloStatus 的 SubModifierList（关卡 __LEVEL__ 光环先于角色光环，确保关卡监听先挂）。"""
+        ordered_mods = sorted(
+            self.by_uid.values(),
+            key=lambda m: (0 if m.owner_id == "__LEVEL__" else 1, m._spawn_order),
+        )
+        for mod in ordered_mods:
             if mod._destroyed:
                 continue
             add_cfg = mod.config.get("AdditionConfig")
@@ -441,12 +477,12 @@ class ModifierEngine:
                         mod.sub_modifier_links.append((new_entity_id, sub_name, child.uid))
 
     def on_entity_created(self, new_entity_id: str) -> None:
-        """新实体（如忆灵）入场时：
-        1. 对带有 IsHaloStatus 的 SubModifierList 自动向新实体补发；
-        2. 分发 OnListenCharacterCreate(ParamEntity=new_entity_id)。
+        """新实体（如忆灵或波次补员）入场时：
+        1. 先分发 OnListenCharacterCreate(ParamEntity=new_entity_id)，挂好关卡监听型 Modifier（如 Grit / ResDown Track）；
+        2. 再对带有 IsHaloStatus 的 SubModifierList 自动向新实体补发，确保 Debuff 入场同步触发上述监听。
         """
-        self.attach_halos_to_new_entity(new_entity_id)
         self.dispatch_event("OnListenCharacterCreate", param_entity_id=new_entity_id)
+        self.attach_halos_to_new_entity(new_entity_id)
 
     def remove_modifier(
         self,
@@ -527,18 +563,23 @@ class ModifierEngine:
                 self._recompute_dirty_hp_ratio(mod.owner_id)
 
         # 通知 OnModifierRemove / OnListenModifierRemove
+        mod_status_type = self.get_modifier_status_type(mod)
         self.dispatch_event(
             "OnModifierRemove",
             owner_id=mod.owner_id,
             param_entity_id=mod.owner_id,
+            param_entity2_id=mod.caster_id,
             callback_modifier_name=mod.name,
             callback_behavior_flags=tuple(mod.behavior_flags),
+            callback_status_type=mod_status_type,
         )
         self.dispatch_event(
             "OnListenModifierRemove",
             param_entity_id=mod.owner_id,
+            param_entity2_id=mod.caster_id,
             callback_modifier_name=mod.name,
             callback_behavior_flags=tuple(mod.behavior_flags),
+            callback_status_type=mod_status_type,
         )
         if mod.owner_id != "__LEVEL__":
             self.check_property_changes(mod.owner_id)
@@ -887,6 +928,8 @@ class ModifierEngine:
         heal_data: Optional[Dict[str, Any]] = None,
         callback_modifier_name: str = "",
         callback_behavior_flags: Tuple[str, ...] = (),
+        callback_status_type: str = "",
+        exclude_modifier_uid: Optional[int] = None,
         change_value: float = 0.0,
         current_skill_type: str = "",
         current_attack_type: str = "",
@@ -897,7 +940,7 @@ class ModifierEngine:
         is_owner_scoped = owner_id is not None and not event_name.startswith("OnListen")
 
         for mod in list(self.by_uid.values()):
-            if mod._destroyed:
+            if mod._destroyed or mod.uid == exclude_modifier_uid:
                 continue
             if is_owner_scoped and mod.owner_id != owner_id:
                 continue
@@ -926,6 +969,7 @@ class ModifierEngine:
                 heal_data=heal_data,
                 callback_modifier_name=callback_modifier_name,
                 callback_behavior_flags=callback_behavior_flags,
+                callback_status_type=callback_status_type,
                 change_value=change_value,
                 current_skill_type=current_skill_type,
                 current_attack_type=current_attack_type,

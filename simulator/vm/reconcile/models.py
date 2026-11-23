@@ -17,6 +17,8 @@ SKIP_SENTINEL = "__SKIP__"
 
 _SERVANT_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
 _AVATAR_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
+_AVATAR_SKILL_STANCE_CACHE: Optional[Dict[int, float]] = None
+_AVATAR_DAMAGE_TYPE_CACHE: Optional[Dict[int, str]] = None
 
 
 def _get_servant_skill_effects() -> Dict[int, str]:
@@ -66,6 +68,63 @@ def _get_avatar_skill_effects() -> Dict[int, str]:
         except Exception:
             pass
     _AVATAR_SKILL_EFFECT_CACHE = out
+    return out
+
+
+def _get_avatar_skill_stances() -> Dict[int, float]:
+    """从官方 ExcelOutput/AvatarSkillConfig.json 加载 SkillID -> 主目标削韧值映射。"""
+    global _AVATAR_SKILL_STANCE_CACHE
+    if _AVATAR_SKILL_STANCE_CACHE is not None:
+        return _AVATAR_SKILL_STANCE_CACHE
+    out: Dict[int, float] = {}
+    path = os.path.join(
+        ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput", "AvatarSkillConfig.json"
+    )
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if isinstance(rows, list):
+                for row in rows:
+                    sid = int(row.get("SkillID") or 0)
+                    if not sid or sid in out:
+                        continue
+                    ssl = row.get("ShowStanceList") or []
+                    vals = [
+                        float(v.get("Value", 0.0) if isinstance(v, dict) else (v or 0.0))
+                        for v in ssl
+                    ]
+                    max_s = max(vals) if vals else 0.0
+                    if max_s > 0.0:
+                        out[sid] = max_s
+        except Exception:
+            pass
+    _AVATAR_SKILL_STANCE_CACHE = out
+    return out
+
+
+def _get_avatar_damage_types() -> Dict[int, str]:
+    """从官方 ExcelOutput/AvatarConfig.json 加载 AvatarID -> 规范元素名映射。"""
+    global _AVATAR_DAMAGE_TYPE_CACHE
+    if _AVATAR_DAMAGE_TYPE_CACHE is not None:
+        return _AVATAR_DAMAGE_TYPE_CACHE
+    out: Dict[int, str] = {}
+    path = os.path.join(
+        ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput", "AvatarConfig.json"
+    )
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if isinstance(rows, list):
+                for row in rows:
+                    aid = int(row.get("AvatarID") or 0)
+                    dt = str(row.get("DamageType") or "")
+                    if aid and dt:
+                        out[aid] = "Lightning" if dt == "Thunder" else dt
+        except Exception:
+            pass
+    _AVATAR_DAMAGE_TYPE_CACHE = out
     return out
 
 
@@ -154,6 +213,8 @@ class LogMetadata:
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = field(default_factory=dict)
     enemy_spawns: List[Tuple[float, int, str]] = field(default_factory=list)
     gluttony_enemy_names: Set[str] = field(default_factory=set)
+    entry_element: Optional[str] = None
+    entry_toughness: float = 10.0
 
 
 @dataclass

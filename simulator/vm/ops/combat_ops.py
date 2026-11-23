@@ -376,12 +376,88 @@ class CombatOpsMixin:
             eff_flat = (flat * base_mult_ratio if base_mult_ratio > 0 else flat) * hit_split
         eff_stance = stance * hit_split
 
+        final_formula = str(atk_prop.get("FinalFormulaType", ""))
+        formula_type = str(atk_prop.get("FormulaType", ""))
+        real_targets = [tid for tid in targets if tid != "__LEVEL__"]
+        caster_ent_bd = sim.get_entity(ctx.caster_id) if ctx.caster_id != "__LEVEL__" else None
+        is_level_base_dmg = ctx.caster_id == "__LEVEL__" and is_true_dmg and final_formula == "ByBaseDamage"
+        is_enemy_self_base_dmg = (
+            final_formula == "ByBaseDamage"
+            and ctx.caster_id != "__LEVEL__"
+            and caster_ent_bd is not None
+            and bool(getattr(caster_ent_bd, "is_enemy", False))
+            and bool(real_targets)
+            and all(tid == ctx.caster_id for tid in real_targets)
+        )
+        if is_level_base_dmg or is_enemy_self_base_dmg:
+            can_last_kill = bool(atk_prop.get("CanTriggerLastKill", False))
+            last_killer = (
+                getattr(rt, "_last_enemy_killer_id", "")
+                or getattr(rt, "_current_attacker_id", "")
+                or ctx.caster_id
+            )
+            hp_change_param = "__LEVEL__" if is_level_base_dmg else ctx.caster_id
+            hp_change_atk_type = "TrueDamage" if is_level_base_dmg else (atk_type or "TrueDamage")
+            for tid in real_targets:
+                tgt_ent = sim.get_entity(tid)
+                if tgt_ent is None or tgt_ent.current_hp <= 0.0:
+                    continue
+                if formula_type == "ByMaxHP":
+                    raw_dmg = float(sim.port.max_hp(tid)) * float(eff_pct) + float(eff_flat)
+                else:
+                    raw_dmg = float(eff_flat)
+                actual = min(float(tgt_ent.current_hp), max(0.0, raw_dmg))
+                if actual <= 0.0:
+                    continue
+                tgt_ent.current_hp = max(0.0, float(tgt_ent.current_hp) - actual)
+                me.dispatch_event(
+                    "OnHPChange",
+                    owner_id=tid,
+                    param_entity_id=hp_change_param,
+                    change_value=-float(actual),
+                    current_attack_type=hp_change_atk_type,
+                    param_flags=("IsHPChangeByDamage",),
+                )
+                me.dispatch_event(
+                    "OnListenHPChange",
+                    param_entity_id=tid,
+                    change_value=-float(actual),
+                )
+                if tgt_ent.current_hp <= 0.0:
+                    if can_last_kill:
+                        if is_level_base_dmg:
+                            eff_killer = last_killer
+                        else:
+                            eff_killer = (ctx.param_entity_id if (ctx.param_entity_id and ctx.param_entity_id != tid) else "") or last_killer
+                    else:
+                        eff_killer = "__LEVEL__" if is_level_base_dmg else ctx.caster_id
+                    if is_level_base_dmg and getattr(rt, "_attack_scope_depth", 0) > 0:
+                        pending_lvl = getattr(rt, "_pending_level_kills", None)
+                        if pending_lvl is None:
+                            pending_lvl = []
+                            rt._pending_level_kills = pending_lvl
+                        if all(item[0] != tid for item in pending_lvl):
+                            pending_lvl.append((tid, eff_killer))
+                    else:
+                        me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=eff_killer)
+                        from simulator.events import EnemyDefeatedEvent
+                        sim.event_bus.publish(
+                            EnemyDefeatedEvent(
+                                av=float(sim.current_av),
+                                cycle=int(sim.current_cycle),
+                                attacker_name=eff_killer,
+                                target_name=tid,
+                            )
+                        )
+                        me.destroy_all_for_entity(tid)
+                        sim.entities[:] = [e for e in sim.entities if e.name != tid]
+            return
+
         base_before_hit_all = dict(dmg_data) if is_true_dmg else base_before_hit_all
         captured = [0.0]
         self._damage_capture_stack.append(captured)
         sim.resolver.begin_aoe()
         try:
-            real_targets = [tid for tid in targets if tid != "__LEVEL__"]
             caster_ent_pre = sim.get_entity(ctx.caster_id)
             if (
                 not is_nested_sub
@@ -426,7 +502,10 @@ class CombatOpsMixin:
                 prev_tgt_hp = float(getattr(tgt_ent, "current_hp", 0.0)) if tgt_ent is not None else 0.0
                 prev_dmg_red = getattr(tgt_ent, "damage_reduction", 0.0) if tgt_ent is not None else 0.0
                 applied_def_red = False
-                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and was_alive and not is_true_dmg:
+                tgt_extra_vuln = 0.0
+                tgt_extra_def_ignore = 0.0
+                tgt_extra_res_pen = 0.0
+                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and not is_true_dmg:
                     tgt_hit_data: Dict[str, Any] = {}
                     me.dispatch_event(
                         "OnBeforeBeingHitAll",
@@ -435,6 +514,9 @@ class CombatOpsMixin:
                         damage_data=tgt_hit_data,
                         current_attack_type=atk_type,
                     )
+                    tgt_extra_vuln = float(tgt_hit_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                    tgt_extra_def_ignore = -float(tgt_hit_data.get("Defender_DefenceAddedRatio", 0.0))
+                    tgt_res_mod = float(tgt_hit_data.get("Defender_AllDamageTypeResistance", 0.0))
                     def_red = float(tgt_hit_data.get("Defender_AllDamageReduce", 0.0))
                     red_mult = 1.0 - prev_dmg_red
                     if def_red > 0.0:
@@ -443,6 +525,8 @@ class CombatOpsMixin:
                         m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
                         if m_red > 0.0:
                             red_mult *= max(0.0, 1.0 - m_red)
+                        tgt_res_mod += float(m_def.properties.get("AllDamageTypeResistance", 0.0))
+                    tgt_extra_res_pen = -tgt_res_mod
                     combined_red = max(0.0, 1.0 - red_mult)
                     if abs(combined_red - prev_dmg_red) > 1e-9:
                         tgt_ent.damage_reduction = combined_red
@@ -466,9 +550,9 @@ class CombatOpsMixin:
                     scaling_stat=scaling_stat,
                     damage_type=damage_type,
                     extra_dmg_boost=extra_dmg_boost,
-                    extra_def_ignore=extra_def_ignore,
-                    extra_res_pen=extra_res_pen,
-                    extra_vuln=extra_vuln,
+                    extra_def_ignore=extra_def_ignore + tgt_extra_def_ignore,
+                    extra_res_pen=extra_res_pen + tgt_extra_res_pen,
+                    extra_vuln=extra_vuln + tgt_extra_vuln,
                     extra_crit_dmg=extra_crit_dmg,
                     vm_hit_hooks_applied=not is_true_dmg,
                 )
@@ -528,6 +612,8 @@ class CombatOpsMixin:
                             pending_dead.append(tid)
             sim.resolver.resolve_all()
             if pending_dying:
+                if ctx.caster_id and ctx.caster_id != "__LEVEL__":
+                    rt._last_enemy_killer_id = ctx.caster_id
                 if getattr(rt, "_attack_scope_depth", 0) > 0:
                     q = getattr(rt, "_pending_dying_enemies", None)
                     if q is None:
@@ -570,8 +656,9 @@ class CombatOpsMixin:
             )
 
         if not is_nested_sub:
+            eff_sk_type = ctx.current_skill_type or atk_type
             if getattr(rt, "_attack_scope_depth", 0) > 0:
-                rt._pending_after_attack = (atk_seq, ctx.caster_id, dmg_data, atk_type)
+                rt._pending_after_attack = (atk_seq, ctx.caster_id, dmg_data, atk_type, eff_sk_type)
             else:
                 after_set = getattr(rt, "_after_attack_fired", None)
                 if after_set is None:
@@ -587,6 +674,7 @@ class CombatOpsMixin:
                             owner_id=ctx.caster_id,
                             attack_target_ids=all_tgts,
                             damage_data=dmg_data,
+                            current_skill_type=eff_sk_type,
                             current_attack_type=atk_type,
                         )
                         me.dispatch_event(
@@ -594,6 +682,7 @@ class CombatOpsMixin:
                             param_entity_id=ctx.caster_id,
                             attack_target_ids=all_tgts,
                             damage_data=dmg_data,
+                            current_skill_type=eff_sk_type,
                             current_attack_type=atk_type,
                         )
                         for tid in all_tgts:
