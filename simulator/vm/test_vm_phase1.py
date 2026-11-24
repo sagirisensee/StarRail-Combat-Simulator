@@ -68,7 +68,7 @@ class TestVMPhase1(unittest.TestCase):
             places=6,
         )
 
-    def test_team_characters_and_servants_match_nanoka_tables(self):
+    def test_team_characters_and_servants_match_official_tables(self):
         # 1. 长夜月 (1413, E2)
         c1413 = self.loader.load_character(1413, eidolon=2)
         s1413 = self.loader.load_servant(11413, eidolon=2)
