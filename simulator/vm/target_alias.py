@@ -184,6 +184,17 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                     return [m.name]
         return []
 
+    def _actual_owner_of(eid: str) -> str:
+        ent = sim.get_entity(eid)
+        if (
+            ent is not None
+            and not getattr(ent, "is_memosprite", False)
+            and getattr(ent, "master_name", None)
+            and sim.get_entity(ent.master_name) is not None
+        ):
+            return ent.master_name
+        return eid
+
     def _adjoin_of(anchor_id: str, direction: str = "both") -> List[str]:
         anchor = sim.get_entity(anchor_id) if anchor_id else None
         if anchor is None:
@@ -215,9 +226,20 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             return [right] if right else []
         return [x for x in (left, right) if x]
 
+    def _caster_is_enemy() -> bool:
+        if not ctx.caster_id:
+            return False
+        if rt is not None and hasattr(rt, "is_enemy_entity_id"):
+            return bool(rt.is_enemy_entity_id(ctx.caster_id))
+        caster_ent = sim.get_entity(ctx.caster_id)
+        return bool(caster_ent is not None and getattr(caster_ent, "is_enemy", False))
+
     # 1. 基础锚点求值
     if base == "Caster":
         cur = [ctx.caster_id] if ctx.caster_id else []
+    elif base == "SnapshotPropertyEntity":
+        eid = ctx.modifier_instance.caster_id if ctx.modifier_instance is not None else ctx.caster_id
+        cur = [eid] if eid else []
     elif base == "ModifierOwnerEntity":
         eid = ctx.modifier_owner_id or ctx.caster_id
         cur = [eid] if eid else []
@@ -356,12 +378,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         ]
     elif base == "ParamEntityActualOwner":
         pid = ctx.param_entity_id
-        if pid:
-            pe = sim.get_entity(pid)
-            mname = getattr(pe, "master_name", None) if pe is not None else None
-            cur = [mname] if mname and sim.get_entity(mname) is not None else [pid]
-        else:
-            cur = []
+        cur = [_actual_owner_of(pid)] if pid else []
     elif base == "CasterAdjoinEntity":
         cur = _adjoin_of(ctx.caster_id, "both")
     elif base == "CasterLeftEntity":
@@ -378,14 +395,12 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
     elif base == "GridFight_AllBackEnd":
         cur = []
     elif base == "AllTeamMember":
-        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
-        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+        if _caster_is_enemy():
             cur = _alive_enemies(include_unselectable=False, include_countdown=False)
         else:
             cur = _alive_allies(include_unselectable=False, include_countdown=False)
     elif base == "AllTeammate":
-        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
-        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+        if _caster_is_enemy():
             team_list = _alive_enemies(include_unselectable=False, include_countdown=False)
         else:
             team_list = _alive_allies(include_unselectable=False, include_countdown=False)
@@ -413,16 +428,14 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
     elif base == "AllDarkTeam":
         cur = _alive_enemies(include_unselectable=False, include_countdown=False)
     elif base == "AllEnemy":
-        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
-        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+        if _caster_is_enemy():
             cur = _alive_allies(include_unselectable=False, include_countdown=False)
         else:
             cur = _alive_enemies(include_unselectable=False, include_countdown=False)
     elif base == "AllDarkTeamWithAllDarkTeamUnselectable":
         cur = _alive_enemies(include_unselectable=True, include_countdown=False)
     elif base == "AllEnemyWithUnSelectable":
-        caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
-        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+        if _caster_is_enemy():
             cur = _alive_allies(include_unselectable=True, include_countdown=False)
         else:
             cur = _alive_enemies(include_unselectable=True, include_countdown=False)
@@ -518,14 +531,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             # 保留既有并允许倒计时/场地事件实体
             cur = list(cur)
         elif mod == "GetActualOwner":
-            nxt = []
-            for eid in cur:
-                ent = sim.get_entity(eid)
-                if ent is not None and getattr(ent, "master_name", None):
-                    nxt.append(ent.master_name)
-                else:
-                    nxt.append(eid)
-            cur = _dedup_preserve(nxt)
+            cur = _dedup_preserve([_actual_owner_of(eid) for eid in cur])
         elif mod == "GetDummyCharacter":
             # 若存在配套 dummy/partner 实体则补充，否则空集
             cur = [eid for eid in cur if getattr(sim.get_entity(eid), "is_dummy", False)]

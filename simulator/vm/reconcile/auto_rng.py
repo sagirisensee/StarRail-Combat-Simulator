@@ -154,6 +154,7 @@ def attach_auto_rng_plugin(
     sim.event_bus.subscribe(_BE, _on_turn_begin_seq)
     ally_ult_cursor: Dict[str, int] = {}
     servant_cursor: Dict[Tuple[float, str], int] = {}
+    player_enemy_cursor: Dict[Tuple[float, str], int] = {}
     recorded_ambig_keys: Set[Tuple[float, int, str]] = set()
     recorded_inf_keys: Set[Tuple[float, int, str]] = set()
 
@@ -291,7 +292,12 @@ def attach_auto_rng_plugin(
                 return None
             for (p_av, p_name), enames in meta.player_enemy_targets.items():
                 if p_name == att_name and abs(p_av - key_av) <= 0.05 and enames:
-                    target_ename = enames[min(hit_idx, len(enames) - 1)]
+                    if len(enames) > 1 and att_name.startswith("BattleEvent_"):
+                        cur_idx = player_enemy_cursor.get((p_av, p_name), 0)
+                        player_enemy_cursor[(p_av, p_name)] = cur_idx + 1
+                        target_ename = enames[min(cur_idx, len(enames) - 1)]
+                    else:
+                        target_ename = enames[min(hit_idx, len(enames) - 1)]
                     found = _find_ally(living, target_ename)
                     if found is not None:
                         return found
@@ -497,6 +503,10 @@ def attach_auto_rng_plugin(
         for uid, name in zip(meta.team_uids, meta.team_names)
     }
 
+    enemy_name_to_uid: Dict[str, int] = {
+        nm: u for u, nm in meta.enemy_uid_map.items()
+    }
+
     def _enemy_retarget_provider(caster: Any, candidates: List[Any]) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         cname = getattr(caster, "name", "")
@@ -507,6 +517,22 @@ def attach_auto_rng_plugin(
                 for ent in candidates:
                     if getattr(ent, "name", "") == vname:
                         return ent
+        if len(candidates) > 1:
+            av_key = round(av, 2)
+            c_uid = enemy_name_to_uid.get(cname, 0)
+            ov_key = (av_key, c_uid, "enemy_retarget")
+            if ov_key in overrides and overrides[ov_key]:
+                chosen_name = overrides[ov_key][0]
+                for ent in candidates:
+                    if getattr(ent, "name", "") == chosen_name:
+                        return ent
+            _record_ambig(
+                av_key,
+                c_uid,
+                "enemy_retarget",
+                [(getattr(c, "name", ""),) for c in candidates],
+                (getattr(candidates[0], "name", ""),),
+            )
         return None
 
     used_spawn_indices: Set[int] = set()

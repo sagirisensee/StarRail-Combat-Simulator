@@ -91,7 +91,8 @@ class Entity:
     def effective_hp_cap(self, max_hp_override: Optional[float] = None) -> float:
         """返回计入【噬命】锁定后的当前生命值上限（不影响 MaxHP 倍率）。"""
         m = self.max_hp if max_hp_override is None else max_hp_override
-        lock = max(0.0, min(0.50, float(getattr(self, "hp_lock_ratio", 0.0))))
+        cap_limit = 1.0 if getattr(self, "is_enemy", False) else 0.50
+        lock = max(0.0, min(cap_limit, float(getattr(self, "hp_lock_ratio", 0.0))))
         return m * (1.0 - lock)
 
     def clamp_hp(self) -> None:

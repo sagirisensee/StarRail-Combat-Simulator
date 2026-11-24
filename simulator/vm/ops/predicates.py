@@ -231,6 +231,11 @@ class PredicateOpsMixin:
                 ent = sim.get_entity(tid)
                 if ent is None:
                     continue
+                if (
+                    "BattleEvent" in want
+                    and (getattr(ent, "is_countdown", False) or getattr(ent, "is_battle_event", False))
+                ):
+                    return True
                 if "Servant" in want and getattr(ent, "is_memosprite", False):
                     return True
                 if (
@@ -533,15 +538,33 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByInTurnBasedGameModeState":
             return True
 
+        if t == "RPG.GameCore.ByIsTriggeredBlockDamage":
+            targets = self._resolve_targets(
+                pred.get("TargetType") or {"Alias": "ModifierOwnerEntity"}, ctx
+            )
+            blocked_set = getattr(rt, "_attack_blocked_targets", ())
+            return any(
+                bool(getattr(sim.get_entity(tid), "_vm_hit_blocked", False))
+                or (tid in blocked_set)
+                for tid in targets
+            )
+
         if t == "RPG.GameCore.ByCheckCustomValueBool":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             key_raw = pred.get("Key", "")
-            key_str = str(key_raw.get("Value", "") if isinstance(key_raw, Mapping) else key_raw)
+            if isinstance(key_raw, Mapping) and "Hash" in key_raw:
+                h = int(key_raw["Hash"])
+            else:
+                key_str = str(key_raw.get("Value", "") if isinstance(key_raw, Mapping) else key_raw)
+                h = dotnet_hash(key_str)
             expected = bool(pred.get("ExpectedValue", True))
             if not targets:
                 return False
-            h = dotnet_hash(key_str)
-            val = bool(self.rt.get_dynamic_value(targets[0], h))
+            val = any(
+                (h in getattr(sim.get_entity(tid), "custom_value_tag_hashes", ()))
+                or bool(self.rt.get_dynamic_value(tid, h, ability_name=ctx.ability_name, local_ctx=ctx))
+                for tid in targets
+            )
             return val == expected
 
         if t in ("NDFKINKPKHF", "RPG.GameCore.ByCompareSomatoType"):

@@ -178,6 +178,12 @@ class SequenceRecorder:
     def _on_damage(self, e: Any) -> None:
         if self._is_enemy_actor(e.attacker_name):
             return
+        atk_ent = self._lookup_entity(e.attacker_name)
+        if atk_ent is not None and (
+            getattr(atk_ent, "is_countdown", False)
+            or getattr(atk_ent, "is_battle_event", False)
+        ):
+            return
         self._ensure_turn(float(getattr(e, "av", 0.0)), "环境/插队")
         dtype = getattr(e, "damage_type", None)
         dtype_value = getattr(dtype, "value", "Direct")

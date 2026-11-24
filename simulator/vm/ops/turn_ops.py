@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from ...actions import ActionKind, ActionScheduleCategory
+from ...actions import AbilityDefinition, ActionKind, ActionScheduleCategory, ResourceCost, TargetMode
 from ...entity import Entity
 from ...status import StatType
 from ..expr import dotnet_hash
@@ -234,6 +234,40 @@ class TurnOpsMixin:
                     action_kind=ActionKind.MEMOSPRITE_SKILL,
                     skill_id=sv_skill_id,
                 )
+            elif getattr(ent, "is_dummy", False):
+                kit = getattr(ent, "kit", None)
+                defn = None
+                if kit is not None:
+                    try:
+                        defn = kit.definition(ActionKind.BASIC)
+                    except Exception:
+                        defn = None
+                d_skill_id = int(getattr(defn, "skill_id", 0) or 0)
+                d_skill_name = str(getattr(defn, "name", "") or f"{tid}_InsertAction")
+
+                def _run_dummy_insert(d_ent: Entity = ent) -> None:
+                    if d_ent.current_hp <= 0.0:
+                        return
+                    sim._execute_action(
+                        d_ent,
+                        target_ids=(),
+                        is_natural_turn_action=False,
+                        advance_policy=False,
+                    )
+                    rt.modifier_engine.dispatch_event(
+                        "OnInsertActionFinish",
+                        owner_id=d_ent.name,
+                        param_entity_id=d_ent.name,
+                    )
+
+                sim.scheduler.enqueue(
+                    tid,
+                    _run_dummy_insert,
+                    name=d_skill_name,
+                    category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+                    action_kind=(getattr(defn, "kind", ActionKind.BASIC) if defn is not None else ActionKind.BASIC),
+                    skill_id=d_skill_id,
+                )
 
     def _execute_create_servant(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -267,6 +301,7 @@ class TurnOpsMixin:
         be_name = f"BattleEvent_{event_id}"
 
         compiled_be = None
+        src_spec = None
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None
         if runner is not None:
@@ -288,6 +323,32 @@ class TurnOpsMixin:
                             if compiled_be is not None:
                                 break
 
+        rt.loader.ensure_ability_index()
+        bec_row: Dict[str, Any] = {}
+        try:
+            for row in rt.loader._read_excel("BattleEventConfig.json"):
+                if int(row.get("BattleEventID", 0) or 0) == event_id:
+                    bec_row = row
+                    break
+        except Exception:
+            bec_row = {}
+
+        event_sub_type = str(
+            (getattr(compiled_be, "event_sub_type", "") if compiled_be is not None else "")
+            or bec_row.get("EventSubType", "")
+        )
+        ab_names: List[str] = []
+        param_list: List[float] = []
+        if compiled_be is not None:
+            ab_names = list(getattr(compiled_be, "ability_list", ()))
+            param_list = [float(p) for p in getattr(compiled_be, "param_list", ())]
+        if not ab_names and bec_row:
+            ab_names = [str(a) for a in bec_row.get("AbilityList", [])]
+        if not param_list and bec_row:
+            for p in bec_row.get("ParamList", []):
+                val = p.get("Value", 0.0) if isinstance(p, Mapping) else p
+                param_list.append(float(val or 0.0))
+
         robin_spd = float(init_dyn.get(dotnet_hash("BattleEvent_RobinS_00_BaseSpeed"), 0.0) or 0.0)
         dv_be_spd = float(init_dyn.get(dotnet_hash("DV_BE_BaseSpeed"), 0.0) or 0.0)
         if robin_spd > 0.0:
@@ -298,6 +359,20 @@ class TurnOpsMixin:
             spd = float(compiled_be.effective_speed)
         else:
             spd = 140.0
+
+        if event_sub_type == "DummyCharacter":
+            self._create_dummy_character_battle_event(
+                event_id=event_id,
+                be_name=be_name,
+                bec_row=bec_row,
+                src_spec=src_spec,
+                init_dyn=init_dyn,
+                ab_names=ab_names,
+                param_list=param_list,
+                task=task,
+                ctx=ctx,
+            )
+            return
 
         be_ent = sim.get_entity(be_name)
         if be_ent is None:
@@ -319,25 +394,6 @@ class TurnOpsMixin:
             be_ent.current_hp = 1000.0
             be_ent.distance_remaining = 10000.0
             be_ent.master_name = ctx.caster_id
-
-        rt.loader.ensure_ability_index()
-        ab_names: List[str] = []
-        param_list: List[float] = []
-        if compiled_be is not None:
-            ab_names = list(getattr(compiled_be, "ability_list", ()))
-            param_list = [float(p) for p in getattr(compiled_be, "param_list", ())]
-        if not ab_names:
-            try:
-                rows = rt.loader._read_excel("BattleEventConfig.json")
-            except Exception:
-                rows = []
-            for row in rows:
-                if int(row.get("BattleEventID", 0) or 0) == event_id:
-                    ab_names = [str(a) for a in row.get("AbilityList", [])]
-                    for p in row.get("ParamList", []):
-                        val = p.get("Value", 0.0) if isinstance(p, Mapping) else p
-                        param_list.append(float(val or 0.0))
-                    break
 
         be_abilities: Dict[str, Dict[str, Any]] = {}
         for ab_name in ab_names:
@@ -373,6 +429,305 @@ class TurnOpsMixin:
 
         for ab_name in ab_names:
             rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
+        on_create = task.get("OnBattleEventCreate")
+        if isinstance(on_create, list) and on_create:
+            self.execute_tasks(on_create, ctx.clone(param_entity_id=be_name))
+
+    def _create_dummy_character_battle_event(
+        self,
+        *,
+        event_id: int,
+        be_name: str,
+        bec_row: Mapping[str, Any],
+        src_spec: Any,
+        init_dyn: Dict[int, float],
+        ab_names: List[str],
+        param_list: List[float],
+        task: Mapping[str, Any],
+        ctx: ExecutionContext,
+    ) -> None:
+        rt = self.rt
+        sim = rt.sim
+
+        bed_row: Dict[str, Any] = {}
+        try:
+            for row in rt.loader._read_excel("BattleEventData.json"):
+                if int(row.get("BattleEventID", 0) or 0) == event_id:
+                    bed_row = row
+                    break
+        except Exception:
+            bed_row = {}
+
+        char_cfg: Dict[str, Any] = {}
+        cfg_path = str(bed_row.get("Config", ""))
+        if cfg_path:
+            try:
+                char_cfg = rt.loader._read_json(cfg_path)
+            except Exception:
+                char_cfg = {}
+
+        skill_id_list = [int(s) for s in bed_row.get("SkillIDList", []) if isinstance(s, int)]
+        skill_params: Dict[str, List[float]] = {}
+        skill_meta_by_key: Dict[str, Dict[str, Any]] = {}
+        try:
+            for row in rt.loader._read_excel("BattleEventSkillConfig.json"):
+                sid = int(row.get("SkillID", 0) or 0)
+                if (skill_id_list and sid in skill_id_list) or (not skill_id_list and sid // 100 == event_id):
+                    tkey = str(row.get("SkillTriggerKey", ""))
+                    if not tkey:
+                        continue
+                    plist = [
+                        float(p.get("Value", 0.0) if isinstance(p, Mapping) else (p or 0.0))
+                        for p in row.get("ParamList", [])
+                    ]
+                    skill_params.setdefault(tkey, plist)
+                    if tkey not in skill_meta_by_key:
+                        skill_meta_by_key[tkey] = {
+                            "skill_id": sid,
+                            "attack_type": str(row.get("AttackType") or "Normal"),
+                        }
+        except Exception:
+            pass
+
+        for h_str, entry in (char_cfg.get("DynamicValues") or {}).get("Floats", {}).items():
+            if not isinstance(entry, Mapping):
+                continue
+            ri = entry.get("ReadInfo") or {}
+            rtype = ri.get("Type")
+            idx = int(ri.get("Index", 0) or 0)
+            if rtype == "SkillParam":
+                tkey = str(ri.get("TriggerKey", ""))
+                plist = skill_params.get(tkey, [])
+                if 0 <= idx < len(plist):
+                    init_dyn[int(h_str)] = float(plist[idx])
+            elif rtype == "BattleEvent":
+                if 0 <= idx < len(param_list):
+                    init_dyn[int(h_str)] = float(param_list[idx])
+
+        stage_level = int(getattr(src_spec, "level", 80) or 80) if src_spec is not None else 80
+        curve = getattr(src_spec, "hard_level_curve", None) if src_spec is not None else None
+        overrides: Dict[str, float] = {}
+        for item in bec_row.get("OverrideProperty", []):
+            if not isinstance(item, Mapping):
+                continue
+            pt = item.get("PropertyType")
+            if pt:
+                ov = item.get("Value")
+                overrides[str(pt)] = float(ov.get("Value", 0.0) if isinstance(ov, Mapping) else (ov or 0.0))
+
+        base_hp = overrides.get("BaseHP", 1000.0)
+        base_atk = overrides.get("BaseAttack", 100.0)
+        base_spd = overrides.get("BaseSpeed", 140.0)
+        if bool(bec_row.get("HardLevel", False)) and curve is not None:
+            eff_hp = base_hp * float(curve.hp_ratio)
+            eff_atk = base_atk * float(curve.atk_ratio)
+            eff_spd = base_spd * float(curve.speed_ratio)
+        else:
+            eff_hp, eff_atk, eff_spd = base_hp, base_atk, base_spd
+
+        from ..stage_factory import normalize_element
+
+        elem = normalize_element(str(char_cfg.get("DamageType", ""))) or "Quantum"
+        is_enemy_team = str(task.get("Team", bec_row.get("Team", ""))) == "TeamDark"
+
+        be_ent = sim.get_entity(be_name)
+        if be_ent is None:
+            be_ent = Entity(
+                name=be_name,
+                level=stage_level,
+                base_speed=max(1.0, eff_spd),
+                base_atk=eff_atk,
+                base_crit_rate=0.0,
+                base_crit_dmg=0.5,
+                max_hp=eff_hp,
+                current_hp=eff_hp,
+                element=elem,
+                is_enemy=is_enemy_team,
+                is_memosprite=False,
+                is_countdown=True,
+                master_name=ctx.caster_id,
+                avatar_id=event_id,
+            )
+            be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent.is_dummy = True  # type: ignore[attr-defined]
+            sim.add_entity(be_ent, trigger_battle_start=False)
+        else:
+            be_ent.level = stage_level
+            be_ent.base_speed = max(1.0, eff_spd)
+            be_ent.base_atk = eff_atk
+            be_ent.max_hp = eff_hp
+            be_ent.current_hp = eff_hp
+            be_ent.element = elem
+            be_ent.distance_remaining = 10000.0
+            be_ent.master_name = ctx.caster_id
+            be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent.is_dummy = True  # type: ignore[attr-defined]
+
+        passive_entries: List[str] = []
+        collect_ab_names: List[str] = list(ab_names) + [
+            str(a) for a in char_cfg.get("AbilityList", []) if isinstance(a, str) and a
+        ]
+        default_skill_key = "Skill01"
+        for sk_entry in char_cfg.get("SkillList", []):
+            if not isinstance(sk_entry, Mapping):
+                continue
+            sk_name = str(sk_entry.get("Name", ""))
+            entry_ab = str(sk_entry.get("EntryAbility", ""))
+            sk_type = str(sk_entry.get("SkillType", "Skill"))
+            if entry_ab:
+                collect_ab_names.append(entry_ab)
+                if entry_ab.endswith("_Phase01"):
+                    collect_ab_names.append(entry_ab.replace("_Phase01", "_Phase02"))
+                if sk_type == "Passive" or sk_name.startswith(("SkillP", "Passive")):
+                    if entry_ab not in passive_entries:
+                        passive_entries.append(entry_ab)
+                else:
+                    meta = skill_meta_by_key.setdefault(
+                        sk_name,
+                        {"skill_id": event_id * 100 + 1, "attack_type": "Normal"},
+                    )
+                    meta["entry_ab"] = entry_ab
+                    meta["skill_type"] = sk_type
+                    meta["always_auto_lock"] = bool(sk_entry.get("AlwaysDoAutoLock", False))
+
+        if default_skill_key not in skill_meta_by_key and skill_meta_by_key:
+            default_skill_key = next(iter(skill_meta_by_key))
+
+        be_abilities: Dict[str, Dict[str, Any]] = {}
+        seen_ab: set[str] = set()
+        queue_ab = list(collect_ab_names)
+        while queue_ab:
+            ab_n = queue_ab.pop(0)
+            if not ab_n or ab_n in seen_ab or ab_n.endswith("_Camera"):
+                continue
+            seen_ab.add(ab_n)
+            ab_doc = rt.loader.get_ability(ab_n)
+            if ab_doc is None:
+                continue
+            be_abilities[ab_n] = ab_doc
+            floats = (ab_doc.get("DynamicValues") or {}).get("Floats") or {}
+            if isinstance(floats, Mapping):
+                for h_str, entry in floats.items():
+                    if not isinstance(entry, Mapping):
+                        continue
+                    ri = entry.get("ReadInfo") or {}
+                    if ri.get("Type") == "BattleEvent":
+                        idx = int(ri.get("Index", 0) or 0)
+                        if 0 <= idx < len(param_list):
+                            init_dyn[int(h_str)] = float(param_list[idx])
+            for t_item in ab_doc.get("OnStart", []) + ab_doc.get("OnAdd", []):
+                if isinstance(t_item, Mapping):
+                    sub_ab = _str_val(t_item.get("AbilityName"))
+                    if sub_ab and sub_ab not in seen_ab:
+                        queue_ab.append(sub_ab)
+
+        class _DummyCharacterBattleEventKit:
+            def __init__(self, owner_id: str) -> None:
+                self.owner_id = owner_id
+                self.port = sim.port
+
+            def _active_key(self) -> str:
+                mapped = rt.control_skill_mapping.get((self.owner_id, "ControlSkill01"))
+                if mapped and mapped in skill_meta_by_key:
+                    return mapped
+                return default_skill_key
+
+            def definition(self, kind: Any) -> Any:
+                key = self._active_key()
+                meta = skill_meta_by_key.get(key) or {}
+                atk_type = str(meta.get("attack_type", "Normal"))
+                act_kind = ActionKind.SKILL if atk_type == "BPSkill" else ActionKind.BASIC
+                return AbilityDefinition(
+                    kind=act_kind,
+                    target_mode=TargetMode.SINGLE_ENEMY,
+                    name=f"BattleEvent_{event_id}_{key}",
+                    cost=ResourceCost(sp=0),
+                    skill_id=int(meta.get("skill_id", event_id * 100 + 1)),
+                )
+
+            def decide_action(self, act_ctx: Any) -> Any:
+                return self.definition(ActionKind.BASIC).kind
+
+            def choose_action(self, act_ctx: Any) -> Any:
+                return self.definition(ActionKind.BASIC).kind
+
+            def execute(self, act_ctx: Any) -> None:
+                key = self._active_key()
+                meta = skill_meta_by_key.get(key) or {}
+                entry_ab = str(meta.get("entry_ab", ""))
+                if not entry_ab:
+                    return
+                tgt_ids = getattr(act_ctx, "target_ids", None)
+                chosen: Optional[str] = None
+                if tgt_ids:
+                    for tid in tgt_ids:
+                        te = sim.get_entity(tid)
+                        if te is not None and te.is_enemy and te.current_hp > 0:
+                            chosen = te.name
+                            break
+                if chosen is None:
+                    living_enemies = [
+                        e for e in sim.entities
+                        if e.is_enemy
+                        and e.current_hp > 0
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                    ]
+                    tprov = getattr(sim, "target_provider", None)
+                    owner_ent = sim.get_entity(self.owner_id)
+                    if callable(tprov) and owner_ent is not None and living_enemies:
+                        picked = tprov(owner_ent, living_enemies, 0)
+                        if picked is not None and getattr(picked, "current_hp", 0.0) > 0.0:
+                            chosen = picked.name
+                    if chosen is None and living_enemies:
+                        if meta.get("always_auto_lock") or meta.get("attack_type") == "BPSkill":
+                            chosen_ent = max(
+                                living_enemies,
+                                key=lambda e: (
+                                    bool(getattr(e, "is_boss", False)),
+                                    float(getattr(e, "max_hp", 0.0)),
+                                    float(getattr(e, "current_hp", 0.0)),
+                                ),
+                            )
+                            chosen = chosen_ent.name
+                        else:
+                            minions = [e for e in living_enemies if not getattr(e, "is_boss", False)]
+                            chosen = (minions[0] if minions else living_enemies[0]).name
+                if chosen is not None:
+                    rt.begin_attack_scope()
+                    try:
+                        rt.trigger_ability(
+                            caster_id=self.owner_id,
+                            ability_name=entry_ab,
+                            target_ids=(chosen,),
+                            skill_target_ids=(chosen,),
+                            current_skill_type=str(meta.get("skill_type", "Skill")),
+                            current_attack_type=str(meta.get("attack_type", "Normal")),
+                        )
+                    finally:
+                        rt.end_attack_scope()
+
+        be_ent.kit = _DummyCharacterBattleEventKit(be_name)
+
+        be_spec = CompiledCharacterSpec(
+            unit_id=event_id,
+            is_servant=False,
+            config=char_cfg,
+            abilities=be_abilities,
+            global_modifiers=rt.loader._global_mod_by_name,
+            global_templates=rt.loader._global_tpl_by_name,
+            dynamic_floats=init_dyn,
+            skill_levels={},
+        )
+        rt.register_character(be_name, be_spec)
+        rt.named_targets["BattleEventCaster"] = [ctx.caster_id]
+        be_list = rt.named_targets.setdefault("BattleEventEntityList", [])
+        if be_name not in be_list:
+            be_list.append(be_name)
+
+        for ab_name in passive_entries + ab_names:
+            if ab_name in be_abilities:
+                rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
         on_create = task.get("OnBattleEventCreate")
         if isinstance(on_create, list) and on_create:
             self.execute_tasks(on_create, ctx.clone(param_entity_id=be_name))

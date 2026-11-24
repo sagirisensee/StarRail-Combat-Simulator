@@ -194,6 +194,7 @@ def _run_single_pass(
     sim_enemy_hp_out: Optional[Dict[Tuple[float, str], float]] = None,
     record_crits: bool = False,
     extra_maze_buff_ids: Sequence[int] = (),
+    on_sim_ready: Optional[Callable[[Any], None]] = None,
 ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
     team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader, loadouts=loadouts)
     sim, director, stage_mode = build_stage_for_id(
@@ -296,6 +297,9 @@ def _run_single_pass(
             inferred_out=inferred_hits,
         )
         plugin_mode = ""
+
+    if on_sim_ready is not None:
+        on_sim_ready(sim)
 
     traj = run_trajectory_replay(
         sim,
@@ -454,14 +458,19 @@ def reconcile_log(
     max_tl_av: Optional[float] = None,
     threshold: float = 0.0001,
     extra_maze_buff_ids: Sequence[int] = (),
+    meta: Optional[LogMetadata] = None,
+    golden: Optional[Any] = None,
+    timeline: Optional[List[Any]] = None,
+    on_sim_ready: Optional[Callable[[Any], None]] = None,
 ) -> ReconcileReport:
     """对任意官方战斗日志执行端到端 VM 对账并返回逐动诊断报告。"""
     char_db = db if db is not None else CharacterDB().load(DEFAULT_CHAR_DB_PATH)
     vm_loader = loader if loader is not None else GameDataLoader()
 
-    meta = extract_log_metadata(log_path, db=char_db, team_override=team_override)
-    g = parse_golden_jsonl(log_path)
-    tl = extract_timeline(log_path)
+    if meta is None:
+        meta = extract_log_metadata(log_path, db=char_db, team_override=team_override)
+    g = golden if golden is not None else parse_golden_jsonl(log_path)
+    tl = list(timeline) if timeline is not None else extract_timeline(log_path)
     if max_tl_av is not None:
         tl = [item for item in tl if item.av < max_tl_av]
 
@@ -491,6 +500,7 @@ def reconcile_log(
         sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
         record_crits=True,
         extra_maze_buff_ids=extra_maze_buff_ids,
+        on_sim_ready=on_sim_ready,
     )
 
     # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，无新检出立即 break）
@@ -517,6 +527,7 @@ def reconcile_log(
             sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
             record_crits=True,
             extra_maze_buff_ids=extra_maze_buff_ids,
+            on_sim_ready=on_sim_ready,
         )
 
     # 被特殊护盾吸收的阿哈回合伤害：由首个破盾回合的 HP+盾 守恒反推精确吸收量
@@ -564,11 +575,39 @@ def reconcile_log(
                         aha_dmg_overrides=aha_dmg_overrides,
                         record_crits=True,
                         extra_maze_buff_ids=extra_maze_buff_ids,
+                        on_sim_ready=on_sim_ready,
                     )
 
     if plugin_fn is None and resolve_memosprites and ambiguous_slots:
+        def _later_key(rep: ReconcileReport, focus_av: float) -> Tuple[float, float, float]:
+            later_bad = [td for td in rep.turn_diffs if td.av > focus_av + 0.05 and td.err >= threshold]
+            if later_bad:
+                return (-later_bad[0].av, round(later_bad[0].err, 6), rep.total_err)
+            return (float("-inf"), 0.0, rep.total_err)
+
+        def _eval_trial(
+            trial_rep: ReconcileReport,
+            best_rep: ReconcileReport,
+            best_err: float,
+            focus_av: float,
+        ) -> Optional[float]:
+            """评估候选 trial 是否优于当前 best，不劣化更早回合且优先解决后续分叉。"""
+            if any(td.av < focus_av - 0.05 and td.err >= threshold for td in trial_rep.turn_diffs):
+                return None
+            trial_td = next((td for td in trial_rep.turn_diffs if abs(td.av - focus_av) < 0.05), None)
+            trial_err = trial_td.err if trial_td is not None else 1.0
+            if trial_err < threshold <= best_err:
+                return trial_err
+            if trial_err < threshold and best_err < threshold:
+                if _later_key(trial_rep, focus_av) < _later_key(best_rep, focus_av):
+                    return trial_err
+                return None
+            if trial_err >= threshold and best_err >= threshold and trial_err + 1e-4 < best_err:
+                return trial_err
+            return None
+
         resolved_keys: Set[Tuple[float, int, str]] = set()
-        for _round in range(min(len(ambiguous_slots), 8)):
+        for _round in range(8):
             bad_turns = [td for td in report.turn_diffs if td.err >= threshold]
             if not bad_turns:
                 break
@@ -581,7 +620,7 @@ def reconcile_log(
             if not preceding:
                 break
             improved_any = False
-            for slot in reversed(preceding[-3:]):
+            for slot in reversed(preceding[-5:]):
                 resolved_keys.add(slot.key)
                 best_choice = slot.default_choice
                 best_err = first_bad.err
@@ -609,10 +648,9 @@ def reconcile_log(
                         record_crits=False,
                         extra_maze_buff_ids=extra_maze_buff_ids,
                     )
-                    trial_td = next((td for td in trial_rep.turn_diffs if abs(td.av - first_bad.av) < 0.05), None)
-                    trial_err = trial_td.err if trial_td is not None else 1.0
-                    if trial_err + 1e-4 < best_err:
-                        best_err = trial_err
+                    new_err = _eval_trial(trial_rep, best_report, best_err, first_bad.av)
+                    if new_err is not None:
+                        best_err = new_err
                         best_choice = cand
                         best_report = trial_rep
                         best_slots = trial_slots
@@ -642,6 +680,7 @@ def reconcile_log(
                 aha_dmg_overrides=aha_dmg_overrides,
                 record_crits=True,
                 extra_maze_buff_ids=extra_maze_buff_ids,
+                on_sim_ready=on_sim_ready,
             )
             for _nc_round in range(2):
                 newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits
@@ -664,6 +703,7 @@ def reconcile_log(
                     aha_dmg_overrides=aha_dmg_overrides,
                     record_crits=True,
                     extra_maze_buff_ids=extra_maze_buff_ids,
+                    on_sim_ready=on_sim_ready,
                 )
 
     report.non_crits = set(non_crits)

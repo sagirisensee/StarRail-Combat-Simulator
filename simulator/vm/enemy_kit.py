@@ -162,7 +162,7 @@ class DataDrivenEnemyKit(EnemyKit):
                 "OnBeforeMortallyWonded",
                 owner_id=self.owner_id,
                 param_entity_id=self.owner_id,
-                change_value=-float(raw_damage),
+                change_value=float(raw_damage),
                 param_flags=("IsHPChangeByDamage",),
             )
 
@@ -493,12 +493,33 @@ class DataDrivenEnemyKit(EnemyKit):
         self._ensure_windwalk_init(sim)
 
         # 非攻击辅助回合（如流星铁鹰 Skill02【如流星闪耀】赋予友方风行）：
-        # 对具有 AIFlag 自切换能力的数据驱动怪物，优先走官方 ConfigAI + ConfigAbility 分支
-        has_dynamic_ai_flag = any(d.next_ai_flag is not None for d in self.ai_executor.spec.decisions)
+        # 对具有 AIFlag 自切换能力或无任何伤害技能的纯辅助怪物，优先走官方 ConfigAI + ConfigAbility 分支
+        has_dynamic_ai_flag = any(
+            d.next_ai_flag is not None
+            or (
+                isinstance(d.root_task, Mapping)
+                and any(
+                    isinstance(t, Mapping)
+                    and t.get("$type")
+                    in (
+                        "RPG.GameCore.PredicateTaskList",
+                        "RPG.GameCore.Retarget",
+                        "RPG.GameCore.SetDynamicValueByAddValue",
+                    )
+                    for t in (d.root_task.get("TaskList") or ())
+                )
+            )
+            for d in self.ai_executor.spec.decisions
+        )
+        has_any_damage_skill = any(
+            (not sk.is_passive) and sk.damage_type is not None
+            for sk in self.ai_executor.spec.skills_by_key.values()
+        )
         skip_prov = getattr(sim, "enemy_attack_skip_provider", None)
         if (
             skip_prov is not None
             and attacker is not None
+            and has_any_damage_skill
             and not has_dynamic_ai_flag
             and skip_prov(attacker, sim.current_av)
         ):
@@ -600,24 +621,33 @@ class DataDrivenEnemyKit(EnemyKit):
                         modifier_owner_id=self.owner_id,
                     )
                     root_tasks = matched_dec.root_task.get("TaskList", [])
-                    ai_tasks = [
-                        t for t in root_tasks
-                        if isinstance(t, Mapping)
-                        and (
-                            t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
-                            or (
-                                t.get("$type") == "RPG.GameCore.DefineDynamicValue"
-                                and (t.get("DynamicKey") or {}).get("Value") != "AIFlag"
-                            )
+                    has_dynamic_root = any(
+                        isinstance(t, Mapping)
+                        and t.get("$type")
+                        in (
+                            "RPG.GameCore.PredicateTaskList",
+                            "RPG.GameCore.Retarget",
+                            "RPG.GameCore.SetDynamicValueByAddValue",
+                            "RPG.GameCore.SequenceConfig",
                         )
-                    ]
-                    if ai_tasks:
-                        rt.executor.execute_tasks(ai_tasks, ai_ctx)
-                    # 动态求值 ConfigAI RootTask 中的 PredicateTaskList，精确还原官方分支技能选择
-                    if any(
-                        isinstance(t, Mapping) and t.get("$type") == "RPG.GameCore.PredicateTaskList"
                         for t in root_tasks
-                    ):
+                    )
+                    if not has_dynamic_root:
+                        ai_tasks = [
+                            t for t in root_tasks
+                            if isinstance(t, Mapping)
+                            and (
+                                t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
+                                or (
+                                    t.get("$type") == "RPG.GameCore.DefineDynamicValue"
+                                    and (t.get("DynamicKey") or {}).get("Value") != "AIFlag"
+                                )
+                            )
+                        ]
+                        if ai_tasks:
+                            rt.executor.execute_tasks(ai_tasks, ai_ctx)
+                    # 动态求值 ConfigAI RootTask 中的条件/目标重选与 AIFlag 自增，精确还原官方分支技能选择
+                    if has_dynamic_root:
                         resolved_skill_names: List[str] = []
 
                         def _resolve_ai_skills(nodes: Any) -> None:
@@ -649,6 +679,32 @@ class DataDrivenEnemyKit(EnemyKit):
                                     new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
                                     if new_flag > 0:
                                         self.ai_executor.ai_flag = int(round(new_flag))
+                            elif nt == "RPG.GameCore.SetDynamicValueByAddValue":
+                                rt.executor.execute_task(nodes, ai_ctx)
+                                dk = nodes.get("Key") or nodes.get("DynamicKey")
+                                dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
+                                if dk_name == "AIFlag":
+                                    new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
+                                    if new_flag > 0:
+                                        self.ai_executor.ai_flag = int(round(new_flag))
+                            elif nt == "RPG.GameCore.Retarget":
+                                cands = rt.executor._resolve_targets(nodes.get("TargetType"), ai_ctx)
+                                pred = nodes.get("Predicate")
+                                matched_tgts: List[str] = []
+                                for tid in cands:
+                                    if pred:
+                                        t_ctx = ai_ctx.clone(param_entity_id=tid)
+                                        try:
+                                            ok = rt.executor.eval_predicate(pred, t_ctx)
+                                        except NotImplementedError:
+                                            ok = False
+                                        if not ok:
+                                            continue
+                                    matched_tgts.append(tid)
+                                if matched_tgts:
+                                    _resolve_ai_skills(nodes.get("TaskList", []))
+                                else:
+                                    _resolve_ai_skills(nodes.get("FailedTaskList", []))
                             elif nt == "RPG.GameCore.PredicateTaskList":
                                 pred = nodes.get("Predicate")
                                 try:

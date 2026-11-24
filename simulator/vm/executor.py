@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ..events import DamageAppliedEvent, WeaknessBreakEvent
 from ..status import StatType
@@ -518,6 +518,12 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             self._write_dyn(task, ctx, key_h, val)
             return
 
+        if t == "RPG.GameCore.SetDynamicValueByChangeValue":
+            key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+            val = float(getattr(ctx, "change_value", 0.0) or 0.0)
+            self._write_dyn(task, ctx, key_h, val)
+            return
+
         if t == "RPG.GameCore.SetDynamicValueByAddValue":
             key_str = _str_val(task.get("DynamicKey") or task.get("Key"))
             key_h = dotnet_hash(key_str)
@@ -534,9 +540,23 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
 
         if t in ("RPG.GameCore.SetDynamicValueByProperty", "RPG.GameCore.SetDynamicValueByHPRatio"):
             key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
-            read_targets = self._resolve_targets(task.get("ReadTargetType") or {"Alias": "ModifierOwnerEntity"}, ctx)
+            read_spec = task.get("ReadTargetType") or {"Alias": "ModifierOwnerEntity"}
             prop_name = "HPRatio" if t == "RPG.GameCore.SetDynamicValueByHPRatio" else str(task.get("Value", ""))
-            val = me.get_entity_property(read_targets[0], prop_name) if read_targets else 0.0
+            is_snap = isinstance(read_spec, Mapping) and read_spec.get("Alias") == "SnapshotPropertyEntity"
+            val: Optional[float] = None
+            if is_snap and ctx.modifier_instance is not None:
+                snap_props = getattr(ctx.modifier_instance, "caster_snapshot_props", None)
+                if isinstance(snap_props, Mapping) and prop_name in snap_props:
+                    val = float(snap_props[prop_name])
+                elif getattr(ctx.modifier_instance, "caster_snapshot_entity", None) is not None:
+                    val = me.get_entity_property(
+                        ctx.modifier_instance.caster_id,
+                        prop_name,
+                        entity_override=ctx.modifier_instance.caster_snapshot_entity,
+                    )
+            if val is None:
+                read_targets = self._resolve_targets(read_spec, ctx)
+                val = me.get_entity_property(read_targets[0], prop_name) if read_targets else 0.0
             self._write_dyn(task, ctx, key_h, val)
             return
 
@@ -720,7 +740,12 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                         )
                     ):
                         continue
-                eff_caster = tid if inherit == "TargetSelf" else ctx.caster_id
+                if inherit == "TargetSelf":
+                    eff_caster = tid
+                elif inherit == "CasterSelf":
+                    eff_caster = ctx.modifier_owner_id or ctx.caster_id
+                else:
+                    eff_caster = ctx.caster_id
                 if chance_val is not None:
                     caster_ent = sim.get_entity(eff_caster)
                     tgt_ent = sim.get_entity(tid)
@@ -948,6 +973,12 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
 
         if t == "RPG.GameCore.CreateBattleEvent":
             self._execute_create_battle_event(task, ctx)
+            return
+
+        if t == "JDOLDFECMPL":
+            val = self._eval_num(task.get("AJHHCOHFIFA"), ctx, 0.0)
+            mode = "set" if str(task.get("FKCKKFALPBK", "")) == "DADCFBHGLOH" else "add"
+            rt.modify_elation_points(val, mode=mode)
             return
 
         if t == "RPG.GameCore.SetTargetUniqueName":
@@ -1185,14 +1216,29 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
         if t == "RPG.GameCore.AddStageAbilityByName":
             ab_name = _str_val(task.get("StageAbilityName"))
             if ab_name:
-                owner = ctx.caster_id or "__LEVEL__"
-                for dk, dv in (task.get("DynamicValues") or {}).items():
-                    rt.set_dynamic_value(owner, dotnet_hash(str(dk)), self._eval_num(dv, ctx, 0.0), ability_name=ab_name)
-                rt.trigger_ability(
-                    caster_id=owner,
-                    ability_name=ab_name,
-                    target_ids=(ctx.caster_id,),
-                )
+                owner = "__LEVEL__"
+                can_replace = bool(task.get("CanReplace", True))
+                eq_key = (owner, ab_name)
+                if can_replace or eq_key not in rt.equip_dynamics:
+                    dyn_map: Dict[int, float] = {}
+                    for dk, dv in (task.get("DynamicValues") or {}).items():
+                        val = self._eval_num(dv, ctx, 0.0)
+                        kh = dotnet_hash(str(dk))
+                        dyn_map[kh] = val
+                        rt.set_dynamic_value(owner, kh, val, ability_name=ab_name)
+                    rt.equip_dynamics[eq_key] = dyn_map
+                ab = rt.loader.get_ability(ab_name)
+                if ab is not None and ab.get("OnAdd"):
+                    add_key = (owner, ab_name)
+                    if can_replace or add_key not in rt._added_abilities:
+                        rt._added_abilities.add(add_key)
+                        add_ctx = ExecutionContext(
+                            runtime=rt,
+                            caster_id=owner,
+                            ability_name=ab_name,
+                            ability_target_ids=(owner,),
+                        )
+                        self.execute_tasks(ab["OnAdd"], add_ctx)
             return
 
         if t == "RPG.GameCore.DamageStance":
@@ -1375,12 +1421,14 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
 
         if t == "RPG.GameCore.SetDieImmediately":
             targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+            active_dr = getattr(rt, "_active_deathrattle_entities", ())
             for tid in targets:
                 ent = sim.get_entity(tid)
                 if ent is not None and getattr(ent, "_in_deathrattle_limbo", False):
-                    if int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) > 0:
+                    if tid in active_dr or int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) > 0:
                         setattr(ent, "_die_immediately_after_deathrattle", True)
                     else:
+                        setattr(ent, "_die_immediately_after_deathrattle", False)
                         setattr(ent, "_in_deathrattle_limbo", False)
                         ent.current_hp = 0.0
                         me.destroy_all_for_entity(tid)
@@ -1528,7 +1576,7 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 next_mid = float(wave_bp.enemies[cur].monster_id) if cur < limit else 0.0
                 next_eg = float(wave_bp.enemies[cur].elite_group) if cur < limit else 0.0
                 slot = (
-                    float(runner.state.recorded_formation_slots.pop(0))
+                    float(runner.state.recorded_formation_slots.pop())
                     if runner.state.recorded_formation_slots
                     else -1.0
                 )
@@ -1595,7 +1643,6 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             "RPG.GameCore.TargetFetchUniqueNameEntity",
             "RPG.GameCore.TargetFilterAliveState",
             "RPG.GameCore.TriggerBreak",
-            "JDOLDFECMPL",
             "MJHAGGNNBIK",
             "FOIBLOANLCJ",
             "CKCOFEAAJII",

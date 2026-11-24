@@ -52,7 +52,7 @@ class CombatOpsMixin:
                     "OnBeforeMortallyWonded",
                     owner_id=tid,
                     param_entity_id=caster_id,
-                    change_value=-float(raw_loss),
+                    change_value=float(raw_loss),
                     param_flags=param_flags,
                 )
         elif cur_hp - raw_loss <= 0.0:
@@ -60,7 +60,7 @@ class CombatOpsMixin:
                 "OnBeforeMortallyWonded",
                 owner_id=tid,
                 param_entity_id=caster_id,
-                change_value=-float(raw_loss),
+                change_value=float(raw_loss),
                 param_flags=param_flags,
             )
 
@@ -226,6 +226,12 @@ class CombatOpsMixin:
         atk_prop = task.get("AttackProperty") or {}
         if not targets or not atk_prop:
             return
+        override_atk_spec = task.get("OverrideAttacker")
+        eff_attacker_id = ctx.caster_id
+        if isinstance(override_atk_spec, Mapping):
+            ov_targets = self._resolve_targets(override_atk_spec, ctx)
+            if ov_targets:
+                eff_attacker_id = ov_targets[0]
 
         _ELEM_ZH_TO_EN = {
             "物理": "Physical",
@@ -240,7 +246,7 @@ class CombatOpsMixin:
         dt_obj = atk_prop.get("DamageType", {})
         if isinstance(dt_obj, Mapping) and dt_obj.get("SourceType") == "ReadTargetType":
             rt_list = self._resolve_targets(dt_obj.get("ReadTargetType"), ctx)
-            src_ent = sim.get_entity(rt_list[0]) if rt_list else sim.get_entity(ctx.caster_id)
+            src_ent = sim.get_entity(rt_list[0]) if rt_list else sim.get_entity(eff_attacker_id)
             element = getattr(src_ent, "element", "Physical") or "Physical"
         elif isinstance(dt_obj, Mapping):
             element = dt_obj.get("DamageType", "Physical")
@@ -374,7 +380,7 @@ class CombatOpsMixin:
         is_nested_sub = is_true_dmg or is_dot_dmg or getattr(rt, "_in_after_attack", False) or is_equip_sub
 
         atk_seq = int(getattr(sim, "_action_seq", 0))
-        atk_key = (atk_seq, ctx.caster_id)
+        atk_key = (atk_seq, eff_attacker_id)
         if not is_nested_sub:
             acc_targets = rt._attack_targets_by_key.setdefault(atk_key, [])
             for tid in targets:
@@ -389,19 +395,19 @@ class CombatOpsMixin:
                 fired_set.add(atk_key)
                 me.dispatch_event(
                     "OnAttackerPrepareAttackData",
-                    owner_id=ctx.caster_id,
+                    owner_id=eff_attacker_id,
                     attack_target_ids=tuple(targets),
                     current_attack_type=atk_type,
                 )
                 me.dispatch_event(
                     "OnBeforeAttack",
-                    owner_id=ctx.caster_id,
+                    owner_id=eff_attacker_id,
                     attack_target_ids=tuple(targets),
                     current_attack_type=atk_type,
                 )
                 me.dispatch_event(
                     "OnListenBeforeAttack",
-                    param_entity_id=ctx.caster_id,
+                    param_entity_id=eff_attacker_id,
                     attack_target_ids=tuple(targets),
                     current_attack_type=atk_type,
                 )
@@ -410,7 +416,7 @@ class CombatOpsMixin:
         if not is_true_dmg:
             me.dispatch_event(
                 "OnBeforeHitAll",
-                owner_id=ctx.caster_id,
+                owner_id=eff_attacker_id,
                 attack_target_ids=tuple(targets),
                 damage_data=dmg_data,
                 current_attack_type=atk_type,
@@ -418,7 +424,7 @@ class CombatOpsMixin:
             base_before_hit_all = dict(dmg_data)
             me.dispatch_event(
                 "OnListenBeforeHitAll",
-                param_entity_id=ctx.caster_id,
+                param_entity_id=eff_attacker_id,
                 attack_target_ids=tuple(targets),
                 damage_data=dmg_data,
                 current_attack_type=atk_type,
@@ -442,24 +448,24 @@ class CombatOpsMixin:
         final_formula = str(atk_prop.get("FinalFormulaType", ""))
         formula_type = str(atk_prop.get("FormulaType", ""))
         real_targets = [tid for tid in targets if tid != "__LEVEL__"]
-        caster_ent_bd = sim.get_entity(ctx.caster_id) if ctx.caster_id != "__LEVEL__" else None
-        is_level_base_dmg = ctx.caster_id == "__LEVEL__" and is_true_dmg and final_formula == "ByBaseDamage"
+        caster_ent_bd = sim.get_entity(eff_attacker_id) if eff_attacker_id != "__LEVEL__" else None
+        is_level_base_dmg = eff_attacker_id == "__LEVEL__" and is_true_dmg and final_formula == "ByBaseDamage"
         is_enemy_self_base_dmg = (
             final_formula == "ByBaseDamage"
-            and ctx.caster_id != "__LEVEL__"
+            and eff_attacker_id != "__LEVEL__"
             and caster_ent_bd is not None
             and bool(getattr(caster_ent_bd, "is_enemy", False))
             and bool(real_targets)
-            and all(tid == ctx.caster_id for tid in real_targets)
+            and all(tid == eff_attacker_id for tid in real_targets)
         )
         if is_level_base_dmg or is_enemy_self_base_dmg:
             can_last_kill = bool(atk_prop.get("CanTriggerLastKill", False))
             last_killer = (
                 getattr(rt, "_last_enemy_killer_id", "")
                 or getattr(rt, "_current_attacker_id", "")
-                or ctx.caster_id
+                or eff_attacker_id
             )
-            hp_change_param = "__LEVEL__" if is_level_base_dmg else ctx.caster_id
+            hp_change_param = "__LEVEL__" if is_level_base_dmg else eff_attacker_id
             hp_change_atk_type = "TrueDamage" if is_level_base_dmg else (atk_type or "TrueDamage")
             for tid in real_targets:
                 tgt_ent = sim.get_entity(tid)
@@ -508,7 +514,7 @@ class CombatOpsMixin:
                         else:
                             eff_killer = (ctx.param_entity_id if (ctx.param_entity_id and ctx.param_entity_id != tid) else "") or last_killer
                     else:
-                        eff_killer = "__LEVEL__" if is_level_base_dmg else ctx.caster_id
+                        eff_killer = "__LEVEL__" if is_level_base_dmg else eff_attacker_id
                     if is_level_base_dmg and getattr(rt, "_attack_scope_depth", 0) > 0:
                         pending_lvl = getattr(rt, "_pending_level_kills", None)
                         if pending_lvl is None:
@@ -536,7 +542,7 @@ class CombatOpsMixin:
         self._damage_capture_stack.append(captured)
         sim.resolver.begin_aoe()
         try:
-            caster_ent_pre = sim.get_entity(ctx.caster_id)
+            caster_ent_pre = sim.get_entity(eff_attacker_id)
             if (
                 not is_nested_sub
                 and caster_ent_pre is not None
@@ -544,7 +550,7 @@ class CombatOpsMixin:
                 and real_targets
                 and getattr(rt, "_open_enemy_attack", None) is None
             ):
-                rt.begin_being_attacked(ctx.caster_id, real_targets)
+                rt.begin_being_attacked(eff_attacker_id, real_targets)
             any_died_mid_aoe = False
             pending_limbo: List[str] = []
             pending_dying: List[str] = []
@@ -554,7 +560,7 @@ class CombatOpsMixin:
                     dmg_data = dict(base_before_hit_all)
                     me.dispatch_event(
                         "OnListenBeforeHitAll",
-                        param_entity_id=ctx.caster_id,
+                        param_entity_id=eff_attacker_id,
                         attack_target_ids=tuple(real_targets[idx:]),
                         damage_data=dmg_data,
                         current_attack_type=atk_type,
@@ -588,7 +594,7 @@ class CombatOpsMixin:
                     me.dispatch_event(
                         "OnBeforeBeingHitAll",
                         owner_id=tid,
-                        param_entity_id=ctx.caster_id,
+                        param_entity_id=eff_attacker_id,
                         damage_data=tgt_hit_data,
                         current_attack_type=atk_type,
                     )
@@ -617,14 +623,14 @@ class CombatOpsMixin:
                 if not is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
-                        owner_id=ctx.caster_id,
+                        owner_id=eff_attacker_id,
                         param_entity_id=tid,
                         attack_target_ids=tuple(targets),
                         damage_data=dmg_data,
                         current_attack_type=atk_type,
                     )
                 sim.port.attack(
-                    ctx.caster_id,
+                    eff_attacker_id,
                     tid,
                     element=element,
                     atk_multiplier=eff_pct,
@@ -646,7 +652,7 @@ class CombatOpsMixin:
                     ),
                 )
                 if not is_true_dmg and not is_dot_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
-                    caster_ent = sim.get_entity(ctx.caster_id)
+                    caster_ent = sim.get_entity(eff_attacker_id)
                     if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
                         sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
                         if sp_base <= 0.0 and ctx.ability_name:
@@ -707,8 +713,8 @@ class CombatOpsMixin:
                             pending_dead.append(tid)
             sim.resolver.resolve_all()
             if pending_dying:
-                if ctx.caster_id and ctx.caster_id != "__LEVEL__":
-                    rt._last_enemy_killer_id = ctx.caster_id
+                if eff_attacker_id and eff_attacker_id != "__LEVEL__":
+                    rt._last_enemy_killer_id = eff_attacker_id
                 if getattr(rt, "_attack_scope_depth", 0) > 0:
                     q = getattr(rt, "_pending_dying_enemies", None)
                     if q is None:
@@ -716,17 +722,27 @@ class CombatOpsMixin:
                         rt._pending_dying_enemies = q
                     for d_tid in pending_dying:
                         if not any(x[0] == d_tid for x in q):
-                            q.append((d_tid, ctx.caster_id))
+                            q.append((d_tid, eff_attacker_id))
                 else:
                     for d_tid in pending_dying:
-                        me.dispatch_event("OnBeforeDying", owner_id=d_tid, param_entity_id=ctx.caster_id)
+                        me.dispatch_event("OnBeforeDying", owner_id=d_tid, param_entity_id=eff_attacker_id)
+                        me.dispatch_event("OnBeingLimbo", owner_id=d_tid, param_entity_id=eff_attacker_id)
                         d_ent = sim.get_entity(d_tid)
                         if d_ent is not None and getattr(d_ent, "_in_deathrattle_limbo", False):
                             me.strip_for_deathrattle(d_tid)
-                        me.dispatch_event("OnDeathrattle", owner_id=d_tid, param_entity_id=ctx.caster_id)
+                        active_dr = getattr(rt, "_active_deathrattle_entities", None)
+                        if active_dr is None:
+                            active_dr = set()
+                            rt._active_deathrattle_entities = active_dr
+                        active_dr.add(d_tid)
+                        try:
+                            me.dispatch_event("OnDeathrattle", owner_id=d_tid, param_entity_id=eff_attacker_id)
+                        finally:
+                            active_dr.discard(d_tid)
+                        rt.finalize_inline_deathrattle(d_tid)
             for l_tid in pending_limbo:
-                if not rt.trigger_or_defer_limbo(l_tid, ctx.caster_id):
-                    me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=ctx.caster_id)
+                if not rt.trigger_or_defer_limbo(l_tid, eff_attacker_id):
+                    me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=eff_attacker_id)
         finally:
             sim.resolver.end_aoe()
             self._damage_capture_stack.pop()
@@ -737,14 +753,14 @@ class CombatOpsMixin:
         if not is_true_dmg:
             me.dispatch_event(
                 "OnAfterHitAll",
-                owner_id=ctx.caster_id,
+                owner_id=eff_attacker_id,
                 attack_target_ids=tuple(targets),
                 damage_data=dmg_data,
                 current_attack_type=atk_type,
             )
             me.dispatch_event(
                 "OnListenAfterHitAll",
-                param_entity_id=ctx.caster_id,
+                param_entity_id=eff_attacker_id,
                 attack_target_ids=tuple(targets),
                 damage_data=dmg_data,
                 current_attack_type=atk_type,
@@ -753,7 +769,7 @@ class CombatOpsMixin:
         if not is_nested_sub:
             eff_sk_type = ctx.current_skill_type or atk_type
             if getattr(rt, "_attack_scope_depth", 0) > 0:
-                rt._pending_after_attack = (atk_seq, ctx.caster_id, dmg_data, atk_type, eff_sk_type)
+                rt._pending_after_attack = (atk_seq, eff_attacker_id, dmg_data, atk_type, eff_sk_type)
             else:
                 after_set = getattr(rt, "_after_attack_fired", None)
                 if after_set is None:
@@ -766,7 +782,7 @@ class CombatOpsMixin:
                     try:
                         me.dispatch_event(
                             "OnAfterAttack",
-                            owner_id=ctx.caster_id,
+                            owner_id=eff_attacker_id,
                             attack_target_ids=all_tgts,
                             damage_data=dmg_data,
                             current_skill_type=eff_sk_type,
@@ -774,7 +790,7 @@ class CombatOpsMixin:
                         )
                         me.dispatch_event(
                             "OnListenAfterAttack",
-                            param_entity_id=ctx.caster_id,
+                            param_entity_id=eff_attacker_id,
                             attack_target_ids=all_tgts,
                             damage_data=dmg_data,
                             current_skill_type=eff_sk_type,
@@ -784,19 +800,21 @@ class CombatOpsMixin:
                             me.dispatch_event(
                                 "OnAfterBeingAttacked",
                                 owner_id=tid,
-                                param_entity_id=ctx.caster_id,
+                                param_entity_id=eff_attacker_id,
                                 damage_data=dmg_data,
                                 current_attack_type=atk_type,
                             )
                             me.dispatch_event(
                                 "OnAfterBeingAttackedEnd",
                                 owner_id=tid,
-                                param_entity_id=ctx.caster_id,
+                                param_entity_id=eff_attacker_id,
                                 damage_data=dmg_data,
                                 current_attack_type=atk_type,
                             )
                     finally:
                         rt._in_after_attack = False
+                        if getattr(rt, "_attack_blocked_targets", None):
+                            rt._attack_blocked_targets.clear()
                     pending_dead = getattr(rt, "_pending_dead_enemies", None)
                     if pending_dead:
                         remaining_dead = []
@@ -908,10 +926,20 @@ class CombatOpsMixin:
                                 pending_dead.append(tid)
                         else:
                             me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
+                            me.dispatch_event("OnBeingLimbo", owner_id=tid, param_entity_id=ctx.caster_id)
                             if has_dr:
                                 me.strip_for_deathrattle(tid)
-                            me.dispatch_event("OnDeathrattle", owner_id=tid, param_entity_id=ctx.caster_id)
-                            if not has_dr:
+                            active_dr = getattr(rt, "_active_deathrattle_entities", None)
+                            if active_dr is None:
+                                active_dr = set()
+                                rt._active_deathrattle_entities = active_dr
+                            active_dr.add(tid)
+                            try:
+                                me.dispatch_event("OnDeathrattle", owner_id=tid, param_entity_id=ctx.caster_id)
+                            finally:
+                                active_dr.discard(tid)
+                            rt.finalize_inline_deathrattle(tid)
+                            if not getattr(ent, "_in_deathrattle_limbo", False) and float(getattr(ent, "current_hp", 0.0)) <= 0.0:
                                 me.destroy_all_for_entity(tid)
                                 if runner is not None:
                                     runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]

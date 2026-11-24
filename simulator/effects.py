@@ -6,7 +6,7 @@
 3. 伤害、削韧、弱点击破与推条解耦结算，伤害分摊通过 `KitHandler.intercept_incoming_damage` 协议多态分发，绝不硬编码特定角色名；
 4. 严格限制最大结算步数 (MAX_EFFECT_STEPS)，彻底防止追击/触发产生无限死循环递归。
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional
 from .events import (
     ActionAdvanceEvent, ActionDelayEvent, SPChangeEvent, StatusApplyEvent, 
@@ -421,19 +421,35 @@ class EffectResolver:
             breakdown = DamageCalculator.calculate(effect.request)
             raw_dmg = breakdown.final_damage
 
-            # 2. 多态伤害分摊/减免拦截协议钩子 (如符玄穷观阵分摊，零角色名硬编码)
-            for ent in list(getattr(self.simulator, "entities", [])):
-                kit = getattr(ent, "kit", None)
-                if kit is not None and hasattr(kit, "intercept_incoming_damage"):
-                    raw_dmg = kit.intercept_incoming_damage(target.name, raw_dmg)
-
-            # 3. 护盾优先吸收 (砂金、杰帕德等)
-            if hasattr(target, "shield") and target.shield > 0:
-                absorbed = min(target.shield, raw_dmg)
-                target.shield -= absorbed
-                raw_dmg -= absorbed
-
             resolved_damage_type = getattr(effect, "damage_type", None) or DamageType.from_tag(getattr(effect, "damage_tag", "direct"))
+            is_dot_dmg = (resolved_damage_type == DamageType.DOT)
+            is_true_dmg = bool(getattr(effect.request, "is_true_damage", False) or resolved_damage_type == DamageType.TRUE)
+            vm_blocked = False
+            if vm_rt is not None and not is_true_dmg:
+                me_blk = vm_rt.modifier_engine
+                if me_blk.has_behavior_flag(target.name, "BlockDamage") or (
+                    not is_dot_dmg and me_blk.has_behavior_flag(target.name, "BlockDamageExcludeDot")
+                ):
+                    vm_blocked = True
+
+            if vm_blocked:
+                raw_dmg = 0.0
+                breakdown = replace(breakdown, final_damage=0.0)
+                setattr(target, "_vm_hit_blocked", True)
+                vm_rt._attack_blocked_targets.add(target.name)
+            else:
+                # 2. 多态伤害分摊/减免拦截协议钩子 (如符玄穷观阵分摊，零角色名硬编码)
+                for ent in list(getattr(self.simulator, "entities", [])):
+                    kit = getattr(ent, "kit", None)
+                    if kit is not None and hasattr(kit, "intercept_incoming_damage"):
+                        raw_dmg = kit.intercept_incoming_damage(target.name, raw_dmg)
+
+                # 3. 护盾优先吸收 (砂金、杰帕德等)
+                if hasattr(target, "shield") and target.shield > 0:
+                    absorbed = min(target.shield, raw_dmg)
+                    target.shield -= absorbed
+                    raw_dmg -= absorbed
+
             vm_atk_type = "DOT" if resolved_damage_type == DamageType.DOT else ""
             was_alive = getattr(target, "current_hp", 0.0) > 0 or getattr(target, "_in_deathrattle_limbo", False)
             was_strictly_alive = getattr(target, "current_hp", 0.0) > 0
@@ -472,6 +488,17 @@ class EffectResolver:
                     param_entity_id=req_attacker.name,
                     current_attack_type=vm_atk_type,
                 )
+            if vm_rt is not None:
+                try:
+                    vm_rt.modifier_engine.dispatch_event(
+                        "OnAfterBeingHit",
+                        owner_id=target.name,
+                        param_entity_id=req_attacker.name,
+                        current_attack_type=vm_atk_type,
+                    )
+                finally:
+                    if vm_blocked:
+                        setattr(target, "_vm_hit_blocked", False)
 
             target_killed = bool(
                 was_strictly_alive

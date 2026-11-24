@@ -222,6 +222,7 @@ class CompiledMonsterSpec:
     ai_path: str
     ability_list: tuple[str, ...] = ()
     battle_events: tuple[CompiledBattleEventSpec, ...] = ()
+    custom_value_tags: tuple[str, ...] = ()
 
     def skill(self, key_or_id: str | int) -> CompiledMonsterSkillSpec:
         """Lookup a monster skill by ``SkillTriggerKey`` (e.g. ``'Skill01'``) or ``SkillID``."""
@@ -1025,6 +1026,11 @@ class StageDataLoader:
             )
             if a
         )
+        custom_value_tags = tuple(
+            str(t)
+            for t in mrow.get("CustomValueTags", [])
+            if isinstance(t, str) and t
+        )
         monster_bes = self._extract_monster_battle_events(char_cfg_with_path, curve)
 
         name = self.resolve_text(mrow.get("MonsterName")) or self.resolve_text(
@@ -1077,6 +1083,7 @@ class StageDataLoader:
             ai_path=str(mrow.get("OverrideAIPath") or trow.get("AIPath", "")),
             ability_list=ability_list,
             battle_events=monster_bes,
+            custom_value_tags=custom_value_tags,
         )
         self._compiled_monster_cache[cache_key] = spec
         return spec
@@ -1259,7 +1266,6 @@ class StageDataLoader:
 
     def _detect_challenge_mode(self, stage_id: int) -> str:
         """根据官方四大深渊配置表精确识别玩法模式：MoC / PF / AS / Peak / Other。"""
-        excel_dir = self.tbgd_root / "ExcelOutput"
         table_specs = (
             ("ChallengeMazeConfig.json", ("EventIDList1", "EventIDList2"), "MoC"),
             ("ChallengeStoryMazeConfig.json", ("EventIDList1", "EventIDList2"), "PF"),

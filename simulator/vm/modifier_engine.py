@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..combat_port import BuffSpec
 from ..status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
@@ -78,6 +78,7 @@ class VMModifierInstance:
     halo_parent_uid: Optional[int] = None
     range_states: Dict[Tuple[str, int, int], bool] = field(default_factory=dict)
     caster_snapshot_entity: Optional[Any] = None
+    caster_snapshot_props: Dict[str, float] = field(default_factory=dict)
     _spawn_order: int = 0
     _destroyed: bool = False
 
@@ -193,6 +194,15 @@ class ModifierEngine:
         ):
             return None
 
+        cfg_count: Optional[int] = None
+        if count is None and "Count" in cfg:
+            cfg_count = int(round(eval_dynamic_float(
+                cfg["Count"],
+                lambda h: self.rt.resolve_hash(caster_id, h, ability_name=ability_name, local_ctx=ctx),
+                1.0,
+            )))
+        init_count_val = count if count is not None else cfg_count
+
         cfg_max_layer = cfg.get("MaxLayer")
         eff_max_layer = max_layer
         if eff_max_layer is None and cfg_max_layer is not None:
@@ -202,8 +212,8 @@ class ModifierEngine:
                 1.0,
             )))
         if eff_max_layer is None:
-            if stacking == "Stack" or (count is not None and count > 1) or cfg.get("LayerAddWhenStack") is not None:
-                eff_max_layer = 99
+            if stacking == "Stack" or (init_count_val is not None and init_count_val > 1) or cfg.get("LayerAddWhenStack") is not None:
+                eff_max_layer = max(99, init_count_val or 1)
             else:
                 eff_max_layer = 1
 
@@ -214,6 +224,8 @@ class ModifierEngine:
                 lambda h: self.rt.resolve_hash(caster_id, h, ability_name=ability_name, local_ctx=ctx),
                 1.0,
             )
+        if eff_life is not None and eff_life < 0:
+            eff_life = None
 
         # 解析传入 DynamicValues
         parsed_dyn: Dict[int, float] = dict(resolved_dynamics) if resolved_dynamics else {}
@@ -254,10 +266,17 @@ class ModifierEngine:
 
         is_new = target_existing is None
         caster_snap = self.rt.sim.get_entity(caster_id) if caster_id != "__LEVEL__" else None
+        caster_snap_props = (
+            self._snapshot_entity_props(caster_id)
+            if (caster_snap is not None and bool(cfg.get("UseSnapshotEntity", False)))
+            else {}
+        )
         if target_existing is not None:
             mod = target_existing
             if caster_snap is not None:
                 mod.caster_snapshot_entity = caster_snap
+            if caster_snap_props:
+                mod.caster_snapshot_props = caster_snap_props
             if max_layer is None and cfg_max_layer is None and mod.max_layer > 1:
                 eff_max_layer = mod.max_layer
             if count is not None:
@@ -268,10 +287,14 @@ class ModifierEngine:
                     lambda h: self.rt.resolve_hash(caster_id, h, ability_name=ability_name, local_ctx=ctx),
                     1.0,
                 )))
+            elif cfg_count is not None and stacking in ("Replace", "ReplaceByCaster", "Refresh"):
+                eff_count = cfg_count
             else:
                 eff_count = 1
             if eff_count < 0:
                 mod.layer = max(0, mod.layer + eff_count)
+            elif cfg_count is not None and count is None and stacking in ("Replace", "ReplaceByCaster", "Refresh"):
+                mod.layer = min(eff_max_layer, max(1, eff_count))
             elif eff_max_layer > 1:
                 mod.layer = min(eff_max_layer, mod.layer + max(1, eff_count))
             else:
@@ -294,7 +317,7 @@ class ModifierEngine:
             self._next_uid += 1
             order = self._next_order
             self._next_order += 1
-            init_layer = min(eff_max_layer, max(1, count if count is not None else 1))
+            init_layer = min(eff_max_layer, max(1, init_count_val if init_count_val is not None else 1))
             mod = VMModifierInstance(
                 uid=uid,
                 name=mod_name,
@@ -302,6 +325,7 @@ class ModifierEngine:
                 owner_id=owner_id,
                 ability_name=ability_name,
                 caster_snapshot_entity=caster_snap,
+                caster_snapshot_props=caster_snap_props,
                 config=cfg,
                 dynamic_values=parsed_dyn,
                 layer=init_layer,
@@ -346,11 +370,16 @@ class ModifierEngine:
 
         # OnStack 前清空动态 StackProperty（允许同窗内多层乘算/覆盖重算）
         self._apc_defer_depth += 1
+        prev_defer_uid = getattr(self, "_defer_sync_mod_uid", None)
+        self._defer_sync_mod_uid = mod.uid
         try:
             mod.properties.clear()
             mod.convert_properties.clear()
             self._apply_static_modifier_props(mod)
-            self.dispatch_modifier_callbacks(mod, "OnStack", mod_ctx)
+            try:
+                self.dispatch_modifier_callbacks(mod, "OnStack", mod_ctx)
+            finally:
+                self._defer_sync_mod_uid = prev_defer_uid
             self._sync_modifier_to_status_mgr(mod)
 
             # 触发全局 OnModifierAdd / OnListenModifierAdd / OnModifierOnStack
@@ -596,6 +625,10 @@ class ModifierEngine:
         for m in list(self.by_uid.values()):
             if not m._destroyed and m.caster_id == owner_id and "RemoveWhenCasterDead" in m.behavior_flags:
                 self.destroy_modifier(m)
+        added = getattr(self.rt, "_added_abilities", None)
+        if added:
+            for k in [item for item in added if item[0] == owner_id]:
+                added.discard(k)
 
     def strip_for_deathrattle(self, owner_id: str) -> None:
         """亡语阶段清理非 KeepOnDeathrattle 的状态与光环子修饰符。"""
@@ -627,7 +660,8 @@ class ModifierEngine:
                 mod.properties[prop_name] = value
             else:
                 mod.properties[prop_name] = mod.properties.get(prop_name, 0.0) + value
-        self._sync_modifier_to_status_mgr(mod)
+        if mod.uid != getattr(self, "_defer_sync_mod_uid", None):
+            self._sync_modifier_to_status_mgr(mod)
         if mod.owner_id != "__LEVEL__":
             if self._apc_defer_depth > 0:
                 self._dirty_apc_entities.add(mod.owner_id)
@@ -719,20 +753,62 @@ class ModifierEngine:
                     cause="DirtyHPRatio",
                 ))
 
-    def get_entity_property(self, entity_id: str, prop_name: str) -> float:
+    def _snapshot_entity_props(self, entity_id: str) -> Dict[str, float]:
+        """在 UseSnapshotEntity 挂载/叠层瞬间快照施法者的面板属性（施法者阵亡离场后仍可读）。"""
+        if not entity_id or entity_id == "__LEVEL__":
+            return {}
+        ent = self.rt.sim.get_entity(entity_id)
+        if ent is None:
+            return {}
+        port = self.rt.sim.port
+        return {
+            "Attack": float(ent.atk),
+            "BaseAttack": float(ent.base_atk),
+            "MaxHP": float(port.max_hp(entity_id)),
+            "BaseHP": float(ent.base_max_hp),
+            "CurrentHP": float(ent.current_hp),
+            "Defence": float(ent.defense),
+            "BaseDefence": float(ent.base_def),
+            "Speed": float(ent.speed),
+            "BaseSpeed": float(ent.base_speed),
+            "CriticalChanceBase": float(ent.crit_rate),
+            "CriticalDamageBase": float(ent.crit_dmg),
+            "BreakDamageAddedRatioBase": float(port.stat(entity_id, StatType.BREAK_EFFECT)),
+            "AllDamageTypeAddedRatio": float(port.stat(entity_id, StatType.DMG_BOOST)),
+        }
+
+    def get_entity_property(
+        self,
+        entity_id: str,
+        prop_name: str,
+        *,
+        entity_override: Optional[Any] = None,
+    ) -> float:
         """读取实体在官方引擎口径下的实时属性值（含 SpeedConvert / CriticalDamageConvert 等转化部分）。"""
         if entity_id == "__LEVEL__":
             return 0.0
         ent = self.rt.sim.get_entity(entity_id)
+        used_override = False
+        if ent is None and entity_override is not None:
+            ent = entity_override
+            used_override = True
         if ent is None:
             return 0.0
         port = self.rt.sim.port
+        if prop_name == "Attack":
+            return float(ent.atk)
+        if prop_name == "BaseAttack":
+            return float(ent.base_atk)
+        if prop_name == "Defence":
+            return float(ent.defense)
+        if prop_name == "BaseDefence":
+            return float(ent.base_def)
         if prop_name == "Speed":
             return float(ent.speed)
         if prop_name == "SpeedConvert":
             return sum(m.convert_properties.get("Speed", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "MaxHP":
-            return float(port.max_hp(entity_id))
+            return float(ent.max_hp) if used_override else float(port.max_hp(entity_id))
         if prop_name == "BaseHP":
             return float(ent.base_max_hp)
         if prop_name == "DirtyHPRatio":
@@ -756,7 +832,7 @@ class ModifierEngine:
         if prop_name == "CurrentHP":
             return float(ent.current_hp)
         if prop_name == "HPRatio":
-            m = float(port.max_hp(entity_id))
+            m = float(ent.max_hp) if used_override else float(port.max_hp(entity_id))
             return float(ent.current_hp / m) if m > 0 else 1.0
         if prop_name == "CriticalChanceBase":
             return float(ent.crit_rate)
@@ -892,6 +968,38 @@ class ModifierEngine:
                     if not now_in and was_in:
                         self.rt.execute_tasks(rng.get("OnExitRange", []), mod_ctx)
 
+    def check_elation_point_changes(self, old_val: float, new_val: float, delta: float) -> None:
+        """触发订阅了 OnElationPointChange 的 Modifier 监听（如 BattleEvent 20049 蓄能同步）。"""
+        for mod in list(self.by_uid.values()):
+            if mod._destroyed:
+                continue
+            epcs = mod.config.get("OnElationPointChange")
+            if not isinstance(epcs, list):
+                continue
+            mod_ctx = ExecutionContext(
+                runtime=self.rt,
+                caster_id=mod.caster_id,
+                ability_name=mod.ability_name,
+                modifier_owner_id=mod.owner_id,
+                modifier_instance=mod,
+                change_value=delta,
+            )
+            for idx_rng, rng in enumerate(epcs):
+                if not isinstance(rng, dict):
+                    continue
+                lo = eval_dynamic_float(rng.get("Min"), lambda h: self._resolve_mod_hash(mod, h), -1e18)
+                hi = eval_dynamic_float(rng.get("Max"), lambda h: self._resolve_mod_hash(mod, h), 1e18)
+                state_key = ("epc", 0, idx_rng)
+                was_in = mod.range_states.get(state_key, (lo <= old_val <= hi))
+                now_in = (lo <= new_val <= hi)
+                mod.range_states[state_key] = now_in
+                if now_in and not was_in:
+                    self.rt.execute_tasks(rng.get("OnEnterRange", []), mod_ctx)
+                if now_in:
+                    self.rt.execute_tasks(rng.get("OnChange", []), mod_ctx)
+                if not now_in and was_in:
+                    self.rt.execute_tasks(rng.get("OnExitRange", []), mod_ctx)
+
     def tick_life_step(self, moment: str, actor_id: str) -> None:
         """按官方 LifeStepMoment 衰减 Modifier 剩余回合数（如 ModifierPhase1End / TurnEnd）。"""
         skip_set = getattr(self, "_skip_turn_end_uids", None) if moment == "TurnEnd" else None
@@ -923,6 +1031,7 @@ class ModifierEngine:
         event_name: str,
         *,
         owner_id: Optional[str] = None,
+        owner_ids: Optional[Sequence[str]] = None,
         param_entity_id: Optional[str] = None,
         param_entity2_id: Optional[str] = None,
         ability_target_ids: Tuple[str, ...] = (),
@@ -943,11 +1052,14 @@ class ModifierEngine:
         """收集所有订阅该事件的 Modifier 回调，严格按 Priority 升序 (-92 -> -80 -> 0 -> +N) 执行。"""
         entries: List[Tuple[int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
         is_owner_scoped = owner_id is not None and not event_name.startswith("OnListen")
+        owner_set = set(owner_ids) if (owner_ids is not None and not event_name.startswith("OnListen")) else None
 
         for mod in list(self.by_uid.values()):
             if mod._destroyed or mod.uid == exclude_modifier_uid:
                 continue
             if is_owner_scoped and mod.owner_id != owner_id:
+                continue
+            if owner_set is not None and mod.owner_id not in owner_set:
                 continue
             for cb in mod.config.get("_CallbackList", []):
                 if cb.get("Event") == event_name:

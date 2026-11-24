@@ -18,6 +18,7 @@ SKIP_SENTINEL = "__SKIP__"
 _SERVANT_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
 _AVATAR_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
 _AVATAR_SKILL_STANCE_CACHE: Optional[Dict[int, float]] = None
+_AVATAR_SKILL_STANCE_PAIR_CACHE: Optional[Dict[int, Tuple[float, float]]] = None
 _AVATAR_DAMAGE_TYPE_CACHE: Optional[Dict[int, str]] = None
 
 
@@ -71,16 +72,18 @@ def _get_avatar_skill_effects() -> Dict[int, str]:
     return out
 
 
-def _get_avatar_skill_stances() -> Dict[int, float]:
-    """从官方 ExcelOutput/AvatarSkillConfig.json 加载 SkillID -> 主目标削韧值映射。"""
-    global _AVATAR_SKILL_STANCE_CACHE
-    if _AVATAR_SKILL_STANCE_CACHE is not None:
-        return _AVATAR_SKILL_STANCE_CACHE
-    out: Dict[int, float] = {}
-    path = os.path.join(
-        ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput", "AvatarSkillConfig.json"
-    )
-    if os.path.exists(path):
+def _get_avatar_skill_stance_pairs() -> Dict[int, Tuple[float, float]]:
+    """从官方 AvatarSkillConfig.json 与 AvatarServantSkillConfig.json 加载 SkillID -> (主目标削韧, 副目标削韧) 映射。"""
+    global _AVATAR_SKILL_STANCE_PAIR_CACHE
+    if _AVATAR_SKILL_STANCE_PAIR_CACHE is not None:
+        return _AVATAR_SKILL_STANCE_PAIR_CACHE
+    out: Dict[int, Tuple[float, float]] = {}
+    for fname in ("AvatarSkillConfig.json", "AvatarServantSkillConfig.json"):
+        path = os.path.join(
+            ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput", fname
+        )
+        if not os.path.exists(path):
+            continue
         try:
             with open(path, "r", encoding="utf-8") as f:
                 rows = json.load(f)
@@ -94,11 +97,26 @@ def _get_avatar_skill_stances() -> Dict[int, float]:
                         float(v.get("Value", 0.0) if isinstance(v, dict) else (v or 0.0))
                         for v in ssl
                     ]
-                    max_s = max(vals) if vals else 0.0
-                    if max_s > 0.0:
-                        out[sid] = max_s
+                    if not vals:
+                        continue
+                    pri = vals[0] if vals[0] > 0.0 else max(vals)
+                    sub = vals[1] if (len(vals) >= 2 and vals[1] > 0.0) else pri
+                    if pri > 0.0:
+                        out[sid] = (pri, sub)
         except Exception:
             pass
+    _AVATAR_SKILL_STANCE_PAIR_CACHE = out
+    return out
+
+
+def _get_avatar_skill_stances() -> Dict[int, float]:
+    """从官方 ExcelOutput/AvatarSkillConfig.json 与 AvatarServantSkillConfig.json 加载 SkillID -> 主目标削韧值映射。"""
+    global _AVATAR_SKILL_STANCE_CACHE
+    if _AVATAR_SKILL_STANCE_CACHE is not None:
+        return _AVATAR_SKILL_STANCE_CACHE
+    out: Dict[int, float] = {
+        sid: pair[0] for sid, pair in _get_avatar_skill_stance_pairs().items()
+    }
     _AVATAR_SKILL_STANCE_CACHE = out
     return out
 

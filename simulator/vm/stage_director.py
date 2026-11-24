@@ -377,6 +377,13 @@ class DataDrivenStageDirector:
                             owner_id=ename,
                             param_entity_id="阿哈",
                         )
+                    e_obj = self.sim.get_entity(ename)
+                    if e_obj is not None and e_obj.current_hp > 0.0:
+                        rt.modifier_engine.dispatch_event(
+                            "OnAfterBeingAttackedEnd",
+                            owner_id=ename,
+                            param_entity_id="阿哈",
+                        )
             rt.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id="__LEVEL__")
             rt.end_being_attacked("阿哈")
             if getattr(self, "_pending_aha_turn", False):
@@ -414,7 +421,11 @@ class DataDrivenStageDirector:
             for sk_item in char_cfg.get("SkillList", ()) or ():
                 if not isinstance(sk_item, dict):
                     continue
-                if sk_item.get("SkillType") != "Passive" and not str(sk_item.get("Name", "")).startswith("PassiveSkill"):
+                if (
+                    sk_item.get("SkillType") != "Passive"
+                    and sk_item.get("UseType") != "Passive"
+                    and not str(sk_item.get("Name", "")).startswith("PassiveSkill")
+                ):
                     continue
                 entry_ab = str(sk_item.get("EntryAbility") or "")
                 if (
@@ -445,6 +456,7 @@ class DataDrivenStageDirector:
             if (
                 be_ent is not None
                 and getattr(be_ent, "is_countdown", False)
+                and not getattr(be_ent, "is_dummy", False)
                 and be_ent.distance_remaining <= 1e-6
             ):
                 if hasattr(self.sim, "_ready_queue") and be_name in self.sim._ready_queue:
@@ -850,6 +862,20 @@ class DataDrivenStageDirector:
                     if sched is not None and sched.can_auto_drain():
                         sched.drain()
                 self._init_wave_monster_battle_events(next_wave_entities, self.runner.state.wave_index)
+                if rt is not None and getattr(rt, "_battle_entered", False) and next_wave_entities:
+                    rt.modifier_engine.dispatch_event(
+                        "OnEnterBattle",
+                        owner_ids=[e.name for e in next_wave_entities],
+                    )
+                    sched = getattr(self.sim, "scheduler", None)
+                    if sched is not None and sched.has_pending():
+                        prev_d = getattr(sched, "_action_frame_depth", 0)
+                        sched._action_frame_depth = 0
+                        try:
+                            sched.drain()
+                        finally:
+                            sched._action_frame_depth = prev_d
+                        self.sync_spawned_entities()
                 if rt is not None:
                     # 官方日志实证（220255 L1336、221208 L1461）：新波次入场会触发一次 turn_owner=null 的 OnTurnBegin，
                     # 用于重置各角色每回合限制标记（如知更鸟 MAvatar_RobinS_00_Passive_HyperCharge_TurnFlag）。

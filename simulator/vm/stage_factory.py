@@ -106,6 +106,7 @@ class EnemyEntityBlueprint:
     ability_list: Tuple[str, ...] = ()
     stance_count: int = 1
     stance_type: Optional[str] = None
+    custom_value_tags: Tuple[str, ...] = ()
 
     @classmethod
     def from_compiled_monster(cls, spec: CompiledMonsterSpec) -> "EnemyEntityBlueprint":
@@ -144,6 +145,7 @@ class EnemyEntityBlueprint:
             ability_list=spec.ability_list,
             stance_count=max(1, int(getattr(spec, "stance_count", 1) or 1)),
             stance_type=normalize_element(getattr(spec, "stance_type", None)) or None,
+            custom_value_tags=tuple(getattr(spec, "custom_value_tags", ())),
         )
 
     def to_entity(
@@ -186,6 +188,13 @@ class EnemyEntityBlueprint:
         ent.max_stance_count = max(1, int(self.stance_count))  # type: ignore[attr-defined]
         ent.current_stance_count = max(1, int(self.stance_count))  # type: ignore[attr-defined]
         ent.stance_type = self.stance_type  # type: ignore[attr-defined]
+        if self.custom_value_tags:
+            from simulator.vm.expr import dotnet_hash
+            ent.custom_value_tags = tuple(self.custom_value_tags)  # type: ignore[attr-defined]
+            ent.custom_value_tag_hashes = frozenset(dotnet_hash(t) for t in self.custom_value_tags)  # type: ignore[attr-defined]
+        else:
+            ent.custom_value_tags = ()  # type: ignore[attr-defined]
+            ent.custom_value_tag_hashes = frozenset()  # type: ignore[attr-defined]
         return ent
 
 

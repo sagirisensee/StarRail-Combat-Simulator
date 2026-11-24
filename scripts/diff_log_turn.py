@@ -39,7 +39,7 @@ from simulator.vm.factory import build_vm_team
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.reconcile.auto_rng import attach_auto_rng_plugin
 from simulator.vm.reconcile.metadata import extract_log_metadata
-from simulator.vm.reconcile.models import DEFAULT_CHAR_DB_PATH
+from simulator.vm.reconcile.models import DEFAULT_CHAR_DB_PATH, LogMetadata, ReconcileReport
 from simulator.vm.reconcile.runner import build_stage_for_id, reconcile_log
 
 
@@ -49,14 +49,14 @@ def _parse_extra_buffs(raw: Optional[str]) -> Tuple[int, ...]:
     return tuple(int(x.strip()) for x in raw.split(",") if x.strip())
 
 
-def _print_summary(log_path: str, extra_buffs: Tuple[int, ...], *, av_budget: Optional[float], threshold: float) -> None:
-    meta = extract_log_metadata(log_path)
-    r = reconcile_log(
-        log_path,
-        extra_maze_buff_ids=extra_buffs,
-        av_budget=av_budget,
-        threshold=threshold,
-    )
+def _print_summary(
+    log_path: str,
+    meta: LogMetadata,
+    extra_buffs: Tuple[int, ...],
+    r: ReconcileReport,
+    *,
+    threshold: float,
+) -> None:
     print(f"=== {log_path} | stage={meta.stage_id} | team={meta.team_names} | extra_buffs={extra_buffs} ===")
     print(
         f"  turn={r.turn_matched}/{r.turn_total}  ult={r.ult_matched}/{r.ult_total}  "
@@ -70,9 +70,9 @@ def _print_summary(log_path: str, extra_buffs: Tuple[int, ...], *, av_budget: Op
     else:
         print("  enemy_hit_mismatches: []")
     for td in r.turn_diffs:
-        mark = "OK " if td.err <= 1e-6 else "ERR"
+        mark = "OK " if td.err <= threshold else "ERR"
         print(f"  [{mark}] av={td.av:6.2f}  gt={td.gt_total:13.2f}  sim={td.sim_total:13.2f}  err={td.err * 100:9.6f}%  atk={td.attackers}")
-        if td.err > 1e-6:
+        if td.err > threshold:
             for k, (gv, sv) in td.breakdown.items():
                 ratio_s = f"{sv / gv:.6f}x" if gv > 0 else ("inf" if sv > 0 else "1.0x")
                 print(f"        {k:<22s} gt={gv:13.2f}  sim={sv:13.2f}  sim/gt={ratio_s}")
@@ -113,6 +113,14 @@ def _print_gt_timeline(log_path: str, target_av: float, window: float) -> None:
             sk = d.get("skill", {})
             uid = int(caster.get("uid", 0) or 0)
             print(f"  L{idx:4d} [CAST ] av={cur_av:6.2f} uid={uid} ({uid_names.get(uid, '')}) skill={sk.get('name') or sk.get('id')}")
+        elif ev == "OnUseSkill":
+            avt = d.get("avatar", {})
+            sk = d.get("skill", {})
+            uid = int(avt.get("uid", 0) or 0)
+            sname = sk.get("name") or sk.get("skill_config_id")
+            sid = sk.get("skill_config_id", "")
+            stype = sk.get("type", "")
+            print(f"  L{idx:4d} [SKILL] av={cur_av:6.2f} uid={uid} ({uid_names.get(uid, '')}) skill={sname} ({sid}) [{stype}]")
         elif ev == "OnDamage":
             att = d.get("attacker", {})
             uid = int(att.get("uid", 0) or 0)
@@ -135,17 +143,85 @@ def _print_gt_timeline(log_path: str, target_av: float, window: float) -> None:
     print(f"  => GT window player non-DoT total = {tot_dmg:,.2f}")
 
 
-def _print_sim_timeline(
+def _attach_sim_timeline_recorder(
+    sim: Any,
+    target_av: float,
+    window: float,
+    lines_out: List[str],
+    tot_dmg_out: List[float],
+) -> None:
+    seen_enemies = {e.name for e in sim.entities if getattr(e, "is_enemy", False)}
+
+    def _check_spawns(av_val: float) -> None:
+        if abs(av_val - target_av) > window:
+            seen_enemies.update(e.name for e in sim.entities if getattr(e, "is_enemy", False))
+            return
+        for e in sim.entities:
+            if getattr(e, "is_enemy", False) and e.name not in seen_enemies:
+                seen_enemies.add(e.name)
+                lines_out.append(
+                    f"  [SPAWN] av={av_val:6.2f} {e.name} hp={getattr(e, 'current_hp', 0.0):.2f} dist={getattr(e, 'distance_remaining', 0.0):.2f}"
+                )
+
+    def _on_ev(ev: BattleEvent) -> None:
+        av_val = float(getattr(sim, "current_av", 0.0) or 0.0)
+        _check_spawns(av_val)
+        if abs(av_val - target_av) > window:
+            return
+        if isinstance(ev, TurnBeginEvent):
+            lines_out.append(f"  [TURN ] av={av_val:6.2f} actor={ev.actor_name}")
+        elif isinstance(ev, ActionExecuteEvent):
+            kind = getattr(ev.action_kind, "name", str(ev.action_kind))
+            lines_out.append(f"  [ACT  ] av={av_val:6.2f} {ev.actor_name} kind={kind} name={ev.action_type}")
+        elif isinstance(ev, EnemyDefeatedEvent):
+            lines_out.append(f"  [DEAD ] av={av_val:6.2f} {ev.target_name} (by {ev.attacker_name})")
+        elif isinstance(ev, DamageAppliedEvent):
+            dtype = getattr(ev.damage_type, "value", str(ev.damage_type))
+            atk_ent = sim.get_entity(ev.attacker_name)
+            if atk_ent is not None and not getattr(atk_ent, "is_enemy", False) and dtype != "DoT":
+                tot_dmg_out[0] += float(ev.damage)
+            bd = getattr(ev, "breakdown", None)
+            bd_str = ""
+            if bd is not None:
+                red = float(getattr(bd, "reduction_mult", 1.0) or 1.0)
+                bar = float(getattr(bd, "barrier_mult", 1.0) or 1.0)
+                bd_str = (
+                    f" base={getattr(bd, 'base_dmg', 0.0):.1f}"
+                    f" dmg%={getattr(bd, 'dmg_boost_mult', 1.0):.4f}"
+                    f" def={getattr(bd, 'def_mult', 1.0):.4f}"
+                    f" res={getattr(bd, 'res_mult', 1.0):.4f}"
+                    f" vuln={getattr(bd, 'vuln_mult', 1.0):.4f}"
+                    f" crit={getattr(bd, 'crit_mult', 1.0):.4f}"
+                )
+                if abs(red - 1.0) > 1e-6:
+                    bd_str += f" red={red:.4f}"
+                if abs(bar - 1.0) > 1e-6:
+                    bd_str += f" bar={bar:.4f}"
+            lines_out.append(
+                f"  [DMG  ] av={av_val:6.2f} {ev.attacker_name} -> {ev.target_name} "
+                f"{dtype:<10s} dmg={ev.damage:12.2f} crit={ev.is_crit}{bd_str}"
+            )
+
+    sim.event_bus.subscribe(BattleEvent, _on_ev)
+
+
+def _print_sim_timeline_block(log_path: str, target_av: float, window: float, lines: Sequence[str], tot_dmg: float) -> None:
+    print(f"\n--- SIM TIMELINE ({log_path}, av={target_av:.2f} +- {window:.2f}) ---")
+    for line in lines:
+        print(line)
+    print(f"  => SIM window player non-DoT total = {tot_dmg:,.2f}")
+
+
+def _run_sim_timeline_only(
     log_path: str,
+    char_db: CharacterDB,
+    vm_loader: GameDataLoader,
+    meta: LogMetadata,
     extra_buffs: Tuple[int, ...],
     target_av: float,
     window: float,
     av_budget: Optional[float],
 ) -> None:
-    print(f"\n--- SIM TIMELINE ({log_path}, av={target_av:.2f} +- {window:.2f}) ---")
-    char_db = CharacterDB().load(DEFAULT_CHAR_DB_PATH)
-    vm_loader = GameDataLoader()
-    meta = extract_log_metadata(log_path, db=char_db)
     tl = extract_timeline(log_path)
     team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader)
     sim, director, _mode = build_stage_for_id(
@@ -160,55 +236,12 @@ def _print_sim_timeline(
     attach_exact_crit_oracle(sim, log_path=log_path, non_crits=set())
     attach_auto_rng_plugin(sim, meta)
 
-    seen_enemies = {e.name for e in sim.entities if getattr(e, "is_enemy", False)}
+    lines_out: List[str] = []
     tot_dmg = [0.0]
-
-    def _check_spawns(av_val: float) -> None:
-        if abs(av_val - target_av) > window:
-            seen_enemies.update(e.name for e in sim.entities if getattr(e, "is_enemy", False))
-            return
-        for e in sim.entities:
-            if getattr(e, "is_enemy", False) and e.name not in seen_enemies:
-                seen_enemies.add(e.name)
-                print(f"  [SPAWN] av={av_val:6.2f} {e.name} hp={getattr(e, 'current_hp', 0.0):.2f} dist={getattr(e, 'distance_remaining', 0.0):.2f}")
-
-    def _on_ev(ev: BattleEvent) -> None:
-        av_val = float(getattr(sim, "current_av", 0.0) or 0.0)
-        _check_spawns(av_val)
-        if abs(av_val - target_av) > window:
-            return
-        if isinstance(ev, TurnBeginEvent):
-            print(f"  [TURN ] av={av_val:6.2f} actor={ev.actor_name}")
-        elif isinstance(ev, ActionExecuteEvent):
-            kind = getattr(ev.action_kind, "name", str(ev.action_kind))
-            print(f"  [ACT  ] av={av_val:6.2f} {ev.actor_name} kind={kind} name={ev.action_type}")
-        elif isinstance(ev, EnemyDefeatedEvent):
-            print(f"  [DEAD ] av={av_val:6.2f} {ev.target_name} (by {ev.attacker_name})")
-        elif isinstance(ev, DamageAppliedEvent):
-            dtype = getattr(ev.damage_type, "value", str(ev.damage_type))
-            atk_ent = sim.get_entity(ev.attacker_name)
-            if atk_ent is not None and not getattr(atk_ent, "is_enemy", False) and dtype != "DoT":
-                tot_dmg[0] += float(ev.damage)
-            bd = getattr(ev, "breakdown", None)
-            bd_str = ""
-            if bd is not None:
-                bd_str = (
-                    f" base={getattr(bd, 'base_dmg', 0.0):.1f}"
-                    f" dmg%={getattr(bd, 'dmg_mult', 1.0):.4f}"
-                    f" def={getattr(bd, 'def_mult', 1.0):.4f}"
-                    f" res={getattr(bd, 'res_mult', 1.0):.4f}"
-                    f" vuln={getattr(bd, 'vuln_mult', 1.0):.4f}"
-                    f" crit={getattr(bd, 'crit_mult', 1.0):.4f}"
-                )
-            print(
-                f"  [DMG  ] av={av_val:6.2f} {ev.attacker_name} -> {ev.target_name} "
-                f"{dtype:<10s} dmg={ev.damage:12.2f} crit={ev.is_crit}{bd_str}"
-            )
-
-    sim.event_bus.subscribe(BattleEvent, _on_ev)
+    _attach_sim_timeline_recorder(sim, target_av, window, lines_out, tot_dmg)
     budget = av_budget if av_budget is not None else (target_av + window + 0.3)
     run_trajectory_replay(sim, director, tl, av_budget=budget, log_path=log_path)
-    print(f"  => SIM window player non-DoT total = {tot_dmg[0]:,.2f}")
+    _print_sim_timeline_block(log_path, target_av, window, lines_out, tot_dmg[0])
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -229,14 +262,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if eff_budget is None and args.av is not None and not args.full:
         eff_budget = args.av + max(args.av_window, 0.2) + 0.3
 
+    char_db = CharacterDB().load(DEFAULT_CHAR_DB_PATH)
+    vm_loader = GameDataLoader()
+
     for lp in args.logs:
+        meta = extract_log_metadata(lp, db=char_db)
         if args.timeline and args.av is not None:
             _print_gt_timeline(lp, args.av, args.av_window)
-            _print_sim_timeline(lp, extra_buffs, args.av, args.av_window, eff_budget)
             if args.summary:
-                _print_summary(lp, extra_buffs, av_budget=eff_budget, threshold=args.threshold)
+                sim_lines: List[str] = []
+                tot_dmg = [0.0]
+
+                def _on_sim_ready(sim: Any) -> None:
+                    sim_lines.clear()
+                    tot_dmg[0] = 0.0
+                    _attach_sim_timeline_recorder(sim, args.av, args.av_window, sim_lines, tot_dmg)
+
+                r = reconcile_log(
+                    lp,
+                    db=char_db,
+                    loader=vm_loader,
+                    meta=meta,
+                    extra_maze_buff_ids=extra_buffs,
+                    av_budget=eff_budget,
+                    threshold=args.threshold,
+                    on_sim_ready=_on_sim_ready,
+                )
+                _print_sim_timeline_block(lp, args.av, args.av_window, sim_lines, tot_dmg[0])
+                _print_summary(lp, meta, extra_buffs, r, threshold=args.threshold)
+            else:
+                _run_sim_timeline_only(lp, char_db, vm_loader, meta, extra_buffs, args.av, args.av_window, eff_budget)
         else:
-            _print_summary(lp, extra_buffs, av_budget=eff_budget, threshold=args.threshold)
+            r = reconcile_log(
+                lp,
+                db=char_db,
+                loader=vm_loader,
+                meta=meta,
+                extra_maze_buff_ids=extra_buffs,
+                av_budget=eff_budget,
+                threshold=args.threshold,
+            )
+            _print_summary(lp, meta, extra_buffs, r, threshold=args.threshold)
     return 0
 
 

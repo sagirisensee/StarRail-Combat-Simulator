@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..actions import AbilityDefinition, ActionContext, ActionKind, ResourceCost, TargetMode
 from ..entity import Entity
@@ -56,6 +56,14 @@ class VMRuntime:
         self._open_enemy_attack: Optional[str] = None
         self._active_skill_sp_base: float = 0.0
         self._skill_sp_ratio_granted: bool = False
+        self._added_abilities: Set[Tuple[str, str]] = set()
+        self.elation_points: float = 0.0
+        self._attack_blocked_targets: Set[str] = set()
+        self._entity_is_enemy: Dict[str, bool] = {
+            e.name: bool(getattr(e, "is_enemy", False))
+            for e in getattr(sim, "entities", ())
+            if getattr(e, "name", None)
+        }
 
         # 订阅 TurnSimulator 核心事实事件，转发给官方 Modifier 引擎
         self.control_skill_mapping: Dict[Tuple[str, str], str] = {}
@@ -146,11 +154,24 @@ class VMRuntime:
             self._in_dying_batch = True
             try:
                 for dead_tid, killer_id in dying_batch:
+                    dead_ent = self.sim.get_entity(dead_tid)
+                    if dead_ent is not None:
+                        self.record_entity_team(dead_ent)
                     self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
+                    self.modifier_engine.dispatch_event("OnBeingLimbo", owner_id=dead_tid, param_entity_id=killer_id)
                     dead_ent = self.sim.get_entity(dead_tid)
                     if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
                         self.modifier_engine.strip_for_deathrattle(dead_tid)
-                    self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
+                    active_dr = getattr(self, "_active_deathrattle_entities", None)
+                    if active_dr is None:
+                        active_dr = set()
+                        self._active_deathrattle_entities = active_dr
+                    active_dr.add(dead_tid)
+                    try:
+                        self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
+                    finally:
+                        active_dr.discard(dead_tid)
+                    self.finalize_inline_deathrattle(dead_tid)
             finally:
                 self._in_dying_batch = prev_in_dying
         pending_listen = getattr(self, "_pending_listen_die", None)
@@ -217,6 +238,8 @@ class VMRuntime:
                     )
             finally:
                 self._in_after_attack = False
+        if self._attack_blocked_targets:
+            self._attack_blocked_targets.clear()
         pending_dead = getattr(self, "_pending_dead_enemies", None)
         if pending_dead:
             remaining_dead = []
@@ -252,9 +275,38 @@ class VMRuntime:
             self._open_enemy_attack = None
         self.modifier_engine.dispatch_event("OnListenAfterAttack", param_entity_id=atk)
 
+    def record_entity_team(self, entity: Any) -> None:
+        if entity is not None and getattr(entity, "name", None):
+            self._entity_is_enemy[entity.name] = bool(getattr(entity, "is_enemy", False))
+
+    def finalize_inline_deathrattle(self, entity_id: str) -> None:
+        """若实体无异步亡语插入动作且 HP<=0，则立即结束亡语悬停态并销毁 Modifier。"""
+        ent = self.sim.get_entity(entity_id)
+        if (
+            ent is not None
+            and getattr(ent, "_in_deathrattle_limbo", False)
+            and int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) == 0
+            and float(getattr(ent, "current_hp", 0.0)) <= 0.0
+        ):
+            setattr(ent, "_die_immediately_after_deathrattle", False)
+            setattr(ent, "_in_deathrattle_limbo", False)
+            ent.current_hp = 0.0
+            self.modifier_engine.destroy_all_for_entity(entity_id)
+
+    def is_enemy_entity_id(self, entity_id: Optional[str]) -> bool:
+        if not entity_id or entity_id == "__LEVEL__":
+            return False
+        ent = self.sim.get_entity(entity_id)
+        if ent is not None:
+            is_en = bool(getattr(ent, "is_enemy", False))
+            self._entity_is_enemy[entity_id] = is_en
+            return is_en
+        return self._entity_is_enemy.get(entity_id, False)
+
     def register_character(self, entity_name: str, spec: CompiledCharacterSpec) -> None:
         self.entity_specs[entity_name] = spec
         self.entity_dynamics[entity_name] = dict(spec.dynamic_floats)
+        self.record_entity_team(self.sim.get_entity(entity_name))
 
     def register_equip_ability(self, owner_id: str, ability_name: str, dyn_floats: Dict[int, float]) -> None:
         self.equip_dynamics[(owner_id, ability_name)] = dict(dyn_floats)
@@ -332,6 +384,16 @@ class VMRuntime:
                     eq[key_hash] = float(value)
         self.modifier_engine.check_dynamic_value_changes(entity_id, key_hash, old_val, float(value))
 
+    def modify_elation_points(self, value: float, *, mode: str = "add") -> None:
+        old_val = float(self.elation_points)
+        if mode == "set":
+            new_val = max(0.0, float(value))
+        else:
+            new_val = max(0.0, old_val + float(value))
+        actual_delta = new_val - old_val
+        self.elation_points = new_val
+        self.modifier_engine.check_elation_point_changes(old_val, new_val, actual_delta)
+
     def find_template(self, tpl_name: str, ability_name: str = "") -> Optional[List[Dict[str, Any]]]:
         if ability_name:
             ab = self.loader.get_ability(ability_name)
@@ -373,7 +435,14 @@ class VMRuntime:
             current_skill_type=current_skill_type,
             current_attack_type=current_attack_type,
         )
-        tasks = ab.get("OnStart") if "OnStart" in ab else ab.get("OnAdd", [])
+        has_add = bool(ab.get("OnAdd"))
+        has_start = "OnStart" in ab
+        if has_add and has_start:
+            add_key = (caster_id, ability_name)
+            if add_key not in self._added_abilities:
+                self._added_abilities.add(add_key)
+                self.executor.execute_tasks(ab.get("OnAdd", []), ctx)
+        tasks = ab.get("OnStart") if has_start else ab.get("OnAdd", [])
         self.executor.execute_tasks(tasks, ctx)
 
     def collect_hit_modifiers(
@@ -682,7 +751,11 @@ class VMRuntime:
     def _on_enemy_defeated(self, evt: EnemyDefeatedEvent) -> None:
         killer_id = str(getattr(evt, "attacker_name", ""))
         dead_id = str(getattr(evt, "target_name", ""))
+        if dead_id:
+            self._entity_is_enemy.setdefault(dead_id, True)
         killer_ent = self.sim.get_entity(killer_id) if killer_id else None
+        if killer_ent is not None:
+            self.record_entity_team(killer_ent)
         if (
             killer_ent is not None
             and self.modifier_engine.has_modifier(killer_id, "MMonster_W4_Griffin_00_Debuff_Avatar_Status")

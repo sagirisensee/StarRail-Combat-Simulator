@@ -154,6 +154,7 @@ class AIDecisionRule:
     root_task: Mapping[str, Any]
     phase_compare_type: str = "Equal"
     success_score: float = 1.0
+    usability_axes: Tuple[Tuple[str, int, int, float], ...] = ()
 
     def matches_phase(self, phase: int) -> bool:
         if self.phase_condition is None:
@@ -241,10 +242,22 @@ class MonsterAIExecutor:
         self.ai_flag: int = spec.initial_ai_flag
         self.turn_count: int = 0
         self.last_matched_decision: Optional[AIDecisionRule] = None
+        self.skill_last_used_turn: Dict[str, int] = {}
 
     def set_phase(self, phase: int, reset_ai_flag: int = 1) -> None:
         self.phase = phase
         self.ai_flag = reset_ai_flag
+
+    def _passes_usability(self, dec: AIDecisionRule) -> bool:
+        for sk_name, init_cd, cd, _ in dec.usability_axes:
+            last_used = self.skill_last_used_turn.get(sk_name)
+            if last_used is None:
+                if self.turn_count < init_cd:
+                    return False
+            else:
+                if (self.turn_count - last_used) < max(1, cd):
+                    return False
+        return True
 
     def select_next_actions(
         self,
@@ -262,6 +275,8 @@ class MonsterAIExecutor:
                     continue
                 if dec.ai_flag_condition is not None and dec.ai_flag_condition != self.ai_flag:
                     continue
+                if not self._passes_usability(dec):
+                    continue
                 if dec.condition_predicates:
                     ok = True
                     for pred in dec.condition_predicates:
@@ -274,12 +289,19 @@ class MonsterAIExecutor:
                             break
                     if not ok:
                         continue
-                elif dec.ai_flag_condition is None:
+                elif dec.ai_flag_condition is None and not dec.usability_axes:
                     continue
                 if dec.success_score > best_score:
                     best_score = dec.success_score
                     matched = dec
 
+        if matched is None:
+            for dec in self.spec.decisions:
+                if not dec.matches_phase(self.phase):
+                    continue
+                if dec.ai_flag_condition is not None and dec.ai_flag_condition == self.ai_flag and self._passes_usability(dec):
+                    matched = dec
+                    break
         if matched is None:
             for dec in self.spec.decisions:
                 if not dec.matches_phase(self.phase):
@@ -290,6 +312,11 @@ class MonsterAIExecutor:
 
         if matched is None and self.spec.decisions:
             # Fallback to first decision matching current phase (e.g. modifier-driven AI)
+            for dec in self.spec.decisions:
+                if dec.matches_phase(self.phase) and self._passes_usability(dec):
+                    matched = dec
+                    break
+        if matched is None and self.spec.decisions:
             for dec in self.spec.decisions:
                 if dec.matches_phase(self.phase):
                     matched = dec
@@ -302,6 +329,8 @@ class MonsterAIExecutor:
         self.last_matched_decision = matched
         if matched.next_ai_flag is not None:
             self.ai_flag = matched.next_ai_flag
+        for sk_nm in matched.use_skills:
+            self.skill_last_used_turn[sk_nm] = self.turn_count
         if matched.candidate_skills:
             return matched.candidate_skills
         if self.spec.override_ai_skill_sequence:
@@ -469,15 +498,27 @@ class StageAILoader:
             flag_conds: List[int] = []
             cond_preds: List[Mapping[str, Any]] = []
             axis_scores: List[float] = []
+            usability_axes: List[Tuple[str, int, int, float]] = []
             for ax in dec.get("ConsiderAxisList", []):
-                if isinstance(ax, Mapping) and isinstance(ax.get("Predicate"), Mapping):
+                if not isinstance(ax, Mapping):
+                    continue
+                if isinstance(ax.get("Predicate"), Mapping):
                     cond_preds.append(ax["Predicate"])
                     _extract_axis_conditions(ax["Predicate"], phase_conds, flag_conds)
-                if isinstance(ax, Mapping) and isinstance(ax.get("SuccessScore"), Mapping):
+                if ax.get("$type") == "RPG.GameCore.CheckSkillUsabilityAxis" and ax.get("SkillName"):
+                    sk_nm = str(ax["SkillName"])
+                    init_cd = int(ax.get("InitialCD", 0) or 0)
+                    cd = int(ax.get("CD", 0) or 0)
+                    cs_raw = ax.get("CheckScore")
+                    cs = float(cs_raw.get("Value", 0.1)) if isinstance(cs_raw, Mapping) else 0.1
+                    usability_axes.append((sk_nm, init_cd, cd, cs))
+                if isinstance(ax.get("SuccessScore"), Mapping):
                     try:
                         axis_scores.append(float(ax["SuccessScore"].get("Value", 1.0)))
                     except (TypeError, ValueError):
                         pass
+            if not axis_scores and usability_axes:
+                axis_scores.extend(u[3] for u in usability_axes)
 
             sel_str = selectors[0] if selectors else "Default"
             cand_skills = tuple(
@@ -501,6 +542,7 @@ class StageAILoader:
                     condition_predicates=tuple(cond_preds),
                     root_task=root_task,
                     success_score=max(axis_scores) if axis_scores else 1.0,
+                    usability_axes=tuple(usability_axes),
                 )
             )
 
