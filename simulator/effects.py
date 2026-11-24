@@ -80,6 +80,46 @@ class ApplyDamageEffect(EffectRequest):
     action_id: int = 0
 
 
+def sync_hp_shared_subtargets(simulator: Any, main_ent: Any) -> None:
+    """按 DefineHPSharedGroup 主目标当前血量比例同步全部子目标 HP。"""
+    if simulator is None or main_ent is None:
+        return
+    vm_rt = getattr(simulator, "vm_runtime", None)
+    shared_map = getattr(vm_rt, "hp_shared_groups", None) if vm_rt is not None else None
+    if not shared_map:
+        return
+    main_id = getattr(main_ent, "name", "")
+    if not main_id:
+        return
+    sub_ids = [sid for sid, mid in shared_map.items() if mid == main_id]
+    if not sub_ids:
+        return
+    port = getattr(simulator, "port", None)
+    main_max = float(port.max_hp(main_id)) if port is not None else float(getattr(main_ent, "max_hp", 0.0) or 0.0)
+    if main_max <= 0.0:
+        return
+    hp_ratio = max(0.0, float(main_ent.current_hp) / main_max)
+    for sid in sub_ids:
+        sub_ent = simulator.get_entity(sid)
+        if sub_ent is None or sub_ent is main_ent:
+            continue
+        sub_max = float(port.max_hp(sid)) if port is not None else float(getattr(sub_ent, "max_hp", 0.0) or 0.0)
+        if sub_max <= 0.0:
+            continue
+        new_sub_hp = max(0.0, sub_max * hp_ratio)
+        kit = getattr(sub_ent, "kit", None)
+        if kit is not None:
+            runner = getattr(kit, "runner", None)
+            if runner is not None:
+                try:
+                    mrs = runner.get_enemy_state(sid)
+                    if getattr(mrs, "lock_hp_ratio", None) is not None and mrs.lock_hp_ratio > 0.0:
+                        new_sub_hp = max(new_sub_hp, sub_max * float(mrs.lock_hp_ratio))
+                except KeyError:
+                    pass
+        sub_ent.current_hp = new_sub_hp
+
+
 class EffectResolver:
     """效果结算器：唯一的状态写入入口。"""
     def __init__(self, simulator: Any):
@@ -163,6 +203,46 @@ class EffectResolver:
         scheduler = getattr(self.simulator, "scheduler", None)
         if scheduler is not None:
             scheduler.commit_reserved_wave()
+
+    def _propagate_hp_shared_group(
+        self,
+        target: Any,
+        loss: float,
+        attacker: Any,
+        av: float,
+        cycle: int,
+    ) -> None:
+        """同步子目标扣血至 DefineHPSharedGroup 主目标（如冥龙双臂分摊扣减本体 HP）。"""
+        if loss <= 0.0:
+            return
+        vm_rt = getattr(self.simulator, "vm_runtime", None)
+        shared_map = getattr(vm_rt, "hp_shared_groups", None) if vm_rt is not None else None
+        if not shared_map or target.name not in shared_map:
+            return
+        main_id = shared_map[target.name]
+        main_ent = self.simulator.get_entity(main_id)
+        if main_ent is None or main_ent is target or main_ent.current_hp <= 0.0:
+            return
+        shared_loss = float(loss)
+        main_kit = getattr(main_ent, "kit", None)
+        if main_kit is not None and hasattr(main_kit, "intercept_incoming_damage"):
+            shared_loss = main_kit.intercept_incoming_damage(main_id, shared_loss)
+        was_alive = float(getattr(main_ent, "current_hp", 0.0)) > 0.0
+        old_hp = float(main_ent.current_hp)
+        main_ent.current_hp = max(0.0, old_hp - shared_loss)
+        actual_shared = old_hp - main_ent.current_hp
+        if actual_shared > 0.0:
+            self.simulator.event_bus.publish(HPLostEvent(
+                av=round(av, 2),
+                cycle=cycle,
+                entity_name=main_id,
+                amount=actual_shared,
+                hp_left=main_ent.current_hp,
+                cause="hp_shared_group",
+            ))
+        sync_hp_shared_subtargets(self.simulator, main_ent)
+        if was_alive and main_ent.current_hp <= 0.0 and not getattr(main_ent, "is_infinite_hp", False):
+            self._handle_enemy_defeated(attacker, main_ent, av, cycle)
 
     def _resolve_one(self, effect: EffectRequest):
         av = self.simulator.current_av
@@ -357,23 +437,49 @@ class EffectResolver:
                         break_killed = False
                         if hasattr(target, "current_hp"):
                             was_strictly_alive = float(getattr(target, "current_hp", 0.0)) > 0.0
-                            actual_break_loss = break_dmg
-                            kit = getattr(target, "kit", None)
-                            if kit is not None and hasattr(kit, "intercept_incoming_damage"):
-                                actual_break_loss = kit.intercept_incoming_damage(target.name, break_dmg)
-                            target.current_hp = max(0.0, target.current_hp - actual_break_loss)
-                            break_killed = bool(
-                                was_strictly_alive
-                                and target.current_hp == 0.0
-                                and not getattr(target, "is_infinite_hp", False)
-                            )
+                            shared_map = getattr(vm_rt, "hp_shared_groups", None) if vm_rt is not None else None
+                            main_id = shared_map.get(target.name) if shared_map else None
+                            main_ent = self.simulator.get_entity(main_id) if main_id else None
+                            if main_ent is not None and main_ent is not target and main_ent.current_hp > 0.0:
+                                self._propagate_hp_shared_group(target, break_dmg, effect.attacker, av, cycle)
+                            else:
+                                actual_break_loss = break_dmg
+                                kit = getattr(target, "kit", None)
+                                if kit is not None and hasattr(kit, "intercept_incoming_damage"):
+                                    actual_break_loss = kit.intercept_incoming_damage(target.name, break_dmg)
+                                target.current_hp = max(0.0, target.current_hp - actual_break_loss)
+                                sync_hp_shared_subtargets(self.simulator, target)
+                                break_killed = bool(
+                                    was_strictly_alive
+                                    and target.current_hp == 0.0
+                                    and not getattr(target, "is_infinite_hp", False)
+                                )
 
+                        entangle_applied = True
                         if not is_sub_stance and effect.element == "Quantum":
-                            self.enqueue(DelayActionEffect(
-                                source_name="量子纠缠推条",
-                                target=target,
-                                percent=0.20 * (1.0 + be)
-                            ))
+                            ctrl_immune = False
+                            if vm_rt is not None:
+                                me_q = vm_rt.modifier_engine
+                                if me_q.has_behavior_flag(target.name, "Endurance") or me_q.has_behavior_flag(target.name, "EnduranceLogicOnly"):
+                                    ctrl_immune = True
+                            if not ctrl_immune:
+                                debuff_res = getattr(target, "debuff_resist", None)
+                                if isinstance(debuff_res, dict) and float(debuff_res.get("STAT_CTRL", 0.0)) >= 1.0 - 1e-6:
+                                    ctrl_immune = True
+                            if ctrl_immune:
+                                entangle_applied = False
+                            else:
+                                debuff_prov = getattr(self.simulator, "debuff_hit_provider", None)
+                                if callable(debuff_prov):
+                                    entangle_applied = bool(
+                                        debuff_prov(effect.attacker, target, "Quantum_Entanglement", round(float(av), 2))
+                                    )
+                            if entangle_applied:
+                                self.enqueue(DelayActionEffect(
+                                    source_name="量子纠缠推条",
+                                    target=target,
+                                    percent=0.20 * (1.0 + be)
+                                ))
                         bus.publish(WeaknessBreakEvent(
                             av=round(av, 2),
                             cycle=cycle,
@@ -381,7 +487,8 @@ class EffectResolver:
                             target_name=target.name,
                             element=effect.element,
                             break_damage=break_dmg,
-                            action_delay_pct=0.0 if is_sub_stance else 0.25
+                            action_delay_pct=0.0 if is_sub_stance else 0.25,
+                            entangle_applied=entangle_applied,
                         ))
                         if break_killed:
                             self._handle_enemy_defeated(effect.attacker, target, av, cycle)
@@ -432,6 +539,7 @@ class EffectResolver:
                 ):
                     vm_blocked = True
 
+            shield_absorbed = 0.0
             if vm_blocked:
                 raw_dmg = 0.0
                 breakdown = replace(breakdown, final_damage=0.0)
@@ -447,8 +555,13 @@ class EffectResolver:
                 # 3. 护盾优先吸收 (砂金、杰帕德等)
                 if hasattr(target, "shield") and target.shield > 0:
                     absorbed = min(target.shield, raw_dmg)
+                    shield_absorbed = absorbed
                     target.shield -= absorbed
                     raw_dmg -= absorbed
+                    if absorbed > 0 and vm_rt is not None:
+                        for m_shd in vm_rt.modifier_engine.get_modifiers(target.name):
+                            if m_shd.shield_value > 0.0:
+                                m_shd.shield_value = max(0.0, m_shd.shield_value - absorbed)
 
             vm_atk_type = "DOT" if resolved_damage_type == DamageType.DOT else ""
             was_alive = getattr(target, "current_hp", 0.0) > 0 or getattr(target, "_in_deathrattle_limbo", False)
@@ -466,19 +579,53 @@ class EffectResolver:
                     current_attack_type=vm_atk_type,
                 )
             if hasattr(target, "current_hp"):
-                old_hp = target.current_hp
-                target.current_hp = max(0.0, target.current_hp - raw_dmg)
-                hp_left = target.current_hp
-                actual_loss = old_hp - target.current_hp
-                if actual_loss > 0:
-                    bus.publish(HPLostEvent(
-                        av=round(av, 2),
-                        cycle=cycle,
-                        entity_name=target.name,
-                        amount=actual_loss,
-                        hp_left=hp_left,
-                        cause="attack_damage"
-                    ))
+                shared_map = getattr(vm_rt, "hp_shared_groups", None) if vm_rt is not None else None
+                shared_main_id = shared_map.get(target.name) if shared_map else None
+                shared_main_ent = self.simulator.get_entity(shared_main_id) if shared_main_id else None
+                if shared_main_ent is not None and shared_main_ent is not target and shared_main_ent.current_hp > 0.0:
+                    self._propagate_hp_shared_group(target, raw_dmg, req_attacker, av, cycle)
+                    hp_left = float(target.current_hp)
+                else:
+                    old_hp = float(target.current_hp)
+                    neg_enabled = (
+                        not getattr(target, "is_enemy", False)
+                        and bool(getattr(target, "_negative_hp_enabled", False))
+                    )
+                    if neg_enabled and old_hp > 0.0 and raw_dmg > 0.0 and old_hp - raw_dmg < min(old_hp, 1.0):
+                        floor_hp = min(old_hp, 1.0)
+                        target.current_hp = floor_hp
+                        actual_loss = max(0.0, old_hp - floor_hp)
+                        overflow = max(0.0, raw_dmg - actual_loss)
+                        if overflow > 0.0:
+                            target._negative_hp = float(getattr(target, "_negative_hp", 0.0) or 0.0) + overflow
+                    else:
+                        target.current_hp = max(0.0, old_hp - raw_dmg)
+                        actual_loss = old_hp - target.current_hp
+                    hp_left = target.current_hp
+                    if actual_loss > 0:
+                        bus.publish(HPLostEvent(
+                            av=round(av, 2),
+                            cycle=cycle,
+                            entity_name=target.name,
+                            amount=actual_loss,
+                            hp_left=hp_left,
+                            cause="attack_damage"
+                        ))
+                        sync_hp_shared_subtargets(self.simulator, target)
+                    elif raw_dmg > 0.0 and neg_enabled and vm_rt is not None:
+                        vm_rt.modifier_engine.dispatch_event(
+                            "OnHPChange",
+                            owner_id=target.name,
+                            param_entity_id=req_attacker.name,
+                            change_value=-float(raw_dmg),
+                            current_attack_type=vm_atk_type,
+                            param_flags=("IsHPChangeByDamage",),
+                        )
+                        vm_rt.modifier_engine.dispatch_event(
+                            "OnListenHPChange",
+                            param_entity_id=target.name,
+                            change_value=-float(raw_dmg),
+                        )
             else:
                 hp_left = 0.0
             if notify_vm_being_hit:
@@ -489,6 +636,16 @@ class EffectResolver:
                     current_attack_type=vm_atk_type,
                 )
             if vm_rt is not None:
+                vm_rt.modifier_engine.dispatch_event(
+                    "OnListenAfterBeingHitAll",
+                    param_entity_id=target.name,
+                    param_entity2_id=req_attacker.name,
+                    damage_data={
+                        "FinalDamage": float(breakdown.final_damage),
+                        "Result_FinalDamageBase": float(breakdown.final_damage),
+                    },
+                    current_attack_type=vm_atk_type,
+                )
                 try:
                     vm_rt.modifier_engine.dispatch_event(
                         "OnAfterBeingHit",
@@ -524,7 +681,8 @@ class EffectResolver:
                 damage_type=resolved_damage_type,
                 target_killed=target_killed,
                 action_id=eff_action_id,
-                effect_id=eff_id
+                effect_id=eff_id,
+                shield_absorbed=shield_absorbed,
             ))
             if scheduler is not None:
                 # 介入点 2 (after_hit): 命中后提交命中触发的动作波次 (如银狼 E2 追加回合、千刃等)

@@ -104,6 +104,7 @@ class StageRuntimeState:
     elation_points: float = 0.0
     in_elation_time: bool = False
     challenge_turns_elapsed: int = 0
+    challenge_turn_limit: int = 0
     custom_events_triggered: List[str] = field(default_factory=list)
     current_av: float = 0.0
     current_cycle: int = 0
@@ -212,6 +213,8 @@ class StageRunner:
         self.state.infinite_wave_max_count = 0
         self.state.recorded_formation_slots.clear()
         self.state.infinite_seen_names.clear()
+        self.state.challenge_turns_elapsed = 0
+        self.state.challenge_turn_limit = 0
 
         for be in self.built_stage.battle_events:
             dyn: Dict[int, float] = {}
@@ -363,12 +366,14 @@ class StageRunner:
         mrs = self.get_enemy_state(target_name)
         ent = mrs.entity
         norm_list = [normalize_element(w) for w in weak_list if w]
-        if op_type == "Add":
+        if op_type in ("Add", "Attach"):
             for elem in norm_list:
                 if elem not in ent.weaknesses:
                     ent.weaknesses.append(elem)
                     if elem not in mrs.stacked_weaknesses:
                         mrs.stacked_weaknesses.append(elem)
+        elif op_type == "Override":
+            ent.weaknesses[:] = list(norm_list)
         elif op_type == "Protected":
             ent.toughness_locked = True
         elif op_type == "Remove":
@@ -487,14 +492,17 @@ class StageRunner:
     ) -> int:
         """Execute ``RPG.GameCore.SetMonsterPhase``: advance phase & switch phase MaxHP."""
         mrs = self.get_enemy_state(monster_name)
+        old_phase = mrs.phase
         if mode == "Inc":
-            new_phase = mrs.phase + 1
-        elif mode == "Set" and value is not None:
-            new_phase = int(value)
+            new_phase = old_phase + 1
+        elif mode == "Set":
+            new_phase = int(value if value is not None else 1)
         else:
-            new_phase = mrs.phase + 1
+            new_phase = old_phase + 1
 
         new_phase = max(1, min(mrs.max_phase, new_phase))
+        if new_phase == old_phase:
+            return new_phase
         mrs.phase = new_phase
         mrs.lock_hp_ratio = None
         setattr(mrs.entity, "_vm_limbo_pending", False)
@@ -586,6 +594,16 @@ class StageRunner:
                     )
                 )
             )
+            if mid <= 0 and isinstance(entry.get("MonsterIDFromCustomValue"), Mapping):
+                h_cv = int(entry["MonsterIDFromCustomValue"].get("Hash", 0) or 0)
+                if h_cv:
+                    cv_val = caster_mrs.custom_values.get(h_cv)
+                    if isinstance(cv_val, (int, float)) and cv_val > 0:
+                        mid = int(round(float(cv_val)))
+                    elif dynamic_resolver is not None:
+                        dyn_val = float(dynamic_resolver(h_cv) or 0.0)
+                        if dyn_val > 0:
+                            mid = int(round(dyn_val))
             if mid <= 0 and caster_mrs.blueprint.summon_ids:
                 mid = caster_mrs.blueprint.summon_ids[0]
             if mid <= 0:
@@ -641,6 +659,25 @@ class StageRunner:
                 else:
                     insert_idx = max(0, caster_idx)
                 self.state.enemies.insert(insert_idx, mrs)
+            elif loc_type in ("BeforeCaster", "AfterCaster"):
+                caster_idx = next(
+                    (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_name),
+                    len(self.state.enemies),
+                )
+                mrs = self._register_enemy(ent, bp)
+                self.state.enemies.pop()
+                insert_idx = (
+                    max(0, caster_idx)
+                    if loc_type == "BeforeCaster"
+                    else min(len(self.state.enemies), caster_idx + 1)
+                )
+                self.state.enemies.insert(insert_idx, mrs)
+            elif loc_type == "First":
+                mrs = self._register_enemy(ent, bp)
+                self.state.enemies.pop()
+                self.state.enemies.insert(0, mrs)
+            elif loc_type == "Last":
+                self._register_enemy(ent, bp)
             else:
                 self._register_enemy(ent, bp)
 
@@ -825,6 +862,18 @@ class StageRunner:
             rhs = self._resolve_monster_num(pred.get("CompareNumber"), mrs, dynamic_resolver, default=0.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
+        if t == "RPG.GameCore.ByCompareChallengeLeft":
+            left = (
+                max(0, self.state.challenge_turn_limit - self.state.challenge_turns_elapsed)
+                if self.state.challenge_turn_limit > 0
+                else 99
+            )
+            rhs = eval_dynamic_float(pred.get("CompareValue"), dynamic_resolver or (lambda _: 0.0), 0.0)
+            return _compare_values(float(left), rhs, str(pred.get("CompareType", "LessEqual")))
+
+        if t == "RPG.GameCore.ByBattleHasCertainResult":
+            return bool(self.state.special_outcome is not None)
+
         raise NotImplementedError(f"Unsupported stage predicate type: {t!r}")
 
     def execute_stage_task(
@@ -882,9 +931,13 @@ class StageRunner:
         if t == "RPG.GameCore.SetMonsterPhase":
             if caster_name is None:
                 raise ValueError("SetMonsterPhase requires caster_name")
-            mode = str(task.get("SetMode", "Inc"))
+            mode = str(task.get("SetMode") or task.get("Mode") or "Set")
             val_spec = task.get("PhaseValue") or task.get("Value")
-            val = int(round(eval_dynamic_float(val_spec, dynamic_resolver or (lambda _: 0.0), 1.0))) if val_spec else None
+            val = (
+                int(round(eval_dynamic_float(val_spec, dynamic_resolver or (lambda _: 0.0), 1.0)))
+                if val_spec is not None
+                else (1 if mode == "Set" else None)
+            )
             self.set_monster_phase(caster_name, mode=mode, value=val)
             return True
 
@@ -905,10 +958,11 @@ class StageRunner:
         if t == "RPG.GameCore.StackWeakness":
             target = caster_name
             if target and target in self._enemy_by_name:
+                raw_op = task.get("OPType")
                 self.execute_stack_weakness(
                     target,
                     task.get("WeakList", []),
-                    op_type=str(task.get("OPType", "Add")),
+                    op_type=("Override" if not raw_op else str(raw_op)),
                 )
             return True
 
@@ -936,6 +990,11 @@ class StageRunner:
             ab_name = _unwrap_str(task.get("AbilityName"))
             if ab_name:
                 self.state.stage_abilities.append(ab_name)
+            return True
+
+        if t == "RPG.GameCore.SetLevelChallengeTurnLimit":
+            val = eval_dynamic_float(task.get("LimitCount"), dynamic_resolver or (lambda _: 0.0), 0.0)
+            self.state.challenge_turn_limit = max(0, int(round(val)))
             return True
 
         if t == "RPG.GameCore.LevelChallengeTurnAcc":

@@ -69,6 +69,7 @@ class VMRuntime:
         self.control_skill_mapping: Dict[Tuple[str, str], str] = {}
         self.turn_control_skill_snapshot: Dict[str, str] = {}
         self.dynamic_entity_params: Dict[Tuple[str, str], List[str]] = {}
+        self.hp_shared_groups: Dict[str, str] = {}
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         self.sim.event_bus.subscribe(TurnEndEvent, self._on_turn_end)
         self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)
@@ -117,6 +118,8 @@ class VMRuntime:
             after_key = (atk_seq, caster_id)
             if after_key not in after_set:
                 after_set.add(after_key)
+                if self._open_enemy_attack == caster_id:
+                    self._open_enemy_attack = None
                 after_end_payload = (all_targets, caster_id, dmg_data, atk_type)
                 self._in_after_attack = True
                 try:
@@ -146,45 +149,8 @@ class VMRuntime:
                         )
                 finally:
                     self._in_after_attack = False
-        pending_dying = getattr(self, "_pending_dying_enemies", None)
-        if pending_dying:
-            dying_batch = list(pending_dying)
-            pending_dying.clear()
-            prev_in_dying = getattr(self, "_in_dying_batch", False)
-            self._in_dying_batch = True
-            try:
-                for dead_tid, killer_id in dying_batch:
-                    dead_ent = self.sim.get_entity(dead_tid)
-                    if dead_ent is not None:
-                        self.record_entity_team(dead_ent)
-                    self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
-                    self.modifier_engine.dispatch_event("OnBeingLimbo", owner_id=dead_tid, param_entity_id=killer_id)
-                    dead_ent = self.sim.get_entity(dead_tid)
-                    if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
-                        self.modifier_engine.strip_for_deathrattle(dead_tid)
-                    active_dr = getattr(self, "_active_deathrattle_entities", None)
-                    if active_dr is None:
-                        active_dr = set()
-                        self._active_deathrattle_entities = active_dr
-                    active_dr.add(dead_tid)
-                    try:
-                        self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
-                    finally:
-                        active_dr.discard(dead_tid)
-                    self.finalize_inline_deathrattle(dead_tid)
-            finally:
-                self._in_dying_batch = prev_in_dying
-        pending_listen = getattr(self, "_pending_listen_die", None)
-        if pending_listen:
-            self._flushing_listen_die = True
-            try:
-                while pending_listen:
-                    listen_batch = list(pending_listen)
-                    pending_listen.clear()
-                    for dead_id in listen_batch:
-                        self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
-            finally:
-                self._flushing_listen_die = False
+        self.drain_pending_dying_enemies()
+        self.flush_pending_listen_die()
         if not getattr(self, "_in_dying_batch", False):
             pending_limbo = getattr(self, "_pending_limbo_after_dying", None)
             if pending_limbo:
@@ -236,8 +202,17 @@ class VMRuntime:
                         damage_data=end_dmg_data,
                         current_attack_type=end_atk_type,
                     )
+                self.modifier_engine.dispatch_event(
+                    "OnListenAfterAttackEnd",
+                    param_entity_id=end_caster,
+                    attack_target_ids=end_targets,
+                    damage_data=end_dmg_data,
+                    current_attack_type=end_atk_type,
+                )
             finally:
                 self._in_after_attack = False
+            self.drain_pending_dying_enemies()
+            self.flush_pending_listen_die()
         if self._attack_blocked_targets:
             self._attack_blocked_targets.clear()
         pending_dead = getattr(self, "_pending_dead_enemies", None)
@@ -248,8 +223,85 @@ class VMRuntime:
                 if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
                     remaining_dead.append(dead_tid)
                 else:
-                    self.modifier_engine.destroy_all_for_entity(dead_tid)
+                    self.finalize_dead_enemy(dead_tid)
             pending_dead[:] = remaining_dead
+
+    def flush_pending_listen_die(self) -> None:
+        """Flush deferred OnListenCharacterDie callbacks after attack/after-attack hooks settle."""
+        pending_listen = getattr(self, "_pending_listen_die", None)
+        if not pending_listen:
+            return
+        self._flushing_listen_die = True
+        try:
+            while pending_listen:
+                listen_batch = list(pending_listen)
+                pending_listen.clear()
+                for dead_id in listen_batch:
+                    dead_ent = self.sim.get_entity(dead_id)
+                    if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
+                        setattr(dead_ent, "_deferred_listen_die", True)
+                        continue
+                    self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+        finally:
+            self._flushing_listen_die = False
+
+    def drain_pending_dying_enemies(self) -> None:
+        """Drain deferred dying enemies (OnBeforeDying / OnDeathrattle) after attack hooks settle."""
+        pending_dying = getattr(self, "_pending_dying_enemies", None)
+        if not pending_dying:
+            return
+        dying_batch = list(pending_dying)
+        pending_dying.clear()
+        prev_in_dying = getattr(self, "_in_dying_batch", False)
+        self._in_dying_batch = True
+        try:
+            for dead_tid, killer_id in dying_batch:
+                dead_ent = self.sim.get_entity(dead_tid)
+                if dead_ent is not None:
+                    self.record_entity_team(dead_ent)
+                self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
+                self.modifier_engine.dispatch_event("OnBeingLimbo", owner_id=dead_tid, param_entity_id=killer_id)
+                dead_ent = self.sim.get_entity(dead_tid)
+                if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
+                    self.modifier_engine.strip_for_deathrattle(dead_tid)
+                active_dr = getattr(self, "_active_deathrattle_entities", None)
+                if active_dr is None:
+                    active_dr = set()
+                    self._active_deathrattle_entities = active_dr
+                active_dr.add(dead_tid)
+                try:
+                    self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
+                finally:
+                    active_dr.discard(dead_tid)
+                self.finalize_inline_deathrattle(dead_tid)
+        finally:
+            self._in_dying_batch = prev_in_dying
+
+    def finalize_dead_enemy(self, dead_tid: str) -> None:
+        """Finalize a defeated enemy entity and cascade-cleanup any HP-shared subtargets."""
+        dead_ent = self.sim.get_entity(dead_tid)
+        if dead_ent is not None and float(getattr(dead_ent, "current_hp", 0.0)) > 0.0:
+            return
+        self.modifier_engine.destroy_all_for_entity(dead_tid)
+        shared_map = getattr(self, "hp_shared_groups", None)
+        if not shared_map:
+            return
+        director = getattr(self.sim, "_stage_director", None)
+        runner = getattr(director, "runner", None) if director is not None else None
+        for sub_tid, mid in list(shared_map.items()):
+            if mid != dead_tid:
+                continue
+            shared_map.pop(sub_tid, None)
+            sub_ent = self.sim.get_entity(sub_tid)
+            if sub_ent is not None:
+                if runner is not None:
+                    try:
+                        mrs = runner.get_enemy_state(sub_tid)
+                        mrs.lock_hp_ratio = None
+                    except KeyError:
+                        pass
+                sub_ent.current_hp = 0.0
+                self.modifier_engine.destroy_all_for_entity(sub_tid)
 
     def end_attack_scope(self) -> None:
         self._attack_scope_depth = max(0, self._attack_scope_depth - 1)
@@ -292,6 +344,9 @@ class VMRuntime:
             setattr(ent, "_in_deathrattle_limbo", False)
             ent.current_hp = 0.0
             self.modifier_engine.destroy_all_for_entity(entity_id)
+            if getattr(ent, "_deferred_listen_die", False):
+                setattr(ent, "_deferred_listen_die", False)
+                self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=entity_id)
 
     def is_enemy_entity_id(self, entity_id: Optional[str]) -> bool:
         if not entity_id or entity_id == "__LEVEL__":
@@ -420,6 +475,7 @@ class VMRuntime:
         skill_target_ids: Tuple[str, ...] = (),
         current_skill_type: str = "",
         current_attack_type: str = "",
+        local_dynamics: Optional[Dict[int, float]] = None,
     ) -> None:
         ab = self.loader.get_ability(ability_name)
         if ab is None:
@@ -434,16 +490,17 @@ class VMRuntime:
             skill_target_ids=skill_target_ids or eff_targets,
             current_skill_type=current_skill_type,
             current_attack_type=current_attack_type,
+            local_dynamics=dict(local_dynamics) if local_dynamics else {},
         )
         has_add = bool(ab.get("OnAdd"))
         has_start = "OnStart" in ab
-        if has_add and has_start:
+        if has_add:
             add_key = (caster_id, ability_name)
             if add_key not in self._added_abilities:
                 self._added_abilities.add(add_key)
                 self.executor.execute_tasks(ab.get("OnAdd", []), ctx)
-        tasks = ab.get("OnStart") if has_start else ab.get("OnAdd", [])
-        self.executor.execute_tasks(tasks, ctx)
+        if has_start:
+            self.executor.execute_tasks(ab.get("OnStart", []), ctx)
 
     def collect_hit_modifiers(
         self,
@@ -723,14 +780,14 @@ class VMRuntime:
             current_skill_type=sk_type,
         )
         self.modifier_engine.dispatch_event("OnListenActionEnd", param_entity_id=evt.actor_name)
-        if evt.actor_name in self.entity_specs:
-            self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
-        self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event(
             "CheckParamFlagCallBack",
             param_entity_id=evt.actor_name,
             param_flags=("CallBack_SettleSkillOrInsertAbility",),
         )
+        if evt.actor_name in self.entity_specs:
+            self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
+        self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
 
     def _on_hp_lost(self, evt: HPLostEvent) -> None:
         self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.entity_name, change_value=-evt.amount)
@@ -777,8 +834,7 @@ class VMRuntime:
                             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=e.name, param_entity_id=dead_id)
                             break
         if (
-            getattr(self, "_attack_scope_depth", 0) > 0
-            and not getattr(self, "_in_after_attack", False)
+            (getattr(self, "_attack_scope_depth", 0) > 0 or getattr(self, "_in_after_attack", False))
             and not getattr(self, "_flushing_listen_die", False)
         ):
             q = getattr(self, "_pending_listen_die", None)
@@ -788,7 +844,11 @@ class VMRuntime:
             if dead_id and dead_id not in q:
                 q.append(dead_id)
         else:
-            self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+            dead_ent = self.sim.get_entity(dead_id) if dead_id else None
+            if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
+                setattr(dead_ent, "_deferred_listen_die", True)
+            else:
+                self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
 
 
 def ensure_vm_runtime(sim: Any, *, loader: Optional[GameDataLoader] = None, strict: bool = True) -> VMRuntime:

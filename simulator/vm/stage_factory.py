@@ -37,11 +37,24 @@ SIM_ELEMENTS: Tuple[str, ...] = tuple(
 BOSS_RANKS: Set[str] = {"LittleBoss", "Boss", "BigBoss"}
 
 
+_ELEMENT_CANONICAL_MAP: Dict[str, str] = {
+    "physical": "Physical",
+    "fire": "Fire",
+    "ice": "Ice",
+    "thunder": "Lightning",
+    "lightning": "Lightning",
+    "wind": "Wind",
+    "quantum": "Quantum",
+    "imaginary": "Imaginary",
+}
+
+
 def normalize_element(element: Optional[str]) -> str:
-    """Normalize an official DamageType string to simulator element naming."""
+    """Normalize an official or enum DamageType string (case-insensitive) to simulator element naming."""
     if not element:
         return ""
-    return OFFICIAL_TO_SIM_ELEMENT.get(element, element)
+    s = str(element).strip()
+    return _ELEMENT_CANONICAL_MAP.get(s.lower(), OFFICIAL_TO_SIM_ELEMENT.get(s, s))
 
 
 def _collect_ast_node_types(

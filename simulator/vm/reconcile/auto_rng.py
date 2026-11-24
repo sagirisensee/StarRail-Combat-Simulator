@@ -68,6 +68,9 @@ def attach_auto_rng_plugin(
         if key == "BeastSprout_Slow":
             tname = str(getattr(target, "name", "") or "")
             return any(abs(av - s_av) < 0.25 and s_name == tname for s_av, s_name in meta.slow_hits)
+        if key == "Quantum_Entanglement":
+            tname = str(getattr(target, "name", "") or "")
+            return not any(abs(av - q_av) < 0.25 and q_name == tname for q_av, q_name in meta.quantum_entangle_resists)
         return True
 
     sim.debuff_hit_provider = _debuff_hit_provider

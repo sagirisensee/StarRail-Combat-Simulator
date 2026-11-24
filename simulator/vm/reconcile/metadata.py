@@ -57,6 +57,7 @@ def extract_log_metadata(
     cur_hit_set: Set[str] = set()
     cur_hit_counts: Dict[str, int] = {}
     cur_hit_dmgs: Dict[str, float] = {}
+    cur_clamped_hp_names: Set[str] = set()
     cur_small_hp_drops: Dict[str, List[float]] = {}
     cur_sub_hits: List[str] = []
     cur_sub_actions: List[List[str]] = []
@@ -91,6 +92,8 @@ def extract_log_metadata(
     pending_player_hit_euids: List[int] = []
     pending_player_dmg_confirmed_euids: List[int] = []
     pending_player_hit_dmgs: Dict[int, float] = {}
+    pending_hit_hp_euids: List[int] = []
+    pending_hit_direct_euid: Optional[int] = None
     last_player_hit_euid: Optional[int] = None
     pending_player_primary_dmg_hits = 0
     pending_player_is_servant = False
@@ -127,7 +130,7 @@ def extract_log_metadata(
         return None
 
     def _flush_pending_player_atk() -> None:
-        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_dmg_confirmed_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits, last_player_hit_euid
+        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_dmg_confirmed_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits, last_player_hit_euid, pending_hit_direct_euid
         nonlocal pending_player_is_servant, pending_player_skill_id, pending_player_skill_type
         if cur_player_sk_info is not None and pending_player_hit_dmgs:
             skill_atk_dmgs.setdefault(cur_player_sk_info[2], {}).update(pending_player_hit_dmgs)
@@ -148,6 +151,8 @@ def extract_log_metadata(
         pending_player_hit_euids = []
         pending_player_dmg_confirmed_euids = []
         pending_player_hit_dmgs = {}
+        pending_hit_hp_euids.clear()
+        pending_hit_direct_euid = None
         last_player_hit_euid = None
         pending_player_primary_dmg_hits = 0
         pending_player_is_servant = False
@@ -157,6 +162,18 @@ def extract_log_metadata(
     last_player_hp: Dict[int, float] = {}
     last_player_spd: Dict[int, float] = {}
     slow_hits: Set[Tuple[float, str]] = set()
+    av_elems_map = _get_avatar_damage_types()
+    last_stance_zero_euid: Optional[int] = None
+    pending_q_break: Optional[Tuple[float, int, int]] = None
+    quantum_entangle_resists_raw: Set[Tuple[float, int]] = set()
+
+    def _flush_pending_q_break() -> None:
+        nonlocal pending_q_break
+        if pending_q_break is not None:
+            q_av, q_euid, q_cnt = pending_q_break
+            if q_cnt == 1:
+                quantum_entangle_resists_raw.add((q_av, q_euid))
+            pending_q_break = None
     last_enemy_hp: Dict[int, float] = {}
     enemy_hp_at_turn_end_raw: Dict[Tuple[float, int], float] = {}
     pending_tie_highest_hp_euid: Optional[int] = None
@@ -182,7 +199,7 @@ def extract_log_metadata(
         cur_small_hp_drops = {}
 
     def _flush_turn() -> None:
-        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_hit_dmgs, cur_small_hp_drops, cur_sub_hits, cur_sub_actions, cur_sub_sp_gains, cur_sub_first_memo, cur_sub_pending_sp_owner, cur_sub_action_details, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, pending_first_sp_owner, last_enemy_hit_sp
+        nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_hit_dmgs, cur_clamped_hp_names, cur_small_hp_drops, cur_sub_hits, cur_sub_actions, cur_sub_sp_gains, cur_sub_first_memo, cur_sub_pending_sp_owner, cur_sub_action_details, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, pending_first_sp_owner, last_enemy_hit_sp
         nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts, cur_none_pending_hp_chip_uid
         if cur_enemy_uid is not None:
             if pending_first_sp_owner is not None and not cur_hit_order and cur_first_memo_owner is None:
@@ -198,7 +215,7 @@ def extract_log_metadata(
                     if st_tgt in eff_hit_order:
                         eff_hit_order.remove(st_tgt)
                     eff_hit_order.insert(0, st_tgt)
-            elif len(cur_sub_actions) == 1 and len(cur_hit_dmgs) >= 2:
+            elif len(cur_sub_actions) == 1 and len(cur_hit_dmgs) >= 2 and not cur_clamped_hp_names:
                 # 全体主/副双倍率技能（如锁定单人高倍率重击 + 其余低倍率波及）：将承伤显著最高者置首作为主目标
                 sorted_dmgs = sorted(cur_hit_dmgs.items(), key=lambda kv: kv[1], reverse=True)
                 if sorted_dmgs[1][1] > 0.0 and sorted_dmgs[0][1] > sorted_dmgs[1][1] * 1.8:
@@ -265,6 +282,7 @@ def extract_log_metadata(
         cur_hit_set = set()
         cur_hit_counts = {}
         cur_hit_dmgs = {}
+        cur_clamped_hp_names = set()
         cur_small_hp_drops = {}
         cur_sub_hits = []
         cur_sub_actions = []
@@ -305,6 +323,7 @@ def extract_log_metadata(
                 "hit_set": set(cur_hit_set),
                 "hit_counts": dict(cur_hit_counts),
                 "hit_dmgs": dict(cur_hit_dmgs),
+                "clamped_hp_names": set(cur_clamped_hp_names),
                 "sub_actions": _paused_sub_actions,
                 "sub_details": _paused_sub_details,
                 "small_heal": set(cur_small_heal_uids),
@@ -347,6 +366,7 @@ def extract_log_metadata(
                 paused_enemy_ctx = None
                 _flush_pending_player_atk()
                 _flush_turn()
+                _flush_pending_q_break()
                 cur_av = float(data.get("action_value", cur_av))
                 owner = data.get("turn_owner")
                 if isinstance(owner, dict):
@@ -372,6 +392,7 @@ def extract_log_metadata(
                     first_skill_done = True
                 _flush_pending_player_atk()
             elif ev == "OnUseSkill":
+                _flush_pending_q_break()
                 _flush_pending_player_atk()
                 if cur_turn_owner_team is None:
                     if cur_none_ally_chips:
@@ -426,13 +447,29 @@ def extract_log_metadata(
                 if pending_player_atk is not None:
                     if dtype in ("Basic", "Normal", "Skill", "BPSkill", "Ultimate", "Ultra"):
                         pending_player_primary_dmg_hits += 1
-                    if last_player_hit_euid is not None and dtype != "Break":
-                        pending_player_dmg_confirmed_euids.append(last_player_hit_euid)
+                    confirmed_euid = (
+                        pending_hit_direct_euid
+                        if pending_hit_direct_euid is not None
+                        else (pending_hit_hp_euids[0] if len(pending_hit_hp_euids) == 1 else None)
+                    )
+                    if confirmed_euid is not None and dtype not in ("Break", "Additional", "True"):
+                        pending_player_dmg_confirmed_euids.append(confirmed_euid)
                         dmg_val = float(data.get("damage") or 0.0)
-                        if dmg_val > pending_player_hit_dmgs.get(last_player_hit_euid, 0.0):
-                            pending_player_hit_dmgs[last_player_hit_euid] = dmg_val
+                        if dmg_val > pending_player_hit_dmgs.get(confirmed_euid, 0.0):
+                            pending_player_hit_dmgs[confirmed_euid] = dmg_val
+                    if dtype != "Break":
+                        pending_hit_hp_euids.clear()
+                        pending_hit_direct_euid = None
                         last_player_hit_euid = None
                 atk_ent = data.get("attacker") or {}
+                if dtype in ("Additional", "True"):
+                    _flush_pending_q_break()
+                elif dtype == "Break" and atk_ent.get("team") == "Player":
+                    _flush_pending_q_break()
+                    atk_uid = int(atk_ent.get("uid") or 0)
+                    if av_elems_map.get(atk_uid) == "Quantum" and last_stance_zero_euid is not None:
+                        pending_q_break = (round(cur_av, 2), last_stance_zero_euid, 0)
+                        last_stance_zero_euid = None
                 if (
                     atk_ent.get("team") == "Player"
                     and int(atk_ent.get("uid") or 0) == 1403
@@ -451,10 +488,25 @@ def extract_log_metadata(
                 ptype = prop.get("type")
                 val = float(prop.get("value", 0.0))
 
+                if ptype == "ActionDelay" and abs(val) <= 1e-6:
+                    _flush_pending_q_break()
+
                 if team_tag == "Enemy" and uid:
+                    if ptype == "CurrentStance" and val <= 1e-6:
+                        _flush_pending_q_break()
+                        last_stance_zero_euid = uid
+                    elif (
+                        ptype == "ActionDelay"
+                        and pending_q_break is not None
+                        and uid == pending_q_break[1]
+                        and 0.0 < val < 100.0
+                    ):
+                        pending_q_break = (pending_q_break[0], pending_q_break[1], pending_q_break[2] + 1)
                     if not saw_first_init_enemy and uid not in seen_init_enemy_uids:
                         seen_init_enemy_uids.add(uid)
                         initial_enemy_uids.append(uid)
+                    if ptype == "CurrentStance" and pending_player_atk is not None and pending_hit_hp_euids:
+                        pending_hit_direct_euid = uid
                     if (
                         ptype == "CurrentStance"
                         and first_skill_info is not None
@@ -477,6 +529,8 @@ def extract_log_metadata(
                             cur_player_sk_info[2],
                         )
                     if ptype == "CurrentSP":
+                        if pending_player_atk is not None and pending_hit_hp_euids and val > 0.0:
+                            pending_hit_direct_euid = uid
                         if (
                             cur_enemy_uid is None
                             and paused_enemy_ctx is not None
@@ -491,6 +545,7 @@ def extract_log_metadata(
                             cur_hit_set = set(paused_enemy_ctx["hit_set"])
                             cur_hit_counts = dict(paused_enemy_ctx["hit_counts"])
                             cur_hit_dmgs = dict(paused_enemy_ctx.get("hit_dmgs") or {})
+                            cur_clamped_hp_names = set(paused_enemy_ctx.get("clamped_hp_names") or ())
                             cur_sub_actions = list(paused_enemy_ctx["sub_actions"])
                             cur_sub_action_details = list(paused_enemy_ctx.get("sub_details") or [])
                             cur_sub_hits = []
@@ -543,8 +598,10 @@ def extract_log_metadata(
                         ):
                             pending_player_hit_euids.append(uid)
                             if prev is not None and val < prev - 1.0:
+                                if uid not in pending_hit_hp_euids:
+                                    pending_hit_hp_euids.append(uid)
                                 last_player_hit_euid = uid
-                                if uid not in pending_player_hit_dmgs:
+                                if len(pending_hit_hp_euids) == 1 and uid not in pending_player_hit_dmgs:
                                     pending_player_hit_dmgs[uid] = prev - val
                         elif cur_enemy_uid is not None and uid != cur_enemy_uid and prev is not None and prev > 0.0 and val <= 0.0:
                             enemy_retarget_picks.append((round(cur_av, 2), cur_enemy_uid, uid))
@@ -585,7 +642,7 @@ def extract_log_metadata(
                         prev_sp = last_player_sp.get(uid)
                         is_enemy_hit_sp = (
                             cur_enemy_uid is not None
-                            and 1.0 < val < 35.0
+                            and 0.2 < val < 35.0
                             and last_enemy_hit_sp > 0.0
                             and 0.99 <= (val / last_enemy_hit_sp) <= 1.60
                             and not (prev_sp is not None and abs((val - prev_sp) - 3.0) < 1e-3)
@@ -679,17 +736,25 @@ def extract_log_metadata(
                                 elif delta >= 10.0:
                                     name = _resolve_uid_name(uid, char_db)
                                     cur_small_hp_drops.setdefault(name, []).append(delta)
+                            elif abs(val - 1.0) <= 1e-2:
+                                name = _resolve_uid_name(uid, char_db)
+                                cur_clamped_hp_names.add(name)
+                                cur_small_hp_drops.setdefault(name, []).append(max(1.0, prev - val))
+                            elif val < prev - 1e-3:
+                                name = _resolve_uid_name(uid, char_db)
+                                cur_small_hp_drops.setdefault(name, []).append(prev - val)
                         elif cur_turn_owner_team is None and not cur_none_had_skill and prev is not None:
                             # 阿哈回合我方伴生微伤（通常 0.1~5.0 点 HP）
                             delta = prev - val
                             if 0.05 <= delta <= 10.0:
                                 cur_none_ally_chips.append(_resolve_uid_name(uid, char_db))
                                 cur_none_pending_hp_chip_uid = uid
-                        if prev is None or val >= prev * 0.40:
+                        if prev is None or val >= prev * 0.40 or val <= 1.0 + 1e-2:
                             last_player_hp[uid] = val
 
     _flush_pending_player_atk()
     _flush_turn()
+    _flush_pending_q_break()
 
     # 排除已在 OnInitializeEnemy 登记的后续生成怪（其属性初始化 OnStatChange 可能早于 OnInitializeEnemy 发出）
     spawn_euids = {u for u, _ in spawn_events_raw}
@@ -728,27 +793,44 @@ def extract_log_metadata(
             inf_seen_cnt[nm] = inf_seen_cnt.get(nm, 0) + 1
             cnt = inf_seen_cnt[nm]
             enemy_uid_map.setdefault(euid, nm if cnt == 1 else f"{nm}_{cnt}")
+        all_wave_monster_names = {m.name for w in stage_spec.waves for m in w.monsters}
+        only_summon_names = summon_monster_names - all_wave_monster_names
         for euid, ename in spawn_events_raw:
             inf_seen_cnt[ename] = inf_seen_cnt.get(ename, 0) + 1
             cnt = inf_seen_cnt[ename]
-            enemy_uid_map[euid] = ename if cnt == 1 else f"{ename}_{cnt}"
+            if ename in only_summon_names:
+                enemy_uid_map[euid] = f"{ename}_{cnt}"
+            else:
+                enemy_uid_map[euid] = ename if cnt == 1 else f"{ename}_{cnt}"
     else:
+        spawn_seq_by_name: Dict[str, int] = {}
         if wave0_names and initial_enemy_uids:
+            sorted_init = sorted(initial_enemy_uids)
             name_totals: Dict[str, int] = {}
             for nm in wave0_names:
                 name_totals[nm] = name_totals.get(nm, 0) + 1
             seen_init_name_cnt: Dict[str, int] = {}
-            for euid, nm in zip(sorted(initial_enemy_uids), wave0_names):
+            for euid, nm in zip(sorted_init, wave0_names):
                 if name_totals[nm] > 1:
                     seen_init_name_cnt[nm] = seen_init_name_cnt.get(nm, 0) + 1
                     enemy_uid_map.setdefault(euid, f"{nm}_{seen_init_name_cnt[nm]}")
                 else:
                     enemy_uid_map.setdefault(euid, nm)
+            if len(sorted_init) > len(wave0_names) and stage_spec is not None and stage_spec.waves:
+                w0_summon_names: List[str] = []
+                w0_smap = stage_spec.waves[0].summon_monsters
+                for m in stage_spec.waves[0].monsters:
+                    for sid in getattr(m, "summon_ids", ()):
+                        sm = w0_smap.get(sid) or stage_spec.summon_monsters.get(sid)
+                        if sm is not None:
+                            w0_summon_names.append(sm.name)
+                for euid, nm in zip(sorted_init[len(wave0_names):], w0_summon_names):
+                    spawn_seq_by_name[nm] = spawn_seq_by_name.get(nm, 0) + 1
+                    enemy_uid_map.setdefault(euid, f"{nm}_{spawn_seq_by_name[nm]}")
 
         raw_name_totals: Dict[str, int] = {}
         for _, ename in spawn_events_raw:
             raw_name_totals[ename] = raw_name_totals.get(ename, 0) + 1
-        spawn_seq_by_name: Dict[str, int] = {}
         for euid, ename in spawn_events_raw:
             if ename in summon_monster_names or raw_name_totals[ename] > 1:
                 spawn_seq_by_name[ename] = spawn_seq_by_name.get(ename, 0) + 1
@@ -874,10 +956,11 @@ def extract_log_metadata(
                 and p_primary_hits == 0
                 and len(set(p_hit_euids)) == 1
             )
-        ) and p_hit_euids:
+        ) and (p_dmg_confirmed or p_hit_euids):
             av_eff = avatar_skill_effects.get(p_skill_id, "")
             if av_eff in ("SingleAttack", "") and p_skill_type != "Ultra":
-                player_enemy_targets_raw.setdefault(p_atk, []).append(p_hit_euids[0])
+                pri_euid = p_dmg_confirmed[0] if p_dmg_confirmed else p_hit_euids[0]
+                player_enemy_targets_raw.setdefault(p_atk, []).append(pri_euid)
 
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = {}
     for k_pt, euids in player_enemy_targets_raw.items():
@@ -928,7 +1011,19 @@ def extract_log_metadata(
     entry_element: Optional[str] = None
     entry_toughness: float = 10.0
     if stage_spec is not None and stage_spec.waves:
-        w0_by_name = {m.name: m for m in stage_spec.waves[0].monsters}
+        w0_by_name: Dict[str, List[Any]] = {}
+
+        def _add_w0_spec(mspec: Any) -> None:
+            lst = w0_by_name.setdefault(mspec.name, [])
+            if all(existing.monster_id != mspec.monster_id for existing in lst):
+                lst.append(mspec)
+
+        for m in stage_spec.waves[0].monsters:
+            _add_w0_spec(m)
+        for sm in stage_spec.waves[0].summon_monsters.values():
+            _add_w0_spec(sm)
+        for sm in stage_spec.summon_monsters.values():
+            _add_w0_spec(sm)
         av_elems = _get_avatar_damage_types()
         if first_skill_info is not None and first_skill_stance_obs:
             sk_id, sk_caster_uid = first_skill_info
@@ -936,13 +1031,15 @@ def extract_log_metadata(
             if sk_stance > 0.0:
                 for euid, new_stance in first_skill_stance_obs.items():
                     base_nm = _base_enemy_name(euid)
-                    m_spec = w0_by_name.get(base_nm)
-                    if m_spec is not None and m_spec.toughness > 0.0:
-                        missing = float(m_spec.toughness) - float(sk_stance) - float(new_stance)
-                        if missing >= 15.0:
-                            entry_toughness = round(missing, 1)
-                            entry_element = av_elems.get(sk_caster_uid)
-                            break
+                    for m_spec in w0_by_name.get(base_nm, ()):
+                        if m_spec.toughness > 0.0:
+                            missing = float(m_spec.toughness) - float(sk_stance) - float(new_stance)
+                            if missing >= 15.0:
+                                entry_toughness = round(missing, 1)
+                                entry_element = av_elems.get(sk_caster_uid)
+                                break
+                    if entry_element is not None:
+                        break
         if entry_element is None and init_enemy_first_stance:
             stance_pairs = _get_avatar_skill_stance_pairs()
             init_euid_set = set(initial_enemy_uids)
@@ -954,12 +1051,6 @@ def extract_log_metadata(
                 if not pair or not elem:
                     continue
                 base_nm = _base_enemy_name(euid)
-                m_spec = w0_by_name.get(base_nm)
-                if m_spec is None or m_spec.toughness <= 0.0:
-                    continue
-                norm_weak = {"Lightning" if w == "Thunder" else w for w in getattr(m_spec, "weaknesses", ())}
-                if elem not in norm_weak:
-                    continue
                 pri_st, sub_st = pair
                 dmgs = skill_atk_dmgs.get(atk_seq, {})
                 is_primary = True
@@ -969,15 +1060,29 @@ def extract_log_metadata(
                     if max_d > 0.0 and e_d < max_d * 0.8:
                         is_primary = False
                 sk_stance = pri_st if is_primary else sub_st
-                missing = float(m_spec.toughness) - float(sk_stance) - float(new_stance)
-                if missing >= 15.0:
-                    entry_toughness = round(missing, 1)
-                    entry_element = elem
+                for m_spec in w0_by_name.get(base_nm, ()):
+                    if m_spec.toughness <= 0.0:
+                        continue
+                    norm_weak = {"Lightning" if w == "Thunder" else w for w in getattr(m_spec, "weaknesses", ())}
+                    if elem not in norm_weak:
+                        continue
+                    missing = float(m_spec.toughness) - float(sk_stance) - float(new_stance)
+                    if missing >= 15.0:
+                        entry_toughness = round(missing, 1)
+                        entry_element = elem
+                        break
+                if entry_element is not None:
                     break
 
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = {
         (av_k, enemy_uid_map[eu]): ehp
         for (av_k, eu), ehp in enemy_hp_at_turn_end_raw.items()
+        if eu in enemy_uid_map
+    }
+
+    quantum_entangle_resists: Set[Tuple[float, str]] = {
+        (q_av, enemy_uid_map[eu])
+        for q_av, eu in quantum_entangle_resists_raw
         if eu in enemy_uid_map
     }
 
@@ -997,6 +1102,7 @@ def extract_log_metadata(
         aha_turns=aha_turns,
         windwalk_enemy_uids=windwalk_enemy_uids,
         slow_hits=slow_hits,
+        quantum_entangle_resists=quantum_entangle_resists,
         enemy_hp_at_turn_end=enemy_hp_at_turn_end,
         enemy_spawns=enemy_spawns,
         gluttony_enemy_names={enemy_uid_map[u] for u in gluttony_revived_euids if u in enemy_uid_map},

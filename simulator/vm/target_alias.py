@@ -141,6 +141,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         spatial_order: bool = False,
     ) -> List[str]:
         include_limbo = bool(getattr(rt, "_include_limbo", False))
+        include_phase_limbo = bool(getattr(rt, "_include_phase_limbo", False))
         has_living_wave_enemy = include_limbo and any(
             getattr(x, "is_enemy", False) and not _is_battle_event(x) and _is_alive_entity(sim, x)
             for x in sim.entities
@@ -152,7 +153,11 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             if not _is_alive_entity(sim, e):
                 pending_dead = getattr(rt, "_pending_dead_enemies", None) or ()
                 if not (
-                    (has_living_wave_enemy or (include_limbo and e.name in pending_dead))
+                    (
+                        has_living_wave_enemy
+                        or (include_limbo and e.name in pending_dead)
+                        or (include_phase_limbo and getattr(e, "_vm_limbo_pending", False))
+                    )
                     and any(m.owner_id == e.name for m in rt.modifier_engine.all_modifiers())
                 ):
                     continue

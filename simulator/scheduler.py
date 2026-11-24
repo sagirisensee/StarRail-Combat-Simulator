@@ -21,7 +21,7 @@
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Deque, List, Optional, TYPE_CHECKING
+from typing import Callable, Deque, List, Optional, Sequence, TYPE_CHECKING
 
 from .actions import (
     ActionKind,
@@ -162,6 +162,34 @@ class ActionScheduler:
                 if intent.actor_id == resolved and intent.name == name:
                     cnt += 1
         return cnt
+
+    def abort_pending_actions(self, actor_ids: Optional[Sequence[str]], name: str) -> int:
+        """从所有调度队列中取消指定实体的待执行同名派生动作（AbortInsertAbility）。"""
+        if not name:
+            return 0
+        resolved_set: Optional[set[str]] = None
+        if actor_ids is not None:
+            resolved_set = set()
+            for aid in actor_ids:
+                ent = self.sim.get_entity(aid)
+                resolved_set.add(ent.name if ent is not None else aid)
+        removed = 0
+        for q in (
+            self._staging_intents,
+            self._immediate_queue,
+            self._followup_queue,
+            self._reserved_queue,
+            self._voyage_queue,
+        ):
+            kept = [
+                it
+                for it in q
+                if not (it.name == name and (resolved_set is None or it.actor_id in resolved_set))
+            ]
+            removed += len(q) - len(kept)
+            q.clear()
+            q.extend(kept)
+        return removed
 
     def _party_slot(self, actor_id: str) -> int:
         for idx, ent in enumerate(self.sim.entities):

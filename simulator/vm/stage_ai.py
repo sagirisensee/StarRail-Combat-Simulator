@@ -109,6 +109,7 @@ class AISkillActionSpec:
     is_aoe: bool = False
     hit_count: int = 1
     has_mark_target: bool = False
+    delay_ratio: float = 1.0
 
     @classmethod
     def from_compiled_skill(
@@ -131,6 +132,7 @@ class AISkillActionSpec:
             is_aoe=sk.is_aoe,
             hit_count=sk.hit_count,
             has_mark_target=sk.has_mark_target,
+            delay_ratio=sk.delay_ratio,
         )
 
     def param(self, index: int, default: float = 0.0) -> float:
@@ -487,21 +489,26 @@ class StageAILoader:
 
         decisions: List[AIDecisionRule] = []
 
-        def _ingest_decision(dec: Mapping[str, Any], group_name: str) -> None:
+        def _ingest_decision(
+            dec: Mapping[str, Any],
+            group_name: str,
+            inherited_axes: Sequence[Mapping[str, Any]] = (),
+        ) -> None:
             root_task = dec.get("RootTask", {})
             use_skills: List[str] = []
             next_flags: List[int] = []
             selectors: List[str] = []
             _extract_use_skills_and_flag(root_task, use_skills, next_flags, selectors)
 
+            own_axes = [ax for ax in dec.get("ConsiderAxisList", []) if isinstance(ax, Mapping)]
+            all_axes = list(inherited_axes) + own_axes
+
             phase_conds: List[Tuple[str, int]] = []
             flag_conds: List[int] = []
             cond_preds: List[Mapping[str, Any]] = []
             axis_scores: List[float] = []
             usability_axes: List[Tuple[str, int, int, float]] = []
-            for ax in dec.get("ConsiderAxisList", []):
-                if not isinstance(ax, Mapping):
-                    continue
+            for ax in all_axes:
                 if isinstance(ax.get("Predicate"), Mapping):
                     cond_preds.append(ax["Predicate"])
                     _extract_axis_conditions(ax["Predicate"], phase_conds, flag_conds)
@@ -512,11 +519,20 @@ class StageAILoader:
                     cs_raw = ax.get("CheckScore")
                     cs = float(cs_raw.get("Value", 0.1)) if isinstance(cs_raw, Mapping) else 0.1
                     usability_axes.append((sk_nm, init_cd, cd, cs))
+
+            for ax in own_axes:
                 if isinstance(ax.get("SuccessScore"), Mapping):
                     try:
                         axis_scores.append(float(ax["SuccessScore"].get("Value", 1.0)))
                     except (TypeError, ValueError):
                         pass
+            if not axis_scores:
+                for ax in inherited_axes:
+                    if isinstance(ax.get("SuccessScore"), Mapping):
+                        try:
+                            axis_scores.append(float(ax["SuccessScore"].get("Value", 1.0)))
+                        except (TypeError, ValueError):
+                            pass
             if not axis_scores and usability_axes:
                 axis_scores.extend(u[3] for u in usability_axes)
 
@@ -546,17 +562,27 @@ class StageAILoader:
                 )
             )
 
-        for dec in ai_doc.get("DecisionList", []):
-            if not isinstance(dec, Mapping):
-                continue
-            dt = dec.get("$type", "")
-            if "Stepper" in dt:
-                gname = str(dec.get("DecisionGroupName", "Stepper"))
-                for sub in dec.get("DecisionList", []):
+        def _walk_decision(
+            node: Mapping[str, Any],
+            group_name: str,
+            inherited_axes: Tuple[Mapping[str, Any], ...],
+        ) -> None:
+            dt = str(node.get("$type", ""))
+            is_group = ("Stepper" in dt) or (isinstance(node.get("DecisionList"), list) and "RootTask" not in node)
+            if is_group:
+                next_gname = str(node.get("DecisionGroupName") or group_name)
+                next_axes = inherited_axes + tuple(
+                    ax for ax in node.get("ConsiderAxisList", []) if isinstance(ax, Mapping)
+                )
+                for sub in node.get("DecisionList", []):
                     if isinstance(sub, Mapping):
-                        _ingest_decision(sub, gname)
+                        _walk_decision(sub, next_gname, next_axes)
             else:
-                _ingest_decision(dec, "Default")
+                _ingest_decision(node, group_name, inherited_axes)
+
+        for dec in ai_doc.get("DecisionList", []):
+            if isinstance(dec, Mapping):
+                _walk_decision(dec, "Default", ())
 
         # Build phase_sequences for phases 1..monster.max_phase
         phase_sequences: Dict[int, Tuple[Tuple[str, ...], ...]] = {}

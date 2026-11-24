@@ -34,6 +34,19 @@ STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES: Set[str] = {
     "RPG.GameCore.ShowBossInfoBar",
     "RPG.GameCore.ShowSkillTextDialog",
     "RPG.GameCore.SkillExecutionStart",
+    "RPG.GameCore.SetCharacterShowSummonUI",
+    "RPG.GameCore.ShowBattleVersusBarCountDownEffect",
+    "RPG.GameCore.SetCountDownWarning",
+    "RPG.GameCore.AddChallengeBossInfoPanelState",
+    "RPG.GameCore.RemoveChallengeBossInfoPanelState",
+    "RPG.GameCore.OverrideEntityModifierPhaseCamera",
+    "RPG.GameCore.PlayScreenTransfer",
+    "RPG.GameCore.WaitAbilityStartTimeStamp",
+    "RPG.GameCore.SetMonsterNameBoardMaxBuffCount",
+    "RPG.GameCore.SetModifierOverrideNameForStatus",
+    "RPG.GameCore.ReleaseCharacterHUDVisibleControl",
+    "RPG.GameCore.AddTargetStancePreshowConfig",
+    "RPG.GameCore.SwitchChallengeBossInfoPanelState",
 }
 
 # Meta / achievement / out-of-combat scoring / UI notification nodes that have

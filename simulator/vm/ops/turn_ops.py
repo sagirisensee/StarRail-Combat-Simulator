@@ -58,14 +58,18 @@ class TurnOpsMixin:
         prio = str(
             task.get("InsertAbilityPriority")
             or task.get("InsertActionPriority")
-            or override_prio
             or "Character_ChainSkill"
         )
+        if override_prio:
+            cond_pred = cond_prio.get("Predicate")
+            if cond_pred is None or self.eval_predicate(cond_pred, ctx):
+                prio = str(override_prio)
         ab_name = _str_val(task.get("AbilityName"))
         if task.get("TargetType") is not None:
             targets = self._resolve_targets(task.get("TargetType"), ctx)
         elif ctx.modifier_owner_id and (
-            prio in ("MonsterForceKill", "MonsterDeathRattle", "MonsterSummon")
+            prio.startswith("Monster")
+            or "Limbo" in str(task.get("OwnerAliveState", ""))
             or (
                 ctx.caster_id
                 and (sim.get_entity(ctx.caster_id) is None or getattr(sim.get_entity(ctx.caster_id), "current_hp", 0.0) <= 0.0)
@@ -106,8 +110,23 @@ class TurnOpsMixin:
                 act_kind = ActionKind.FOLLOW_UP if cat == ActionScheduleCategory.FOLLOW_UP else ActionKind.TALENT
                 ins_skill_id, ins_sp_base = (0, 0.0) if is_level_caster else self._resolve_insert_skill_meta(tid, ab_name)
                 preset_targets = tuple(self._resolve_targets(ability_tgt_spec, ctx)) if ability_tgt_spec is not None else ()
+                raw_dyn = task.get("DynamicValues")
+                insert_dyn: Dict[int, float] = (
+                    {dotnet_hash(str(k)): self._eval_num(v, ctx, 0.0) for k, v in raw_dyn.items()}
+                    if isinstance(raw_dyn, Mapping)
+                    else {}
+                )
+                active_pred = task.get("ActivePredicate")
+                pred_ctx = ctx.clone()
 
-                if prio == "MonsterDeathRattle" and ent is not None:
+                _is_limbo_insert = ent is not None and (
+                    prio in ("MonsterDeathRattle", "MonsterForceKill")
+                    or (
+                        getattr(ent, "_in_deathrattle_limbo", False)
+                        and (prio.startswith("MonsterBuffOthers") or "Limbo" in str(task.get("OwnerAliveState", "")))
+                    )
+                )
+                if _is_limbo_insert:
                     setattr(
                         ent,
                         "_pending_deathrattle_actions",
@@ -122,8 +141,19 @@ class TurnOpsMixin:
                     _sp: float = ins_sp_base,
                     _is_en: bool = is_enemy_caster,
                     _prio: str = prio,
+                    _dyn: Dict[int, float] = insert_dyn,
+                    _active_pred: Any = active_pred,
+                    _pred_ctx: ExecutionContext = pred_ctx,
                 ) -> None:
                     try:
+                        if isinstance(_active_pred, Mapping) and not self.eval_predicate(_active_pred, _pred_ctx):
+                            ab_doc = rt.loader.get_ability(ab)
+                            if ab_doc and ab_doc.get("OnInsertAbort"):
+                                self.execute_tasks(
+                                    ab_doc["OnInsertAbort"],
+                                    _pred_ctx.clone(caster_id=a_id, ability_name=ab),
+                                )
+                            return
                         sim._action_seq += 1
                         sk_t = "Insert" if _c == ActionScheduleCategory.FOLLOW_UP else "Talent"
                         me = rt.modifier_engine
@@ -157,6 +187,7 @@ class TurnOpsMixin:
                                 skill_target_ids=eff_tgts,
                                 current_skill_type=sk_t,
                                 current_attack_type=sk_t,
+                                local_dynamics=_dyn,
                             )
                         finally:
                             rt.end_attack_scope()
@@ -184,21 +215,39 @@ class TurnOpsMixin:
                             param_flags=("CallBack_SettleSkillOrInsertAbility",),
                         )
                     finally:
-                        if _prio == "MonsterDeathRattle":
-                            dr_ent = sim.get_entity(a_id)
-                            if dr_ent is not None:
-                                rem_dr = max(0, int(getattr(dr_ent, "_pending_deathrattle_actions", 0) or 0) - 1)
-                                setattr(dr_ent, "_pending_deathrattle_actions", rem_dr)
-                                if rem_dr == 0 and getattr(dr_ent, "_die_immediately_after_deathrattle", False):
-                                    setattr(dr_ent, "_die_immediately_after_deathrattle", False)
-                                    if getattr(dr_ent, "_in_deathrattle_limbo", False):
-                                        setattr(dr_ent, "_in_deathrattle_limbo", False)
-                                        dr_ent.current_hp = 0.0
-                                        rt.modifier_engine.destroy_all_for_entity(a_id)
-                                        pending_dead = getattr(rt, "_pending_dead_enemies", None)
-                                        if pending_dead and a_id in pending_dead:
-                                            pending_dead[:] = [x for x in pending_dead if x != a_id]
+                        dr_ent = sim.get_entity(a_id)
+                        if dr_ent is not None and (
+                            _prio in ("MonsterDeathRattle", "MonsterForceKill")
+                            or (
+                                getattr(dr_ent, "_in_deathrattle_limbo", False)
+                                and int(getattr(dr_ent, "_pending_deathrattle_actions", 0) or 0) > 0
+                            )
+                        ):
+                            rem_dr = max(0, int(getattr(dr_ent, "_pending_deathrattle_actions", 0) or 0) - 1)
+                            setattr(dr_ent, "_pending_deathrattle_actions", rem_dr)
+                            if rem_dr == 0 and getattr(dr_ent, "_die_immediately_after_deathrattle", False):
+                                setattr(dr_ent, "_die_immediately_after_deathrattle", False)
+                                if getattr(dr_ent, "_in_deathrattle_limbo", False):
+                                    setattr(dr_ent, "_in_deathrattle_limbo", False)
+                                    dr_ent.current_hp = 0.0
+                                    rt.modifier_engine.destroy_all_for_entity(a_id)
+                                    pending_dead = getattr(rt, "_pending_dead_enemies", None)
+                                    if pending_dead and a_id in pending_dead:
+                                        pending_dead[:] = [x for x in pending_dead if x != a_id]
+                                    if getattr(dr_ent, "_deferred_listen_die", False):
+                                        setattr(dr_ent, "_deferred_listen_die", False)
+                                        rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=a_id)
 
+                imm_prio = (
+                    2 if prio.startswith("MonsterBuffOthers")
+                    else (
+                        3 if prio == "MonsterDeathRattle"
+                        else (
+                            4 if prio == "MonsterForceKill"
+                            else (5 if prio == "MonsterSummon" else (6 if prio == "MonsterChangePhase" else 10))
+                        )
+                    )
+                )
                 sim.scheduler.enqueue(
                     tid,
                     _run_insert,
@@ -206,8 +255,16 @@ class TurnOpsMixin:
                     category=cat,
                     action_kind=act_kind,
                     skill_id=ins_skill_id,
-                    preempt_follow_up=(prio in ("AvatarBuffSelf", "MonsterChangeState", "MonsterChangePhase", "MonsterForceKill")),
-                    immediate_priority=(3 if prio == "MonsterDeathRattle" else (5 if prio == "MonsterSummon" else 10)),
+                    preempt_follow_up=(
+                        prio in (
+                            "AvatarBuffSelf",
+                            "MonsterChangeState",
+                            "MonsterChangePhase",
+                            "MonsterForceKill",
+                            "MonsterBuffOthers_Elation",
+                        )
+                    ),
+                    immediate_priority=imm_prio,
                     allow_limbo=allow_limbo,
                 )
             elif getattr(ent, "is_memosprite", False):
@@ -351,12 +408,28 @@ class TurnOpsMixin:
 
         robin_spd = float(init_dyn.get(dotnet_hash("BattleEvent_RobinS_00_BaseSpeed"), 0.0) or 0.0)
         dv_be_spd = float(init_dyn.get(dotnet_hash("DV_BE_BaseSpeed"), 0.0) or 0.0)
+        bec_fixed_spd = 0.0
+        raw_spd = bec_row.get("Speed")
+        if isinstance(raw_spd, Mapping):
+            bec_fixed_spd = float(raw_spd.get("Value", 0.0) or 0.0)
+        elif isinstance(raw_spd, (int, float)):
+            bec_fixed_spd = float(raw_spd)
+        bec_override_spd = 0.0
+        for ov in bec_row.get("OverrideProperty") or ():
+            if isinstance(ov, Mapping) and ov.get("PropertyType") == "BaseSpeed":
+                ov_v = ov.get("Value", 0.0)
+                bec_override_spd = float(ov_v.get("Value", 0.0) if isinstance(ov_v, Mapping) else (ov_v or 0.0))
+                break
         if robin_spd > 0.0:
             spd = robin_spd
         elif dv_be_spd > 0.0:
             spd = dv_be_spd
         elif compiled_be is not None and float(getattr(compiled_be, "effective_speed", 0.0) or 0.0) > 0.0:
             spd = float(compiled_be.effective_speed)
+        elif bec_fixed_spd > 0.0:
+            spd = bec_fixed_spd
+        elif bec_override_spd > 0.0:
+            spd = bec_override_spd
         else:
             spd = 140.0
 

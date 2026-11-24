@@ -35,6 +35,7 @@ class DamageBreakdown:
     final_damage: float
     # 诊断与微观明细 (可选扩展字段，保持 100% 向后兼容)
     barrier_mult: float = 1.0
+    fatigue_mult: float = 1.0
     scaling_stat: str = "atk"
     base_stat: float = 0.0
     skill_multiplier: float = 1.0
@@ -240,6 +241,13 @@ class DamageCalculator:
             target_dmg_red = float(getattr(req.target, "damage_reduction", 0.0) or 0.0)
             barrier_mult = max(0.0, 1.0 - target_dmg_red)
 
+        fatigue = 0.0
+        if hasattr(req.attacker, "simulator") and req.attacker.simulator:
+            fatigue = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, 0.0, StatType.FATIGUE)
+        raw_min_fatigue = getattr(req.attacker, "min_fatigue_ratio", None)
+        min_fatigue = 0.2 if raw_min_fatigue is None else float(raw_min_fatigue)
+        fatigue_mult = max(min_fatigue, 1.0 - max(0.0, fatigue)) if fatigue > 0.0 else 1.0
+
         # 最终汇总
         final_dmg = (
             base_dmg
@@ -250,6 +258,7 @@ class DamageCalculator:
             * vuln_mult
             * reduction_mult
             * barrier_mult
+            * fatigue_mult
         )
 
         return DamageBreakdown(
@@ -265,6 +274,7 @@ class DamageCalculator:
             reduction_mult=reduction_mult,
             final_damage=final_dmg,
             barrier_mult=barrier_mult,
+            fatigue_mult=fatigue_mult,
             scaling_stat=scaling,
             base_stat=base_stat,
             skill_multiplier=req.skill_multiplier,

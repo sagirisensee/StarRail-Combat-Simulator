@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 from ..expr import dotnet_hash
+from ..stage_factory import normalize_element
 from ..target_alias import ExecutionContext
 
 
@@ -214,10 +215,15 @@ class PredicateOpsMixin:
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             want_team = str(pred.get("Team", ""))
             for tid in targets:
-                ent = sim.get_entity(tid)
-                if ent is None:
+                if not tid or tid == "__LEVEL__":
                     continue
-                is_dark = bool(getattr(ent, "is_enemy", False))
+                ent = sim.get_entity(tid)
+                if ent is not None:
+                    is_dark = bool(getattr(ent, "is_enemy", False))
+                elif tid in getattr(rt, "_entity_is_enemy", {}):
+                    is_dark = bool(rt.is_enemy_entity_id(tid))
+                else:
+                    continue
                 if want_team in ("TeamDark", "Dark") and is_dark:
                     return True
                 if want_team in ("TeamLight", "Light") and not is_dark:
@@ -286,10 +292,11 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByCharacterDamageType":
             targets = self._resolve_targets(pred.get("TargetType") or {"Alias": "Caster"}, ctx)
             dt = pred.get("DamageType", {})
-            want = dt.get("DamageType", "") if isinstance(dt, Mapping) else str(dt)
+            raw_want = dt.get("DamageType", "") if isinstance(dt, Mapping) else str(dt)
+            want = normalize_element(raw_want)
             for tid in targets:
                 ent = sim.get_entity(tid)
-                if ent is not None and getattr(ent, "element", "") == want:
+                if ent is not None and normalize_element(getattr(ent, "element", "")) == want:
                     return True
             return False
 
@@ -498,14 +505,16 @@ class PredicateOpsMixin:
 
         if t == "RPG.GameCore.ByIsMatchTeammateCount":
             team_type = str(pred.get("TeamType", "TeamLight"))
-            want_s = str(pred.get("CountType", "Count1"))
-            want_cnt = int(want_s[5:]) if want_s.startswith("Count") and want_s[5:].isdigit() else 1
+            want_s = str(pred.get("CountType", "Count0"))
+            want_cnt = int(want_s[5:]) if want_s.startswith("Count") and want_s[5:].isdigit() else 0
             is_dark = team_type in ("TeamDark", "Dark")
             cnt = sum(
                 1 for e in sim.entities
                 if bool(getattr(e, "is_enemy", False)) == is_dark
                 and not getattr(e, "is_memosprite", False)
                 and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_battle_event", False)
+                and not getattr(e, "is_unselectable", False)
                 and _is_alive(sim, e.name)
             )
             return cnt == want_cnt
@@ -513,27 +522,42 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByIsTeamLocationIndexType":
             targets = self._resolve_targets(pred.get("TargetType") or {"Alias": "Caster"}, ctx)
             team_type = str(pred.get("TeamType", "TeamLight"))
-            loc_type = str(pred.get("Type", "Min"))
+            loc_type = str(pred.get("Type") or "Min")
             is_dark = team_type in ("TeamDark", "Dark")
             pool = [
                 e.name for e in sim.entities
                 if bool(getattr(e, "is_enemy", False)) == is_dark
+                and float(getattr(e, "current_hp", 0.0)) > 0.0
                 and not getattr(e, "is_memosprite", False)
                 and not getattr(e, "is_countdown", False)
             ]
-            if not pool or not targets:
+            if not pool or not targets or targets[0] not in pool:
                 return False
+            idx = pool.index(targets[0])
             if loc_type == "Min":
-                return targets[0] == pool[0]
+                return idx == 0
             if loc_type == "Max":
-                return targets[0] == pool[-1]
+                return idx == len(pool) - 1
+            if loc_type == "Left":
+                return idx <= (len(pool) - 1) // 2
+            if loc_type == "Right":
+                return idx > (len(pool) - 1) // 2
+            if loc_type.startswith("Pos") and loc_type[3:].isdigit():
+                return idx == int(loc_type[3:]) - 1
             return False
 
         if t == "RPG.GameCore.ByHasStanceWeak":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             wt = pred.get("WeakType", {})
-            elem = wt.get("DamageType", "") if isinstance(wt, Mapping) else str(wt)
-            return any(elem in getattr(sim.get_entity(tid), "weaknesses", []) for tid in targets)
+            raw_elem = wt.get("DamageType", "") if isinstance(wt, Mapping) else str(wt)
+            elem = normalize_element(raw_elem)
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is None:
+                    continue
+                if elem in getattr(ent, "weaknesses", ()) and elem not in getattr(ent, "_protected_weaknesses", ()):
+                    return True
+            return False
 
         if t == "RPG.GameCore.ByInTurnBasedGameModeState":
             return True
@@ -585,6 +609,117 @@ class PredicateOpsMixin:
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             return any(bool(getattr(sim.get_entity(tid), "_is_avatar_change_target", False)) for tid in targets)
 
+        if t == "RPG.GameCore.ByCompareChallengeLeft":
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            left = (
+                max(0, runner.state.challenge_turn_limit - runner.state.challenge_turns_elapsed)
+                if (runner is not None and runner.state.challenge_turn_limit > 0)
+                else 99
+            )
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            return _compare_values(float(left), rhs, str(pred.get("CompareType", "LessEqual")))
+
+        if t == "RPG.GameCore.ByBattleHasCertainResult":
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            return bool(runner is not None and runner.state.special_outcome is not None)
+
+        if t == "RPG.GameCore.ByCompareHP":
+            targets = (
+                self._resolve_targets(pred.get("TargetType"), ctx)
+                if "TargetType" in pred
+                else [ctx.modifier_owner_id or ctx.caster_id]
+            )
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            cmp_type = str(pred.get("CompareType", "Equal"))
+            return any(
+                _compare_values(float(getattr(sim.get_entity(tid), "current_hp", 0.0)), rhs, cmp_type)
+                for tid in targets
+                if sim.get_entity(tid) is not None
+            )
+
+        if t == "RPG.GameCore.ByCompareMonsterUniqueID":
+            targets = (
+                self._resolve_targets(pred.get("TargetType"), ctx)
+                if "TargetType" in pred
+                else [ctx.modifier_owner_id or ctx.caster_id]
+            )
+            rhs = int(round(self._eval_num(pred.get("TargetMonsterUniqueID"), ctx, 0.0)))
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is not None and int(getattr(ent, "monster_id", 0) or 0) == rhs:
+                    return True
+                if runner is not None:
+                    try:
+                        if int(runner.get_enemy_state(tid).blueprint.monster_id) == rhs:
+                            return True
+                    except KeyError:
+                        pass
+            return False
+
+        if t == "RPG.GameCore.ByCurrentSkillName":
+            want = _str_val(pred.get("SkillName"))
+            cur_sk = str(getattr(rt, "_current_skill_name", "") or "")
+            return bool(want and (want == cur_sk or want in str(ctx.ability_name or "")))
+
+        if t == "RPG.GameCore.ByInTimelinePerform":
+            return False
+
+        if t == "RPG.GameCore.ByIsDamageType":
+            allowed = {normalize_element(str(d)) for d in (pred.get("DamageTypeList") or ())}
+            if not allowed and "DamageType" in pred:
+                dt_val = pred["DamageType"]
+                if isinstance(dt_val, Mapping):
+                    allowed.add(normalize_element(str(dt_val.get("DamageType", ""))))
+                else:
+                    allowed.add(normalize_element(str(dt_val)))
+            if not allowed:
+                return False
+            if "TargetType" in pred:
+                targets = self._resolve_targets(pred.get("TargetType"), ctx)
+                return any(
+                    normalize_element(str(getattr(sim.get_entity(tid), "element", ""))) in allowed
+                    for tid in targets
+                    if sim.get_entity(tid) is not None
+                )
+            cur_elem = normalize_element(str((ctx.damage_data or {}).get("Element", "")))
+            return bool(cur_elem and cur_elem in allowed)
+
+        if t == "RPG.GameCore.ByIsInsertAction":
+            return bool(ctx.current_attack_type in ("Insert", "Pursued") or getattr(rt, "_in_insert_action", False))
+
+        if t == "RPG.GameCore.ByIsTurnActionEntity":
+            targets = (
+                self._resolve_targets(pred.get("TargetType"), ctx)
+                if "TargetType" in pred
+                else [ctx.modifier_owner_id or ctx.caster_id]
+            )
+            cur = getattr(sim, "_current_turn_entity", None)
+            return bool(cur is not None and cur.name in targets)
+
+        if t == "RPG.GameCore.ByTargetIsStanceWeak":
+            attackers = (
+                self._resolve_targets(pred.get("AttackerType"), ctx)
+                if "AttackerType" in pred
+                else []
+            ) or ([ctx.caster_id] if ctx.caster_id else [])
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            for aid in attackers:
+                a_ent = sim.get_entity(aid)
+                if a_ent is None:
+                    continue
+                a_elem = normalize_element(str(getattr(a_ent, "element", "")))
+                if not a_elem:
+                    continue
+                for tid in targets:
+                    t_ent = sim.get_entity(tid)
+                    if t_ent is not None and a_elem in getattr(t_ent, "weaknesses", []):
+                        return True
+            return False
+
         if t == "DNILHDGHLGL":
             # 官方贪饕侵蚀目标判定（HILNFHCPEAD = TargetType）
             # 优先查官方 StageInvasionConfig.MonsterInvasionList（按 monster_id 与 LMEBOHHDIAG 周期序列），
@@ -629,6 +764,37 @@ class PredicateOpsMixin:
             prov = getattr(sim, "gluttony_target_provider", None)
             if callable(prov):
                 return any(bool(prov(tid)) for tid in targets)
+            return False
+
+        if t == "RPG.GameCore.ByCompareControlSkillEffectIsDamaging":
+            targets = self._resolve_targets(
+                pred.get("TargetType") or {"Alias": "ModifierOwnerEntity"}, ctx
+            )
+            ctrl_type = str(pred.get("ControlSkillType") or "ControlSkill01")
+            atk_map = {
+                "ControlSkill01": "Normal",
+                "ControlSkill02": "BPSkill",
+                "ControlSkill03": "Ultra",
+            }
+            want_atk = atk_map.get(ctrl_type, "Normal")
+            damaging_effects = {"SingleAttack", "Blast", "AoEAttack", "Bounce"}
+            rt.loader._ensure_avatars()
+            rt.loader._ensure_avatar_skills()
+            for tid in targets:
+                spec = rt.entity_specs.get(tid)
+                if spec is None or spec.is_servant:
+                    continue
+                av = rt.loader._avatars.get(int(spec.unit_id))
+                if not av:
+                    continue
+                for sid in av.get("SkillList") or ():
+                    row = rt.loader._avatar_skills.get((int(sid), 1), {})
+                    atk_t = str(
+                        row.get("AttackType")
+                        or ("Normal" if row.get("SkillTriggerKey") == "Skill01" else "")
+                    )
+                    if atk_t == want_atk and str(row.get("SkillEffect") or "") in damaging_effects:
+                        return True
             return False
 
         director = getattr(sim, "_stage_director", None)

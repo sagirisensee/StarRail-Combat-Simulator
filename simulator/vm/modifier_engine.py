@@ -43,8 +43,10 @@ PROPERTY_TO_STAT: Dict[str, Tuple[StatType, ModifierOp, bool]] = {
     "DefenceAddedRatio": (StatType.DEF_PERCENT, ModifierOp.PERCENT, False),
     "DefenceDelta": (StatType.DEF, ModifierOp.ADD, False),
     "BreakDamageAddedRatioBase": (StatType.BREAK_EFFECT, ModifierOp.ADD, False),
+    "StanceBreakAddedRatio": (StatType.BREAK_EFFICIENCY, ModifierOp.ADD, False),
     "SPRatioBase": (StatType.ERR, ModifierOp.ADD, False),
     "AggroAddedRatio": (StatType.AGGRO, ModifierOp.PERCENT, False),
+    "FatigueRatio": (StatType.FATIGUE, ModifierOp.ADD, False),
 }
 
 CONVERT_PROPERTY_PAIR: Dict[str, str] = {
@@ -81,6 +83,10 @@ class VMModifierInstance:
     caster_snapshot_props: Dict[str, float] = field(default_factory=dict)
     _spawn_order: int = 0
     _destroyed: bool = False
+    shield_value: float = 0.0
+    shield_max: float = 0.0
+    stacked_weaknesses: Dict[str, List[Tuple[str, Tuple[str, ...]]]] = field(default_factory=dict)
+    weak_resistance_deltas: Dict[str, List[Tuple[str, str, float]]] = field(default_factory=dict)
 
     @property
     def status_key(self) -> str:
@@ -138,6 +144,107 @@ class ModifierEngine:
     def get_modifier_status_type(self, mod: VMModifierInstance) -> str:
         """返回 Modifier 的官方 StatusType（先读自身/合成配置，再查官方 StatusConfig 系列表）。"""
         return str(mod.config.get("StatusType") or "") or self.rt.loader.get_modifier_status_type(mod.name)
+
+    def can_dispel_modifier(self, mod: VMModifierInstance) -> bool:
+        """校验 Modifier 是否允许被驱散（优先遵循 UnDispellable 标记与官方 StatusConfig.CanDispel）。"""
+        if "UnDispellable" in mod.behavior_flags:
+            return False
+        official = self.rt.loader.get_modifier_can_dispel(mod.name)
+        if official is not None:
+            return bool(official)
+        return bool(mod.config.get("CanDispel", True))
+
+    def sync_entity_shield(self, entity_id: str) -> None:
+        """将实体挂载的所有活性护盾 Modifier 最大有效盾量同步到 Entity.shield。"""
+        if not entity_id or entity_id == "__LEVEL__":
+            return
+        ent = self.rt.sim.get_entity(entity_id)
+        if ent is not None:
+            ent.shield = max((m.shield_value for m in self.get_modifiers(entity_id) if m.shield_value > 0.0), default=0.0)
+
+    def recompute_entity_weaknesses(self, entity_id: str, *, unlock_if_unprotected: bool = False) -> None:
+        """根据实体初始弱点与当前全部活跃 Modifier 的 StackWeakness / ClearWeakness 声明重算有效弱点列表。"""
+        if not entity_id or entity_id == "__LEVEL__":
+            return
+        ent = self.rt.sim.get_entity(entity_id)
+        if ent is None:
+            return
+        if not hasattr(ent, "_base_weaknesses"):
+            setattr(ent, "_base_weaknesses", list(getattr(ent, "weaknesses", [])))
+        cur: List[str] = list(getattr(ent, "_base_weaknesses", []))
+
+        director = getattr(self.rt.sim, "_stage_director", None)
+        runner = getattr(director, "runner", None) if director is not None else None
+        if runner is not None:
+            try:
+                mrs = runner.get_enemy_state(entity_id)
+                for elem in getattr(mrs, "stacked_weaknesses", ()):
+                    if elem not in cur:
+                        cur.append(elem)
+            except KeyError:
+                pass
+
+        has_protected: Optional[bool] = None
+        protected_elems: Set[str] = set()
+        for m in sorted(self.by_uid.values(), key=lambda x: x._spawn_order):
+            if m._destroyed:
+                continue
+            ops = m.stacked_weaknesses.get(entity_id)
+            if not ops:
+                continue
+            for op, elems in ops:
+                if op == "Override":
+                    cur = list(elems)
+                elif op in ("Attach", "Add"):
+                    for el in elems:
+                        if el not in cur:
+                            cur.append(el)
+                elif op in ("Remove", "Clear", "ClearAttach"):
+                    cur = [el for el in cur if el not in elems]
+                elif op == "Protected":
+                    has_protected = True
+                    protected_elems.update(elems)
+                elif op == "ClearProtected":
+                    has_protected = False
+                    if elems:
+                        protected_elems.difference_update(elems)
+                    else:
+                        protected_elems.clear()
+
+        ent.weaknesses[:] = cur
+        setattr(ent, "_protected_weaknesses", set(protected_elems))
+        if has_protected is True:
+            ent.toughness_locked = True
+        elif has_protected is False or unlock_if_unprotected:
+            has_flag_lock = any(
+                not m._destroyed and ("MuteBreak" in m.behavior_flags or "SingleBlock" in m.behavior_flags)
+                for m in self.get_modifiers(entity_id)
+            )
+            if not has_flag_lock:
+                ent.toughness_locked = False
+
+    def recompute_entity_damage_res(self, entity_id: str) -> None:
+        """根据实体初始属性抗性与当前全部活跃 Modifier 的 StackWeakResistance 声明重算 damage_res。"""
+        if not entity_id or entity_id == "__LEVEL__":
+            return
+        ent = self.rt.sim.get_entity(entity_id)
+        if ent is None:
+            return
+        if not hasattr(ent, "_base_damage_res"):
+            setattr(ent, "_base_damage_res", dict(getattr(ent, "damage_res", {}) or {}))
+        res: Dict[str, float] = dict(getattr(ent, "_base_damage_res", {}))
+        for m in sorted(self.by_uid.values(), key=lambda x: x._spawn_order):
+            if m._destroyed:
+                continue
+            deltas = m.weak_resistance_deltas.get(entity_id)
+            if not deltas:
+                continue
+            for stype, elem, val in deltas:
+                if stype == "Delta":
+                    res[elem] = float(res.get(elem, 0.0)) + float(val)
+                else:
+                    res[elem] = float(val)
+        ent.damage_res = res
 
     def _lookup_modifier_config(self, mod_name: str, ability_name: str = "") -> Dict[str, Any]:
         if mod_name.startswith("MCommon_BreakDebuff_"):
@@ -570,6 +677,15 @@ class ModifierEngine:
                     runner.get_enemy_state(mod.owner_id).lock_hp_ratio = None
                 except KeyError:
                     pass
+        if owner_ent is not None and getattr(mod, "_enabled_negative_hp", False):
+            has_other_neg = any(
+                not m._destroyed
+                and m.uid != mod.uid
+                and getattr(m, "_enabled_negative_hp", False)
+                for m in self.get_modifiers(mod.owner_id)
+            )
+            if not has_other_neg:
+                setattr(owner_ent, "_negative_hp_enabled", False)
 
         # 触发 OnDestroy
         mod_ctx = ExecutionContext(
@@ -595,6 +711,13 @@ class ModifierEngine:
             self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key, reason=reason)
             if "DirtyHPRatio" in mod.properties:
                 self._recompute_dirty_hp_ratio(mod.owner_id)
+        if mod.stacked_weaknesses:
+            for tid, ops in list(mod.stacked_weaknesses.items()):
+                had_prot = any(op == "Protected" for op, _ in ops)
+                self.recompute_entity_weaknesses(tid, unlock_if_unprotected=had_prot)
+        if mod.weak_resistance_deltas:
+            for tid in list(mod.weak_resistance_deltas.keys()):
+                self.recompute_entity_damage_res(tid)
 
         # 通知 OnModifierRemove / OnListenModifierRemove
         mod_status_type = self.get_modifier_status_type(mod)
@@ -831,6 +954,8 @@ class ModifierEngine:
             return sum(m.convert_properties.get("MaxHP", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "CurrentHP":
             return float(ent.current_hp)
+        if prop_name == "NegativeHP":
+            return float(getattr(ent, "_negative_hp", 0.0) or 0.0)
         if prop_name == "HPRatio":
             m = float(ent.max_hp) if used_override else float(port.max_hp(entity_id))
             return float(ent.current_hp / m) if m > 0 else 1.0
@@ -848,6 +973,12 @@ class ModifierEngine:
             return float(ent.base_speed)
         if prop_name == "Shield":
             return float(getattr(ent, "shield", 0.0))
+        if prop_name == "CurrentStance":
+            return float(getattr(ent, "current_toughness", 0.0))
+        if prop_name == "MaxStance":
+            return float(getattr(ent, "max_toughness", 0.0))
+        if prop_name == "ActionDelay":
+            return float(getattr(ent, "remaining_av", 0.0)) / 10.0
         if prop_name == "AllDamageTypeAddedRatio":
             return float(port.stat(entity_id, StatType.DMG_BOOST))
         mapping = PROPERTY_TO_STAT.get(prop_name)
@@ -1025,6 +1156,38 @@ class ModifierEngine:
         for cb in mod.config.get("_CallbackList", []):
             if cb.get("Event") == event_name:
                 self.rt.execute_tasks(cb.get("CallbackConfig", []), ctx)
+
+    def dispatch_event_to_modifiers(
+        self,
+        modifiers: Sequence[VMModifierInstance],
+        event_name: str,
+        *,
+        param_entity_id: Optional[str] = None,
+        param_entity2_id: Optional[str] = None,
+    ) -> None:
+        """仅向指定 Modifier 列表派发事件（避免 OnListen* 广播误触已挂载角色监听）。"""
+        entries: List[Tuple[int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
+        for mod in modifiers:
+            if mod._destroyed:
+                continue
+            for cb in mod.config.get("_CallbackList", []):
+                if cb.get("Event") == event_name:
+                    prio = int(cb.get("Priority", 0))
+                    entries.append((prio, mod._spawn_order, mod, cb.get("CallbackConfig", [])))
+        entries.sort(key=lambda item: (item[0], item[1]))
+        for _, _, mod, tasks in entries:
+            if mod._destroyed:
+                continue
+            ctx = ExecutionContext(
+                runtime=self.rt,
+                caster_id=mod.caster_id,
+                ability_name=mod.ability_name,
+                modifier_owner_id=mod.owner_id,
+                modifier_instance=mod,
+                param_entity_id=param_entity_id,
+                param_entity2_id=param_entity2_id,
+            )
+            self.rt.execute_tasks(tasks, ctx)
 
     def dispatch_event(
         self,

@@ -60,6 +60,7 @@ class StatType(Enum):
     EHR = "ehr"                  # 效果命中
     OUTGOING_HEALING = "outgoing_healing" # 治疗量加成
     HEAL_BOOST = "outgoing_healing"       # 治疗量加成 (兼容别名)
+    FATIGUE = "fatigue"                   # 疲惫/出伤衰减 (Damage = max(MinFatigue, 1 - FatigueRatio))
 
 
 class ModifierOp(Enum):

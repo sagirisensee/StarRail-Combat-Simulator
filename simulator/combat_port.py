@@ -702,7 +702,17 @@ class SimulatorCombatPort:
         if tgt and hasattr(tgt, "current_hp"):
             cur_max = self.max_hp(target_id) or tgt.max_hp
             cap = tgt.effective_hp_cap(cur_max) if hasattr(tgt, "effective_hp_cap") else cur_max
-            tgt.current_hp = min(cap, tgt.current_hp + amount)
+            neg_hp = float(getattr(tgt, "_negative_hp", 0.0) or 0.0)
+            if neg_hp > 0.0 and amount > 0.0:
+                absorbed_neg = min(neg_hp, float(amount))
+                new_neg = neg_hp - absorbed_neg
+                tgt._negative_hp = 0.0 if new_neg <= 1e-6 else new_neg
+                rem_heal = max(0.0, float(amount) - absorbed_neg)
+            else:
+                rem_heal = float(amount)
+            tgt.current_hp = min(cap, tgt.current_hp + rem_heal)
+            from simulator.effects import sync_hp_shared_subtargets
+            sync_hp_shared_subtargets(self.sim, tgt)
             self.sim.event_bus.publish(HealAppliedEvent(
                 av=getattr(self.sim, "current_av", 0.0),
                 cycle=getattr(self.sim, "current_cycle", 0),

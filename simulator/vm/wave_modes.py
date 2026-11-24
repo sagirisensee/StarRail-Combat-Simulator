@@ -116,7 +116,7 @@ class BreakStatusHelper:
         tgt = self.sim.get_entity(event.target_name)
         if tgt is None or not getattr(tgt, "is_enemy", False):
             return
-        if event.element == "Quantum":
+        if event.element == "Quantum" and getattr(event, "entangle_applied", True):
             self.quantum_entanglements[event.target_name] = (event.breaker_name, 1)
         elif event.element == "Wind":
             self.wind_shears[event.target_name] = (event.breaker_name, 2)

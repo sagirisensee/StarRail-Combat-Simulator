@@ -477,6 +477,10 @@ class TurnSimulator:
                         owner_id=active_entity.name,
                         param_entity_id=active_entity.name,
                     )
+                    vm_rt.modifier_engine.dispatch_event(
+                        "OnListenEndBreak",
+                        param_entity_id=active_entity.name,
+                    )
             self.event_bus.publish(TurnBeginEvent(
                 av=round(self.current_av, 2),
                 cycle=self.current_cycle,

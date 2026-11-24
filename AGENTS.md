@@ -144,9 +144,47 @@ $$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult}
 
 ---
 
-## 4. 架构与质量红线
+## 4. 核心微内核架构与四层强制边界规范
 
-- **零手写日志/关卡插件**：所有对账修复必须落在通用 `ConfigAbility` VM、官方表加载器（`StageDataLoader` / `loader.py`）、通用调度器（`ActionScheduler` / `core.py`）或通用日志元信息提取器（`simulator/vm/reconcile/`），严禁针对特定关卡或日志编写定制补丁或硬编码数值。
-- **官方源数据只读**：`data/TurnBasedGameData/` 只读，所有差异必须由引擎正确解释官方 JSON/Excel 来解决。
-- **源文件修改规范**：所有仓库文件修改必须直接通过 `edit_file` / `write_file` 落盘，严禁通过临时脚本间接改写。
-- **Windows PowerShell 环境注意**：不使用 `rg`、`head`、`tail`、`&&`，不在双引号内使用转义双引号。
+本项目采用**纯数据驱动的官方 `TurnBasedGameData` + `ConfigAbility` 虚拟机（`simulator/vm/`）** 架构：
+- **微内核零硬编码**：`core.py`, `scheduler.py`, `status.py`, `damage.py` 严禁出现具体角色名、怪物模板 ID 或关卡数值。
+- **四层职责绝对隔离**：
+  1. **数据驱动敌方套件 (`simulator/vm/enemy_kit.py`)**：仅执行官方 `ConfigAI` 与 `ConfigAbility` 确定的机制（多动、召唤、阶段切换、印记/Debuff、护盾/锁血拦截）。严禁硬编码我方角色名、中文怪名、玩家 UID 或随机点名序列。
+  2. **数据驱动关卡导演 (`simulator/vm/stage_director.py`)**：仅处理通用关卡事实：波次切换（`MoCWaveMode` / `AnomalyWaveMode`）、轮次边界、`BattleEvent` 调度与通用钩子。严禁写入单场随机命中序列。
+  3. **通用回放框架 (`simulator/golden/` & `simulator/golden_diff.py`)**：负责解析 Veritas JSONL、动态加载角色、注入暴击先知与驱动 `run_trajectory_replay()`。严禁写入 `if "<log_id>" in str(log_path)` 单场分支。
+  4. **单场日志 RNG 插件 (`simulator/plugins/log_<tag>.py` 或 `reconcile/auto_rng.py`)**：集中封装单场录制日志的全部随机真值（`NON_CRITS` 非暴击账本、点名序列与弹射命中）。
+
+---
+
+## 5. 官方 VM 算子扩展与关键时序规范
+
+### 5.1 扩展未实现的官方 VM 节点 (`strict=True` 驱动)
+
+`TaskExecutor` 与 `ModifierEngine` 默认运行在 **`strict=True`** 模式下，遇到未知的 `Task` 或 `Predicate` `$type` 会直接抛出 `NotImplementedError`。扩展新能力时按以下 4 步归属：
+1. **纯表现节点**：仅涉及镜头/动画/特效/UI/音效的节点，加入 `simulator/vm/loader.py` 的 `PRUNABLE_PRESENTATION_TYPES`。
+2. **目标解析 (`TargetAlias` / `TargetType`)**：新增锚点或修饰符在 `simulator/vm/target_alias.py` 中按官方语义实现，注意保序去重与存活/不可选中过滤。
+3. **属性映射与二次转化隔离**：新增属性在 `simulator/vm/modifier_engine.py` 加入 `PROPERTY_TO_STAT`。二次转化（`*Convert`）务必同步登记 `CONVERT_PROPERTY_PAIR` 并标记 `StatusTag.EXCLUDE_FROM_STAT_TRANSFERS`，防止转化死循环。
+4. **算子归属四分流 (`simulator/vm/ops/`)**：
+   - 断言谓词加在 `predicates.py`；
+   - 数值、伤害、治疗、护盾、状态加在 `combat_ops.py`；
+   - 拉推条、召唤、插队加在 `turn_ops.py`；
+   - 控制流加在 `executor.py`。
+   所有数值参数统一经 `self._eval_num(...)` 求值，自动兼容固定值与 `PostfixExpr` 逆波兰表达式。
+
+### 5.2 VM 关键时序约定
+
+- **`OnEnterBattle` 全局升序**：`TurnSimulator.__init__` 在实体初始化后调用 `sim.vm_runtime.enter_battle()`，按 `_CallbackList.Priority` 升序（如 `-92 → -80 → 0`）执行，随后刷新实体 `OnAbilityPropertyChange` 区间监听。
+- **Modifier 衰减时钟 (`LifeStepMoment`)**：`ModifierPhase1End` 在 `TurnBeginEvent` 扣减；`TurnEnd` 在 `TurnEndEvent` 扣减。
+- **新实体入场光环补发**：通过 `CreateServant` 或波次切换创建新实体时，触发 `modifier_engine.on_entity_created()` / `attach_halos_to_new_entity()`，确保 `IsHaloStatus` 自动覆盖新入场忆灵或敌方。
+
+---
+
+## 6. 全仓工程五大核心戒律与质量红线
+
+1. **❌ 戒律 1：严禁在核心引擎中硬编码具体角色名、技能名或角色 ID**：`core.py`、`scheduler.py`、`entity.py`、`effects.py`、`status.py` 必须保持纯净微内核。
+2. **❌ 戒律 2：严禁绕过 `CombatPort` 或 `VMRuntime` 契约直接篡改私有状态**：严禁静默吞掉未知 `$type` 掩盖实现缺失。
+3. **❌ 戒律 3：严禁在属性汇算中使用状态名称/ID 硬编码黑名单**：二次转化隔离一律依赖 `*Convert` 与 `StatusTag`。
+4. **❌ 戒律 4：严禁把单场日志 RNG 结果写进通用引擎模块**：通用模块中严禁出现 `battle_2026*` 字符串判断。
+5. **❌ 戒律 5：严禁使用任何经验凑数浮点或真值反推逻辑伪造对账通过**：禁止循环自证，所有中间量由内核原生计算后单向核对。
+6. **官方源数据只读**：`data/TurnBasedGameData/` 只读，所有差异必须由引擎正确解释官方 JSON/Excel 来解决。
+7. **Windows PowerShell 环境兼容**：不使用 `rg`、`head`、`tail`、`&&`，不在双引号内使用转义双引号。

@@ -30,7 +30,7 @@ DEFAULT_TBGD_ROOT = (
     else "/tmp/tbgd"
 )
 
-_ABILITY_INDEX_CACHE_VERSION = 1
+_ABILITY_INDEX_CACHE_VERSION = 2
 _ABILITY_INDEX_MEM_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
 # 经实证确认的纯表现/客户端无逻辑副作用节点，加载期裁剪以压缩 AST 体积
@@ -141,8 +141,6 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SetEnergyBarState",
     "RPG.GameCore.SetSummonerEnergyBarState",
     "RPG.GameCore.SetTargetAlwaysAutoBattle",
-    "RPG.GameCore.AddEntityToTeamFormation",
-    "RPG.GameCore.RemoveEntityFromTeamFormation",
     "RPG.GameCore.SetTargetTeamLocation",
     "RPG.GameCore.SetTriggeredFormationAssetAutoCenter",
     "RPG.GameCore.PreloadBattleEventByID",
@@ -167,6 +165,19 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SetBattleTargetProgress",
     "RPG.GameCore.ShowEvolveBuildGearSelectInBattle",
     "RPG.GameCore.ToggleUITop",
+    "RPG.GameCore.SetCharacterShowSummonUI",
+    "RPG.GameCore.ShowBattleVersusBarCountDownEffect",
+    "RPG.GameCore.SetCountDownWarning",
+    "RPG.GameCore.AddChallengeBossInfoPanelState",
+    "RPG.GameCore.RemoveChallengeBossInfoPanelState",
+    "RPG.GameCore.OverrideEntityModifierPhaseCamera",
+    "RPG.GameCore.PlayScreenTransfer",
+    "RPG.GameCore.WaitAbilityStartTimeStamp",
+    "RPG.GameCore.SetMonsterNameBoardMaxBuffCount",
+    "RPG.GameCore.SetModifierOverrideNameForStatus",
+    "RPG.GameCore.ReleaseCharacterHUDVisibleControl",
+    "RPG.GameCore.AddTargetStancePreshowConfig",
+    "RPG.GameCore.SwitchChallengeBossInfoPanelState",
 }
 
 
@@ -358,6 +369,7 @@ class GameDataLoader:
         self._monsters: Optional[Dict[int, Dict[str, Any]]] = None
         self._monster_skills: Optional[Dict[int, Dict[str, Any]]] = None
         self._status_type_by_mod: Optional[Dict[str, str]] = None
+        self._can_dispel_by_mod: Optional[Dict[str, bool]] = None
 
     def _read_json(self, rel_or_abs: str) -> Any:
         path = rel_or_abs if os.path.isabs(rel_or_abs) else os.path.join(self.data_root, rel_or_abs)
@@ -641,32 +653,49 @@ class GameDataLoader:
             return None
         return ability_name, rel_path, mdef
 
+    def _ensure_status_config_tables(self) -> None:
+        if getattr(self, "_status_type_by_mod", None) is not None and getattr(self, "_can_dispel_by_mod", None) is not None:
+            return
+        status_table: Dict[str, str] = {}
+        dispel_table: Dict[str, bool] = {}
+        excel_dir = os.path.join(self.data_root, "ExcelOutput")
+        for fn in (
+            "AvatarStatusConfig.json",
+            "MonsterStatusConfig.json",
+            "StatusConfig.json",
+            "StatusConfigLD.json",
+        ):
+            path = os.path.join(excel_dir, fn)
+            if not os.path.exists(path):
+                continue
+            rows = self._read_excel(fn)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                mn = str(row.get("ModifierName") or "")
+                if not mn:
+                    continue
+                st = str(row.get("StatusType") or "")
+                if st and mn not in status_table:
+                    status_table[mn] = st
+                if mn not in dispel_table:
+                    dispel_table[mn] = bool(row.get("CanDispel", False))
+        self._status_type_by_mod = status_table
+        self._can_dispel_by_mod = dispel_table
+
     def get_modifier_status_type(self, mod_name: str) -> str:
         """从官方 StatusConfig 系列表按 ModifierName 解析官方 StatusType（Buff/Debuff/Other）。"""
-        if getattr(self, "_status_type_by_mod", None) is None:
-            table: Dict[str, str] = {}
-            excel_dir = os.path.join(self.data_root, "ExcelOutput")
-            for fn in (
-                "AvatarStatusConfig.json",
-                "MonsterStatusConfig.json",
-                "StatusConfig.json",
-                "StatusConfigLD.json",
-            ):
-                path = os.path.join(excel_dir, fn)
-                if not os.path.exists(path):
-                    continue
-                rows = self._read_excel(fn)
-                if not isinstance(rows, list):
-                    continue
-                for row in rows:
-                    if not isinstance(row, Mapping):
-                        continue
-                    mn = str(row.get("ModifierName") or "")
-                    st = str(row.get("StatusType") or "")
-                    if mn and st and mn not in table:
-                        table[mn] = st
-            self._status_type_by_mod = table
+        self._ensure_status_config_tables()
+        assert self._status_type_by_mod is not None
         return self._status_type_by_mod.get(mod_name, "")
+
+    def get_modifier_can_dispel(self, mod_name: str) -> Optional[bool]:
+        """从官方 StatusConfig 系列表按 ModifierName 解析官方 CanDispel（未收录返回 None）。"""
+        self._ensure_status_config_tables()
+        assert self._can_dispel_by_mod is not None
+        return self._can_dispel_by_mod.get(mod_name)
 
     # --- 角色/忆灵/光锥/遗器参数解析 ---
     def compute_effective_skill_levels(

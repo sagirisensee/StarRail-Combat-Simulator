@@ -125,6 +125,7 @@ class CompiledMonsterSkillSpec:
     is_aoe: bool = False
     hit_count: int = 1
     has_mark_target: bool = False
+    delay_ratio: float = 1.0
 
     def param(self, index: int, default: float = 0.0) -> float:
         """Return effective skill parameter at ``index`` (0-based)."""
@@ -953,6 +954,7 @@ class StageDataLoader:
                 is_aoe=is_aoe_sk,
                 hit_count=(ab_hits if not is_aoe_sk else 1),
                 has_mark_target=(not is_aoe_sk) and ab_mark,
+                delay_ratio=_unwrap_value(srow.get("DelayRatio"), 1.0),
             )
             skills[sid] = spec
             if tkey:
@@ -1002,13 +1004,18 @@ class StageDataLoader:
                 )
             )
 
-        # Summon IDs from CustomValues and SummonIDList
+        # Summon IDs and initial DynamicValues from MonsterConfig
         custom_values: dict[str, Any] = {}
         for cv in mrow.get("CustomValues", []):
             k = cv.get("BFLIFKBEOPJ")
             v = cv.get("MNDFOPKBHKP")
             if k is not None:
                 custom_values[str(k)] = v
+        for dv in mrow.get("DynamicValues", []):
+            k = dv.get("BFLIFKBEOPJ")
+            v = dv.get("MNDFOPKBHKP")
+            if k is not None:
+                custom_values.setdefault(str(k), _unwrap_value(v, 0.0))
 
         summon_ids_list: list[int] = []
         for s_id in mrow.get("SummonIDList", []):
@@ -1271,6 +1278,7 @@ class StageDataLoader:
             ("ChallengeStoryMazeConfig.json", ("EventIDList1", "EventIDList2"), "PF"),
             ("ChallengeStoryMazeTierce.json", ("HFIAAGAKFMD",), "PF"),
             ("ChallengeBossMazeConfig.json", ("EventIDList1", "EventIDList2"), "AS"),
+            ("ChallengeBossMazeTierce.json", ("HFIAAGAKFMD",), "AS"),
             ("ChallengePeakConfig.json", ("EventIDList",), "Peak"),
             ("ChallengePeakBossConfig.json", ("EventIDList", "HardEventIDList"), "Peak"),
         )
@@ -1352,6 +1360,35 @@ class StageDataLoader:
                                 mb_id = int(grow.get("MazeBuffID") or 0)
                                 if mb_id > 0 and mb_id not in tag_ids:
                                     tag_ids.append(mb_id)
+
+        boss_rows = self._try_read_excel_json("ChallengeBossMazeConfig.json")
+        if boss_rows:
+            for row in boss_rows:
+                if stage_id in (row.get("EventIDList1") or ()) or stage_id in (row.get("EventIDList2") or ()):
+                    mb_id = int(row.get("MazeBuffID") or 0)
+                    if mb_id > 0 and mb_id not in tag_ids:
+                        tag_ids.append(mb_id)
+            bt_rows = self._try_read_excel_json("ChallengeBossMazeTierce.json")
+            if bt_rows:
+                boss_by_id = {int(r.get("ID") or 0): r for r in boss_rows if r.get("ID")}
+                for brow in bt_rows:
+                    if stage_id in (brow.get("HFIAAGAKFMD") or ()):
+                        parent_id = int(brow.get("DLCKKJFMJOB") or 0)
+                        prow = boss_by_id.get(parent_id)
+                        if prow is not None:
+                            mb_id = int(prow.get("MazeBuffID") or 0)
+                            if mb_id > 0 and mb_id not in tag_ids:
+                                tag_ids.append(mb_id)
+
+        srow = self.stages.get(int(stage_id))
+        if isinstance(srow, Mapping):
+            for entry in srow.get("StageConfigData", ()):
+                if isinstance(entry, Mapping) and entry.get("BFLIFKBEOPJ") == "_BindingMazeBuff":
+                    raw_bm = str(entry.get("MNDFOPKBHKP", "")).strip()
+                    if raw_bm.isdigit():
+                        bm_id = int(raw_bm)
+                        if bm_id > 0 and bm_id not in tag_ids:
+                            tag_ids.append(bm_id)
 
         if not tag_ids:
             return ()

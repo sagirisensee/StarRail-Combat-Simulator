@@ -1,10 +1,9 @@
 # 星穹铁道战斗模拟器代码索引与架构速查表 (CODEBASE INDEX)
 
-> 📘 **相关文档**：
-> - [项目总览 (README.md)](README.md)
-> - [终极架构蓝图与演进路线 (docs/ARCHITECTURE_BLUEPRINT.md)](docs/ARCHITECTURE_BLUEPRINT.md)
-> - [ConfigAbility VM 引擎架构设计 (docs/VM_ARCHITECTURE.md)](docs/VM_ARCHITECTURE.md)
-> - [研发工程规范与开发指引 (DEVELOPER_GUIDE.md)](DEVELOPER_GUIDE.md)
+> 📘 **核心文档导航**：
+> - [项目总览与 VM 执行流水线架构 (README.md)](README.md)
+> - [研发工程规范、四大铁律与对账 SOP 总纲 (AGENTS.md)](AGENTS.md)
+> - [当前活跃攻坚台账 (docs/PROGRESS_ApocalypticShadow_420564-84.md)](docs/PROGRESS_ApocalypticShadow_420564-84.md)
 
 本文档用于在研发、VM 算子扩展与官方日志对账排障时**秒级定位**核心模块、数据源、适配器、关卡引擎与测试套件。
 
@@ -63,8 +62,8 @@
 | [`simulator/damage.py`](simulator/damage.py) | `DamageCalculator`, `DamageRequest`, `DamageBreakdown` | 8 大乘区纯函数伤害计算器 |
 | [`simulator/actions.py`](simulator/actions.py) & [`sp.py`](simulator/sp.py) | `ActionKind`, `DamageType`, `SkillPointManager` | 动作/伤害分类枚举与战技点池管理 |
 | [`simulator/inspector.py`](simulator/inspector.py) & [`tracer.py`](simulator/tracer.py) | `BattleInspector`, `ActionCausalTracer` | 只读战场快照查询与动作级因果链路追踪 |
-| [`simulator/kits/enemies/`](simulator/kits/enemies/) | `EnemyKit`, `BaseEnemyCombatPortImpl` | 敌方行为协议与攻击/扩散/弹射/受击回能执行端口 |
-| [`simulator/stage_director.py`](simulator/stage_director.py) & [`stage_mechanics.py`](simulator/stage_mechanics.py) | `MoCWaveMode`, `AnomalyWaveMode`, `BreakStatusHelper`, `StageMechanicPlugin` | 波次换波模式、弱点击破辅助与通用关卡环境插件 |
+| [`simulator/vm/enemy_kit.py`](simulator/vm/enemy_kit.py) & [`simulator/vm/enemy_port.py`](simulator/vm/enemy_port.py) | `DataDrivenEnemyKit`, `DataDrivenEnemyCombatPort` | 纯数据驱动敌方行为协议与攻击/扩散/弹射/受击回能执行端口 |
+| [`simulator/vm/stage_director.py`](simulator/vm/stage_director.py) & [`simulator/stage_mechanics.py`](simulator/stage_mechanics.py) | `DataDrivenStageDirector`, `BreakStatusHelper`, `StageMechanicPlugin` | 数据驱动波次换波、弱点击破辅助与通用关卡环境插件 |
 
 ---
 
@@ -75,8 +74,7 @@
 | [`simulator/db/tables.py`](simulator/db/tables.py) | `AVATAR_STATS`, `LIGHT_CONE_STATS`, `RELIC_SETS`, `RELIC_MAIN_AFFIX`, `RELIC_SUB_AFFIX` | 启动时直读官方 7 张 `ExcelOutput/*.json`（95 角色 / 172 光锥 / 64 遗器套装） |
 | [`simulator/db/calculator.py`](simulator/db/calculator.py) | `StatCalculator` | 按官方成长公式与精炼/强化等级精确计算局外白字与面板 |
 | [`simulator/db/character_db.py`](simulator/db/character_db.py) | `CharacterDB` | 玩家存档解析、多维度查询与 `to_combat_entity()` |
-| [`simulator/golden/`](simulator/golden/) | `parse_golden_jsonl`, `SequenceRecorder`, `extract_timeline`, `run_trajectory_replay`, `diff_sequences` | Golden Trace 拆分模块：`models.py` / `parser.py` / `replay.py` / `diff.py` |
-| [`simulator/golden_diff.py`](simulator/golden_diff.py) | CLI 与兼容门面 | 重导出 `simulator.golden.*` 并提供 `build_stage_sim` 与命令行入口 |
+| [`simulator/golden/`](simulator/golden/) | `parse_golden_jsonl`, `SequenceRecorder`, `extract_timeline`, `run_trajectory_replay`, `diff_sequences` | Golden Trace 真值拆分模块：`models.py` / `parser.py` / `replay.py` / `diff.py` |
 | [`simulator/plugins/`](simulator/plugins/) | `log_<tag>.py` (`NON_CRITS` + `attach_log_<tag>_plugin`) | 单场日志专属 RNG 真值插件（非暴击账本、受击/弹射/阿哈序列） |
 
 ---

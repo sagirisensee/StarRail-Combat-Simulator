@@ -6,7 +6,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from ...actions import DamageType
-from ...events import HPLostEvent
+from ...damage import DamageBreakdown
+from ...events import DamageAppliedEvent, HPLostEvent
 from ...status import StatType
 from ..expr import dotnet_hash
 from ..target_alias import ExecutionContext
@@ -195,7 +196,10 @@ class CombatOpsMixin:
             final_heal = max(0.0, base_heal * (1.0 + outgoing))
             hp_before = float(tgt.current_hp)
             cap = tgt.effective_hp_cap(float(sim.port.max_hp(tgt.name)))
-            actual_restored = max(0.0, min(cap, hp_before + final_heal) - hp_before)
+            neg_hp = float(getattr(tgt, "_negative_hp", 0.0) or 0.0)
+            neg_cleared = min(neg_hp, final_heal)
+            rem_heal = max(0.0, final_heal - neg_cleared)
+            actual_restored = neg_cleared + max(0.0, min(cap, hp_before + rem_heal) - hp_before)
             heal_data["HealValue"] = final_heal
             heal_data["ActualHealValue"] = actual_restored
             heal_data["OverflowHealValue"] = max(0.0, final_heal - actual_restored)
@@ -377,11 +381,12 @@ class CombatOpsMixin:
         damage_type = dtype_map.get(atk_type, DamageType.BASIC)
         is_true_dmg = (damage_type == DamageType.TRUE)
         is_dot_dmg = (damage_type == DamageType.DOT)
+        is_additional_dmg = (damage_type == DamageType.ADDITIONAL)
         is_nested_sub = is_true_dmg or is_dot_dmg or getattr(rt, "_in_after_attack", False) or is_equip_sub
 
         atk_seq = int(getattr(sim, "_action_seq", 0))
         atk_key = (atk_seq, eff_attacker_id)
-        if not is_nested_sub:
+        if not is_nested_sub and not is_additional_dmg:
             acc_targets = rt._attack_targets_by_key.setdefault(atk_key, [])
             for tid in targets:
                 if tid != "__LEVEL__" and tid not in acc_targets:
@@ -458,6 +463,124 @@ class CombatOpsMixin:
             and bool(real_targets)
             and all(tid == eff_attacker_id for tid in real_targets)
         )
+        is_enemy_to_player_base_dmg = (
+            final_formula == "ByBaseDamage"
+            and pct == 0.0
+            and eff_attacker_id != "__LEVEL__"
+            and caster_ent_bd is not None
+            and bool(getattr(caster_ent_bd, "is_enemy", False))
+            and bool(real_targets)
+            and all(
+                (t_ent := sim.get_entity(tid)) is not None
+                and not bool(getattr(t_ent, "is_enemy", False))
+                for tid in real_targets
+            )
+        )
+        if is_enemy_to_player_base_dmg:
+            sp_base = 0.0
+            sp_ratio = self._eval_num(atk_prop.get("SPHitRatio"), ctx, 0.0)
+            if sp_ratio > 0.0 and not is_true_dmg and not is_dot_dmg:
+                sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
+                if sp_base <= 0.0 and ctx.ability_name:
+                    mspec = getattr(getattr(caster_ent_bd, "kit", None), "ai_spec", None)
+                    if mspec is not None:
+                        for sk_key, sk_spec in getattr(mspec, "skills_by_key", {}).items():
+                            if sk_key and (f"_{sk_key}_" in ctx.ability_name or ctx.ability_name.endswith(f"_{sk_key}")):
+                                sp_base = float(getattr(sk_spec, "sp_hit_base", 0.0) or 0.0)
+                                break
+            for tid in real_targets:
+                tgt_ent = sim.get_entity(tid)
+                if tgt_ent is None or float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
+                    continue
+                old_hp = float(tgt_ent.current_hp)
+                raw_dmg = max(0.0, float(eff_flat))
+                if bool(getattr(tgt_ent, "_negative_hp_enabled", False)) and raw_dmg > 0.0 and old_hp - raw_dmg < min(old_hp, 1.0):
+                    tgt_ent.current_hp = min(old_hp, 1.0)
+                    actual = max(0.0, old_hp - float(tgt_ent.current_hp))
+                    overflow = max(0.0, raw_dmg - actual)
+                    if overflow > 0.0:
+                        tgt_ent._negative_hp = float(getattr(tgt_ent, "_negative_hp", 0.0) or 0.0) + overflow
+                else:
+                    actual = min(old_hp, raw_dmg)
+                    tgt_ent.current_hp = max(0.0, old_hp - actual)
+                if actual > 0.0:
+                    sim.event_bus.publish(
+                        HPLostEvent(
+                            av=round(float(sim.current_av), 2),
+                            cycle=int(sim.current_cycle),
+                            entity_name=tid,
+                            amount=float(actual),
+                            hp_left=float(tgt_ent.current_hp),
+                            cause=ctx.ability_name or "ByBaseDamage",
+                        )
+                    )
+                elif raw_dmg > 0.0 and bool(getattr(tgt_ent, "_negative_hp_enabled", False)):
+                    me.dispatch_event(
+                        "OnHPChange",
+                        owner_id=tid,
+                        param_entity_id=eff_attacker_id,
+                        change_value=-float(raw_dmg),
+                        current_attack_type=atk_type,
+                        param_flags=("IsHPChangeByDamage",),
+                    )
+                    me.dispatch_event(
+                        "OnListenHPChange",
+                        param_entity_id=tid,
+                        change_value=-float(raw_dmg),
+                    )
+                if raw_dmg > 0.0:
+                    sim.event_bus.publish(
+                        DamageAppliedEvent(
+                            av=round(float(sim.current_av), 2),
+                            cycle=int(sim.current_cycle),
+                            attacker_name=eff_attacker_id,
+                            target_name=tid,
+                            damage=float(raw_dmg),
+                            is_crit=False,
+                            breakdown=DamageBreakdown(
+                                attacker_name=eff_attacker_id,
+                                target_name=tid,
+                                base_dmg=float(raw_dmg),
+                                crit_mult=1.0,
+                                is_crit=False,
+                                dmg_boost_mult=1.0,
+                                def_mult=1.0,
+                                res_mult=1.0,
+                                vuln_mult=1.0,
+                                reduction_mult=1.0,
+                                final_damage=float(raw_dmg),
+                            ),
+                            target_hp_left=float(tgt_ent.current_hp),
+                            damage_tag=damage_type.value,
+                            damage_type=damage_type,
+                            target_killed=bool(
+                                old_hp > 0.0
+                                and float(tgt_ent.current_hp) <= 0.0
+                                and not getattr(tgt_ent, "is_infinite_hp", False)
+                            ),
+                        )
+                    )
+                sp_hit = sp_base * sp_ratio * hit_split
+                if sp_hit > 0.0:
+                    energy_tid = (getattr(tgt_ent, "master_name", None) or tid) if getattr(tgt_ent, "is_memosprite", False) else tid
+                    sim.port.gain_hit_energy(energy_tid, base_amount=sp_hit)
+                me.dispatch_event(
+                    "OnAfterBeingHitAll",
+                    owner_id=tid,
+                    param_entity_id=eff_attacker_id,
+                    current_attack_type=atk_type,
+                )
+                me.dispatch_event(
+                    "OnListenAfterBeingHitAll",
+                    param_entity_id=tid,
+                    param_entity2_id=eff_attacker_id,
+                    damage_data={
+                        "FinalDamage": float(raw_dmg),
+                        "Result_FinalDamageBase": float(raw_dmg),
+                    },
+                    current_attack_type=atk_type,
+                )
+            return
         if is_level_base_dmg or is_enemy_self_base_dmg:
             can_last_kill = bool(atk_prop.get("CanTriggerLastKill", False))
             last_killer = (
@@ -490,6 +613,8 @@ class CombatOpsMixin:
                 if actual <= 0.0:
                     continue
                 tgt_ent.current_hp = max(0.0, float(tgt_ent.current_hp) - actual)
+                from ...effects import sync_hp_shared_subtargets
+                sync_hp_shared_subtargets(sim, tgt_ent)
                 me.dispatch_event(
                     "OnHPChange",
                     owner_id=tid,
@@ -584,6 +709,17 @@ class CombatOpsMixin:
                 )
                 was_strictly_alive = bool(tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) > 0.0)
                 prev_tgt_hp = float(getattr(tgt_ent, "current_hp", 0.0)) if tgt_ent is not None else 0.0
+                shared_main_id_pre = (getattr(rt, "hp_shared_groups", None) or {}).get(tid)
+                shared_main_ent_pre = (
+                    sim.get_entity(shared_main_id_pre)
+                    if shared_main_id_pre and shared_main_id_pre != tid
+                    else None
+                )
+                prev_shared_main_hp = (
+                    float(getattr(shared_main_ent_pre, "current_hp", 0.0))
+                    if shared_main_ent_pre is not None
+                    else 0.0
+                )
                 prev_dmg_red = getattr(tgt_ent, "damage_reduction", 0.0) if tgt_ent is not None else 0.0
                 applied_def_red = False
                 tgt_extra_vuln = 0.0
@@ -620,30 +756,82 @@ class CombatOpsMixin:
                     setattr(tgt_ent, "_vm_last_tgt_vuln", tgt_extra_vuln)
                     setattr(tgt_ent, "_vm_last_tgt_def_ignore", tgt_extra_def_ignore)
                     setattr(tgt_ent, "_vm_last_tgt_res_pen", tgt_extra_res_pen)
+                hit_dmg_data = dict(dmg_data)
                 if not is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
                         owner_id=eff_attacker_id,
                         param_entity_id=tid,
                         attack_target_ids=tuple(targets),
-                        damage_data=dmg_data,
+                        damage_data=hit_dmg_data,
                         current_attack_type=atk_type,
                     )
+                if not is_true_dmg:
+                    hit_extra_dmg_boost = float(hit_dmg_data.get("Attacker_AllDamageTypeAddedRatio", 0.0))
+                    hit_extra_def_ignore = -float(hit_dmg_data.get("Defender_DefenceAddedRatio", 0.0))
+                    hit_extra_res_pen = float(hit_dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
+                    hit_extra_vuln = float(hit_dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                    hit_extra_crit_dmg = float(hit_dmg_data.get("Attacker_CriticalDamageBase", 0.0))
+                    hit_base_mult_ratio = float(hit_dmg_data.get("Attacker_BaseDamageMultiRatio", 0.0))
+                    if abs(hit_base_mult_ratio - base_mult_ratio) > 1e-12:
+                        if str(atk_prop.get("FinalFormulaType", "")) == "ByBaseDamage" and pct == 0.0:
+                            hit_eff_pct = 0.0
+                            hit_eff_flat = flat * hit_split
+                        else:
+                            hit_eff_pct = (pct * hit_base_mult_ratio if hit_base_mult_ratio > 0 else pct) * hit_split
+                            hit_eff_flat = (flat * hit_base_mult_ratio if hit_base_mult_ratio > 0 else flat) * hit_split
+                    else:
+                        hit_eff_pct = eff_pct
+                        hit_eff_flat = eff_flat
+                    hit_res_delta = float(hit_dmg_data.get("Defender_AllDamageTypeResistance", 0.0)) - float(
+                        dmg_data.get("Defender_AllDamageTypeResistance", 0.0)
+                    )
+                    if abs(hit_res_delta) > 1e-12:
+                        tgt_extra_res_pen -= hit_res_delta
+                        if tgt_ent is not None:
+                            setattr(tgt_ent, "_vm_last_tgt_res_pen", tgt_extra_res_pen)
+                    hit_def_red_delta = float(hit_dmg_data.get("Defender_AllDamageReduce", 0.0)) - float(
+                        dmg_data.get("Defender_AllDamageReduce", 0.0)
+                    )
+                    if abs(hit_def_red_delta) > 1e-12 and tgt_ent is not None:
+                        cur_red_mult = max(0.0, 1.0 - float(getattr(tgt_ent, "damage_reduction", 0.0)))
+                        cur_red_mult *= max(0.0, 1.0 - hit_def_red_delta)
+                        new_combined_red = max(0.0, 1.0 - cur_red_mult)
+                        if abs(new_combined_red - prev_dmg_red) > 1e-9:
+                            tgt_ent.damage_reduction = new_combined_red
+                            applied_def_red = True
+                        cur_last_def_red = float(getattr(tgt_ent, "_vm_last_def_red", 0.0) or 0.0)
+                        setattr(tgt_ent, "_vm_last_def_red", cur_last_def_red + hit_def_red_delta)
+                else:
+                    hit_extra_dmg_boost = extra_dmg_boost
+                    hit_extra_def_ignore = extra_def_ignore
+                    hit_extra_res_pen = extra_res_pen
+                    hit_extra_vuln = extra_vuln
+                    hit_extra_crit_dmg = extra_crit_dmg
+                    hit_eff_pct = eff_pct
+                    hit_eff_flat = eff_flat
+                hit_eff_stance = eff_stance
+                if hit_eff_stance > 0.0 and eff_attacker_id and eff_attacker_id != "__LEVEL__":
+                    brk_eff = float(sim.port.stat(eff_attacker_id, StatType.BREAK_EFFICIENCY)) + float(
+                        hit_dmg_data.get("Attacker_StanceBreakAddedRatio", 0.0)
+                    )
+                    if abs(brk_eff) > 1e-12:
+                        hit_eff_stance *= max(0.0, 1.0 + brk_eff)
                 sim.port.attack(
                     eff_attacker_id,
                     tid,
                     element=element,
-                    atk_multiplier=eff_pct,
-                    flat_damage=eff_flat,
-                    toughness_damage=eff_stance,
+                    atk_multiplier=hit_eff_pct,
+                    flat_damage=hit_eff_flat,
+                    toughness_damage=hit_eff_stance,
                     scaling_stat=scaling_stat,
                     damage_type=damage_type,
                     force_crit=(False if is_dot_dmg else None),
-                    extra_dmg_boost=extra_dmg_boost,
-                    extra_def_ignore=extra_def_ignore + tgt_extra_def_ignore,
-                    extra_res_pen=extra_res_pen + tgt_extra_res_pen,
-                    extra_vuln=extra_vuln + tgt_extra_vuln,
-                    extra_crit_dmg=extra_crit_dmg,
+                    extra_dmg_boost=hit_extra_dmg_boost,
+                    extra_def_ignore=hit_extra_def_ignore + tgt_extra_def_ignore,
+                    extra_res_pen=hit_extra_res_pen + tgt_extra_res_pen,
+                    extra_vuln=hit_extra_vuln + tgt_extra_vuln,
+                    extra_crit_dmg=hit_extra_crit_dmg,
                     vm_hit_hooks_applied=not is_true_dmg,
                     source_entity=(
                         getattr(ctx.modifier_instance, "caster_snapshot_entity", None)
@@ -681,41 +869,55 @@ class CombatOpsMixin:
                 if len(real_targets) > 1 or applied_def_red:
                     if was_strictly_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
                         any_died_mid_aoe = True
+                shared_main_id = (getattr(rt, "hp_shared_groups", None) or {}).get(tid)
                 if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and (
                     float(getattr(tgt_ent, "current_hp", 0.0)) < prev_tgt_hp
                     or getattr(tgt_ent, "_in_deathrattle_limbo", False)
+                    or shared_main_id is not None
                 ):
                     director = getattr(sim, "_stage_director", None)
                     runner = getattr(director, "runner", None) if director is not None else None
                     if runner is not None:
-                        try:
-                            mrs = runner.get_enemy_state(tid)
-                            if getattr(mrs, "_limbo_pending", False):
-                                setattr(mrs, "_limbo_pending", False)
-                                if atk_type in ("Servant", "Pursued"):
-                                    any_died_mid_aoe = True
-                                if tid not in pending_limbo:
-                                    pending_limbo.append(tid)
-                        except KeyError:
-                            pass
+                        limbo_check_ids = (tid, shared_main_id) if (shared_main_id and shared_main_id != tid) else (tid,)
+                        for lcid in limbo_check_ids:
+                            try:
+                                mrs = runner.get_enemy_state(lcid)
+                                if getattr(mrs, "_limbo_pending", False):
+                                    setattr(mrs, "_limbo_pending", False)
+                                    if atk_type in ("Servant", "Pursued"):
+                                        any_died_mid_aoe = True
+                                    if lcid not in pending_limbo:
+                                        pending_limbo.append(lcid)
+                            except KeyError:
+                                pass
+                    died_candidates: List[str] = []
                     if was_strictly_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
-                        if me.has_behavior_flag(tid, "Deathrattle"):
-                            summoner_id = getattr(tgt_ent, "summoner_name", None)
+                        died_candidates.append(tid)
+                    if (
+                        shared_main_ent_pre is not None
+                        and prev_shared_main_hp > 0.0
+                        and float(getattr(shared_main_ent_pre, "current_hp", 0.0)) <= 0.0
+                    ):
+                        died_candidates.append(shared_main_id_pre)
+                    for dead_id_cand in died_candidates:
+                        dead_cand_ent = sim.get_entity(dead_id_cand)
+                        if dead_cand_ent is not None and me.has_behavior_flag(dead_id_cand, "Deathrattle"):
+                            summoner_id = getattr(dead_cand_ent, "summoner_name", None)
                             if not summoner_id or not me.has_behavior_flag(summoner_id, "Break"):
-                                setattr(tgt_ent, "_in_deathrattle_limbo", True)
-                        if tid not in pending_dying:
-                            pending_dying.append(tid)
+                                setattr(dead_cand_ent, "_in_deathrattle_limbo", True)
+                        if dead_id_cand not in pending_dying:
+                            pending_dying.append(dead_id_cand)
                         pending_dead = getattr(rt, "_pending_dead_enemies", None)
                         if pending_dead is None:
                             pending_dead = []
                             rt._pending_dead_enemies = pending_dead
-                        if tid not in pending_dead:
-                            pending_dead.append(tid)
+                        if dead_id_cand not in pending_dead:
+                            pending_dead.append(dead_id_cand)
             sim.resolver.resolve_all()
             if pending_dying:
                 if eff_attacker_id and eff_attacker_id != "__LEVEL__":
                     rt._last_enemy_killer_id = eff_attacker_id
-                if getattr(rt, "_attack_scope_depth", 0) > 0:
+                if getattr(rt, "_attack_scope_depth", 0) > 0 or getattr(rt, "_in_after_attack", False):
                     q = getattr(rt, "_pending_dying_enemies", None)
                     if q is None:
                         q = []
@@ -766,7 +968,7 @@ class CombatOpsMixin:
                 current_attack_type=atk_type,
             )
 
-        if not is_nested_sub:
+        if not is_nested_sub and not is_additional_dmg:
             eff_sk_type = ctx.current_skill_type or atk_type
             if getattr(rt, "_attack_scope_depth", 0) > 0:
                 rt._pending_after_attack = (atk_seq, eff_attacker_id, dmg_data, atk_type, eff_sk_type)
@@ -811,10 +1013,19 @@ class CombatOpsMixin:
                                 damage_data=dmg_data,
                                 current_attack_type=atk_type,
                             )
+                        me.dispatch_event(
+                            "OnListenAfterAttackEnd",
+                            param_entity_id=eff_attacker_id,
+                            attack_target_ids=all_tgts,
+                            damage_data=dmg_data,
+                            current_attack_type=atk_type,
+                        )
                     finally:
                         rt._in_after_attack = False
                         if getattr(rt, "_attack_blocked_targets", None):
                             rt._attack_blocked_targets.clear()
+                    rt.drain_pending_dying_enemies()
+                    rt.flush_pending_listen_die()
                     pending_dead = getattr(rt, "_pending_dead_enemies", None)
                     if pending_dead:
                         remaining_dead = []
@@ -823,7 +1034,7 @@ class CombatOpsMixin:
                             if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
                                 remaining_dead.append(dead_tid)
                             else:
-                                me.destroy_all_for_entity(dead_tid)
+                                rt.finalize_dead_enemy(dead_tid)
                         pending_dead[:] = remaining_dead
 
     def _execute_lose_hp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -836,7 +1047,8 @@ class CombatOpsMixin:
         ratio = self._eval_num(task.get("Ratio"), ctx, 0.0) if "Ratio" in task else 0.0
         dmg_val = self._eval_num(task.get("DamageValue"), ctx, 0.0) if "DamageValue" in task else 0.0
         consume_shield = bool(task.get("ConsumeShield", False))
-        hp_floor = self._eval_num(task.get("Floor"), ctx, 1.0) if "Floor" in task else 1.0
+        has_explicit_floor = "Floor" in task
+        hp_floor = self._eval_num(task.get("Floor"), ctx, 0.0) if has_explicit_floor else 1.0
         dyn_set = str(task.get("DynamicFloatSet", ""))
 
         for tid in targets:
@@ -868,11 +1080,20 @@ class CombatOpsMixin:
                     )
                 eff_floor = self._eval_num(task.get("Floor"), ctx, 0.0) if "Floor" in task else 0.0
             else:
-                eff_floor = hp_floor
+                if has_explicit_floor:
+                    eff_floor = hp_floor
+                elif bool(getattr(ent, "_negative_hp_enabled", False)):
+                    eff_floor = 1.0
+                elif ratio_type == "CurrentHP" and ratio >= 1.0 - 1e-6:
+                    eff_floor = 0.0
+                else:
+                    eff_floor = 1.0
 
             actual_loss = max(0.0, min(ent.current_hp - eff_floor, raw_loss))
             if actual_loss > 0:
                 ent.current_hp -= actual_loss
+                from ...effects import sync_hp_shared_subtargets
+                sync_hp_shared_subtargets(sim, ent)
                 sim.event_bus.publish(HPLostEvent(
                     av=round(sim.current_av, 2),
                     cycle=sim.current_cycle,

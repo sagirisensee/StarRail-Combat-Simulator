@@ -146,6 +146,12 @@ class DataDrivenEnemyKit(EnemyKit):
         except KeyError:
             return raw_damage
 
+        shared_map = getattr(rt, "hp_shared_groups", None) if rt is not None else None
+        if shared_map and self.owner_id in shared_map and sim is not None:
+            main_ent_sh = sim.get_entity(shared_map[self.owner_id])
+            if main_ent_sh is not None and main_ent_sh is not mrs.entity and main_ent_sh.current_hp > 0.0:
+                return raw_damage
+
         cur_hp = float(mrs.entity.current_hp)
         max_hp = float(mrs.entity.max_hp)
         if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:
@@ -310,6 +316,16 @@ class DataDrivenEnemyKit(EnemyKit):
         h_cp = dotnet_hash("ChangePhase")
         if mrs.max_phase > 1 and str(h_cp) in floats and rt.get_dynamic_value(self.owner_id, h_cp) == 0.0:
             rt.set_dynamic_value(self.owner_id, h_cp, 1.0)
+        h_ic = dotnet_hash("InsertCheck")
+        if (
+            mrs.max_phase > 1
+            and str(h_ic) in floats
+            and "InsertCheck" not in custom_vals
+            and h_ic not in mrs.custom_values
+            and "InsertCheck" not in mrs.custom_values
+            and rt.get_dynamic_value(self.owner_id, h_ic) == 0.0
+        ):
+            rt.set_dynamic_value(self.owner_id, h_ic, 1.0)
         for h_str, entry in floats.items():
             if not isinstance(entry, Mapping):
                 continue
@@ -426,11 +442,14 @@ class DataDrivenEnemyKit(EnemyKit):
         )
         prev_sp_base = getattr(rt, "_current_enemy_sp_hit_base", 0.0)
         prev_has_dmg = getattr(rt, "_current_enemy_skill_has_damage", True)
+        prev_sk_name = getattr(rt, "_current_skill_name", "")
         rt._current_enemy_sp_hit_base = sp_base
         rt._current_enemy_skill_has_damage = has_dmg
+        rt._current_skill_name = str(getattr(sk, "skill_trigger_key", "") or "")
 
         hit_targets: List[str] = []
         hit_avatars: List[str] = []
+        hit_sp_owners: List[str] = []
         from simulator.events import DamageAppliedEvent
 
         def _on_vm_dmg(ev: Any) -> None:
@@ -441,29 +460,58 @@ class DataDrivenEnemyKit(EnemyKit):
             if tent is not None and not tent.is_enemy and not getattr(tent, "is_countdown", False):
                 if tnm not in hit_targets:
                     hit_targets.append(tnm)
-                if not getattr(tent, "is_memosprite", False) and tnm not in hit_avatars:
+                is_memo = bool(getattr(tent, "is_memosprite", False))
+                if not is_memo and tnm not in hit_avatars:
                     hit_avatars.append(tnm)
+                sp_owner = (getattr(tent, "master_name", None) or tnm) if is_memo else tnm
+                if sp_owner not in hit_sp_owners:
+                    hit_sp_owners.append(sp_owner)
 
         sim.event_bus.subscribe(DamageAppliedEvent, _on_vm_dmg)
-        rt.begin_attack_scope()
         try:
-            rt.trigger_ability(
-                caster_id=self.owner_id,
-                ability_name=entry_ab,
-                target_ids=target_ids,
-                skill_target_ids=target_ids,
+            rt.modifier_engine.dispatch_event(
+                "OnBeforeSkillUse",
+                owner_id=self.owner_id,
+                param_entity_id=self.owner_id,
+                attack_target_ids=target_ids,
+            )
+            rt.begin_attack_scope()
+            try:
+                rt.trigger_ability(
+                    caster_id=self.owner_id,
+                    ability_name=entry_ab,
+                    target_ids=target_ids,
+                    skill_target_ids=target_ids,
+                )
+            finally:
+                rt.end_attack_scope()
+                rt.end_being_attacked()
+            rt.modifier_engine.dispatch_event(
+                "OnAfterSkillUse",
+                owner_id=self.owner_id,
+                param_entity_id=self.owner_id,
+                attack_target_ids=target_ids,
+            )
+            rt.modifier_engine.dispatch_event(
+                "OnListenAfterSkillUse",
+                param_entity_id=self.owner_id,
+                attack_target_ids=target_ids,
+            )
+            rt.modifier_engine.dispatch_event(
+                "CheckParamFlagCallBack",
+                param_entity_id=self.owner_id,
+                param_flags=("CallBack_SettleSkillOrInsertAbility",),
             )
         finally:
-            rt.end_being_attacked()
-            rt.end_attack_scope()
             subs = sim.event_bus._subscribers.get(DamageAppliedEvent)
             if isinstance(subs, list) and _on_vm_dmg in subs:
                 subs.remove(_on_vm_dmg)
             rt._current_enemy_sp_hit_base = prev_sp_base
             rt._current_enemy_skill_has_damage = prev_has_dmg
+            rt._current_skill_name = prev_sk_name
 
         skill_audit_cb = getattr(sim, "on_enemy_skill_resolved", None)
-        if callable(skill_audit_cb) and hit_avatars:
+        if callable(skill_audit_cb) and (hit_avatars or hit_sp_owners):
             is_aoe = bool(getattr(sk, "is_aoe", False)) or tinfo == "AllEnemy"
             is_blast = (not is_aoe) and bool(getattr(sk, "is_blast", False))
             scope = "AllEnemy" if is_aoe else ("Blast" if is_blast else "Single")
@@ -475,6 +523,7 @@ class DataDrivenEnemyKit(EnemyKit):
                 expected_scope=scope,
                 expected_hits=tuple(sorted(hit_avatars)),
                 sim_hits=tuple(sorted(hit_avatars)),
+                sim_sp_owners=tuple(sorted(hit_sp_owners)),
             )
 
         return tuple(hit_targets)
@@ -500,12 +549,7 @@ class DataDrivenEnemyKit(EnemyKit):
                 isinstance(d.root_task, Mapping)
                 and any(
                     isinstance(t, Mapping)
-                    and t.get("$type")
-                    in (
-                        "RPG.GameCore.PredicateTaskList",
-                        "RPG.GameCore.Retarget",
-                        "RPG.GameCore.SetDynamicValueByAddValue",
-                    )
+                    and t.get("$type") == "RPG.GameCore.SetDynamicValueByAddValue"
                     for t in (d.root_task.get("TaskList") or ())
                 )
             )
@@ -568,11 +612,11 @@ class DataDrivenEnemyKit(EnemyKit):
         next_turn_one_more = can_one_more
 
         action_idx = 0
-        while action_idx < 3:
+        while action_idx < 8:
             has_runtime_one_more = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
             if action_idx == 1 and not can_one_more and not has_runtime_one_more:
                 break
-            if action_idx == 2 and not has_runtime_one_more:
+            if action_idx >= 2 and not has_runtime_one_more:
                 break
             action_idx += 1
             if action_idx >= 2 and rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore"):
@@ -591,6 +635,7 @@ class DataDrivenEnemyKit(EnemyKit):
                     self.ai_executor.ai_flag = int(round(vm_flag))
                 else:
                     rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
+                prev_ai_flag = self.ai_executor.ai_flag
                 eval_ctx = ExecutionContext(
                     runtime=rt,
                     caster_id=self.owner_id,
@@ -608,7 +653,6 @@ class DataDrivenEnemyKit(EnemyKit):
             if rt is not None:
                 from simulator.vm.expr import dotnet_hash
 
-                rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
                 matched_dec = getattr(self.ai_executor, "last_matched_decision", None)
                 if matched_dec is not None and isinstance(matched_dec.root_task, Mapping):
                     from simulator.vm.executor import ExecutionContext
@@ -620,7 +664,11 @@ class DataDrivenEnemyKit(EnemyKit):
                         ability_target_ids=(self.owner_id,),
                         modifier_owner_id=self.owner_id,
                     )
-                    root_tasks = matched_dec.root_task.get("TaskList", [])
+                    root_type = str(matched_dec.root_task.get("$type", "") or "")
+                    if root_type and root_type != "RPG.GameCore.SequenceConfig":
+                        root_tasks = [matched_dec.root_task]
+                    else:
+                        root_tasks = matched_dec.root_task.get("TaskList", [])
                     has_dynamic_root = any(
                         isinstance(t, Mapping)
                         and t.get("$type")
@@ -633,13 +681,14 @@ class DataDrivenEnemyKit(EnemyKit):
                         for t in root_tasks
                     )
                     if not has_dynamic_root:
+                        rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
                         ai_tasks = [
                             t for t in root_tasks
                             if isinstance(t, Mapping)
                             and (
                                 t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
                                 or (
-                                    t.get("$type") == "RPG.GameCore.DefineDynamicValue"
+                                    t.get("$type") in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue")
                                     and (t.get("DynamicKey") or {}).get("Value") != "AIFlag"
                                 )
                             )
@@ -648,6 +697,8 @@ class DataDrivenEnemyKit(EnemyKit):
                             rt.executor.execute_tasks(ai_tasks, ai_ctx)
                     # 动态求值 ConfigAI RootTask 中的条件/目标重选与 AIFlag 自增，精确还原官方分支技能选择
                     if has_dynamic_root:
+                        self.ai_executor.ai_flag = prev_ai_flag
+                        rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(prev_ai_flag))
                         resolved_skill_names: List[str] = []
 
                         def _resolve_ai_skills(nodes: Any) -> None:
@@ -784,6 +835,7 @@ class DataDrivenEnemyKit(EnemyKit):
                 # 3. 统一通过官方 ConfigAbility VM 执行技能（废除伤害/非伤害双轨分流）
                 if sk.is_passive or attacker is None:
                     continue
+                sim._pending_turn_reset_distance = STANDARD_ACTION_DISTANCE * float(getattr(sk, "delay_ratio", 1.0) or 1.0)
                 resolved: Tuple[str, ...] = ()
                 if entry_ab and rt is not None:
                     resolved = self._execute_vm_skill(entry_ab, sim, sk, attacker)

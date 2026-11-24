@@ -136,6 +136,7 @@ class DamageAppliedEvent(BattleEvent):
     target_killed: bool = False # 本次伤害是否将该目标从存活击杀至 0 HP
     action_id: int = 0
     effect_id: int = 0
+    shield_absorbed: float = 0.0
 
     def __post_init__(self):
         # 手工构造事件未显式给出 damage_type 时, 由 damage_tag 经官方映射收编, 保证该字段恒为枚举
@@ -189,6 +190,7 @@ class WeaknessBreakEvent(BattleEvent):
     element: str
     break_damage: float
     action_delay_pct: float
+    entangle_applied: bool = True
 
 
 @dataclass(frozen=True)

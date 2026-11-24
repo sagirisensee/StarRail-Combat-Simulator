@@ -166,7 +166,22 @@ def _loadout_signature(ch: Dict[str, Any]) -> Any:
 
 
 def load_config() -> Dict[str, Any]:
-    """读取配置，优先从 data/.hoyolab_config.json 或环境变量读取，绝不硬编码敏感凭证。"""
+    """读取配置，优先从 .env、环境变量或 data/.hoyolab_config.json 读取，绝不硬编码敏感凭证。"""
+    # 自动加载根目录 .env 文件 (若存在)
+    env_file = os.path.join(PROJECT_ROOT, ".env")
+    if os.path.exists(env_file):
+        try:
+            with open(env_file, "r", encoding="utf-8") as ef:
+                for line in ef:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip().strip("'\"")
+                        if k not in os.environ:
+                            os.environ[k] = v
+        except Exception:
+            pass
+
     default_cfg = {
         "email": os.getenv("HOYOLAB_EMAIL", ""),
         "password": os.getenv("HOYOLAB_PASSWORD", ""),

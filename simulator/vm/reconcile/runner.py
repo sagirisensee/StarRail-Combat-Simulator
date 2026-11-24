@@ -165,14 +165,25 @@ def _detect_non_crits_from_trace(
     detected: Set[Tuple[int, int]] = set()
     for key, s_list in sim_grouped.items():
         g_list = gt_hits.get(key)
-        if not g_list or len(g_list) != len(s_list):
+        if not g_list:
             continue
+        same_len = len(g_list) == len(s_list)
         for (act_i, hit_i, is_crit, eff_cr, crit_mult, s_dmg), g_dmg in zip(s_list, g_list):
-            if not is_crit or crit_mult <= 1.05 or eff_cr >= 0.999 or g_dmg <= 0.0:
+            if g_dmg <= 0.0:
+                if not same_len:
+                    break
                 continue
-            ratio = s_dmg / g_dmg
-            if abs(ratio - crit_mult) / crit_mult < 0.06:
-                detected.add((act_i, hit_i))
+            if abs(s_dmg - g_dmg) / g_dmg < 1e-4:
+                continue
+            if is_crit and crit_mult > 1.05 and eff_cr < 0.999:
+                ratio = s_dmg / g_dmg
+                if abs(ratio - crit_mult) / crit_mult < 0.06:
+                    detected.add((act_i, hit_i))
+                    if not same_len:
+                        break
+                    continue
+            if not same_len:
+                break
     return detected
 
 
@@ -215,8 +226,8 @@ def _run_single_pass(
 
     # 现场逐动三方（官方 TargetInfo 期望 / 日志实录 / 模拟实际）敌方受击一致性检测
     enemy_hit_mismatches: List[EnemyHitMismatch] = []
-    # 按 TurnBeginEvent 序号切分敌方回合: (turn_seq, av, enemy_name, sim_hits_set, last_skill_meta)
-    sim_enemy_turn_records: List[Tuple[int, float, str, Set[str], Tuple[int, str, str, Tuple[str, ...]]]] = []
+    # 按 TurnBeginEvent 序号切分敌方回合: (turn_seq, av, enemy_name, sim_hits_set, sim_sp_owners_set, last_skill_meta)
+    sim_enemy_turn_records: List[Tuple[int, float, str, Set[str], Set[str], Tuple[int, str, str, Tuple[str, ...]]]] = []
     _audit_turn_seq = [0]
     from simulator.events import BattleEvent as _BE, TurnBeginEvent as _TBE
 
@@ -235,6 +246,7 @@ def _run_single_pass(
         expected_scope: str,
         expected_hits: Tuple[str, ...],
         sim_hits: Tuple[str, ...],
+        sim_sp_owners: Tuple[str, ...] = (),
     ) -> None:
         tseq = _audit_turn_seq[0]
         # 1. 现场结构断言：官方 TargetInfo + 当前站位推导的期望命中集合 vs 模拟实际命中集合
@@ -258,16 +270,18 @@ def _run_single_pass(
             and sim_enemy_turn_records[-1][2] == enemy_name
         ):
             sim_enemy_turn_records[-1][3].update(sim_hits)
+            sim_enemy_turn_records[-1][4].update(sim_sp_owners)
             sim_enemy_turn_records[-1] = (
                 tseq,
                 sim_enemy_turn_records[-1][1],
                 enemy_name,
                 sim_enemy_turn_records[-1][3],
+                sim_enemy_turn_records[-1][4],
                 (skill_id, skill_key, expected_scope, expected_hits),
             )
         else:
             sim_enemy_turn_records.append(
-                (tseq, av, enemy_name, set(sim_hits), (skill_id, skill_key, expected_scope, expected_hits))
+                (tseq, av, enemy_name, set(sim_hits), set(sim_sp_owners), (skill_id, skill_key, expected_scope, expected_hits))
             )
 
     sim.on_enemy_skill_resolved = _on_enemy_skill_resolved
@@ -375,16 +389,14 @@ def _run_single_pass(
         if not h.hit_allies:
             continue
         log_set = {nm for nm in h.hit_allies if not str(nm).startswith("UID_")}
-        # 多段低额全体 AoE（如呼雷 Skill03）可能因单段扣血小未全入 hit_allies，但日志 sp_gain_counts 完整记录了受击回能全员
-        if h.had_hp_drop and len(h.sp_gain_counts) >= 3:
-            log_set |= {nm for nm, cnt in h.sp_gain_counts.items() if cnt > 0 and not str(nm).startswith("UID_")}
-        if not log_set:
+        has_aoe_sp_union = bool(h.had_hp_drop and len(h.sp_gain_counts) >= 3)
+        if not log_set and not has_aoe_sp_union:
             continue
         expected_name = meta.enemy_uid_map.get(h.enemy_uid, f"UID_{h.enemy_uid}")
         best_idx: Optional[int] = None
         best_dt = 0.25
-        for idx, (_tseq, s_av, s_atk, _s_tgts, _sk_meta) in enumerate(sim_enemy_turn_records):
-            if idx in used_sim_rec:
+        for idx, (_tseq, s_av, s_atk, _s_tgts, _s_sp_tgts, _sk_meta) in enumerate(sim_enemy_turn_records):
+            if idx in used_sim_rec or not _s_tgts:
                 continue
             dt = abs(s_av - h.av)
             if dt <= best_dt:
@@ -395,8 +407,15 @@ def _run_single_pass(
                         break
         if best_idx is not None:
             used_sim_rec.add(best_idx)
-            _tseq, _s_av, s_atk, raw_sim_set, (sk_id, sk_key, exp_scope, exp_hits) = sim_enemy_turn_records[best_idx]
-            sim_set = {nm for nm in raw_sim_set if not str(nm).startswith("UID_")}
+            _tseq, _s_av, s_atk, raw_sim_set, raw_sp_set, (sk_id, sk_key, exp_scope, exp_hits) = sim_enemy_turn_records[best_idx]
+            # 多段低额全体 AoE（如呼雷 Skill03）可能因单段扣血小未全入 hit_allies，仅全体技能从 sp_gain_counts 补全员
+            use_sp_union = bool(exp_scope == "AllEnemy" and has_aoe_sp_union)
+            if use_sp_union:
+                log_set |= {nm for nm, cnt in h.sp_gain_counts.items() if cnt > 0 and not str(nm).startswith("UID_")}
+            if not log_set:
+                continue
+            raw_set = (raw_sim_set | raw_sp_set) if use_sp_union else raw_sim_set
+            sim_set = {nm for nm in raw_set if not str(nm).startswith("UID_")}
             if sim_set != log_set:
                 enemy_hit_mismatches.append(
                     EnemyHitMismatch(
@@ -411,6 +430,10 @@ def _run_single_pass(
                     )
                 )
         else:
+            if has_aoe_sp_union:
+                log_set |= {nm for nm, cnt in h.sp_gain_counts.items() if cnt > 0 and not str(nm).startswith("UID_")}
+            if not log_set:
+                continue
             enemy_hit_mismatches.append(
                 EnemyHitMismatch(
                     av=round(h.av, 2),
