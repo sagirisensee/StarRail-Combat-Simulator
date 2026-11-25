@@ -7,9 +7,7 @@
 > 📘 **核心规范导航**：
 > - **全仓研发与日志对账总纲**：[《开发与实机日志对账规范 (AGENTS.md)》](AGENTS.md)（含四大红线、五步法 SOP、四层边界、VM 算子扩展与比值数学定位法）
 > - **代码索引与架构速查表**：[《代码索引与架构速查表 (CODEBASE_INDEX.md)》](CODEBASE_INDEX.md)
-> - **当前活跃攻坚台账**：
->   - [《末日幻影 420564~420584 对账进度 (docs/PROGRESS_ApocalypticShadow_420564-84.md)》](docs/PROGRESS_ApocalypticShadow_420564-84.md)
->   - [《周本 1052096（DoT 队 & 海瑟音反推建档）进展 (docs/PROGRESS_DoT_1052096_Hysilens.md)》](docs/PROGRESS_DoT_1052096_Hysilens.md)
+> - **当前活跃攻坚台账**：[《周本 1052096（DoT 队 & 海瑟音反推建档）进展 (docs/PROGRESS_DoT_1052096_Hysilens.md)》](docs/PROGRESS_DoT_1052096_Hysilens.md)
 
 ---
 
