@@ -115,11 +115,8 @@ class TaskExecutor(
         self.rt = runtime
         self.strict = strict
         self._damage_capture_stack: List[List[float]] = []
-        if getattr(runtime, "sim", None) is not None and getattr(runtime.sim, "event_bus", None) is not None:
-            runtime.sim.event_bus.subscribe(DamageAppliedEvent, self._on_damage_applied)
-            runtime.sim.event_bus.subscribe(WeaknessBreakEvent, self._on_weakness_break)
 
-    def _on_damage_applied(self, evt: DamageAppliedEvent) -> None:
+    def on_damage_applied(self, evt: DamageAppliedEvent) -> None:
         if self._damage_capture_stack:
             tgt = self.rt.sim.get_entity(evt.target_name)
             bg = bool(tgt is not None and getattr(tgt, "barrier_guarded", False))
@@ -132,7 +129,7 @@ class TaskExecutor(
                 return
             self._damage_capture_stack[-1][0] += max(0.0, float(evt.damage) - float(getattr(evt, "shield_absorbed", 0.0)))
 
-    def _on_weakness_break(self, evt: WeaknessBreakEvent) -> None:
+    def on_weakness_break(self, evt: WeaknessBreakEvent) -> None:
         if self._damage_capture_stack:
             self._damage_capture_stack[-1][0] += float(evt.break_damage)
         t_ent = self.rt.sim.get_entity(evt.target_name)

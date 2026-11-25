@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..combat_port import BuffSpec
+from ..lifecycle import emit_sim_event
 from ..status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
 from .expr import dotnet_hash, eval_dynamic_float
 from .target_alias import ExecutionContext, resolve_target_type
@@ -977,7 +978,7 @@ class ModifierEngine:
             lost = old_hp - float(getattr(ent, "current_hp", 0.0))
             if lost > 1e-6:
                 from simulator.events import HPLostEvent
-                self.rt.sim.event_bus.publish(HPLostEvent(
+                emit_sim_event(self.rt.sim, HPLostEvent(
                     av=self.rt.sim.current_av,
                     cycle=self.rt.sim.current_cycle,
                     entity_name=ent.name,

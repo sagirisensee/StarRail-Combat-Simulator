@@ -23,6 +23,7 @@ from .events import (
     ActionExecuteEvent, HealAppliedEvent, ShieldAppliedEvent, HPLostEvent,
     SpiritSummonedEvent, SpiritDespawnEvent
 )
+from .lifecycle import emit_sim_event
 from .status import Modifier, ModifierOp, DurationTiming, StatType, StackPolicy, StatusInstance, StatusTag
 
 if TYPE_CHECKING:
@@ -730,7 +731,7 @@ class SimulatorCombatPort:
             tgt.current_hp = min(cap, tgt.current_hp + rem_heal)
             from simulator.effects import sync_hp_shared_subtargets
             sync_hp_shared_subtargets(self.sim, tgt)
-            self.sim.event_bus.publish(HealAppliedEvent(
+            emit_sim_event(self.sim, HealAppliedEvent(
                 av=getattr(self.sim, "current_av", 0.0),
                 cycle=getattr(self.sim, "current_cycle", 0),
                 source_name=source_id,
@@ -742,7 +743,7 @@ class SimulatorCombatPort:
         tgt = self._get_entity(target_id)
         if tgt and hasattr(tgt, "shield"):
             tgt.shield = max(tgt.shield, amount)
-            self.sim.event_bus.publish(ShieldAppliedEvent(
+            emit_sim_event(self.sim, ShieldAppliedEvent(
                 av=getattr(self.sim, "current_av", 0.0),
                 cycle=getattr(self.sim, "current_cycle", 0),
                 source_name=source_id,
@@ -985,7 +986,7 @@ class SimulatorCombatPort:
                 if self._last_followup_frame is not caller_frame or getattr(self, "_last_followup_actor", None) != source_id:
                     self._last_followup_frame = caller_frame
                     self._last_followup_actor = source_id
-                    self.sim.event_bus.publish(ActionExecuteEvent(
+                    emit_sim_event(self.sim, ActionExecuteEvent(
                         av=round(self.sim.current_av, 2),
                         cycle=self.sim.current_cycle,
                         actor_id=source_id,
@@ -1039,7 +1040,7 @@ class SimulatorCombatPort:
             actual = min(ent.current_hp, amount)
             ent.current_hp = max(1.0, ent.current_hp - actual)
             if actual > 0:
-                self.sim.event_bus.publish(HPLostEvent(
+                emit_sim_event(self.sim, HPLostEvent(
                     av=round(getattr(self.sim, "current_av", 0.0), 2),
                     cycle=getattr(self.sim, "current_cycle", 0),
                     entity_name=ent.name,
@@ -1064,7 +1065,7 @@ class SimulatorCombatPort:
         """
         if kind != ActionKind.TALENT:
             self.resolve_effects()
-        self.sim.event_bus.publish(ActionExecuteEvent(
+        emit_sim_event(self.sim, ActionExecuteEvent(
             av=round(getattr(self.sim, "current_av", 0.0), 2),
             cycle=getattr(self.sim, "current_cycle", 0),
             actor_id=actor_id,
@@ -1134,7 +1135,7 @@ class SimulatorCombatPort:
 
         # --- Phase 2: BROADCAST ---
         ctx.phase = SpawnPhase.BROADCAST
-        self.sim.event_bus.publish(SpiritSummonedEvent(
+        emit_sim_event(self.sim, SpiritSummonedEvent(
             av=round(getattr(self.sim, "current_av", 0.0), 2),
             cycle=getattr(self.sim, "current_cycle", 0),
             owner_name=owner_id,
@@ -1169,7 +1170,7 @@ class SimulatorCombatPort:
             self.sim.entities.remove(ent)
             if self.sim._current_turn_entity == ent:
                 self.sim._current_turn_entity = None
-            self.sim.event_bus.publish(SpiritDespawnEvent(
+            emit_sim_event(self.sim, SpiritDespawnEvent(
                 av=round(getattr(self.sim, "current_av", 0.0), 2),
                 cycle=getattr(self.sim, "current_cycle", 0),
                 owner_name=owner_name,

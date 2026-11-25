@@ -24,6 +24,7 @@ from ..events import (
     TurnBeginEvent,
     TurnEndEvent,
 )
+from ..lifecycle import AbilityFrameSpec, AfterAttackPayload, ExecutionLifecycle, emit_sim_event
 from ..protocols import KitHandler, LightConeHandler, RelicSetHandler
 from ..status import StatType
 from .executor import TaskExecutor
@@ -49,17 +50,12 @@ class VMRuntime:
         self.equip_dynamics: Dict[Tuple[str, str], Dict[int, float]] = {}
         self.global_target_aliases: Dict[str, Any] = {}
         self._global_aliases_loaded: bool = False
+        self.lifecycle = ExecutionLifecycle(self)
         self._battle_entered: bool = False
-        self._in_turn_phase1_end: bool = False
-        self._attack_scope_depth: int = 0
-        self._attack_targets_by_key: Dict[Tuple[int, str], List[str]] = {}
-        self._pending_after_attack: Optional[Tuple[int, str, Dict[str, Any], str]] = None
-        self._open_enemy_attack: Optional[str] = None
         self._active_skill_sp_base: float = 0.0
         self._skill_sp_ratio_granted: bool = False
         self._added_abilities: Set[Tuple[str, str]] = set()
         self.elation_points: float = 0.0
-        self._attack_blocked_targets: Set[str] = set()
         self._entity_is_enemy: Dict[str, bool] = {
             e.name: bool(getattr(e, "is_enemy", False))
             for e in getattr(sim, "entities", ())
@@ -82,257 +78,183 @@ class VMRuntime:
         self.elation_time_units: List[str] = []
         self.has_paused_elation_time: bool = False
         self.entity_dynamic_strings: Dict[str, Dict[str, str]] = {}
-        self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
-        self.sim.event_bus.subscribe(TurnEndEvent, self._on_turn_end)
-        self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)
-        self.sim.event_bus.subscribe(ActionEndEvent, self._on_action_end)
-        self.sim.event_bus.subscribe(HPLostEvent, self._on_hp_lost)
-        self.sim.event_bus.subscribe(HealAppliedEvent, self._on_heal_applied)
-        self.sim.event_bus.subscribe(SPChangeEvent, self._on_sp_change)
-        self.sim.event_bus.subscribe(SpiritDespawnEvent, self._on_spirit_despawn)
-        self.sim.event_bus.subscribe(EnemyDefeatedEvent, self._on_enemy_defeated)
+        if getattr(sim, "vm_runtime", None) is None:
+            sim.vm_runtime = self
+
+    @property
+    def _attack_scope_depth(self) -> int:
+        return self.lifecycle.attack_scope_depth
+
+    @_attack_scope_depth.setter
+    def _attack_scope_depth(self, value: int) -> None:
+        self.lifecycle.attack_scope_depth = int(value)
+
+    @property
+    def _in_turn_phase1_end(self) -> bool:
+        return self.lifecycle.in_turn_phase1_end
+
+    @_in_turn_phase1_end.setter
+    def _in_turn_phase1_end(self, value: bool) -> None:
+        self.lifecycle.in_turn_phase1_end = bool(value)
+
+    @property
+    def _in_after_attack(self) -> bool:
+        return self.lifecycle.in_after_attack
+
+    @_in_after_attack.setter
+    def _in_after_attack(self, value: bool) -> None:
+        self.lifecycle.in_after_attack = bool(value)
+
+    @property
+    def _in_dying_batch(self) -> bool:
+        return self.lifecycle.in_dying_batch
+
+    @_in_dying_batch.setter
+    def _in_dying_batch(self, value: bool) -> None:
+        self.lifecycle.in_dying_batch = bool(value)
+
+    @property
+    def _flushing_listen_die(self) -> bool:
+        return self.lifecycle.flushing_listen_die
+
+    @_flushing_listen_die.setter
+    def _flushing_listen_die(self, value: bool) -> None:
+        self.lifecycle.flushing_listen_die = bool(value)
+
+    @property
+    def _pending_after_attack(self) -> Optional[AfterAttackPayload]:
+        return self.lifecycle.pending_after_attack
+
+    @_pending_after_attack.setter
+    def _pending_after_attack(self, value: Any) -> None:
+        if value is None or isinstance(value, AfterAttackPayload):
+            self.lifecycle.pending_after_attack = value
+        elif isinstance(value, tuple):
+            atk_seq, caster_id, dmg_data, atk_type = value[:4]
+            skill_type = value[4] if len(value) > 4 else atk_type
+            self.lifecycle.pending_after_attack = AfterAttackPayload(
+                atk_seq=int(atk_seq),
+                caster_id=str(caster_id),
+                dmg_data=dmg_data,
+                atk_type=str(atk_type),
+                skill_type=str(skill_type),
+            )
+        else:
+            raise TypeError(f"Unsupported pending_after_attack payload: {type(value)!r}")
+
+    @property
+    def _after_attack_fired(self) -> Set[Tuple[int, str]]:
+        return self.lifecycle.after_attack_fired
+
+    @_after_attack_fired.setter
+    def _after_attack_fired(self, value: Set[Tuple[int, str]]) -> None:
+        self.lifecycle.after_attack_fired = value
+
+    @property
+    def _attack_targets_by_key(self) -> Dict[Tuple[int, str], List[str]]:
+        return self.lifecycle.attack_targets_by_key
+
+    @_attack_targets_by_key.setter
+    def _attack_targets_by_key(self, value: Dict[Tuple[int, str], List[str]]) -> None:
+        self.lifecycle.attack_targets_by_key = value
+
+    @property
+    def _attack_blocked_targets(self) -> Set[str]:
+        return self.lifecycle.attack_blocked_targets
+
+    @_attack_blocked_targets.setter
+    def _attack_blocked_targets(self, value: Set[str]) -> None:
+        self.lifecycle.attack_blocked_targets = value
+
+    @property
+    def _open_enemy_attack(self) -> Optional[str]:
+        return self.lifecycle.open_enemy_attack
+
+    @_open_enemy_attack.setter
+    def _open_enemy_attack(self, value: Optional[str]) -> None:
+        self.lifecycle.open_enemy_attack = value
+
+    @property
+    def _pending_dying_enemies(self) -> List[Tuple[str, str]]:
+        return self.lifecycle.pending_dying_enemies
+
+    @_pending_dying_enemies.setter
+    def _pending_dying_enemies(self, value: List[Tuple[str, str]]) -> None:
+        self.lifecycle.pending_dying_enemies = value
+
+    @property
+    def _pending_limbo_after_dying(self) -> List[Tuple[str, Optional[str]]]:
+        return self.lifecycle.pending_limbo_after_dying
+
+    @_pending_limbo_after_dying.setter
+    def _pending_limbo_after_dying(self, value: List[Tuple[str, Optional[str]]]) -> None:
+        self.lifecycle.pending_limbo_after_dying = value
+
+    @property
+    def _pending_level_kills(self) -> List[Tuple[str, str]]:
+        return self.lifecycle.pending_level_kills
+
+    @_pending_level_kills.setter
+    def _pending_level_kills(self, value: List[Tuple[str, str]]) -> None:
+        self.lifecycle.pending_level_kills = value
+
+    @property
+    def _pending_dead_enemies(self) -> List[str]:
+        return self.lifecycle.pending_dead_enemies
+
+    @_pending_dead_enemies.setter
+    def _pending_dead_enemies(self, value: List[str]) -> None:
+        self.lifecycle.pending_dead_enemies = value
+
+    @property
+    def _pending_listen_die(self) -> List[str]:
+        return self.lifecycle.pending_listen_die
+
+    @_pending_listen_die.setter
+    def _pending_listen_die(self, value: List[str]) -> None:
+        self.lifecycle.pending_listen_die = value
+
+    @property
+    def _active_deathrattle_entities(self) -> Set[str]:
+        return self.lifecycle.active_deathrattle_entities
+
+    @_active_deathrattle_entities.setter
+    def _active_deathrattle_entities(self, value: Set[str]) -> None:
+        self.lifecycle.active_deathrattle_entities = value
 
     def resolve_global_target_alias(self, alias_name: str) -> Optional[Dict[str, Any]]:
         return self.loader.get_global_target_alias(alias_name)
 
     def begin_attack_scope(self) -> None:
-        self._attack_scope_depth += 1
+        self.lifecycle.begin_attack_scope()
 
     def trigger_or_defer_limbo(self, owner_id: str, param_entity_id: Optional[str]) -> bool:
         """若当前处于攻击作用域或死亡批处理（OnBeforeDying）中，将转阶段回血延后至结算完成后触发，防止附加/真伤或自伤误扣新阶段 HP。"""
-        if getattr(self, "_in_dying_batch", False) or getattr(self, "_attack_scope_depth", 0) > 0:
-            q = getattr(self, "_pending_limbo_after_dying", None)
-            if q is None:
-                q = []
-                self._pending_limbo_after_dying = q
-            if not any(tid == owner_id for tid, _ in q):
-                q.append((owner_id, param_entity_id))
-            return True
-        return False
+        return self.lifecycle.trigger_or_defer_limbo(owner_id, param_entity_id)
 
     def flush_pending_after_attack(self) -> None:
-        after_end_payload: Optional[Tuple[Tuple[str, ...], str, Dict[str, Any], str]] = None
-        if self._pending_after_attack is not None:
-            pending = self._pending_after_attack
-            atk_seq, caster_id, dmg_data, atk_type = pending[:4]
-            skill_type = pending[4] if len(pending) > 4 else atk_type
-            self._pending_after_attack = None
-            all_targets = tuple(self._attack_targets_by_key.get((atk_seq, caster_id), ()))
-            after_set = getattr(self, "_after_attack_fired", None)
-            if after_set is None:
-                after_set = set()
-                self._after_attack_fired = after_set
-            after_key = (atk_seq, caster_id)
-            if after_key not in after_set:
-                after_set.add(after_key)
-                if self._open_enemy_attack == caster_id:
-                    self._open_enemy_attack = None
-                after_end_payload = (all_targets, caster_id, dmg_data, atk_type)
-                self._in_after_attack = True
-                try:
-                    self.modifier_engine.dispatch_event(
-                        "OnAfterAttack",
-                        owner_id=caster_id,
-                        attack_target_ids=all_targets,
-                        damage_data=dmg_data,
-                        current_skill_type=skill_type,
-                        current_attack_type=atk_type,
-                    )
-                    self.modifier_engine.dispatch_event(
-                        "OnListenAfterAttack",
-                        param_entity_id=caster_id,
-                        attack_target_ids=all_targets,
-                        damage_data=dmg_data,
-                        current_skill_type=skill_type,
-                        current_attack_type=atk_type,
-                    )
-                    for tid in all_targets:
-                        self.modifier_engine.dispatch_event(
-                            "OnAfterBeingAttacked",
-                            owner_id=tid,
-                            param_entity_id=caster_id,
-                            damage_data=dmg_data,
-                            current_attack_type=atk_type,
-                        )
-                finally:
-                    self._in_after_attack = False
-        self.drain_pending_dying_enemies()
-        self.flush_pending_listen_die()
-        if not getattr(self, "_in_dying_batch", False):
-            pending_limbo = getattr(self, "_pending_limbo_after_dying", None)
-            if pending_limbo:
-                limbo_batch = list(pending_limbo)
-                pending_limbo.clear()
-                for limbo_tid, limbo_killer in limbo_batch:
-                    ent = self.sim.get_entity(limbo_tid)
-                    kit = getattr(ent, "kit", None) if ent is not None else None
-                    runner = getattr(kit, "runner", None) if kit is not None else None
-                    if runner is not None:
-                        try:
-                            mrs = runner.get_enemy_state(limbo_tid)
-                            setattr(mrs, "_limbo_pending", False)
-                        except KeyError:
-                            pass
-                    self.modifier_engine.dispatch_event(
-                        "OnLimboWaitHeal",
-                        owner_id=limbo_tid,
-                        param_entity_id=limbo_killer,
-                    )
-        pending_lvl = getattr(self, "_pending_level_kills", None)
-        while pending_lvl:
-            lvl_batch = list(pending_lvl)
-            pending_lvl.clear()
-            for dead_tid, eff_killer in lvl_batch:
-                ent = self.sim.get_entity(dead_tid)
-                if ent is None:
-                    continue
-                self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=eff_killer)
-                self.sim.event_bus.publish(
-                    EnemyDefeatedEvent(
-                        av=float(self.sim.current_av),
-                        cycle=int(self.sim.current_cycle),
-                        attacker_name=eff_killer,
-                        target_name=dead_tid,
-                    )
-                )
-                self.modifier_engine.destroy_all_for_entity(dead_tid)
-                self.sim.entities[:] = [e for e in self.sim.entities if e.name != dead_tid]
-        if after_end_payload is not None:
-            end_targets, end_caster, end_dmg_data, end_atk_type = after_end_payload
-            self._in_after_attack = True
-            try:
-                for tid in end_targets:
-                    self.modifier_engine.dispatch_event(
-                        "OnAfterBeingAttackedEnd",
-                        owner_id=tid,
-                        param_entity_id=end_caster,
-                        damage_data=end_dmg_data,
-                        current_attack_type=end_atk_type,
-                    )
-                self.modifier_engine.dispatch_event(
-                    "OnListenAfterAttackEnd",
-                    param_entity_id=end_caster,
-                    attack_target_ids=end_targets,
-                    damage_data=end_dmg_data,
-                    current_attack_type=end_atk_type,
-                )
-            finally:
-                self._in_after_attack = False
-            self.drain_pending_dying_enemies()
-            self.flush_pending_listen_die()
-        if self._attack_blocked_targets:
-            self._attack_blocked_targets.clear()
-        pending_dead = getattr(self, "_pending_dead_enemies", None)
-        if pending_dead:
-            remaining_dead = []
-            for dead_tid in list(pending_dead):
-                dead_ent = self.sim.get_entity(dead_tid)
-                if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
-                    remaining_dead.append(dead_tid)
-                else:
-                    self.finalize_dead_enemy(dead_tid)
-            pending_dead[:] = remaining_dead
+        self.lifecycle.settle_attack_boundary()
 
     def flush_pending_listen_die(self) -> None:
         """Flush deferred OnListenCharacterDie callbacks after attack/after-attack hooks settle."""
-        pending_listen = getattr(self, "_pending_listen_die", None)
-        if not pending_listen:
-            return
-        self._flushing_listen_die = True
-        try:
-            while pending_listen:
-                listen_batch = list(pending_listen)
-                pending_listen.clear()
-                for dead_id in listen_batch:
-                    dead_ent = self.sim.get_entity(dead_id)
-                    if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
-                        setattr(dead_ent, "_deferred_listen_die", True)
-                        continue
-                    self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
-        finally:
-            self._flushing_listen_die = False
+        self.lifecycle.flush_listen_die()
 
     def drain_pending_dying_enemies(self) -> None:
         """Drain deferred dying enemies (OnBeforeDying / OnDeathrattle) after attack hooks settle."""
-        pending_dying = getattr(self, "_pending_dying_enemies", None)
-        if not pending_dying:
-            return
-        dying_batch = list(pending_dying)
-        pending_dying.clear()
-        prev_in_dying = getattr(self, "_in_dying_batch", False)
-        self._in_dying_batch = True
-        try:
-            for dead_tid, killer_id in dying_batch:
-                dead_ent = self.sim.get_entity(dead_tid)
-                if dead_ent is not None:
-                    self.record_entity_team(dead_ent)
-                self.modifier_engine.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
-                self.modifier_engine.dispatch_event("OnBeingLimbo", owner_id=dead_tid, param_entity_id=killer_id)
-                dead_ent = self.sim.get_entity(dead_tid)
-                if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
-                    self.modifier_engine.strip_for_deathrattle(dead_tid)
-                active_dr = getattr(self, "_active_deathrattle_entities", None)
-                if active_dr is None:
-                    active_dr = set()
-                    self._active_deathrattle_entities = active_dr
-                active_dr.add(dead_tid)
-                try:
-                    self.modifier_engine.dispatch_event("OnDeathrattle", owner_id=dead_tid, param_entity_id=killer_id)
-                finally:
-                    active_dr.discard(dead_tid)
-                self.finalize_inline_deathrattle(dead_tid)
-        finally:
-            self._in_dying_batch = prev_in_dying
+        self.lifecycle.drain_dying_batch()
 
     def finalize_dead_enemy(self, dead_tid: str) -> None:
         """Finalize a defeated enemy entity and cascade-cleanup any HP-shared subtargets."""
-        dead_ent = self.sim.get_entity(dead_tid)
-        if dead_ent is not None and float(getattr(dead_ent, "current_hp", 0.0)) > 0.0:
-            return
-        self.modifier_engine.destroy_all_for_entity(dead_tid)
-        shared_map = getattr(self, "hp_shared_groups", None)
-        if not shared_map:
-            return
-        director = getattr(self.sim, "_stage_director", None)
-        runner = getattr(director, "runner", None) if director is not None else None
-        for sub_tid, mid in list(shared_map.items()):
-            if mid != dead_tid:
-                continue
-            shared_map.pop(sub_tid, None)
-            sub_ent = self.sim.get_entity(sub_tid)
-            if sub_ent is not None:
-                if runner is not None:
-                    try:
-                        mrs = runner.get_enemy_state(sub_tid)
-                        mrs.lock_hp_ratio = None
-                    except KeyError:
-                        pass
-                sub_ent.current_hp = 0.0
-                self.modifier_engine.destroy_all_for_entity(sub_tid)
+        self.lifecycle.finalize_dead_enemy(dead_tid)
 
     def end_attack_scope(self) -> None:
-        self._attack_scope_depth = max(0, self._attack_scope_depth - 1)
-        if self._attack_scope_depth == 0:
-            self.flush_pending_after_attack()
+        self.lifecycle.end_attack_scope()
 
     def begin_being_attacked(self, attacker_name: str, target_ids: Sequence[str]) -> None:
-        if self._open_enemy_attack is not None:
-            self.end_being_attacked(self._open_enemy_attack)
-        self._open_enemy_attack = attacker_name
-        for tid in target_ids:
-            self.modifier_engine.dispatch_event(
-                "OnBeforeBeingAttacked",
-                owner_id=tid,
-                param_entity_id=attacker_name,
-            )
+        self.lifecycle.begin_being_attacked(attacker_name, target_ids)
 
     def end_being_attacked(self, attacker_name: Optional[str] = None) -> None:
-        atk = attacker_name or self._open_enemy_attack
-        if atk is None:
-            return
-        if self._open_enemy_attack == atk or attacker_name is None:
-            self._open_enemy_attack = None
-        self.modifier_engine.dispatch_event("OnListenAfterAttack", param_entity_id=atk)
+        self.lifecycle.end_being_attacked(attacker_name)
 
     def record_entity_team(self, entity: Any) -> None:
         if entity is not None and getattr(entity, "name", None):
@@ -340,22 +262,7 @@ class VMRuntime:
 
     def finalize_inline_deathrattle(self, entity_id: str) -> None:
         """若实体无异步亡语插入动作且 HP<=0，则立即结束亡语悬停态并销毁 Modifier。"""
-        ent = self.sim.get_entity(entity_id)
-        if (
-            ent is not None
-            and getattr(ent, "_in_deathrattle_limbo", False)
-            and int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) == 0
-            and float(getattr(ent, "current_hp", 0.0)) <= 0.0
-        ):
-            setattr(ent, "_die_immediately_after_deathrattle", False)
-            setattr(ent, "_in_deathrattle_limbo", False)
-            ent.current_hp = 0.0
-            if getattr(ent, "is_memosprite", False) and hasattr(self.sim, "port"):
-                self.sim.port.despawn_spirit(entity_id, reason="death")
-            self.modifier_engine.destroy_all_for_entity(entity_id)
-            if getattr(ent, "_deferred_listen_die", False):
-                setattr(ent, "_deferred_listen_die", False)
-                self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=entity_id)
+        self.lifecycle.finalize_inline_deathrattle(entity_id)
 
     def is_enemy_entity_id(self, entity_id: Optional[str]) -> bool:
         if not entity_id or entity_id == "__LEVEL__":
@@ -683,7 +590,7 @@ class VMRuntime:
             sv_entity.current_hp = full_hp
 
         # 发布官方 SpiritSummonedEvent 并通知关卡机制插件 (如血噬)
-        self.sim.event_bus.publish(SpiritSummonedEvent(
+        emit_sim_event(self.sim, SpiritSummonedEvent(
             av=round(getattr(self.sim, "current_av", 0.0), 2),
             cycle=getattr(self.sim, "current_cycle", 0),
             owner_name=master_id,
@@ -695,9 +602,9 @@ class VMRuntime:
         return sv_entity
 
     # ------------------------------------------------------------------
-    # EventBus 桥接回调
+    # 微内核事实路由入口（由 TurnSimulator.emit_event 显式顺序调用）
     # ------------------------------------------------------------------
-    def _on_turn_begin(self, evt: TurnBeginEvent) -> None:
+    def on_turn_begin(self, evt: TurnBeginEvent) -> None:
         # 实机日志已证实 (184845 [961..966], 204943 [637..640], 155925 [304..305])：
         # TurnPhase1 顺序：OnPhase1 -> OnListenTurnBegin -> OnListenTurnPhase1Begin
         # -> OnListenBeforeTurnPhase1End (血嗜等回合开始扣血 & 伴生小伊卡回血，此时 Phase1End 到期光环仍在！)
@@ -707,11 +614,8 @@ class VMRuntime:
         self.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnPhase1Begin", param_entity_id=evt.actor_name)
         self.turn_control_skill_snapshot[evt.actor_name] = self.control_skill_mapping.get((evt.actor_name, "ControlSkill01"), "Skill01")
-        self._in_turn_phase1_end = True
-        try:
+        with self.lifecycle.turn_phase1_end_scope():
             self.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=evt.actor_name)
-        finally:
-            self._in_turn_phase1_end = False
         actor_ent = self.sim.get_entity(evt.actor_name)
         if actor_ent is not None and not getattr(actor_ent, "is_enemy", False):
             sched = getattr(self.sim, "scheduler", None)
@@ -731,27 +635,19 @@ class VMRuntime:
                     director.sync_spawned_entities()
         self.modifier_engine.dispatch_event("OnListenAllowAction", param_entity_id=evt.actor_name)
 
-    def _on_turn_end(self, evt: TurnEndEvent) -> None:
+    def on_turn_end(self, evt: TurnEndEvent) -> None:
         self.turn_control_skill_snapshot.pop(evt.actor_name, None)
         self.end_being_attacked()
-        self._in_turn_phase1_end = True
-        try:
+        with self.lifecycle.turn_phase1_end_scope():
             self.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=evt.actor_name)
             self.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id=evt.actor_name)
             self.modifier_engine.tick_life_step("TurnEnd", evt.actor_name)
-        finally:
-            self._in_turn_phase1_end = False
         ent = self.sim.get_entity(evt.actor_name)
         if ent is not None and (getattr(ent, "is_enemy", False) or getattr(ent, "is_battle_event", False)) and getattr(ent, "current_hp", 0.0) > 0.0:
             self.modifier_engine.dispatch_event("OnPhase2", owner_id=evt.actor_name, param_entity_id=evt.actor_name)
             sched_p2 = getattr(self.sim, "scheduler", None)
-            if sched_p2 is not None and sched_p2.has_pending():
-                prev_d2 = getattr(sched_p2, "_action_frame_depth", 0)
-                sched_p2._action_frame_depth = 0
-                try:
-                    sched_p2.drain()
-                finally:
-                    sched_p2._action_frame_depth = prev_d2
+            if sched_p2 is not None:
+                sched_p2.drain_at_boundary()
             self.end_being_attacked()
 
     @staticmethod
@@ -780,7 +676,7 @@ class VMRuntime:
             return "Servant"
         return at
 
-    def _on_action_execute(self, evt: ActionExecuteEvent) -> None:
+    def on_action_execute(self, evt: ActionExecuteEvent) -> None:
         sk_type = self._normalize_skill_type(evt)
         if evt.actor_name in self.entity_specs:
             ent = self.sim.get_entity(evt.actor_name)
@@ -798,7 +694,7 @@ class VMRuntime:
                 current_skill_type=sk_type,
             )
 
-    def _on_action_end(self, evt: ActionEndEvent) -> None:
+    def on_action_end(self, evt: ActionEndEvent) -> None:
         self.end_being_attacked()
         sk_type = self._normalize_skill_type(evt)
         in_hold = bool(getattr(getattr(self.sim, "scheduler", None), "continuous_action_hold", False))
@@ -826,16 +722,16 @@ class VMRuntime:
                 self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
             self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
 
-    def _on_hp_lost(self, evt: HPLostEvent) -> None:
+    def on_hp_lost(self, evt: HPLostEvent) -> None:
         self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.entity_name, change_value=-evt.amount)
         self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.entity_name, change_value=-evt.amount)
 
-    def _on_heal_applied(self, evt: HealAppliedEvent) -> None:
+    def on_heal_applied(self, evt: HealAppliedEvent) -> None:
         if evt.amount > 0.0:
             self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.target_name, change_value=float(evt.amount))
             self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.target_name, change_value=float(evt.amount))
 
-    def _on_sp_change(self, evt: SPChangeEvent) -> None:
+    def on_sp_change(self, evt: SPChangeEvent) -> None:
         if evt.delta != 0:
             self.modifier_engine.dispatch_event(
                 "OnListenBpChange",
@@ -843,7 +739,7 @@ class VMRuntime:
                 change_value=float(evt.delta),
             )
 
-    def _on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
+    def on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
         done_set = getattr(self, "_pre_despawn_trigger_death_done", None)
         if done_set and evt.spirit_name in done_set:
             done_set.discard(evt.spirit_name)
@@ -853,7 +749,7 @@ class VMRuntime:
             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=evt.owner_name, param_entity_id=evt.spirit_name)
         self.modifier_engine.destroy_all_for_entity(evt.spirit_name)
 
-    def _on_enemy_defeated(self, evt: EnemyDefeatedEvent) -> None:
+    def on_enemy_defeated(self, evt: EnemyDefeatedEvent) -> None:
         killer_id = str(getattr(evt, "attacker_name", ""))
         dead_id = str(getattr(evt, "target_name", ""))
         if dead_id:
@@ -881,22 +777,7 @@ class VMRuntime:
                         if self.modifier_engine.has_modifier(e.name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
                             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=e.name, param_entity_id=dead_id)
                             break
-        if (
-            (getattr(self, "_attack_scope_depth", 0) > 0 or getattr(self, "_in_after_attack", False))
-            and not getattr(self, "_flushing_listen_die", False)
-        ):
-            q = getattr(self, "_pending_listen_die", None)
-            if q is None:
-                q = []
-                self._pending_listen_die = q
-            if dead_id and dead_id not in q:
-                q.append(dead_id)
-        else:
-            dead_ent = self.sim.get_entity(dead_id) if dead_id else None
-            if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
-                setattr(dead_ent, "_deferred_listen_die", True)
-            else:
-                self.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+        self.lifecycle.defer_or_dispatch_listen_die(dead_id, defer_in_after_attack=True)
 
 
 def ensure_vm_runtime(sim: Any, *, loader: Optional[GameDataLoader] = None, strict: bool = True) -> VMRuntime:
@@ -1273,75 +1154,33 @@ class ConfigAbilityKitAdapter(KitHandler):
         else:
             eff_targets = ctx.target_ids
 
-        if ctx.kind == ActionKind.ULTIMATE:
-            rt.modifier_engine.dispatch_event(
-                "OnListenUltraSkillPrepare",
-                param_entity_id=self.owner_id,
-            )
-
-        # 在执行 Ability 前以当前 SkillTargetEntityList 分发 OnBeforeSkillUse 与 OnListenBeforeSkillUse（支撑 23057 GetSkillAllTarget 与 23052 ParamEntitySkillTargetEntityList）
-        rt.modifier_engine.dispatch_event(
-            "OnBeforeSkillUse",
-            owner_id=self.owner_id,
-            skill_target_ids=eff_targets,
-            param_skill_targets=eff_targets,
-            current_skill_type=sk_type,
-        )
-        rt.modifier_engine.dispatch_event(
-            "OnListenBeforeSkillUse",
-            param_entity_id=self.owner_id,
-            skill_target_ids=eff_targets,
-            param_skill_targets=eff_targets,
-            current_skill_type=sk_type,
-        )
-
         # 读取官方 ExcelOutput SPBase 能量基数
         row = self._resolve_skill_row(sk_key)
         sp_obj = (row.get("SPBase") or {}) if row else {}
         base_en = float(sp_obj.get("Value", 0.0)) if isinstance(sp_obj, dict) else 0.0
 
-        prev_sp_base = rt._active_skill_sp_base
-        prev_sp_granted = rt._skill_sp_ratio_granted
-        rt._active_skill_sp_base = base_en
-        rt._skill_sp_ratio_granted = False
-        rt.begin_attack_scope()
-        try:
-            # 只执行 Phase01/Phase02（跳过 _Camera）
-            entry_ab = self._skill_entries.get(sk_key, "")
-            entry = [entry_ab] if (entry_ab and not entry_ab.endswith("_Camera")) else (
-                [a for a in ab_list if a.endswith("_Phase01")] or [a for a in ab_list if not a.endswith("_Camera")]
+        # 只执行 Phase01/Phase02（跳过 _Camera）
+        entry_ab = self._skill_entries.get(sk_key, "")
+        entry = [entry_ab] if (entry_ab and not entry_ab.endswith("_Camera")) else (
+            [a for a in ab_list if a.endswith("_Phase01")] or [a for a in ab_list if not a.endswith("_Camera")]
+        )
+        rt.lifecycle.run_ability_frame(
+            AbilityFrameSpec(
+                caster_id=self.owner_id,
+                ability_name=(entry[0] if entry else ""),
+                target_ids=eff_targets,
+                skill_target_ids=eff_targets,
+                skill_type=sk_type,
+                attack_type=sk_type,
+                skill_name=sk_key,
+                sp_base=base_en,
+                energy_cause=f"技能回能 {sk_key}",
+                emit_ultra_prepare=(ctx.kind == ActionKind.ULTIMATE),
+                emit_before_skill=True,
+                emit_listen_before_skill=True,
+                pass_skill_targets_to_before_hooks=True,
             )
-            prev_sk_name = getattr(rt, "_current_skill_name", "")
-            rt._current_skill_name = sk_key
-            try:
-                for ab_name in entry[:1]:
-                    rt.trigger_ability(
-                        caster_id=self.owner_id,
-                        ability_name=ab_name,
-                        target_ids=eff_targets,
-                        skill_target_ids=eff_targets,
-                        current_skill_type=sk_type,
-                        current_attack_type=sk_type,
-                    )
-            finally:
-                rt._current_skill_name = prev_sk_name
-        finally:
-            rt.end_attack_scope()
-            sp_granted_by_task = rt._skill_sp_ratio_granted
-            rt._active_skill_sp_base = prev_sp_base
-            rt._skill_sp_ratio_granted = prev_sp_granted
-
-        # 若 Ability 内未通过 ModifySPNew(AddRatio) 结算技能基础回能，则在此统一按 SPBase * ERR 结算
-        if base_en > 0 and not sp_granted_by_task and self.port:
-            ep_recipient = self.owner_id
-            if self.is_servant:
-                ent = rt.sim.get_entity(self.owner_id)
-                master_id = getattr(ent, "master_name", None) if ent is not None else None
-                if not master_id:
-                    return
-                ep_recipient = master_id
-            err = self.port.stat(ep_recipient, StatType.ERR) or 1.0
-            self.port.gain_energy(ep_recipient, base_en * err, cause=f"技能回能 {sk_key}")
+        )
 
 
 class ConfigAbilityRelicAdapter(RelicSetHandler):

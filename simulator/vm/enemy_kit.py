@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from simulator.core import Entity, TurnSimulator
+from simulator.lifecycle import AbilityFrameSpec
 from simulator.vm.enemy_port import (
     BaseEnemyCombatPortImpl,
     EnemyActionContext,
@@ -453,10 +454,8 @@ class DataDrivenEnemyKit(EnemyKit):
         )
         prev_sp_base = getattr(rt, "_current_enemy_sp_hit_base", 0.0)
         prev_has_dmg = getattr(rt, "_current_enemy_skill_has_damage", True)
-        prev_sk_name = getattr(rt, "_current_skill_name", "")
         rt._current_enemy_sp_hit_base = sp_base
         rt._current_enemy_skill_has_damage = has_dmg
-        rt._current_skill_name = str(getattr(sk, "skill_trigger_key", "") or "")
 
         hit_targets: List[str] = []
         hit_avatars: List[str] = []
@@ -480,38 +479,19 @@ class DataDrivenEnemyKit(EnemyKit):
 
         sim.event_bus.subscribe(DamageAppliedEvent, _on_vm_dmg)
         try:
-            rt.modifier_engine.dispatch_event(
-                "OnBeforeSkillUse",
-                owner_id=self.owner_id,
-                param_entity_id=self.owner_id,
-                attack_target_ids=target_ids,
-            )
-            rt.begin_attack_scope()
-            try:
-                rt.trigger_ability(
+            rt.lifecycle.run_ability_frame(
+                AbilityFrameSpec(
                     caster_id=self.owner_id,
                     ability_name=entry_ab,
                     target_ids=target_ids,
                     skill_target_ids=target_ids,
+                    skill_name=str(getattr(sk, "skill_trigger_key", "") or ""),
+                    emit_before_skill=True,
+                    before_skill_targets_as_attack=True,
+                    end_being_attacked_on_exit=True,
+                    emit_after_skill=True,
+                    emit_settle_callback=True,
                 )
-            finally:
-                rt.end_attack_scope()
-                rt.end_being_attacked()
-            rt.modifier_engine.dispatch_event(
-                "OnAfterSkillUse",
-                owner_id=self.owner_id,
-                param_entity_id=self.owner_id,
-                attack_target_ids=target_ids,
-            )
-            rt.modifier_engine.dispatch_event(
-                "OnListenAfterSkillUse",
-                param_entity_id=self.owner_id,
-                attack_target_ids=target_ids,
-            )
-            rt.modifier_engine.dispatch_event(
-                "CheckParamFlagCallBack",
-                param_entity_id=self.owner_id,
-                param_flags=("CallBack_SettleSkillOrInsertAbility",),
             )
         finally:
             subs = sim.event_bus._subscribers.get(DamageAppliedEvent)
@@ -519,7 +499,6 @@ class DataDrivenEnemyKit(EnemyKit):
                 subs.remove(_on_vm_dmg)
             rt._current_enemy_sp_hit_base = prev_sp_base
             rt._current_enemy_skill_has_damage = prev_has_dmg
-            rt._current_skill_name = prev_sk_name
 
         skill_audit_cb = getattr(sim, "on_enemy_skill_resolved", None)
         if callable(skill_audit_cb) and (hit_avatars or hit_sp_owners):
@@ -894,16 +873,13 @@ class DataDrivenEnemyKit(EnemyKit):
                 sub_cb = getattr(sim, "on_enemy_sub_action_end", None)
                 if callable(sub_cb) and has_next_sub_action:
                     sched = getattr(sim, "scheduler", None)
-                    prev_depth = getattr(sched, "_action_frame_depth", 0) if sched is not None else 0
-                    if sched is not None and prev_depth > 0:
-                        sched._action_frame_depth = 0
-                    try:
+                    if sched is not None:
+                        with sched.drain_window():
+                            sub_cb()
+                            if sched.has_pending():
+                                sched.drain()
+                    else:
                         sub_cb()
-                        if sched is not None and sched.has_pending():
-                            sched.drain()
-                    finally:
-                        if sched is not None and prev_depth > 0:
-                            sched._action_frame_depth = prev_depth
 
                 if attacker is None or attacker.current_hp <= 0.0:
                     break

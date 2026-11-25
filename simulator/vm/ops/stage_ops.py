@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping
 
 from ...events import EnemyDefeatedEvent, HPLostEvent, WeaknessBreakEvent
+from ...lifecycle import clear_deathrattle_limbo, emit_sim_event
 from ...status import StatType
 from ..expr import dotnet_hash
 from ..target_alias import ExecutionContext
@@ -64,17 +65,11 @@ class StageOpsMixin:
                         setattr(rt, "_pre_despawn_trigger_death_done", done_set)
                     done_set.add(tid)
             prev_hp = float(getattr(ent, "current_hp", 0.0))
-            was_limbo = bool(getattr(ent, "_in_deathrattle_limbo", False))
-            was_deferred_die = bool(getattr(ent, "_deferred_listen_die", False))
-            if was_limbo:
-                setattr(ent, "_in_deathrattle_limbo", False)
-            if was_deferred_die:
-                setattr(ent, "_deferred_listen_die", False)
-            setattr(ent, "_die_immediately_after_deathrattle", False)
-            setattr(ent, "_pending_deathrattle_actions", 0)
+            was_limbo, was_deferred_die = clear_deathrattle_limbo(ent)
             ent.current_hp = 0.0
             if not getattr(ent, "is_enemy", False) and prev_hp > 0.0:
-                sim.event_bus.publish(
+                emit_sim_event(
+                    sim,
                     HPLostEvent(
                         av=round(float(sim.current_av), 2),
                         cycle=int(sim.current_cycle),
@@ -82,7 +77,7 @@ class StageOpsMixin:
                         amount=prev_hp,
                         hp_left=0.0,
                         cause="ForceKill",
-                    )
+                    ),
                 )
             me.destroy_all_for_entity(tid)
             if getattr(ent, "is_enemy", False):
@@ -99,32 +94,19 @@ class StageOpsMixin:
                 if runner is not None and not is_inf_stage:
                     runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
                 sim.entities[:] = [e for e in sim.entities if e.name != tid]
-                pending_dead = getattr(rt, "_pending_dead_enemies", None)
-                if pending_dead and tid in pending_dead:
-                    pending_dead[:] = [x for x in pending_dead if x != tid]
+                rt.lifecycle.discard_pending_dead(tid)
                 if prev_hp > 0.0:
-                    sim.event_bus.publish(
+                    emit_sim_event(
+                        sim,
                         EnemyDefeatedEvent(
                             av=float(sim.current_av),
                             cycle=int(sim.current_cycle),
                             attacker_name=eff_attacker,
                             target_name=tid,
-                        )
+                        ),
                     )
                 elif not mute_death and (was_deferred_die or was_limbo):
-                    if (
-                        getattr(rt, "_attack_scope_depth", 0) > 0
-                        and not getattr(rt, "_in_after_attack", False)
-                        and not getattr(rt, "_flushing_listen_die", False)
-                    ):
-                        q = getattr(rt, "_pending_listen_die", None)
-                        if q is None:
-                            q = []
-                            rt._pending_listen_die = q
-                        if tid not in q:
-                            q.append(tid)
-                    else:
-                        me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
+                    rt.lifecycle.defer_or_dispatch_listen_die(tid, defer_in_after_attack=False)
             elif not mute_death and (prev_hp > 0.0 or getattr(ent, "is_memosprite", False)):
                 me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
             if getattr(ent, "is_memosprite", False) or getattr(ent, "is_countdown", False):
@@ -134,7 +116,7 @@ class StageOpsMixin:
                 rt.named_targets["BattleEventEntityList"] = [x for x in be_list if x != tid]
 
     def _op_damage_perform_finish(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
-        self.rt.flush_pending_after_attack()
+        self.rt.lifecycle.settle_attack_boundary()
 
     def _op_summon_monster(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -548,23 +530,19 @@ class StageOpsMixin:
                                     )
                             if entangle_applied:
                                 ent.delay_action(0.20 * (1.0 + atk_be))
-                        bus = getattr(sim, "event_bus", None)
-                        if bus is not None:
-                            bus.publish(
-                                WeaknessBreakEvent(
-                                    av=round(float(getattr(sim, "current_av", 0.0)), 2),
-                                    cycle=int(getattr(sim, "current_cycle", 0)),
-                                    breaker_name=atk_id,
-                                    target_name=tid,
-                                    element=st_elem,
-                                    break_damage=brk_dmg,
-                                    action_delay_pct=0.25,
-                                    entangle_applied=entangle_applied,
-                                )
-                            )
-                        else:
-                            me.dispatch_event("OnBeingBreak", owner_id=tid, param_entity_id=atk_id)
-                            me.dispatch_event("OnListenBreak", param_entity_id=tid)
+                        emit_sim_event(
+                            sim,
+                            WeaknessBreakEvent(
+                                av=round(float(getattr(sim, "current_av", 0.0)), 2),
+                                cycle=int(getattr(sim, "current_cycle", 0)),
+                                breaker_name=atk_id,
+                                target_name=tid,
+                                element=st_elem,
+                                break_damage=brk_dmg,
+                                action_delay_pct=0.25,
+                                entangle_applied=entangle_applied,
+                            ),
+                        )
                         break
 
     def _op_destroy_battle_character(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:

@@ -2,6 +2,7 @@
 
 > 📘 **核心文档导航**：
 > - [项目总览与 VM 执行流水线架构 (README.md)](README.md)
+> - [微内核统一执行管线架构蓝图 (docs/KERNEL_EXECUTION_PIPELINE.md)](docs/KERNEL_EXECUTION_PIPELINE.md)
 > - [研发工程规范、四大铁律与对账 SOP 总纲 (AGENTS.md)](AGENTS.md)
 > - [当前活跃攻坚台账 (docs/PROGRESS_ApocalypticShadow_420564-84.md)](docs/PROGRESS_ApocalypticShadow_420564-84.md)
 
@@ -51,8 +52,9 @@
 
 | 文件 | 核心类 / 符号 | 职责说明 |
 | :--- | :--- | :--- |
-| [`simulator/core.py`](simulator/core.py) | `TurnSimulator` | AV 跑条调度微内核、回合执行、秘技顺序、`vm_runtime.enter_battle()` 编排 |
-| [`simulator/scheduler.py`](simulator/scheduler.py) | `ActionScheduler` | 五级优先级派生队列调度器 |
+| [`simulator/core.py`](simulator/core.py) | `TurnSimulator` | AV 跑条调度微内核、`_run_kit_action_frame()`、秘技顺序与 `emit_event()` 事实路由编排 |
+| [`simulator/lifecycle.py`](simulator/lifecycle.py) | `ExecutionLifecycle`, `AbilityFrameSpec`, `dispatch_combat_fact`, `emit_sim_event` | 统一 Ability/Attack 帧、8 阶段 `SettlementBarrier` 与确定性内核事实路由（`EventBus` 降格为只读） |
+| [`simulator/scheduler.py`](simulator/scheduler.py) | `ActionScheduler` | 五级优先级派生队列调度器与 `drain_window()` / `drain_at_boundary()` 受控排空窗口 |
 | [`simulator/entity.py`](simulator/entity.py) | `Entity` | 战斗实体模型、静态白字与动态属性只读 `@property` |
 | [`simulator/protocols.py`](simulator/protocols.py) | `KitHandler`, `LightConeHandler`, `RelicSetHandler`, `GenericKit`, `apply_equipped_relics_affixes` | 角色/光锥/遗器行为处理器统一抽象协议层 |
 | [`simulator/combat_port.py`](simulator/combat_port.py) | `CombatPort`, `SimulatorCombatPort`, `BuffSpec` | 插件安全窄接口契约、召唤物入场四阶段屏障与事务桥接 |

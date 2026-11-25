@@ -13,6 +13,7 @@ from simulator.events import (
     TurnBeginEvent,
     WeaknessBreakEvent,
 )
+from simulator.lifecycle import emit_sim_event
 from simulator.vm.enemy_port import BaseEnemyCombatPortImpl
 from simulator.vm.wave_modes import AnomalyWaveMode, BreakStatusHelper, MoCWaveMode
 from simulator.status import StatType
@@ -71,9 +72,6 @@ class DataDrivenStageDirector:
         self._triggered_aha_137: bool = False
         self._triggered_aha_150: bool = False
 
-        self.sim.event_bus.subscribe(WeaknessBreakEvent, self._break_helper.on_weakness_break)
-        self.sim.event_bus.subscribe(DamageAppliedEvent, self._break_helper.on_damage_applied)
-        self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         setattr(self.sim, "_stage_director", self)
         self._active_wave_ability: Optional[str] = None
         self._init_stage_affix_abilities()
@@ -326,7 +324,8 @@ class DataDrivenStageDirector:
             if cur_cycle >= 1:
                 self.sim._turn_seq = getattr(self.sim, "_turn_seq", 0) + 1
                 self._published_aha_turn_avs.add(round(float(self.sim.current_av), 2))
-                self.sim.event_bus.publish(
+                emit_sim_event(
+                    self.sim,
                     TurnBeginEvent(
                         av=round(self.sim.current_av, 2),
                         cycle=cur_cycle,
@@ -334,11 +333,12 @@ class DataDrivenStageDirector:
                         actor_name="阿哈",
                         speed=0.0,
                         turn_id=self.sim._turn_seq,
-                    )
+                    ),
                 )
             from simulator.events import AhaExtraTurnEvent
 
-            self.sim.event_bus.publish(
+            emit_sim_event(
+                self.sim,
                 AhaExtraTurnEvent(
                     av=round(self.sim.current_av, 2),
                     cycle=cur_cycle,
@@ -511,13 +511,8 @@ class DataDrivenStageDirector:
                     self.sim._natural_due_names.discard(be_name)
                 rt.modifier_engine.dispatch_event("OnPhase1", owner_id=be_name)
                 sched = getattr(self.sim, "scheduler", None)
-                if sched is not None and sched.has_pending():
-                    prev_d = getattr(sched, "_action_frame_depth", 0)
-                    sched._action_frame_depth = 0
-                    try:
-                        sched.drain()
-                    finally:
-                        sched._action_frame_depth = prev_d
+                if sched is not None:
+                    sched.drain_at_boundary()
                 be_ent.distance_remaining = 10000.0
         self.sync_spawned_entities()
         pending_entry = getattr(self, "_entry_weakness_break", None) if wave_index == 0 else None
@@ -531,19 +526,20 @@ class DataDrivenStageDirector:
                             ent.current_toughness = max(0.0, ent.current_toughness - float(entry_toughness))
             self._entry_weakness_break = None
 
-    def _on_turn_begin(self, event: TurnBeginEvent) -> None:
+    def on_damage_applied(self, event: DamageAppliedEvent) -> None:
+        self._break_helper.on_damage_applied(event)
+
+    def on_weakness_break(self, event: WeaknessBreakEvent) -> None:
+        self._break_helper.on_weakness_break(event)
+
+    def on_turn_begin(self, event: TurnBeginEvent) -> None:
         self._check_aha_special_damage_events()
         self._break_helper.on_turn_begin(event)
         actor_ent = self.sim.get_entity(event.actor_name)
         if actor_ent is not None and getattr(actor_ent, "is_countdown", False):
             sched = getattr(self.sim, "scheduler", None)
             if sched is not None and sched.has_pending():
-                prev_d = getattr(sched, "_action_frame_depth", 0)
-                sched._action_frame_depth = 0
-                try:
-                    sched.drain()
-                finally:
-                    sched._action_frame_depth = prev_d
+                sched.drain_at_boundary()
                 self.sync_spawned_entities()
 
     @property
@@ -680,7 +676,8 @@ class DataDrivenStageDirector:
         if av_key not in self._published_aha_turn_avs:
             self._published_aha_turn_avs.add(av_key)
             self.sim._turn_seq = getattr(self.sim, "_turn_seq", 0) + 1
-            self.sim.event_bus.publish(
+            emit_sim_event(
+                self.sim,
                 TurnBeginEvent(
                     av=av_key,
                     cycle=int(self.sim.current_cycle),
@@ -688,7 +685,7 @@ class DataDrivenStageDirector:
                     actor_name="阿哈",
                     speed=0.0,
                     turn_id=self.sim._turn_seq,
-                )
+                ),
             )
         ent = self._resolve_enemy_target(target_name)
         if ent is None or ent.current_hp <= 0:
@@ -742,13 +739,14 @@ class DataDrivenStageDirector:
             if vm_rt is not None:
                 vm_rt.modifier_engine.dispatch_event("OnBeforeDying", owner_id=ent.name, param_entity_id="阿哈")
                 vm_rt.modifier_engine.destroy_all_for_entity(ent.name)
-            self.sim.event_bus.publish(
+            emit_sim_event(
+                self.sim,
                 EnemyDefeatedEvent(
                     av=float(self.sim.current_av),
                     cycle=int(self.sim.current_cycle),
                     attacker_name="阿哈",
                     target_name=ent.name,
-                )
+                ),
             )
             self.runner.state.enemies = [
                 m for m in self.runner.state.enemies if m.entity.name != ent.name
@@ -777,9 +775,9 @@ class DataDrivenStageDirector:
         if actual > 0.0:
             vm_rt = getattr(self.sim, "vm_runtime", None)
             if vm_rt is not None:
-                vm_rt._open_enemy_attack = "阿哈"
+                vm_rt.lifecycle.open_enemy_attack = "阿哈"
                 vm_rt.modifier_engine.dispatch_event("OnBeforeBeingHitAll", owner_id=ent.name, param_entity_id="阿哈")
-                self.sim.event_bus.publish(HPLostEvent(
+                emit_sim_event(self.sim, HPLostEvent(
                     av=round(self.sim.current_av, 2),
                     cycle=self.sim.current_cycle,
                     entity_name=ent.name,
@@ -986,12 +984,7 @@ class DataDrivenStageDirector:
                     )
                     sched = getattr(self.sim, "scheduler", None)
                     if sched is not None and sched.has_pending():
-                        prev_d = getattr(sched, "_action_frame_depth", 0)
-                        sched._action_frame_depth = 0
-                        try:
-                            sched.drain()
-                        finally:
-                            sched._action_frame_depth = prev_d
+                        sched.drain_at_boundary()
                         self.sync_spawned_entities()
                 if rt is not None:
                     # 官方日志实证（220255 L1336、221208 L1461）：新波次入场会触发一次 turn_owner=null 的 OnTurnBegin，
@@ -1003,15 +996,7 @@ class DataDrivenStageDirector:
         sched = getattr(self.sim, "scheduler", None)
         if sched is None or not sched.has_pending():
             return
-        prev_auto_ult = getattr(self.sim, "auto_ult", False)
-        self.sim.auto_ult = False
-        prev_d = getattr(sched, "_action_frame_depth", 0)
-        sched._action_frame_depth = 0
-        try:
-            sched.drain()
-        finally:
-            sched._action_frame_depth = prev_d
-            self.sim.auto_ult = prev_auto_ult
+        sched.drain_at_boundary(auto_ult=False)
         self.sync_spawned_entities()
 
 

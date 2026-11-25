@@ -264,9 +264,10 @@ class StatusManager:
                 elif getattr(target, "current_hp", 0.0) > cap:
                     target.current_hp = cap
 
-            if abs(hp_delta) > 1e-4 and StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (status.tags or ()) and self.simulator and hasattr(self.simulator, "event_bus"):
+            if abs(hp_delta) > 1e-4 and StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (status.tags or ()) and self.simulator and (hasattr(self.simulator, "event_bus") or hasattr(self.simulator, "emit_event")):
                 from .events import StatusApplyEvent
-                self.simulator.event_bus.publish(StatusApplyEvent(
+                from .lifecycle import emit_sim_event
+                emit_sim_event(self.simulator, StatusApplyEvent(
                     av=round(getattr(self.simulator, "current_av", 0.0), 2),
                     cycle=getattr(self.simulator, "current_cycle", 0),
                     source_name=getattr(status.source, "name", str(status.source)),
@@ -349,13 +350,13 @@ class StatusManager:
                 tgt.current_hp = cap
 
         # 发布到期/删除事实事件
-        if reason == "EXPIRED" and self.simulator and hasattr(self.simulator, "event_bus"):
+        if reason == "EXPIRED" and self.simulator and (hasattr(self.simulator, "event_bus") or hasattr(self.simulator, "emit_event")):
             from .events import StatusExpireEvent
-            bus = self.simulator.event_bus
+            from .lifecycle import emit_sim_event
             av = getattr(self.simulator, "current_av", 0.0)
             cycle = getattr(self.simulator, "current_cycle", 0)
             for st in removed_instances:
-                bus.publish(StatusExpireEvent(
+                emit_sim_event(self.simulator, StatusExpireEvent(
                     av=round(av, 2),
                     cycle=cycle,
                     target_name=st.target.name,

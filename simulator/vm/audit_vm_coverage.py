@@ -93,6 +93,25 @@ def extract_executor_supported_types(executor_path: Path) -> Tuple[Set[str], Set
                             _collect_strings_from_method(item, supported_predicates)
                         elif item.name in task_methods:
                             _collect_strings_from_method(item, supported_tasks)
+                    elif node.name == "TaskExecutor":
+                        dict_node: Optional[ast.Dict] = None
+                        if (
+                            isinstance(item, ast.AnnAssign)
+                            and isinstance(item.target, ast.Name)
+                            and item.target.id == "_TASK_DISPATCH"
+                            and isinstance(item.value, ast.Dict)
+                        ):
+                            dict_node = item.value
+                        elif (
+                            isinstance(item, ast.Assign)
+                            and any(isinstance(t, ast.Name) and t.id == "_TASK_DISPATCH" for t in item.targets)
+                            and isinstance(item.value, ast.Dict)
+                        ):
+                            dict_node = item.value
+                        if dict_node is not None:
+                            for key_node in dict_node.keys:
+                                if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                                    supported_tasks.add(key_node.value)
 
     return supported_tasks, supported_predicates
 

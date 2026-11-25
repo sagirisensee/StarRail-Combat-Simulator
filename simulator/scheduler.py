@@ -30,6 +30,7 @@ from .actions import (
     ScheduledActionIntent,
 )
 from .events import ActionExecuteEvent, PrimaryDamageCompleteEvent, ActionEndEvent, TurnBeginEvent
+from .lifecycle import emit_sim_event
 
 if TYPE_CHECKING:
     from .core import TurnSimulator
@@ -108,6 +109,29 @@ class ActionScheduler:
             yield
         finally:
             self._action_frame_depth = max(0, self._action_frame_depth - 1)
+
+    @contextmanager
+    def drain_window(self, *, auto_ult: Optional[bool] = None):
+        """在允许边界临时开放调度排空窗口，退出时严格恢复 `_action_frame_depth` 与 `auto_ult`。"""
+        prev_depth = self._action_frame_depth
+        has_prev_auto_ult = auto_ult is not None and hasattr(self.sim, "auto_ult")
+        prev_auto_ult = getattr(self.sim, "auto_ult", None) if has_prev_auto_ult else None
+        self._action_frame_depth = 0
+        if has_prev_auto_ult:
+            self.sim.auto_ult = bool(auto_ult)
+        try:
+            yield self
+        finally:
+            self._action_frame_depth = prev_depth
+            if has_prev_auto_ult:
+                self.sim.auto_ult = prev_auto_ult
+
+    def drain_at_boundary(self, *, auto_ult: Optional[bool] = None) -> int:
+        """在确认可开放边界时安全排空挂起动作（仅当存在待执行动作时开放窗口）。"""
+        if not self.has_pending():
+            return 0
+        with self.drain_window(auto_ult=auto_ult):
+            return self.drain()
 
     def can_auto_drain(self) -> bool:
         """当不处于原子动作帧内且未在 drain 循环中时，允许 EffectResolver.resolve_all() 自动触发排空。"""
@@ -526,7 +550,8 @@ class ActionScheduler:
                                 act_id = self.sim._action_seq
                             else:
                                 act_id = 0
-                            self.sim.event_bus.publish(
+                            emit_sim_event(
+                                self.sim,
                                 ActionExecuteEvent(
                                     av=round(getattr(self.sim, "current_av", 0.0), 2),
                                     cycle=getattr(self.sim, "current_cycle", 0),
@@ -537,14 +562,15 @@ class ActionScheduler:
                                     action_kind=intent.action_kind,
                                     skill_config_id=intent.skill_id,
                                     action_id=act_id,
-                                )
+                                ),
                             )
 
                         intent.callback()
                         self.sim.resolver.resolve_all()
                         if intent.publish_execute_event:
                             act_id = getattr(self.sim, "_action_seq", 0)
-                            self.sim.event_bus.publish(
+                            emit_sim_event(
+                                self.sim,
                                 PrimaryDamageCompleteEvent(
                                     av=round(getattr(self.sim, "current_av", 0.0), 2),
                                     cycle=getattr(self.sim, "current_cycle", 0),
@@ -554,9 +580,10 @@ class ActionScheduler:
                                     action_kind=intent.action_kind,
                                     skill_config_id=intent.skill_id,
                                     action_id=act_id,
-                                )
+                                ),
                             )
-                            self.sim.event_bus.publish(
+                            emit_sim_event(
+                                self.sim,
                                 ActionEndEvent(
                                     av=round(getattr(self.sim, "current_av", 0.0), 2),
                                     cycle=getattr(self.sim, "current_cycle", 0),
@@ -566,7 +593,7 @@ class ActionScheduler:
                                     action_kind=intent.action_kind,
                                     skill_config_id=intent.skill_id,
                                     action_id=act_id,
-                                )
+                                ),
                             )
                 finally:
                     self.active_intent = prev_intent

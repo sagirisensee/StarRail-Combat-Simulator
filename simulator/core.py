@@ -24,6 +24,7 @@ from .effects import (
 from .sp import SkillPointManager
 from .status import StatusManager, StatType
 from .actions import ActionKind, ActionContext, ActionScheduleCategory, TargetMode
+from .lifecycle import dispatch_combat_fact
 from .scheduler import ActionScheduler
 
 
@@ -189,6 +190,11 @@ class TurnSimulator:
 
         self.battle_started = True
 
+    def emit_event(self, event: BattleEvent) -> None:
+        """统一发送战斗事实事件：先按固定内核顺序显式路由，再向只读 EventBus 广播。"""
+        dispatch_combat_fact(self, event)
+        self.event_bus.publish(event)
+
     def get_entity(self, name_or_id: str) -> Optional[Entity]:
         for e in self.entities:
             if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
@@ -225,7 +231,7 @@ class TurnSimulator:
             except Exception:
                 tech_name = "秘技"
 
-            self.event_bus.publish(TechniqueExecuteEvent(
+            self.emit_event(TechniqueExecuteEvent(
                 av=0.0,
                 cycle=0,
                 actor_id=ent.name,
@@ -475,7 +481,7 @@ class TurnSimulator:
                 active_entity.is_broken = False
                 active_entity.current_toughness = active_entity.max_toughness
                 active_entity.current_stance_count = getattr(active_entity, "max_stance_count", 1)
-                self.event_bus.publish(ToughnessRecoverEvent(
+                self.emit_event(ToughnessRecoverEvent(
                     av=round(self.current_av, 2),
                     cycle=self.current_cycle,
                     target_name=active_entity.name,
@@ -492,7 +498,7 @@ class TurnSimulator:
                         "OnListenEndBreak",
                         param_entity_id=active_entity.name,
                     )
-            self.event_bus.publish(TurnBeginEvent(
+            self.emit_event(TurnBeginEvent(
                 av=round(self.current_av, 2),
                 cycle=self.current_cycle,
                 actor_id=active_entity.name,
@@ -516,6 +522,97 @@ class TurnSimulator:
         for plugin in getattr(self, "stage_plugins", []):
             plugin.on_turn_begin(active_entity, self)
         self.resolver.resolve_all()
+
+    def _run_kit_action_frame(
+        self,
+        actor: Entity,
+        *,
+        kind: ActionKind,
+        defn: Any,
+        action_type: str,
+        description: str,
+        target_ids: Tuple[str, ...],
+        is_natural_turn_action: bool,
+        schedule_category: Optional[ActionScheduleCategory],
+        owner_turn_id: Optional[int],
+        owner_turn_actor_id: Optional[str],
+        should_publish: bool,
+        after_execute_event_hook: Optional[Any] = None,
+        after_resolve_hook: Optional[Any] = None,
+        notify_all_kits_action_end: bool = False,
+        include_actor_kit_hooks: bool = False,
+    ) -> None:
+        """统一角色/终结技/连动动作执行帧：递增序号 -> ActionExecute -> Kit/装备钩子 -> resolve_all -> 收尾事件。"""
+        with self.scheduler.action_frame():
+            self._action_seq += 1
+            self._av_batch_seq += 1
+            skill_id = resolve_skill_config_id(actor, defn, kind)
+            if should_publish:
+                self.emit_event(ActionExecuteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=actor.name,
+                    actor_name=actor.name,
+                    action_type=action_type,
+                    description=description,
+                    action_kind=kind,
+                    skill_config_id=skill_id,
+                    action_id=self._action_seq,
+                ))
+            if after_execute_event_hook is not None:
+                after_execute_event_hook(skill_id)
+            ctx = ActionContext(
+                action_id=self._action_seq,
+                actor_id=actor.name,
+                kind=kind,
+                target_ids=target_ids,
+                is_natural_turn_action=is_natural_turn_action,
+                schedule_category=schedule_category,
+                owner_turn_id=owner_turn_id,
+                owner_turn_actor_id=owner_turn_actor_id,
+            )
+            if include_actor_kit_hooks and getattr(actor, "kit", None) is not None and hasattr(actor.kit, "on_action_before"):
+                actor.kit.on_action_before(ctx)
+            if getattr(actor, "light_cone", None) is not None:
+                actor.light_cone.on_action_before(ctx)
+            for rh in getattr(actor, "relic_handlers", []):
+                rh.on_action_before(ctx)
+            actor.kit.execute(ctx)
+            if include_actor_kit_hooks and getattr(actor, "kit", None) is not None and hasattr(actor.kit, "on_action_after"):
+                actor.kit.on_action_after(ctx)
+            if getattr(actor, "light_cone", None) is not None:
+                actor.light_cone.on_action_after(ctx)
+            for rh in getattr(actor, "relic_handlers", []):
+                rh.on_action_after(ctx)
+            self.resolver.resolve_all()
+            if after_resolve_hook is not None:
+                after_resolve_hook()
+            if notify_all_kits_action_end:
+                for e_ent in list(self.entities):
+                    if getattr(e_ent, "kit", None) is not None and hasattr(e_ent.kit, "on_action_end"):
+                        e_ent.kit.on_action_end(actor)
+                self.resolver.resolve_all()
+            if should_publish:
+                self.emit_event(PrimaryDamageCompleteEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=actor.name,
+                    actor_name=actor.name,
+                    action_type=action_type,
+                    action_kind=kind,
+                    skill_config_id=skill_id,
+                    action_id=self._action_seq,
+                ))
+                self.emit_event(ActionEndEvent(
+                    av=round(self.current_av, 2),
+                    cycle=self.current_cycle,
+                    actor_id=actor.name,
+                    actor_name=actor.name,
+                    action_type=action_type,
+                    action_kind=kind,
+                    skill_config_id=skill_id,
+                    action_id=self._action_seq,
+                ))
 
     def _execute_action(
         self,
@@ -545,8 +642,6 @@ class TurnSimulator:
         prev_hold = self.scheduler.continuous_action_hold
 
         with self.scheduler.action_frame():
-            self._action_seq += 1
-            self._av_batch_seq += 1
             intent = active_entity.get_next_action_intent()
             from simulator.vm.enemy_port import EnemyKit, EnemyActionContext
             is_char_kit = getattr(active_entity, "kit", None) is not None and not isinstance(active_entity.kit, EnemyKit)
@@ -573,39 +668,22 @@ class TurnSimulator:
                 if advance_policy:
                     active_entity.advance_policy()
 
-                if should_publish:
-                    self.event_bus.publish(ActionExecuteEvent(
-                        av=round(self.current_av, 2),
-                        cycle=self.current_cycle,
-                        actor_id=active_entity.name,
-                        actor_name=active_entity.name,
-                        action_type=actual_action,
-                        description=f"施放【{defn.name}】",
-                        action_kind=actual_kind,
-                        skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind),
-                        action_id=self._action_seq
-                    ))
-
-                ctx = ActionContext(
-                    action_id=self._action_seq,
-                    actor_id=active_entity.name,
+                self._run_kit_action_frame(
+                    active_entity,
                     kind=actual_kind,
+                    defn=defn,
+                    action_type=actual_action,
+                    description=f"施放【{defn.name}】",
                     target_ids=target_ids if target_ids is not None else (),
                     is_natural_turn_action=is_natural_turn_action,
                     schedule_category=schedule_category,
                     owner_turn_id=owner_turn_id,
                     owner_turn_actor_id=owner_turn_actor,
+                    should_publish=should_publish,
                 )
-                if getattr(active_entity, "light_cone", None) is not None:
-                    active_entity.light_cone.on_action_before(ctx)
-                for rh in getattr(active_entity, "relic_handlers", []):
-                    rh.on_action_before(ctx)
-                active_entity.kit.execute(ctx)
-                if getattr(active_entity, "light_cone", None) is not None:
-                    active_entity.light_cone.on_action_after(ctx)
-                for rh in getattr(active_entity, "relic_handlers", []):
-                    rh.on_action_after(ctx)
             else:
+                self._action_seq += 1
+                self._av_batch_seq += 1
                 if not active_entity.is_enemy and not getattr(active_entity, "is_countdown", False):
                     is_skill = (action_override == ActionKind.SKILL) if action_override is not None else (intent == "E")
                     if is_skill:
@@ -625,7 +703,7 @@ class TurnSimulator:
                     active_entity.advance_policy()
 
                 if should_publish:
-                    self.event_bus.publish(ActionExecuteEvent(
+                    self.emit_event(ActionExecuteEvent(
                         av=round(self.current_av, 2),
                         cycle=self.current_cycle,
                         actor_id=active_entity.name,
@@ -649,28 +727,28 @@ class TurnSimulator:
                             req = DamageRequest(attacker=active_entity, target=target, skill_multiplier=1.2)
                             self.resolver.enqueue(ApplyDamageEffect(request=req, toughness_reduction=0.0, element="Physical"))
 
-            self.resolver.resolve_all()
-            if should_publish:
-                self.event_bus.publish(PrimaryDamageCompleteEvent(
-                    av=round(self.current_av, 2),
-                    cycle=self.current_cycle,
-                    actor_id=active_entity.name,
-                    actor_name=active_entity.name,
-                    action_type=actual_action,
-                    action_kind=actual_kind if is_char_kit else None,
-                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if is_char_kit else 0,
-                    action_id=self._action_seq
-                ))
-                self.event_bus.publish(ActionEndEvent(
-                    av=round(self.current_av, 2),
-                    cycle=self.current_cycle,
-                    actor_id=active_entity.name,
-                    actor_name=active_entity.name,
-                    action_type=actual_action,
-                    action_kind=actual_kind if is_char_kit else None,
-                    skill_config_id=resolve_skill_config_id(active_entity, defn, actual_kind) if is_char_kit else 0,
-                    action_id=self._action_seq
-                ))
+                self.resolver.resolve_all()
+                if should_publish:
+                    self.emit_event(PrimaryDamageCompleteEvent(
+                        av=round(self.current_av, 2),
+                        cycle=self.current_cycle,
+                        actor_id=active_entity.name,
+                        actor_name=active_entity.name,
+                        action_type=actual_action,
+                        action_kind=None,
+                        skill_config_id=0,
+                        action_id=self._action_seq
+                    ))
+                    self.emit_event(ActionEndEvent(
+                        av=round(self.current_av, 2),
+                        cycle=self.current_cycle,
+                        actor_id=active_entity.name,
+                        actor_name=active_entity.name,
+                        action_type=actual_action,
+                        action_kind=None,
+                        skill_config_id=0,
+                        action_id=self._action_seq
+                    ))
 
             vm_rt = getattr(self, "vm_runtime", None)
             one_more_steps = 0
@@ -693,85 +771,48 @@ class TurnSimulator:
                     "ControlSkill03": ActionKind.ULTIMATE,
                 }
                 one_more_kind = ctrl_map.get(ctrl_type, ActionKind.BASIC)
-                with self.scheduler.action_frame():
-                    self._action_seq += 1
-                    self._av_batch_seq += 1
-                    sub_defn = active_entity.kit.definition(one_more_kind)
-                    sub_sid = resolve_skill_config_id(active_entity, sub_defn, one_more_kind)
-                    if sub_defn.cost.sp != 0:
-                        self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
-                    sub_tgts = (
-                        tuple(
-                            e.name for e in self.entities
-                            if getattr(e, "is_enemy", False)
-                            and not getattr(e, "is_countdown", False)
-                            and not getattr(e, "is_unselectable", False)
-                            and float(getattr(e, "current_hp", 0.0)) > 0.0
-                        )
-                        if sub_defn.target_mode == TargetMode.ALL_ENEMIES
-                        else tuple(
-                            t for t in (target_ids or ())
-                            if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
-                        )
+                sub_defn = active_entity.kit.definition(one_more_kind)
+                if sub_defn.cost.sp != 0:
+                    self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
+                sub_tgts = (
+                    tuple(
+                        e.name for e in self.entities
+                        if getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
                     )
-                    if should_publish:
-                        self.event_bus.publish(ActionExecuteEvent(
-                            av=round(self.current_av, 2),
-                            cycle=self.current_cycle,
-                            actor_id=active_entity.name,
-                            actor_name=active_entity.name,
-                            action_type=sub_defn.name,
-                            description=f"施放【{sub_defn.name}】",
-                            action_kind=one_more_kind,
-                            skill_config_id=sub_sid,
-                            action_id=self._action_seq,
-                        ))
+                    if sub_defn.target_mode == TargetMode.ALL_ENEMIES
+                    else tuple(
+                        t for t in (target_ids or ())
+                        if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
+                    )
+                )
+
+                def _after_chain_exec(sub_sid: int) -> None:
                     on_chain = getattr(self, "on_auto_chained_skill", None)
                     if callable(on_chain):
                         on_chain(active_entity.name, sub_sid)
-                    sub_ctx = ActionContext(
-                        action_id=self._action_seq,
-                        actor_id=active_entity.name,
-                        kind=one_more_kind,
-                        target_ids=sub_tgts,
-                        is_natural_turn_action=is_natural_turn_action,
-                        schedule_category=schedule_category,
-                        owner_turn_id=owner_turn_id,
-                        owner_turn_actor_id=owner_turn_actor,
-                    )
-                    if getattr(active_entity, "light_cone", None) is not None:
-                        active_entity.light_cone.on_action_before(sub_ctx)
-                    for rh in getattr(active_entity, "relic_handlers", []):
-                        rh.on_action_before(sub_ctx)
-                    active_entity.kit.execute(sub_ctx)
-                    if getattr(active_entity, "light_cone", None) is not None:
-                        active_entity.light_cone.on_action_after(sub_ctx)
-                    for rh in getattr(active_entity, "relic_handlers", []):
-                        rh.on_action_after(sub_ctx)
-                    self.resolver.resolve_all()
+
+                def _after_chain_resolve() -> None:
                     if not vm_rt._pending_use_skill_one_more.get(active_entity.name):
                         self.scheduler.continuous_action_hold = False
-                    if should_publish:
-                        self.event_bus.publish(PrimaryDamageCompleteEvent(
-                            av=round(self.current_av, 2),
-                            cycle=self.current_cycle,
-                            actor_id=active_entity.name,
-                            actor_name=active_entity.name,
-                            action_type=sub_defn.name,
-                            action_kind=one_more_kind,
-                            skill_config_id=sub_sid,
-                            action_id=self._action_seq,
-                        ))
-                        self.event_bus.publish(ActionEndEvent(
-                            av=round(self.current_av, 2),
-                            cycle=self.current_cycle,
-                            actor_id=active_entity.name,
-                            actor_name=active_entity.name,
-                            action_type=sub_defn.name,
-                            action_kind=one_more_kind,
-                            skill_config_id=sub_sid,
-                            action_id=self._action_seq,
-                        ))
+
+                self._run_kit_action_frame(
+                    active_entity,
+                    kind=one_more_kind,
+                    defn=sub_defn,
+                    action_type=sub_defn.name,
+                    description=f"施放【{sub_defn.name}】",
+                    target_ids=sub_tgts,
+                    is_natural_turn_action=is_natural_turn_action,
+                    schedule_category=schedule_category,
+                    owner_turn_id=owner_turn_id,
+                    owner_turn_actor_id=owner_turn_actor,
+                    should_publish=should_publish,
+                    after_execute_event_hook=_after_chain_exec,
+                    after_resolve_hook=_after_chain_resolve,
+                )
             if one_more_steps > 0 and not (vm_rt and vm_rt._pending_use_skill_one_more.get(active_entity.name)):
                 self.scheduler.continuous_action_hold = False
             elif not is_natural_turn_action and prev_hold:
@@ -823,14 +864,14 @@ class TurnSimulator:
         if active_entity.is_broken:
             active_entity.is_broken = False
             active_entity.current_toughness = active_entity.max_toughness
-            self.event_bus.publish(ToughnessRecoverEvent(
+            self.emit_event(ToughnessRecoverEvent(
                 av=round(self.current_av, 2),
                 cycle=self.current_cycle,
                 target_name=active_entity.name,
                 max_toughness=active_entity.max_toughness
             ))
 
-        self.event_bus.publish(TurnEndEvent(
+        self.emit_event(TurnEndEvent(
             av=round(self.current_av, 2),
             cycle=self.current_cycle,
             actor_id=active_entity.name,
@@ -1011,71 +1052,21 @@ class TurnSimulator:
         active_intent = getattr(self.scheduler, "active_intent", None)
         should_publish = not (active_intent is not None and active_intent.publish_execute_event)
 
-        with self.scheduler.action_frame():
-            self._action_seq += 1
-            self._av_batch_seq += 1
-            if should_publish:
-                self.event_bus.publish(ActionExecuteEvent(
-                    av=round(self.current_av, 2),
-                    cycle=self.current_cycle,
-                    actor_id=ent.name,
-                    actor_name=ent.name,
-                    action_type=f"Ultimate ({defn.name})",
-                    description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！",
-                    action_kind=ActionKind.ULTIMATE,
-                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE),
-                    action_id=self._action_seq
-                ))
-
-            ctx = ActionContext(
-                action_id=self._action_seq,
-                actor_id=ent.name,
-                kind=ActionKind.ULTIMATE,
-                target_ids=target_ids if target_ids is not None else (),
-                is_natural_turn_action=False,
-                schedule_category=ActionScheduleCategory.ULTIMATE,
-                owner_turn_id=owner_turn_id,
-                owner_turn_actor_id=owner_turn_actor,
-            )
-            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_before"):
-                ent.kit.on_action_before(ctx)
-            if getattr(ent, "light_cone", None) is not None:
-                ent.light_cone.on_action_before(ctx)
-            for rh in getattr(ent, "relic_handlers", []):
-                rh.on_action_before(ctx)
-            ent.kit.execute(ctx)
-            if getattr(ent, "kit", None) is not None and hasattr(ent.kit, "on_action_after"):
-                ent.kit.on_action_after(ctx)
-            if getattr(ent, "light_cone", None) is not None:
-                ent.light_cone.on_action_after(ctx)
-            for rh in getattr(ent, "relic_handlers", []):
-                rh.on_action_after(ctx)
-            self.resolver.resolve_all()
-            for e_ent in list(self.entities):
-                if getattr(e_ent, "kit", None) is not None and hasattr(e_ent.kit, "on_action_end"):
-                    e_ent.kit.on_action_end(ent)
-            self.resolver.resolve_all()
-            if should_publish:
-                self.event_bus.publish(PrimaryDamageCompleteEvent(
-                    av=round(self.current_av, 2),
-                    cycle=self.current_cycle,
-                    actor_id=ent.name,
-                    actor_name=ent.name,
-                    action_type=f"Ultimate ({defn.name})",
-                    action_kind=ActionKind.ULTIMATE,
-                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE),
-                    action_id=self._action_seq
-                ))
-                self.event_bus.publish(ActionEndEvent(
-                    av=round(self.current_av, 2),
-                    cycle=self.current_cycle,
-                    actor_id=ent.name,
-                    actor_name=ent.name,
-                    action_type=f"Ultimate ({defn.name})",
-                    action_kind=ActionKind.ULTIMATE,
-                    skill_config_id=resolve_skill_config_id(ent, defn, ActionKind.ULTIMATE),
-                    action_id=self._action_seq
-                ))
+        self._run_kit_action_frame(
+            ent,
+            kind=ActionKind.ULTIMATE,
+            defn=defn,
+            action_type=f"Ultimate ({defn.name})",
+            description=f"【{ent.name}】能量充盈，抢断插入终结技【{defn.name}】！",
+            target_ids=target_ids if target_ids is not None else (),
+            is_natural_turn_action=False,
+            schedule_category=ActionScheduleCategory.ULTIMATE,
+            owner_turn_id=owner_turn_id,
+            owner_turn_actor_id=owner_turn_actor,
+            should_publish=should_publish,
+            notify_all_kits_action_end=True,
+            include_actor_kit_hooks=True,
+        )
         return True
 
     def request_ultimate(self, actor_id: str, target_ids: Optional[Tuple[str, ...]] = None) -> bool:

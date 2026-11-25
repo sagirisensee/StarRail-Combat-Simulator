@@ -15,6 +15,7 @@ from .events import (
 )
 from .damage import DamageCalculator, DamageRequest, DamageBreakdown
 from .actions import DamageType
+from .lifecycle import emit_sim_event
 
 
 MAX_EFFECT_STEPS = 100
@@ -192,13 +193,14 @@ class EffectResolver:
                 10.0,
                 cause=f"击败【{target.name}】击杀回能 (基础 10.0, 受 ERR 放大)",
             )
-        self.simulator.event_bus.publish(
+        emit_sim_event(
+            self.simulator,
             EnemyDefeatedEvent(
                 av=round(av, 2),
                 cycle=cycle,
                 attacker_name=killer_name,
                 target_name=target.name,
-            )
+            ),
         )
         scheduler = getattr(self.simulator, "scheduler", None)
         if scheduler is not None:
@@ -232,14 +234,17 @@ class EffectResolver:
         main_ent.current_hp = max(0.0, old_hp - shared_loss)
         actual_shared = old_hp - main_ent.current_hp
         if actual_shared > 0.0:
-            self.simulator.event_bus.publish(HPLostEvent(
-                av=round(av, 2),
-                cycle=cycle,
-                entity_name=main_id,
-                amount=actual_shared,
-                hp_left=main_ent.current_hp,
-                cause="hp_shared_group",
-            ))
+            emit_sim_event(
+                self.simulator,
+                HPLostEvent(
+                    av=round(av, 2),
+                    cycle=cycle,
+                    entity_name=main_id,
+                    amount=actual_shared,
+                    hp_left=main_ent.current_hp,
+                    cause="hp_shared_group",
+                ),
+            )
         sync_hp_shared_subtargets(self.simulator, main_ent)
         if was_alive and main_ent.current_hp <= 0.0 and not getattr(main_ent, "is_infinite_hp", False):
             self._handle_enemy_defeated(attacker, main_ent, av, cycle)
@@ -247,7 +252,6 @@ class EffectResolver:
     def _resolve_one(self, effect: EffectRequest):
         av = self.simulator.current_av
         cycle = self.simulator.current_cycle
-        bus = self.simulator.event_bus
 
         if isinstance(effect, AdvanceActionEffect):
             before = effect.target.distance_remaining
@@ -258,7 +262,7 @@ class EffectResolver:
             if after <= 0.0 and self.simulator.current_turn_entity != effect.target:
                 if hasattr(self.simulator, "notify_entity_ready"):
                     self.simulator.notify_entity_ready(effect.target.name)
-            bus.publish(ActionAdvanceEvent(
+            emit_sim_event(self.simulator, ActionAdvanceEvent(
                 av=round(av, 2),
                 cycle=cycle,
                 source_name=effect.source_name,
@@ -279,7 +283,7 @@ class EffectResolver:
                 nd = getattr(self.simulator, "_natural_due_names", None)
                 if isinstance(nd, set):
                     nd.discard(effect.target.name)
-            bus.publish(ActionDelayEvent(
+            emit_sim_event(self.simulator, ActionDelayEvent(
                 av=round(av, 2),
                 cycle=cycle,
                 source_name=effect.source_name,
@@ -313,7 +317,7 @@ class EffectResolver:
                     f"team_sp={self.simulator.sp.current_sp}/{self.simulator.sp.max_sp} "
                     f"extra_bp={extra_bp} cause={effect.reason}",
                 )
-            bus.publish(SPChangeEvent(
+            emit_sim_event(self.simulator, SPChangeEvent(
                 av=round(av, 2),
                 cycle=cycle,
                 actor_name=effect.actor_name,
@@ -330,7 +334,7 @@ class EffectResolver:
                     delta=effect.sp_change,
                     reason="终结技效果"
                 ))
-            bus.publish(ActionExecuteEvent(
+            emit_sim_event(self.simulator, ActionExecuteEvent(
                 av=round(av, 2),
                 cycle=cycle,
                 actor_id=effect.actor.name,
@@ -345,7 +349,7 @@ class EffectResolver:
             # 派生同步类状态 (带 SUPPRESS_STATUS_APPLY_EVENT 标签) 不广播应用事件，防事件自循环
             from .status import StatusTag
             if StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (getattr(st, "tags", None) or ()):
-                bus.publish(StatusApplyEvent(
+                emit_sim_event(self.simulator, StatusApplyEvent(
                     av=round(av, 2),
                     cycle=cycle,
                     source_name=st.source.name,
@@ -368,7 +372,7 @@ class EffectResolver:
                     cut = min(target.current_toughness, effect.amount)
                     overflow = max(0.0, float(effect.amount) - float(cut))
                     target.current_toughness -= cut
-                    bus.publish(ToughnessReduceEvent(
+                    emit_sim_event(self.simulator, ToughnessReduceEvent(
                         av=round(av, 2),
                         cycle=cycle,
                         attacker_name=effect.attacker.name,
@@ -506,7 +510,7 @@ class EffectResolver:
                                     target=target,
                                     percent=0.20 * (1.0 + be)
                                 ))
-                        bus.publish(WeaknessBreakEvent(
+                        emit_sim_event(self.simulator, WeaknessBreakEvent(
                             av=round(av, 2),
                             cycle=cycle,
                             breaker_name=effect.attacker.name,
@@ -632,7 +636,7 @@ class EffectResolver:
                         actual_loss = old_hp - target.current_hp
                     hp_left = target.current_hp
                     if actual_loss > 0:
-                        bus.publish(HPLostEvent(
+                        emit_sim_event(self.simulator, HPLostEvent(
                             av=round(av, 2),
                             cycle=cycle,
                             entity_name=target.name,
@@ -697,7 +701,7 @@ class EffectResolver:
             else:
                 self.simulator.effect_counter = 1
             eff_id = self.simulator.effect_counter
-            bus.publish(DamageAppliedEvent(
+            emit_sim_event(self.simulator, DamageAppliedEvent(
                 av=round(av, 2),
                 cycle=cycle,
                 attacker_name=breakdown.attacker_name,

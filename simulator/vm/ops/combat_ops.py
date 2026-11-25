@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from ...actions import DamageType
 from ...damage import DamageBreakdown
 from ...events import DamageAppliedEvent, HPLostEvent
+from ...lifecycle import emit_sim_event, enter_deathrattle_limbo
 from ...status import StatType
 from ..expr import dotnet_hash
 from ..target_alias import ExecutionContext
@@ -706,7 +707,8 @@ class CombatOpsMixin:
                     actual = min(old_hp, raw_dmg)
                     tgt_ent.current_hp = max(0.0, old_hp - actual)
                 if actual > 0.0:
-                    sim.event_bus.publish(
+                    emit_sim_event(
+                        sim,
                         HPLostEvent(
                             av=round(float(sim.current_av), 2),
                             cycle=int(sim.current_cycle),
@@ -714,7 +716,7 @@ class CombatOpsMixin:
                             amount=float(actual),
                             hp_left=float(tgt_ent.current_hp),
                             cause=ctx.ability_name or "ByBaseDamage",
-                        )
+                        ),
                     )
                 elif raw_dmg > 0.0 and bool(getattr(tgt_ent, "_negative_hp_enabled", False)):
                     me.dispatch_event(
@@ -731,7 +733,8 @@ class CombatOpsMixin:
                         change_value=-float(raw_dmg),
                     )
                 if raw_dmg > 0.0:
-                    sim.event_bus.publish(
+                    emit_sim_event(
+                        sim,
                         DamageAppliedEvent(
                             av=round(float(sim.current_av), 2),
                             cycle=int(sim.current_cycle),
@@ -842,23 +845,19 @@ class CombatOpsMixin:
                             eff_killer = (ctx.param_entity_id if (ctx.param_entity_id and ctx.param_entity_id != tid) else "") or last_killer
                     else:
                         eff_killer = "__LEVEL__" if is_level_base_dmg else spec.eff_attacker_id
-                    if is_level_base_dmg and getattr(rt, "_attack_scope_depth", 0) > 0:
-                        pending_lvl = getattr(rt, "_pending_level_kills", None)
-                        if pending_lvl is None:
-                            pending_lvl = []
-                            rt._pending_level_kills = pending_lvl
-                        if all(item[0] != tid for item in pending_lvl):
-                            pending_lvl.append((tid, eff_killer))
+                    if is_level_base_dmg and rt.lifecycle.in_attack_scope:
+                        rt.lifecycle.enqueue_level_kill(tid, eff_killer)
                     else:
                         me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=eff_killer)
                         from simulator.events import EnemyDefeatedEvent
-                        sim.event_bus.publish(
+                        emit_sim_event(
+                            sim,
                             EnemyDefeatedEvent(
                                 av=float(sim.current_av),
                                 cycle=int(sim.current_cycle),
                                 attacker_name=eff_killer,
                                 target_name=tid,
-                            )
+                            ),
                         )
                         me.destroy_all_for_entity(tid)
                         sim.entities[:] = [e for e in sim.entities if e.name != tid]
@@ -1171,56 +1170,27 @@ class CombatOpsMixin:
                         if dead_cand_ent is not None and me.has_behavior_flag(dead_id_cand, "Deathrattle"):
                             summoner_id = getattr(dead_cand_ent, "summoner_name", None)
                             if not summoner_id or not me.has_behavior_flag(summoner_id, "Break"):
-                                setattr(dead_cand_ent, "_in_deathrattle_limbo", True)
+                                enter_deathrattle_limbo(dead_cand_ent)
                         if dead_id_cand not in pending_dying:
                             pending_dying.append(dead_id_cand)
-                        pending_dead = getattr(rt, "_pending_dead_enemies", None)
-                        if pending_dead is None:
-                            pending_dead = []
-                            rt._pending_dead_enemies = pending_dead
-                        if dead_id_cand not in pending_dead:
-                            pending_dead.append(dead_id_cand)
+                        rt.lifecycle.enqueue_pending_dead(dead_id_cand)
                 elif tgt_ent is not None and getattr(tgt_ent, "is_memosprite", False):
                     if was_strictly_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
                         if me.has_behavior_flag(tid, "Deathrattle"):
-                            setattr(tgt_ent, "_in_deathrattle_limbo", True)
+                            enter_deathrattle_limbo(tgt_ent)
                         if tid not in pending_dying:
                             pending_dying.append(tid)
-                        pending_dead = getattr(rt, "_pending_dead_enemies", None)
-                        if pending_dead is None:
-                            pending_dead = []
-                            rt._pending_dead_enemies = pending_dead
-                        if tid not in pending_dead:
-                            pending_dead.append(tid)
+                        rt.lifecycle.enqueue_pending_dead(tid)
             sim.resolver.resolve_all()
             if pending_dying:
                 if spec.eff_attacker_id and spec.eff_attacker_id != "__LEVEL__":
                     rt._last_enemy_killer_id = spec.eff_attacker_id
-                if getattr(rt, "_attack_scope_depth", 0) > 0 or getattr(rt, "_in_after_attack", False):
-                    q = getattr(rt, "_pending_dying_enemies", None)
-                    if q is None:
-                        q = []
-                        rt._pending_dying_enemies = q
-                    for d_tid in pending_dying:
-                        if not any(x[0] == d_tid for x in q):
-                            q.append((d_tid, spec.eff_attacker_id))
-                else:
-                    for d_tid in pending_dying:
-                        me.dispatch_event("OnBeforeDying", owner_id=d_tid, param_entity_id=spec.eff_attacker_id)
-                        me.dispatch_event("OnBeingLimbo", owner_id=d_tid, param_entity_id=spec.eff_attacker_id)
-                        d_ent = sim.get_entity(d_tid)
-                        if d_ent is not None and getattr(d_ent, "_in_deathrattle_limbo", False):
-                            me.strip_for_deathrattle(d_tid)
-                        active_dr = getattr(rt, "_active_deathrattle_entities", None)
-                        if active_dr is None:
-                            active_dr = set()
-                            rt._active_deathrattle_entities = active_dr
-                        active_dr.add(d_tid)
-                        try:
-                            me.dispatch_event("OnDeathrattle", owner_id=d_tid, param_entity_id=spec.eff_attacker_id)
-                        finally:
-                            active_dr.discard(d_tid)
-                        rt.finalize_inline_deathrattle(d_tid)
+                for d_tid in pending_dying:
+                    rt.lifecycle.enqueue_or_process_dying(
+                        d_tid,
+                        spec.eff_attacker_id,
+                        defer_in_after_attack=True,
+                    )
             for l_tid in pending_limbo:
                 if not rt.trigger_or_defer_limbo(l_tid, spec.eff_attacker_id):
                     me.dispatch_event("OnLimboWaitHeal", owner_id=l_tid, param_entity_id=spec.eff_attacker_id)
@@ -1263,78 +1233,14 @@ class CombatOpsMixin:
 
         if not spec.is_nested_sub and not spec.is_additional_dmg:
             eff_sk_type = ctx.current_skill_type or spec.atk_type
-            if getattr(rt, "_attack_scope_depth", 0) > 0:
-                rt._pending_after_attack = (
-                    prep.atk_seq,
-                    spec.eff_attacker_id,
-                    dmg_data,
-                    spec.atk_type,
-                    eff_sk_type,
-                )
-            else:
-                after_set = getattr(rt, "_after_attack_fired", None)
-                if after_set is None:
-                    after_set = set()
-                    rt._after_attack_fired = after_set
-                if prep.atk_key not in after_set:
-                    after_set.add(prep.atk_key)
-                    all_tgts = tuple(rt._attack_targets_by_key.get(prep.atk_key, spec.targets))
-                    rt._in_after_attack = True
-                    try:
-                        me.dispatch_event(
-                            "OnAfterAttack",
-                            owner_id=spec.eff_attacker_id,
-                            attack_target_ids=all_tgts,
-                            damage_data=dmg_data,
-                            current_skill_type=eff_sk_type,
-                            current_attack_type=spec.atk_type,
-                        )
-                        me.dispatch_event(
-                            "OnListenAfterAttack",
-                            param_entity_id=spec.eff_attacker_id,
-                            attack_target_ids=all_tgts,
-                            damage_data=dmg_data,
-                            current_skill_type=eff_sk_type,
-                            current_attack_type=spec.atk_type,
-                        )
-                        for tid in all_tgts:
-                            me.dispatch_event(
-                                "OnAfterBeingAttacked",
-                                owner_id=tid,
-                                param_entity_id=spec.eff_attacker_id,
-                                damage_data=dmg_data,
-                                current_attack_type=spec.atk_type,
-                            )
-                            me.dispatch_event(
-                                "OnAfterBeingAttackedEnd",
-                                owner_id=tid,
-                                param_entity_id=spec.eff_attacker_id,
-                                damage_data=dmg_data,
-                                current_attack_type=spec.atk_type,
-                            )
-                        me.dispatch_event(
-                            "OnListenAfterAttackEnd",
-                            param_entity_id=spec.eff_attacker_id,
-                            attack_target_ids=all_tgts,
-                            damage_data=dmg_data,
-                            current_attack_type=spec.atk_type,
-                        )
-                    finally:
-                        rt._in_after_attack = False
-                        if getattr(rt, "_attack_blocked_targets", None):
-                            rt._attack_blocked_targets.clear()
-                    rt.drain_pending_dying_enemies()
-                    rt.flush_pending_listen_die()
-                    pending_dead = getattr(rt, "_pending_dead_enemies", None)
-                    if pending_dead:
-                        remaining_dead = []
-                        for dead_tid in list(pending_dead):
-                            dead_ent = sim.get_entity(dead_tid)
-                            if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
-                                remaining_dead.append(dead_tid)
-                            else:
-                                rt.finalize_dead_enemy(dead_tid)
-                        pending_dead[:] = remaining_dead
+            rt.lifecycle.schedule_after_attack(
+                prep.atk_seq,
+                spec.eff_attacker_id,
+                dmg_data,
+                spec.atk_type,
+                eff_sk_type,
+                fallback_targets=tuple(spec.targets),
+            )
 
     def _execute_damage(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         spec = self._parse_damage_spec(task, ctx)
@@ -1412,7 +1318,7 @@ class CombatOpsMixin:
                 ent.current_hp -= actual_loss
                 from ...effects import sync_hp_shared_subtargets
                 sync_hp_shared_subtargets(sim, ent)
-                sim.event_bus.publish(HPLostEvent(
+                emit_sim_event(sim, HPLostEvent(
                     av=round(sim.current_av, 2),
                     cycle=sim.current_cycle,
                     entity_name=tid,
@@ -1444,49 +1350,23 @@ class CombatOpsMixin:
                         except KeyError:
                             pass
                     if ent.current_hp <= 0.0:
-                        has_dr = False
                         if me.has_behavior_flag(tid, "Deathrattle"):
                             summoner_id = getattr(ent, "summoner_name", None)
                             if not summoner_id or not me.has_behavior_flag(summoner_id, "Break"):
-                                has_dr = True
-                                setattr(ent, "_in_deathrattle_limbo", True)
+                                enter_deathrattle_limbo(ent)
                         from simulator.events import EnemyDefeatedEvent
-                        sim.event_bus.publish(
+                        emit_sim_event(
+                            sim,
                             EnemyDefeatedEvent(
                                 av=float(sim.current_av),
                                 cycle=int(sim.current_cycle),
                                 attacker_name=eff_killer or "",
                                 target_name=tid,
-                            )
+                            ),
                         )
-                        if getattr(rt, "_attack_scope_depth", 0) > 0:
-                            q = getattr(rt, "_pending_dying_enemies", None)
-                            if q is None:
-                                q = []
-                                rt._pending_dying_enemies = q
-                            if not any(x[0] == tid for x in q):
-                                q.append((tid, eff_killer))
-                            pending_dead = getattr(rt, "_pending_dead_enemies", None)
-                            if pending_dead is None:
-                                pending_dead = []
-                                rt._pending_dead_enemies = pending_dead
-                            if tid not in pending_dead:
-                                pending_dead.append(tid)
+                        if rt.lifecycle.enqueue_or_process_dying(tid, eff_killer, defer_in_after_attack=False):
+                            rt.lifecycle.enqueue_pending_dead(tid)
                         else:
-                            me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=eff_killer)
-                            me.dispatch_event("OnBeingLimbo", owner_id=tid, param_entity_id=eff_killer)
-                            if has_dr:
-                                me.strip_for_deathrattle(tid)
-                            active_dr = getattr(rt, "_active_deathrattle_entities", None)
-                            if active_dr is None:
-                                active_dr = set()
-                                rt._active_deathrattle_entities = active_dr
-                            active_dr.add(tid)
-                            try:
-                                me.dispatch_event("OnDeathrattle", owner_id=tid, param_entity_id=eff_killer)
-                            finally:
-                                active_dr.discard(tid)
-                            rt.finalize_inline_deathrattle(tid)
                             if not getattr(ent, "_in_deathrattle_limbo", False) and float(getattr(ent, "current_hp", 0.0)) <= 0.0:
                                 me.destroy_all_for_entity(tid)
                                 if runner is not None:
