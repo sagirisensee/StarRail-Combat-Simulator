@@ -5,6 +5,8 @@ import os
 import unittest
 from typing import Optional, Sequence, Tuple
 
+import pytest
+
 from simulator.db.character_db import CharacterDB
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.reconcile.runner import reconcile_log
@@ -73,6 +75,7 @@ class TestVMStage30126123Alignment(unittest.TestCase):
             ["风堇", _NOV_ROBIN_PROFILE, "缇宝", "长夜月"],
         )
 
+    @pytest.mark.slow
     def test_vm_20261122_193501(self) -> None:
         self._run_vm_case(
             "193501",

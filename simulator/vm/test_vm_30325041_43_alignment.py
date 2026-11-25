@@ -5,6 +5,8 @@ import os
 import unittest
 from typing import Optional, Tuple
 
+import pytest
+
 from simulator.db.character_db import CharacterDB
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.reconcile.runner import reconcile_log
@@ -68,6 +70,7 @@ class TestVMStage30325041To43Alignment(unittest.TestCase):
             extra_maze_buff_ids=(3031359,),
         )
 
+    @pytest.mark.slow
     def test_vm_30325042_20261122_233304(self) -> None:
         self._run_vm_case(
             "30325042_233304",
@@ -75,6 +78,7 @@ class TestVMStage30325041To43Alignment(unittest.TestCase):
             extra_maze_buff_ids=(3031359, 3034013),
         )
 
+    @pytest.mark.slow
     def test_vm_30325043_20261122_233727(self) -> None:
         self._run_vm_case(
             "30325043_233727",

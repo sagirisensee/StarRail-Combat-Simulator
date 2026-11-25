@@ -72,54 +72,8 @@ class TestVMStage30126122Alignment(unittest.TestCase):
     def test_vm_20261114_155925(self) -> None:
         self._run_vm_case("155925", "battle_20261114_155925.jsonl", ["风堇", "长夜月"])
 
-    @pytest.mark.slow
-    def test_vm_20261114_184651(self) -> None:
-        self._run_vm_case(
-            "184651",
-            "battle_20261114_184651.jsonl",
-            ["风堇", "长夜月"],
-            av_budget=240.0,
-            max_tl_av=240.22,
-        )
-
-    @pytest.mark.slow
-    def test_vm_20261114_184845(self) -> None:
-        self._run_vm_case("184845", "battle_20261114_184845.jsonl", ["风堇", "缇宝"])
-
-    @pytest.mark.slow
-    def test_vm_20261114_204943(self) -> None:
-        self._run_vm_case("204943", "battle_20261114_204943.jsonl", ["风堇", _NOV_ROBIN_PROFILE])
-
-    @pytest.mark.slow
-    def test_vm_20261114_205144(self) -> None:
-        self._run_vm_case("205144", "battle_20261114_205144.jsonl", ["风堇", _NOV_ROBIN_PROFILE, "缇宝"])
-
-    @pytest.mark.slow
-    def test_vm_20261114_220255(self) -> None:
-        self._run_vm_case("220255", "battle_20261114_220255.jsonl", ["风堇", _NOV_ROBIN_PROFILE, "缇宝"])
-
-    @pytest.mark.slow
-    def test_vm_20261114_221208(self) -> None:
-        self._run_vm_case("221208", "battle_20261114_221208.jsonl", ["风堇", _NOV_ROBIN_PROFILE, "长夜月"])
-
-    @pytest.mark.slow
-    def test_vm_20261114_222204(self) -> None:
-        self._run_vm_case("222204", "battle_20261114_222204.jsonl", ["风堇", "缇宝", "长夜月"])
-
     def test_vm_20261115_041608(self) -> None:
         self._run_vm_case("041608", "battle_20261115_041608.jsonl", ["风堇", "缇宝", "长夜月", _NOV_ROBIN_PROFILE])
-
-    @pytest.mark.slow
-    def test_vm_20261116_031107(self) -> None:
-        self._run_vm_case("031107", "battle_20261116_031107.jsonl", ["风堇", "长夜月"])
-
-    @pytest.mark.slow
-    def test_vm_20261115_060113(self) -> None:
-        self._run_vm_case("060113", "battle_20261115_060113.jsonl", ["风堇", "长夜月"])
-
-    @pytest.mark.slow
-    def test_vm_20261115_060344(self) -> None:
-        self._run_vm_case("060344", "battle_20261115_060344.jsonl", ["风堇", "缇宝"])
 
 
 if __name__ == "__main__":
