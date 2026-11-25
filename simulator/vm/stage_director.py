@@ -481,19 +481,11 @@ class DataDrivenStageDirector:
                     triggered.add(entry_ab)
                     rt.trigger_ability(caster_id=ent.name, ability_name=entry_ab, target_ids=(ent.name,))
 
-    def _init_wave_monster_battle_events(self, entities: Sequence[Entity], wave_index: int) -> None:
-        """通用初始化当前波次怪物的 DynamicValues、触发入场被动，并结算入场立即就绪的 BattleEvent（如 20041 进场召唤胚芽）。"""
+    def _flush_ready_battle_events(self) -> None:
+        """结算入场即就绪（distance_remaining == 0）的非傀儡 BattleEvent（如 20041 进场召唤胚芽）。"""
         rt = getattr(self.sim, "vm_runtime", None)
         if rt is None:
             return
-        for ent in entities:
-            kit = getattr(ent, "kit", None)
-            if kit is not None and hasattr(kit, "_ensure_monster_dynamic_values"):
-                kit._ensure_monster_dynamic_values(rt)
-            self._trigger_monster_passive_abilities(ent, rt)
-
-        # 若怪物 PassiveSkillInitiate 创建了 OnAdd 立即置零跑道 (distance_remaining == 0) 的 BattleEvent (如 20041)，
-        # 按官方波次进场时序立即触发其 OnPhase1 + drain 并将距离重置为 10000.0
         for be_name in list(rt.named_targets.get("BattleEventEntityList", ())):
             be_ent = self.sim.get_entity(be_name)
             if (
@@ -512,6 +504,27 @@ class DataDrivenStageDirector:
                     sched.drain_at_boundary()
                 be_ent.distance_remaining = 10000.0
         self.sync_spawned_entities()
+
+    def _init_wave_monster_battle_events(
+        self,
+        entities: Sequence[Entity],
+        wave_index: int,
+        *,
+        flush_ready_events: bool = True,
+    ) -> None:
+        """通用初始化当前波次怪物的 DynamicValues、触发入场被动，并按需结算立即就绪的 BattleEvent（如 20041 进场召唤胚芽）。"""
+        rt = getattr(self.sim, "vm_runtime", None)
+        if rt is None:
+            return
+        for ent in entities:
+            kit = getattr(ent, "kit", None)
+            if kit is not None and hasattr(kit, "_ensure_monster_dynamic_values"):
+                kit._ensure_monster_dynamic_values(rt)
+            self._trigger_monster_passive_abilities(ent, rt)
+
+        self.sync_spawned_entities()
+        if flush_ready_events:
+            self._flush_ready_battle_events()
         pending_entry = getattr(self, "_entry_weakness_break", None) if wave_index == 0 else None
         if pending_entry is not None:
             entry_elem, entry_toughness, applied_names = pending_entry
@@ -942,6 +955,7 @@ class DataDrivenStageDirector:
             next_wave_entities = self.runner.advance_wave_if_cleared(current_av=self.sim.current_av)
             if next_wave_entities is not None:
                 self._wave_start_av = float(self.sim.current_av)
+                setattr(self.sim, "current_wave", int(self.runner.state.wave_index) + 1)
                 self.sim.entities[:] = [
                     e for e in self.sim.entities if not e.is_enemy or e.current_hp > 0.0
                 ]
@@ -962,6 +976,11 @@ class DataDrivenStageDirector:
                     if getattr(ent, "kit", None) is not None:
                         ent.kit.port = self.port
                 self._apply_wave_ability(self.runner.state.wave_index)
+                self._init_wave_monster_battle_events(
+                    next_wave_entities,
+                    self.runner.state.wave_index,
+                    flush_ready_events=False,
+                )
                 rt = getattr(self.sim, "vm_runtime", None)
                 if rt is not None:
                     # 官方 AST 规范（如 Tribbie OnWaveMonster 监听）：波次怪物入场时派发 OnWaveMonster，
@@ -970,16 +989,16 @@ class DataDrivenStageDirector:
                     sched = getattr(self.sim, "scheduler", None)
                     if sched is not None and sched.can_auto_drain():
                         sched.drain()
-                self._init_wave_monster_battle_events(next_wave_entities, self.runner.state.wave_index)
                 if rt is not None and getattr(rt, "_battle_entered", False) and next_wave_entities:
-                    rt.modifier_engine.dispatch_event(
-                        "OnEnterBattle",
-                        owner_ids=[e.name for e in next_wave_entities],
-                    )
+                    # 官方波次切换后全局派发 OnEnterBattle（按 Priority 升序）：
+                    # 仅限首波的机制在官方 ConfigAbility 内自带 ByCompareWaveCount==1 守卫，
+                    # 无该守卫的能力（如银狼LV.999秘技进战、珍珠StatusResistance等）在新波次也会触发。
+                    rt.modifier_engine.dispatch_event("OnEnterBattle")
                     sched = getattr(self.sim, "scheduler", None)
                     if sched is not None and sched.has_pending():
                         sched.drain_at_boundary()
                         self.sync_spawned_entities()
+                self._flush_ready_battle_events()
                 if rt is not None:
                     # 官方日志实证（220255 L1336、221208 L1461）：新波次入场会触发一次 turn_owner=null 的 OnTurnBegin，
                     # 用于重置各角色每回合限制标记（如知更鸟 MAvatar_RobinS_00_Passive_HyperCharge_TurnFlag）。
@@ -1120,6 +1139,7 @@ def build_data_driven_stage(
         pre_technique_hook=_apply_pre_tech_stage_setup,
         defer_opening_drain=defer_opening_drain,
     )
+    setattr(sim, "current_wave", 1)
     director = DataDrivenStageDirector(sim, runner, ai_loader)
     if entry_elem and entry_toughness > 0.0:
         director._entry_weakness_break = (

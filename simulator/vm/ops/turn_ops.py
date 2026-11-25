@@ -270,7 +270,7 @@ class TurnOpsMixin:
                             else (
                                 5 if prio == "MonsterSummon"
                                 else (
-                                    6 if prio == "MonsterChangePhase"
+                                    6 if prio in ("MonsterChangePhase", "MonsterChangeState")
                                     else (7 if prio == "MonsterBattleCry" else 10)
                                 )
                             )

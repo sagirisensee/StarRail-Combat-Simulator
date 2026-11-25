@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, List, Mapping, Optional, Set
 
 from ...status import StatType
@@ -538,12 +539,13 @@ class ModifierOpsMixin:
     def _op_modify_elation_points(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         val = self._eval_num(task.get("AJHHCOHFIFA"), ctx, 0.0)
         op = str(task.get("FKCKKFALPBK", ""))
+        src = str(ctx.ability_name or ctx.caster_id or "")
         if op == "DADCFBHGLOH":
-            self.rt.modify_elation_points(val, mode="set")
+            self.rt.modify_elation_points(val, mode="set", source=src)
         elif op == "NOKLNMBGACJ":
-            self.rt.modify_elation_points(-val, mode="add")
+            self.rt.modify_elation_points(-val, mode="add", source=src)
         else:
-            self.rt.modify_elation_points(val, mode="add")
+            self.rt.modify_elation_points(val, mode="add", source=src)
 
     def _op_set_target_unique_name(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         targets = self._resolve_targets(task.get("TargetType"), ctx)
@@ -775,16 +777,24 @@ class ModifierOpsMixin:
                 new_val = max(0.0, val)
             setattr(mod, "team_block_cur", new_val)
             setattr(mod, "team_block_max", max(float(getattr(mod, "team_block_max", 0.0)), new_val))
+            diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                diag_cb("TBLK", f"mod {mfunc} val={val:.2f} {cur:.2f}->{new_val:.2f} mod={mod.name}")
             self.rt.set_dynamic_value(mod.owner_id, dotnet_hash("MDF_TeamBlockValue"), new_val, modifier=mod)
 
     def _op_consume_elation_echo_point(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
-        amt = max(0.0, self._eval_num(task.get("AHCBJENOJHJ"), ctx, 0.0))
+        raw_amt = self._eval_num(task.get("AHCBJENOJHJ"), ctx, 0.0)
+        amt = max(0.0, raw_amt)
+        if task.get("NLIAEJNBEKP") is False and amt > 0.0:
+            # 珍珠 EchoBlock 传 NLIAEJNBEKP=false：按四舍五入消耗整点意气
+            amt = float(math.floor(amt + 0.5))
         if amt <= 0.0:
             return
         targets = self._resolve_targets(task.get("HILNFHCPEAD"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
         target_mname = str(task.get("EMFAHIBNJMP") or "")
         echo_hash = dotnet_hash("ElationEchoPoint")
         me = self.rt.modifier_engine
+        diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
         for tid in targets:
             remaining = amt
             for m in list(me.get_modifiers(tid)):
@@ -801,6 +811,20 @@ class ModifierOpsMixin:
                 take = min(cur_m, remaining)
                 new_m = max(0.0, cur_m - take)
                 remaining -= take
+                if callable(diag_cb):
+                    src_m = ctx.modifier_instance
+                    dyn_info = ""
+                    if src_m is not None:
+                        dv = src_m.dynamic_values
+                        echo_d = dv.get(dotnet_hash("MDF_Echo"))
+                        blk_d = dv.get(dotnet_hash("MDF_TeamBlockValue"))
+                        per_d = dv.get(dotnet_hash("MDF_BlockPerEcho"))
+                        if echo_d is not None or blk_d is not None or per_d is not None:
+                            dyn_info = f" echo={echo_d} blk={blk_d} per={per_d}"
+                    diag_cb(
+                        "ECHO_C",
+                        f"target={tid} raw={raw_amt:.4f} amt={amt:.4f} flag={task.get('NLIAEJNBEKP')} mod={m.name} {cur_m:g}->{new_m:g}{dyn_info}",
+                    )
                 self.rt.set_dynamic_value(tid, echo_hash, new_m, modifier=m)
                 if "ElationEchoPoint" in m.properties and abs(float(m.properties.get("ElationEchoPoint", 0.0)) - new_m) > 1e-9:
                     m.properties["ElationEchoPoint"] = new_m

@@ -627,6 +627,12 @@ class TaskExecutor(
                             pick_caster = sim.get_entity(ctx.modifier_owner_id) if ctx.modifier_owner_id else caster_ent
                             picked = r_prov(pick_caster or caster_ent, dark_cands)
                             pname = getattr(picked, "name", picked) if picked is not None else None
+                            diag_cb = getattr(sim, "timeline_diag_cb", None)
+                            if callable(diag_cb):
+                                diag_cb(
+                                    "RETARG",
+                                    f"caster={getattr(pick_caster or caster_ent, 'name', '')} cands={[e.name for e in dark_cands]} picked={pname} ab={ctx.ability_name}",
+                                )
                             if isinstance(pname, str) and pname in out:
                                 out = [pname] + [cid for cid in out if cid != pname]
                 out = out[:cap]

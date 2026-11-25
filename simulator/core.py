@@ -560,6 +560,11 @@ class TurnSimulator:
                     skill_config_id=skill_id,
                     action_id=self._action_seq,
                 ))
+            else:
+                diag_cb = getattr(self, "timeline_diag_cb", None)
+                if callable(diag_cb):
+                    kname = getattr(kind, "name", str(kind))
+                    diag_cb("SUBACT", f"{actor.name} kind={kname} sid={skill_id} name={action_type}")
             if after_execute_event_hook is not None:
                 after_execute_event_hook(skill_id)
             ctx = ActionContext(

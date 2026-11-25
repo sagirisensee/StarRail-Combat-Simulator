@@ -1421,6 +1421,12 @@ class CombatOpsMixin:
                                 m_shd.shield_value = max(0.0, m_shd.shield_value - absorbed)
 
             actual_loss = max(0.0, min(ent.current_hp - eff_floor, raw_loss))
+            diag_cb = getattr(sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                diag_cb(
+                    "LOSEHP",
+                    f"target={tid} raw={raw_loss:.2f} actual={actual_loss:.2f} ab={ctx.ability_name}",
+                )
             if actual_loss > 0:
                 ent.current_hp -= actual_loss
                 from ...effects import sync_hp_shared_subtargets

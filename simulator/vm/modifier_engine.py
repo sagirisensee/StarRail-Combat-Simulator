@@ -1630,6 +1630,12 @@ class ModifierEngine:
                 new_val = max(0.0, cur - absorbed)
                 setattr(m, "team_block_cur", new_val)
                 raw_dmg -= absorbed
+                diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
+                if callable(diag_cb):
+                    diag_cb(
+                        "TBLK",
+                        f"absorb target={target_id} abs={absorbed:.2f} {cur:.2f}->{new_val:.2f} mod={m.name}",
+                    )
                 self.rt.set_dynamic_value(m.owner_id, dotnet_hash("MDF_TeamBlockValue"), new_val, modifier=m)
                 cb_ctx = ExecutionContext(
                     runtime=self.rt,

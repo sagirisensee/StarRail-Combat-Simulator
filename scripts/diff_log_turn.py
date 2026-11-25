@@ -210,7 +210,7 @@ def _attach_sim_timeline_recorder(
                     bd_str += f" fat={fat:.4f}"
             lines_out.append(
                 f"  [DMG  ] av={av_val:6.2f} {ev.attacker_name} -> {ev.target_name} "
-                f"{dtype:<10s} dmg={ev.damage:12.2f} crit={ev.is_crit}{bd_str}"
+                f"{dtype:<10s} dmg={ev.damage:12.2f} hp={float(getattr(ev, 'target_hp_left', 0.0)):.1f} crit={ev.is_crit}{bd_str}"
             )
 
     def _on_diag(tag: str, msg: str) -> None:
@@ -299,6 +299,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         f"  [EHIT ] av={rec.av:6.2f} euid={rec.enemy_uid}({meta.enemy_uid_map.get(rec.enemy_uid, '?')}) "
                         f"hits={list(rec.hit_allies)} sp={dict(rec.sp_gain_counts)} memo={rec.first_memo_owner}{subs}"
                     )
+            rt_groups: Dict[Tuple[float, int], List[int]] = {}
+            for p_av, c_uid, v_uid in meta.enemy_retarget_picks:
+                if abs(p_av - args.av) <= args.av_window:
+                    rt_groups.setdefault((p_av, c_uid), []).append(v_uid)
+            for (p_av, c_uid), vuids in rt_groups.items():
+                vnames = [meta.enemy_uid_map.get(v, str(v)) for v in vuids]
+                print(f"  [META_RT] av={p_av:6.2f} uid={c_uid} count={len(vuids)} picks={vnames}")
 
             def _on_sim_ready(sim: Any) -> None:
                 sim_lines.clear()

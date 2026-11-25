@@ -366,7 +366,7 @@ class VMRuntime:
             entity_id, key_hash, old_val, float(value), modifier=modifier
         )
 
-    def modify_elation_points(self, value: float, *, mode: str = "add") -> None:
+    def modify_elation_points(self, value: float, *, mode: str = "add", source: str = "") -> None:
         old_val = float(self.elation_points)
         if mode == "set":
             new_val = max(0.0, float(value))
@@ -376,7 +376,8 @@ class VMRuntime:
         self.elation_points = new_val
         diag_cb = getattr(self.sim, "timeline_diag_cb", None)
         if callable(diag_cb):
-            diag_cb("EP", f"mode={mode} val={float(value):g} {old_val:g}->{new_val:g}")
+            src_s = f" ab={source}" if source else ""
+            diag_cb("EP", f"mode={mode} val={float(value):g} {old_val:g}->{new_val:g}{src_s}")
         self.modifier_engine.check_elation_point_changes(old_val, new_val, actual_delta)
 
     def get_elation_points_for_query(self, owner_id: str, query_type: Optional[str] = None) -> float:
@@ -620,8 +621,8 @@ class VMRuntime:
         # -> OnListenBeforeTurnPhase1End (血嗜等回合开始扣血 & 伴生小伊卡回血，此时 Phase1End 到期光环仍在！)
         # -> ModifierPhase1End (回合开始到期光环结算) -> OnActionPhaseBegin；
         # 终结技/追击等额外行动不经过 TurnBegin，不触发 OnPhase1。
-        self.modifier_engine.dispatch_event("OnPhase1", owner_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id=evt.actor_name)
+        self.modifier_engine.dispatch_event("OnPhase1", owner_id=evt.actor_name)
         self.modifier_engine.dispatch_event("OnListenTurnPhase1Begin", param_entity_id=evt.actor_name)
         self.turn_control_skill_snapshot[evt.actor_name] = self.control_skill_mapping.get((evt.actor_name, "ControlSkill01"), "Skill01")
         with self.lifecycle.turn_phase1_end_scope():
