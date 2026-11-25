@@ -273,7 +273,7 @@ def resolve_player_and_servant_targets(
             )
         ) and (p_dmg_confirmed or p_hit_euids):
             av_eff = avatar_skill_effects.get(rec.skill_id, "")
-            if av_eff in ("SingleAttack", "") and rec.skill_type != "Ultra":
+            if av_eff in ("SingleAttack", "") and rec.skill_type not in ("Ultra", "ElationDamage"):
                 pri_euid = p_dmg_confirmed[0] if p_dmg_confirmed else p_hit_euids[0]
                 player_enemy_targets_raw.setdefault(p_atk, []).append(pri_euid)
 

@@ -50,6 +50,7 @@ class _DamageSpec:
     is_nested_sub: bool
     custom_name: str = ""
     is_elation_dmg: bool = False
+    is_indirect: bool = False
     prop_source_id: str = ""
     equal_split: bool = False
 
@@ -189,6 +190,8 @@ class CombatOpsMixin:
                 ent = sim.get_entity(ep_tid)
                 if ent is None:
                     continue
+            if getattr(ent, "uses_special_sp", False) and not (mfunc == "Set" and ep_tid == ctx.caster_id):
+                continue
             max_ep = float(sim.port.max_energy(ep_tid) or getattr(ent, "max_energy", 0.0) or 0.0)
             if mfunc == "Set":
                 ent.energy = max(0.0, min(max_ep, val)) if max_ep > 0.0 else max(0.0, val)
@@ -224,6 +227,8 @@ class CombatOpsMixin:
                 ent = sim.get_entity(ep_tid)
                 if ent is None:
                     continue
+            if getattr(ent, "uses_special_sp", False):
+                continue
 
             err = float(sim.port.stat(ep_tid, StatType.ERR) or 1.0)
             max_ep = float(sim.port.max_energy(ep_tid) or getattr(ent, "max_energy", 0.0) or 0.0)
@@ -560,6 +565,7 @@ class CombatOpsMixin:
             is_nested_sub=is_nested_sub,
             custom_name=custom_name,
             is_elation_dmg=is_elation_dmg,
+            is_indirect=bool(atk_prop.get("IsIndirect", False)),
             prop_source_id=prop_source_id,
             equal_split=bool(task.get("EqualSplitInTargets", False)),
         )
@@ -570,7 +576,8 @@ class CombatOpsMixin:
         sim = rt.sim
         me = rt.modifier_engine
 
-        atk_seq = int(getattr(sim, "_action_seq", 0))
+        merged_seq = getattr(getattr(rt, "lifecycle", None), "merged_atk_seq", None)
+        atk_seq = int(merged_seq) if merged_seq is not None else int(getattr(sim, "_action_seq", 0))
         atk_key = (atk_seq, spec.eff_attacker_id)
         if not spec.is_nested_sub and not spec.is_additional_dmg:
             acc_targets = rt._attack_targets_by_key.setdefault(atk_key, [])
@@ -1167,7 +1174,7 @@ class CombatOpsMixin:
                         elation_level_base = rt.loader.get_elation_basic_level_damage(atk_lvl)
                         if "AttackData_ElationPointNum" in hit_dmg_data:
                             base_elation_pt = float(hit_dmg_data["AttackData_ElationPointNum"])
-                        elif getattr(rt, "in_elation_time", False):
+                        elif getattr(rt, "in_elation_time", False) and not spec.is_indirect:
                             ov_pt = float(getattr(rt, "elation_time_override_points", 0.0) or 0.0)
                             base_elation_pt = ov_pt if ov_pt > 0.0 else float(getattr(rt, "elation_points", 0.0) or 0.0)
                         else:

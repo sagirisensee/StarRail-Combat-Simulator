@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Dict, Optional, Sequence, Set, Tuple
+from datetime import datetime
+from typing import Any, Dict, Optional, Sequence, Set, Tuple
 
 from simulator.db.character_db import CharacterDB
 from simulator.vm.reconcile.metadata_post import (
@@ -28,6 +29,15 @@ from simulator.vm.reconcile.models import (
     _extract_tag,
     _resolve_uid_name,
 )
+
+
+def _parse_log_time_ms(ts: Any) -> Optional[float]:
+    if not isinstance(ts, str) or not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts).timestamp() * 1000.0
+    except ValueError:
+        return None
 
 
 def extract_log_metadata(
@@ -67,6 +77,8 @@ def extract_log_metadata(
 
             if ev == "OnBattleBegin":
                 roster_tracker.on_battle_begin(data)
+            elif ev == "OnUpdateWave":
+                player_tracker.on_update_wave()
             elif ev == "OnInitializeEnemy":
                 roster_tracker.on_initialize_enemy(data, sctx)
             elif ev == "OnTurnBegin":
@@ -78,7 +90,7 @@ def extract_log_metadata(
                 sctx.cur_av = float(data.get("action_value", sctx.cur_av))
                 sctx.cur_turn_owner_team = enemy_tracker.on_turn_begin_owner(data.get("turn_owner"), sctx.cur_av)
                 player_tracker.on_turn_begin_after_owner()
-                roster_tracker.on_turn_begin_after_flush()
+                roster_tracker.on_turn_begin_after_flush(data.get("turn_owner"))
                 player_tracker.flush_pending_player_atk()
             elif ev == "OnUseSkill":
                 player_tracker.flush_pending_q_break()
@@ -103,7 +115,7 @@ def extract_log_metadata(
                     player_tracker.on_player_use_skill(sctx.cur_av, uid, cname, sk_type, sk_id)
             elif ev == "OnDamage":
                 roster_tracker.on_damage_for_init_hp(data)
-                player_tracker.on_damage(data, sctx.cur_av)
+                player_tracker.on_damage(data, sctx.cur_av, _parse_log_time_ms(obj.get("time")), sctx.last_enemy_hp)
             elif ev == "OnStatChange":
                 ent = data.get("entity") or {}
                 team_tag = ent.get("team")
@@ -139,7 +151,13 @@ def extract_log_metadata(
                 elif team_tag == "Player" and uid:
                     roster_tracker.on_player_stat_change(uid, ptype, val, char_db)
                     player_tracker.on_player_stat_change_ult(uid, ptype, val, char_db)
-                    player_tracker.on_player_special_sp_change(uid, ptype, val, sctx.cur_av)
+                    player_tracker.on_player_special_sp_change(
+                        uid,
+                        ptype,
+                        val,
+                        sctx.cur_av,
+                        _parse_log_time_ms(obj.get("time")),
+                    )
                     if ptype == "MaxHP":
                         if uid not in sctx.last_player_hp:
                             sctx.last_player_hp[uid] = val
@@ -177,6 +195,7 @@ def extract_log_metadata(
 
     player_tracker.flush_pending_player_atk()
     player_tracker.flush_bp_draw_carry()
+    player_tracker.flush_active_elation_insert()
     _flush_turn()
     player_tracker.flush_pending_q_break()
 
@@ -249,4 +268,6 @@ def extract_log_metadata(
         },
         entry_element=entry_element,
         entry_toughness=entry_toughness,
+        player_obs_speeds=roster_tracker.player_obs_speeds,
+        random_chance_triggers=player_tracker.random_chance_triggers,
     )

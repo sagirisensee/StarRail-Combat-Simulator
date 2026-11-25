@@ -399,6 +399,7 @@ class ModifierOpsMixin:
                 if ent is None:
                     continue
             max_ep = float(sim.port.max_energy(ep_tid) or getattr(ent, "max_energy", 0.0) or 0.0)
+            old_ep = float(ent.energy)
             if "SetValue" in task:
                 val = self._eval_num(task.get("SetValue"), ctx, float(ent.energy))
                 ent.energy = max(0.0, min(max_ep, val)) if max_ep > 0.0 else max(0.0, val)
@@ -408,6 +409,9 @@ class ModifierOpsMixin:
                     delta += max_ep * self._eval_num(task.get("AddMaxSPRatio"), ctx, 0.0)
                 new_ep = float(ent.energy) + delta
                 ent.energy = max(0.0, min(max_ep, new_ep)) if max_ep > 0.0 else max(0.0, new_ep)
+            diag_cb = getattr(sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                diag_cb("SSP", f"{ep_tid} {old_ep:g}->{float(ent.energy):g} (ab={ctx.ability_name})")
             if me._apc_defer_depth > 0:
                 me._dirty_apc_entities.add(ep_tid)
             else:

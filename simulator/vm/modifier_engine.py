@@ -109,6 +109,30 @@ class VMModifierInstance:
     weak_resistance_deltas: Dict[str, List[Tuple[str, str, float]]] = field(default_factory=dict)
     custom_strings: Dict[str, str] = field(default_factory=dict)
 
+    def resolve_bound_value(self, hash_val: int) -> Optional[float]:
+        add_cfg = self.config.get("AdditionConfig")
+        if not isinstance(add_cfg, Mapping):
+            return None
+        vbinds = add_cfg.get("ValueBindList")
+        if not isinstance(vbinds, list):
+            return None
+        for entry in vbinds:
+            if not isinstance(entry, Mapping):
+                continue
+            dk = entry.get("DynamicKey")
+            if not isinstance(dk, Mapping):
+                continue
+            h = int(dk["Hash"]) if "Hash" in dk else (dotnet_hash(str(dk["Value"])) if "Value" in dk else None)
+            if h == hash_val:
+                btype = str(entry.get("BindType") or "Layer")
+                if btype in ("Layer", "Count"):
+                    return float(self.layer)
+                if btype == "MaxLayer":
+                    return float(self.max_layer)
+                if btype == "LifeTime":
+                    return float(self.life_time or 0.0)
+        return None
+
 
 class ModifierEngine:
     """官方 Modifier 宿主、属性与优先级事件调度引擎。"""
@@ -411,6 +435,9 @@ class ModifierEngine:
         return {}
 
     def _resolve_mod_hash(self, mod: VMModifierInstance, hash_val: int) -> float:
+        bound = mod.resolve_bound_value(hash_val)
+        if bound is not None:
+            return bound
         if hash_val in mod.dynamic_values:
             return mod.dynamic_values[hash_val]
         return self.rt.resolve_hash(mod.caster_id, hash_val, ability_name=mod.ability_name)

@@ -277,7 +277,10 @@ class VMRuntime:
     def register_character(self, entity_name: str, spec: CompiledCharacterSpec) -> None:
         self.entity_specs[entity_name] = spec
         self.entity_dynamics[entity_name] = dict(spec.dynamic_floats)
-        self.record_entity_team(self.sim.get_entity(entity_name))
+        ent = self.sim.get_entity(entity_name)
+        if ent is not None and getattr(spec, "uses_special_sp", False):
+            ent.uses_special_sp = True
+        self.record_entity_team(ent)
 
     def register_equip_ability(self, owner_id: str, ability_name: str, dyn_floats: Dict[int, float]) -> None:
         self.equip_dynamics[(owner_id, ability_name)] = dict(dyn_floats)
@@ -295,8 +298,12 @@ class VMRuntime:
                 return local_ctx.template_dynamics[hash_val]
             if hash_val in local_ctx.local_dynamics:
                 return local_ctx.local_dynamics[hash_val]
-            if local_ctx.modifier_instance is not None and hash_val in local_ctx.modifier_instance.dynamic_values:
-                return local_ctx.modifier_instance.dynamic_values[hash_val]
+            if local_ctx.modifier_instance is not None:
+                bound = local_ctx.modifier_instance.resolve_bound_value(hash_val)
+                if bound is not None:
+                    return bound
+                if hash_val in local_ctx.modifier_instance.dynamic_values:
+                    return local_ctx.modifier_instance.dynamic_values[hash_val]
         if ability_name:
             if (caster_id, ability_name) in self.equip_dynamics:
                 eq_map = self.equip_dynamics[(caster_id, ability_name)]
@@ -367,6 +374,9 @@ class VMRuntime:
             new_val = max(0.0, old_val + float(value))
         actual_delta = new_val - old_val
         self.elation_points = new_val
+        diag_cb = getattr(self.sim, "timeline_diag_cb", None)
+        if callable(diag_cb):
+            diag_cb("EP", f"mode={mode} val={float(value):g} {old_val:g}->{new_val:g}")
         self.modifier_engine.check_elation_point_changes(old_val, new_val, actual_delta)
 
     def get_elation_points_for_query(self, owner_id: str, query_type: Optional[str] = None) -> float:

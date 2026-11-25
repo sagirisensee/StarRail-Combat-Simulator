@@ -269,6 +269,16 @@ def _run_single_pass(
     on_sim_ready: Optional[Callable[[Any], None]] = None,
 ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
     team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader, loadouts=loadouts)
+    if meta.player_obs_speeds:
+        for ent in team:
+            uid_i = int(getattr(ent, "avatar_id", 0) or 0)
+            cands = meta.player_obs_speeds.get(uid_i)
+            if not cands:
+                continue
+            for obs_spd in cands:
+                if int(obs_spd) == int(ent.base_speed) and 1e-4 < abs(obs_spd - ent.base_speed) < 0.999:
+                    ent.base_speed = float(obs_spd)
+                    break
     sim, director, stage_mode = build_stage_for_id(
         meta.stage_id,
         team,

@@ -672,6 +672,8 @@ class SimulatorCombatPort:
 
     def gain_energy(self, entity_id: str, amount: float, cause: str = "", source_plugin: str = "") -> None:
         ent = self._get_entity(entity_id)
+        if ent and getattr(ent, "uses_special_sp", False):
+            return
         if ent and getattr(ent, "max_energy", 0.0) > 0:
             old_e = ent.energy
             ent.energy = min(ent.max_energy, ent.energy + amount)
@@ -705,7 +707,7 @@ class SimulatorCombatPort:
     def gain_hit_energy(self, entity_id: str, base_amount: float = 5.0, cause: str = "") -> float:
         """受击回能标准接口：严格按角色【能量恢复效率 (ERR)】进行放大。"""
         ent = self._get_entity(entity_id)
-        if not ent:
+        if not ent or getattr(ent, "uses_special_sp", False):
             return 0.0
         err = self.stat(entity_id, StatType.ERR) or getattr(ent, "base_err", 1.0) or 1.0
         actual = base_amount * err

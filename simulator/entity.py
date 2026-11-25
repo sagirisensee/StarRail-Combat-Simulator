@@ -83,6 +83,7 @@ class Entity:
 
     # 底层静态面板白板生命 (放在字段末尾避免破坏现有位置参数签名)
     base_max_hp: float = 10000.0
+    uses_special_sp: bool = False
     _in_max_hp_calc: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self, max_hp: Optional[float]) -> None:

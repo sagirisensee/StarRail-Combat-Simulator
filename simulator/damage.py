@@ -48,6 +48,11 @@ class DamageBreakdown:
     eff_res: float = 0.0
     res_pen: float = 0.0
     vuln: float = 0.0
+    is_elation_dmg: bool = False
+    elation_val: float = 0.0
+    elation_extra_val: float = 0.0
+    elation_point_num: float = 0.0
+    punchline_mult: float = 1.0
 
     def format_details(self) -> str:
         """生成清晰可读的乘区算式账单。"""
@@ -189,6 +194,10 @@ class DamageCalculator:
         crit_mult = (1.0 + crit_dmg) if is_crit else 1.0
 
         # 3. 增伤区 (ByBreakDamage 不吃增伤; 欢愉伤害不吃常规属性/全伤增伤, 改吃 (1+欢愉度)*(1+5P/(P+240))*(1+增笑))
+        elation_val_bd = 0.0
+        elation_extra_val_bd = 0.0
+        elation_pt_bd = 0.0
+        punchline_mult_bd = 1.0
         if getattr(req, "ignore_dmg_boost", False):
             dmg_boost = 0.0
             dmg_boost_mult = 1.0
@@ -209,6 +218,10 @@ class DamageCalculator:
             punchline_mult = 1.0 + (5.0 * p) / (p + 240.0)
             dmg_boost_mult = (1.0 + elation_val) * punchline_mult * (1.0 + elation_extra_val)
             dmg_boost = dmg_boost_mult - 1.0
+            elation_val_bd = elation_val
+            elation_extra_val_bd = elation_extra_val
+            elation_pt_bd = p
+            punchline_mult_bd = punchline_mult
         else:
             dmg_boost_mult = 1.0 + dmg_boost
 
@@ -319,4 +332,9 @@ class DamageCalculator:
             eff_res=eff_res,
             res_pen=res_pen,
             vuln=vuln,
+            is_elation_dmg=is_elation_dmg,
+            elation_val=elation_val_bd,
+            elation_extra_val=elation_extra_val_bd,
+            elation_point_num=elation_pt_bd,
+            punchline_mult=punchline_mult_bd,
         )

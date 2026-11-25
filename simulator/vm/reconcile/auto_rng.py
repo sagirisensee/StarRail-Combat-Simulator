@@ -665,5 +665,39 @@ def attach_auto_rng_plugin(
             return None
 
         sim.random_config_provider = _random_config_provider
+
+        def _random_config_pity_skip(caster_id: str, ability_name: str, matched_idx: int) -> None:
+            cur_av = float(getattr(sim, "current_av", 0.0) or 0.0)
+            caster_ent = sim.get_entity(caster_id) if hasattr(sim, "get_entity") else None
+            caster_uid = int(getattr(caster_ent, "avatar_id", 0) or 0) if caster_ent is not None else 0
+            if not caster_uid:
+                return
+            for idx, (d_av, d_uid, d_branch) in enumerate(meta.random_config_draws):
+                if idx in used_draw_indices:
+                    continue
+                if d_uid == caster_uid and abs(cur_av - d_av) <= 0.25 and d_branch == matched_idx:
+                    used_draw_indices.add(idx)
+                    return
+
+        sim.random_config_pity_skip_cb = _random_config_pity_skip
+
+    used_chance_indices: Set[int] = set()
+
+    def _random_chance_provider(caster_id: str, ability_name: str, chance: float) -> Optional[bool]:
+        cur_av = float(getattr(sim, "current_av", 0.0) or 0.0)
+        caster_ent = sim.get_entity(caster_id) if hasattr(sim, "get_entity") else None
+        caster_uid = int(getattr(caster_ent, "avatar_id", 0) or 0) if caster_ent is not None else 0
+        if not caster_uid:
+            return None
+        for idx, (c_av, c_uid) in enumerate(meta.random_chance_triggers):
+            if idx in used_chance_indices:
+                continue
+            if c_uid == caster_uid and abs(cur_av - c_av) <= 0.25:
+                used_chance_indices.add(idx)
+                return True
+        return False
+
+    sim.random_chance_provider = _random_chance_provider
+
     if meta.gluttony_enemy_names:
         sim.gluttony_target_provider = lambda name: name in meta.gluttony_enemy_names

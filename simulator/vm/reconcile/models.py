@@ -263,6 +263,8 @@ class LogMetadata:
     gluttony_enemy_names: Set[str] = field(default_factory=set)
     entry_element: Optional[str] = None
     entry_toughness: float = 10.0
+    player_obs_speeds: Dict[int, List[float]] = field(default_factory=dict)
+    random_chance_triggers: List[Tuple[float, int]] = field(default_factory=list)
 
 
 @dataclass

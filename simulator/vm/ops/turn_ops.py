@@ -136,7 +136,7 @@ class TurnOpsMixin:
                     else {}
                 )
                 active_pred = task.get("ActivePredicate")
-                pred_ctx = ctx.clone()
+                pred_ctx = ctx.clone(param_entity_id=tid)
 
                 _is_limbo_insert = ent is not None and (
                     prio in ("MonsterDeathRattle", "MonsterForceKill")
@@ -155,6 +155,7 @@ class TurnOpsMixin:
                     _tgts: Tuple[str, ...] = preset_targets,
                     _sp: float = ins_sp_base,
                     _is_en: bool = is_enemy_caster,
+                    _is_lvl: bool = is_level_caster,
                     _prio: str = prio,
                     _dyn: Dict[int, float] = insert_dyn,
                     _active_pred: Any = active_pred,
@@ -172,7 +173,41 @@ class TurnOpsMixin:
                         sim._action_seq += 1
                         sk_t = "Insert" if _c == ActionScheduleCategory.FOLLOW_UP else "Talent"
                         if _tgts:
-                            eff_tgts = _tgts
+                            if not _is_en and not _is_lvl:
+                                live_preset = tuple(
+                                    t
+                                    for t in _tgts
+                                    if (e := sim.get_entity(t)) is not None
+                                    and (
+                                        not getattr(e, "is_enemy", False)
+                                        or e.current_hp > 0
+                                        or getattr(e, "is_infinite_hp", False)
+                                        or getattr(e, "_in_deathrattle_limbo", False)
+                                    )
+                                )
+                                if live_preset:
+                                    eff_tgts = live_preset
+                                elif all(
+                                    (e := sim.get_entity(t)) is None or getattr(e, "is_enemy", False)
+                                    for t in _tgts
+                                ):
+                                    eff_tgts = tuple(
+                                        e.name
+                                        for e in sim.entities
+                                        if e.is_enemy
+                                        and not getattr(e, "is_countdown", False)
+                                        and not getattr(e, "is_battle_event", False)
+                                        and not getattr(e, "is_unselectable", False)
+                                        and (
+                                            e.current_hp > 0
+                                            or getattr(e, "is_infinite_hp", False)
+                                            or getattr(e, "_in_deathrattle_limbo", False)
+                                        )
+                                    )
+                                else:
+                                    eff_tgts = ()
+                            else:
+                                eff_tgts = _tgts
                         elif _is_en:
                             eff_tgts = tuple(
                                 e.name for e in sim.entities
@@ -182,8 +217,24 @@ class TurnOpsMixin:
                             eff_tgts = tuple(
                                 e.name
                                 for e in sim.entities
-                                if e.is_enemy and (e.current_hp > 0 or getattr(e, "_in_deathrattle_limbo", False))
+                                if e.is_enemy
+                                and not getattr(e, "is_countdown", False)
+                                and not getattr(e, "is_battle_event", False)
+                                and not getattr(e, "is_unselectable", False)
+                                and (
+                                    e.current_hp > 0
+                                    or getattr(e, "is_infinite_hp", False)
+                                    or getattr(e, "_in_deathrattle_limbo", False)
+                                )
                             )
+                        if not _is_en and not _is_lvl and not eff_tgts:
+                            ab_doc = rt.loader.get_ability(ab)
+                            if ab_doc and ab_doc.get("OnInsertAbort"):
+                                self.execute_tasks(
+                                    ab_doc["OnInsertAbort"],
+                                    _pred_ctx.clone(caster_id=a_id, ability_name=ab),
+                                )
+                                return
                         rt.lifecycle.run_ability_frame(
                             AbilityFrameSpec(
                                 caster_id=a_id,
@@ -264,7 +315,7 @@ class TurnOpsMixin:
                 )
                 insert_strs = self._resolve_dynamic_strings(task.get("DynamicStrings"), ctx)
                 active_pred = task.get("ActivePredicate")
-                pred_ctx = ctx.clone()
+                pred_ctx = ctx.clone(param_entity_id=tid)
                 imm_prio = 1 if prio in ("StartElationTime", "RestartElationTime") else 2
 
                 def _run_insert_skill_index(
@@ -525,6 +576,19 @@ class TurnOpsMixin:
             if not tid or tid == "__LEVEL__":
                 continue
             self.rt._pending_use_skill_one_more.setdefault(tid, []).append(ctrl_type)
+
+    def _op_merged_attack_scope(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行官方 KJNHIELIFEK：开启/关闭跨 UseSkillOneMore 子技能的合并攻击窗口。"""
+        is_close = bool(task.get("FLONKDDGCFC", False))
+        lc = self.rt.lifecycle
+        if not is_close:
+            atk_seq = int(getattr(self.rt.sim, "_action_seq", 0))
+            lc.begin_merged_attack_scope(atk_seq)
+        else:
+            actor_id = ctx.caster_id or ctx.modifier_owner_id or ""
+            has_pending = bool(actor_id and self.rt._pending_use_skill_one_more.get(actor_id))
+            if not has_pending:
+                lc.finish_merged_attack_scope(keep_atk_seq_until_settle=True)
 
     def _execute_start_elation_time(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         """执行官方 ELLFLJKDCAE（开启阿哈时刻 ElationTime 并按 ElationSkill.PriorityValue 依次施放欢愉技）。"""

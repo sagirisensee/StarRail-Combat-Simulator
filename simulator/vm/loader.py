@@ -374,6 +374,20 @@ class CompiledCharacterSpec:
     unlocked_ranks: Set[int] = field(default_factory=set)
     servant_id: Optional[int] = None
     extra_passive_abilities: Tuple[str, ...] = ()
+    uses_special_sp: bool = False
+
+
+def _node_uses_special_sp(node: Any) -> bool:
+    """递归检测 ConfigAbility AST 是否使用 CurrentSpecialSP / ModifySpecialSP。"""
+    if isinstance(node, dict):
+        if node.get("$type") in ("RPG.GameCore.ModifySpecialSP", "RPG.GameCore.ByCompareSpecialSPRatio"):
+            return True
+        if node.get("Property") in ("CurrentSpecialSP", "MaxSpecialSP"):
+            return True
+        return any(_node_uses_special_sp(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_node_uses_special_sp(x) for x in node)
+    return False
 
 
 class GameDataLoader:
@@ -1053,6 +1067,7 @@ class GameDataLoader:
                 abilities[ab_name] = ab
 
         servant_id = 10000 + int(avatar_id)
+        uses_special_sp = _node_uses_special_sp(abilities)
         return CompiledCharacterSpec(
             unit_id=int(avatar_id),
             is_servant=False,
@@ -1066,6 +1081,7 @@ class GameDataLoader:
             unlocked_ranks=set(range(1, eidolon + 1)),
             servant_id=servant_id if servant_id in self._servants else None,
             extra_passive_abilities=tuple(extra_passives),
+            uses_special_sp=uses_special_sp,
         )
 
     def load_servant(

@@ -253,6 +253,8 @@ class ExecutionLifecycle:
         self.attack_targets_by_key: Dict[Tuple[int, str], List[str]] = {}
         self.attack_blocked_targets: Set[str] = set()
         self.open_enemy_attack: Optional[str] = None
+        self.merged_attack_scope_active: bool = False
+        self.merged_atk_seq: Optional[int] = None
 
         self.pending_dying_enemies: List[Tuple[str, str]] = []
         self.pending_limbo_after_dying: List[Tuple[str, Optional[str]]] = []
@@ -300,6 +302,8 @@ class ExecutionLifecycle:
             reasons.append(f"pending_after_attack={self.pending_after_attack.caster_id}")
         if self.open_enemy_attack is not None:
             reasons.append(f"open_enemy_attack={self.open_enemy_attack}")
+        if self.merged_attack_scope_active:
+            reasons.append("merged_attack_scope_active=True")
         if self.attack_blocked_targets:
             reasons.append(f"attack_blocked_targets={sorted(self.attack_blocked_targets)}")
         if self.pending_dying_enemies:
@@ -335,6 +339,21 @@ class ExecutionLifecycle:
         self.attack_scope_depth = max(0, self.attack_scope_depth - 1)
         if self.attack_scope_depth == 0:
             self.settle_attack_boundary()
+
+    def begin_merged_attack_scope(self, atk_seq: int) -> None:
+        """进入跨 UseSkillOneMore 子技能的合并攻击作用域，延后 OnAfterAttack/OnAfterBeingAttacked 收口。"""
+        if not self.merged_attack_scope_active:
+            self.merged_attack_scope_active = True
+            self.merged_atk_seq = int(atk_seq)
+            self.begin_attack_scope()
+
+    def finish_merged_attack_scope(self, *, keep_atk_seq_until_settle: bool = False) -> None:
+        """结束合并攻击作用域并归还其占用的 attack_scope 深度。"""
+        if self.merged_attack_scope_active:
+            self.merged_attack_scope_active = False
+            if not keep_atk_seq_until_settle:
+                self.merged_atk_seq = None
+            self.end_attack_scope()
 
     @contextmanager
     def attack_scope(self) -> Iterator[None]:
@@ -548,6 +567,8 @@ class ExecutionLifecycle:
                         )
                 finally:
                     self.in_after_attack = False
+        if not self.merged_attack_scope_active:
+            self.merged_atk_seq = None
 
         # Stage 2
         self.drain_dying_batch()
@@ -852,12 +873,14 @@ class ExecutionLifecycle:
             if ent is not None and getattr(ent, "is_memosprite", False):
                 ep_recipient = getattr(ent, "master_name", None)
             if ep_recipient:
-                err = sim.port.stat(ep_recipient, StatType.ERR) or 1.0
-                sim.port.gain_energy(
-                    ep_recipient,
-                    float(spec.sp_base) * err,
-                    cause=spec.energy_cause or f"技能回能 {spec.skill_name or spec.ability_name}",
-                )
+                rec_ent = sim.get_entity(ep_recipient)
+                if rec_ent is None or not getattr(rec_ent, "uses_special_sp", False):
+                    err = sim.port.stat(ep_recipient, StatType.ERR) or 1.0
+                    sim.port.gain_energy(
+                        ep_recipient,
+                        float(spec.sp_base) * err,
+                        cause=spec.energy_cause or f"技能回能 {spec.skill_name or spec.ability_name}",
+                    )
 
         if spec.emit_after_skill:
             if spec.before_skill_targets_as_attack:

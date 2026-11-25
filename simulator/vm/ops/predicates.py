@@ -334,7 +334,13 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByCheckFightFinish":
             has_enemy = any(getattr(e, "is_enemy", False) and e.current_hp > 0 for e in sim.entities)
             has_ally = any(not getattr(e, "is_enemy", False) and e.current_hp > 0 for e in sim.entities)
-            return (not has_enemy) or (not has_ally)
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            has_more_waves = bool(
+                runner is not None
+                and (runner.state.wave_index + 1) < len(runner.built_stage.source_spec.waves)
+            )
+            return ((not has_enemy) and (not has_more_waves)) or (not has_ally)
 
         if t == "RPG.GameCore.ByIsBattleEventEntity":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
@@ -968,6 +974,21 @@ class PredicateOpsMixin:
             if not isinstance(usage_map, Mapping) or sk_key not in usage_map:
                 return True
             return (cur_turn - int(usage_map[sk_key])) >= max(1, delay_req)
+
+        if t == "RPG.GameCore.ByRandomChance":
+            chance = self._eval_num(pred.get("Chance"), ctx, 0.0)
+            if chance <= 1e-9:
+                return False
+            prov = getattr(sim, "random_chance_provider", None)
+            if callable(prov):
+                res = prov(ctx.caster_id, ctx.ability_name, chance)
+                if chance >= 1.0 - 1e-9:
+                    return True
+                if res is not None:
+                    return bool(res)
+            if chance >= 1.0 - 1e-9:
+                return True
+            return bool(chance >= 0.5)
 
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None

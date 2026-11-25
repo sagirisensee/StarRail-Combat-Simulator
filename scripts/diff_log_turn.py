@@ -196,6 +196,12 @@ def _attach_sim_timeline_recorder(
                     f" vuln={getattr(bd, 'vuln_mult', 1.0):.4f}"
                     f" crit={getattr(bd, 'crit_mult', 1.0):.4f}"
                 )
+                if getattr(bd, "is_elation_dmg", False):
+                    bd_str += (
+                        f" el={getattr(bd, 'elation_val', 0.0):.4f}"
+                        f" p={getattr(bd, 'elation_point_num', 0.0):.0f}(x{getattr(bd, 'punchline_mult', 1.0):.4f})"
+                        f" ex={getattr(bd, 'elation_extra_val', 0.0):.4f}"
+                    )
                 if abs(red - 1.0) > 1e-6:
                     bd_str += f" red={red:.4f}"
                 if abs(bar - 1.0) > 1e-6:

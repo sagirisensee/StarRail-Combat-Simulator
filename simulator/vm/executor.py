@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Mapping, Sequence, Set
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 from ..events import DamageAppliedEvent, WeaknessBreakEvent
 from .expr import dotnet_hash, eval_dynamic_float
@@ -86,7 +86,6 @@ IGNORED_OBFUSCATED_TASK_STUBS: Set[str] = {
     "CPFPIKGBLFK",
     "EGKMFINAFHB",
     "HCBPOFFBEOH",
-    "KJNHIELIFEK",
     "LBMLBLLLMGG",
     "MMBPCMGMMIH",
     "NGLKHNKNBDC",
@@ -332,10 +331,28 @@ class TaskExecutor(
     # 控制流算子
     # ------------------------------------------------------------------
     def _op_predicate_task_list(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
-        if self.eval_predicate(task.get("Predicate"), ctx):
-            self.execute_tasks(task.get("SuccessTaskList", []), ctx)
-        else:
-            self.execute_tasks(task.get("FailedTaskList", []), ctx)
+        cond = self.eval_predicate(task.get("Predicate"), ctx)
+        taken = task.get("SuccessTaskList", []) if cond else task.get("FailedTaskList", [])
+        skipped = task.get("FailedTaskList", []) if cond else task.get("SuccessTaskList", [])
+        skip_cb = getattr(self.rt.sim, "random_config_pity_skip_cb", None)
+        if callable(skip_cb) and taken and skipped:
+            taken_list = list(taken)
+            for sk in skipped:
+                if not (isinstance(sk, Mapping) and sk.get("$type") == "RPG.GameCore.RandomConfig"):
+                    continue
+                rc_tlist = sk.get("TaskList") or ()
+                matched_idx: Optional[int] = None
+                for idx, rc_item in enumerate(rc_tlist):
+                    if (len(taken_list) == 1 and rc_item == taken_list[0]) or rc_item == taken_list:
+                        matched_idx = idx
+                        break
+                if matched_idx is not None:
+                    skip_cb(ctx.caster_id, ctx.ability_name, matched_idx)
+                    diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
+                    if callable(diag_cb):
+                        diag_cb("RAND", f"{ctx.caster_id} pity_skip={matched_idx}/{len(rc_tlist)}")
+                    break
+        self.execute_tasks(taken, ctx)
 
     def _op_switch_case(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         branches = task.get("TaskList") or task.get("CaseTaskList") or ()
@@ -843,6 +860,7 @@ class TaskExecutor(
         "RPG.GameCore.TurnInsertAbilityCondition": TurnOpsMixin._execute_turn_insert,
         "RPG.GameCore.TurnInsertAction": TurnOpsMixin._execute_turn_insert,
         "RPG.GameCore.UseSkillOneMore": TurnOpsMixin._execute_use_skill_one_more,
+        "KJNHIELIFEK": TurnOpsMixin._op_merged_attack_scope,
         "RPG.GameCore.CreateServant": TurnOpsMixin._execute_create_servant,
         "RPG.GameCore.CreateBattleEvent": TurnOpsMixin._execute_create_battle_event,
         "RPG.GameCore.AttachAvatarChange": TurnOpsMixin._execute_attach_avatar_change,

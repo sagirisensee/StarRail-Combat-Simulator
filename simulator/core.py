@@ -765,65 +765,69 @@ class TurnSimulator:
             "ControlSkill02": ActionKind.SKILL,
             "ControlSkill03": ActionKind.ULTIMATE,
         }
-        while (
-            vm_rt is not None
-            and is_char_kit
-            and vm_rt._pending_use_skill_one_more.get(active_entity.name)
-        ):
-            if active_entity.current_hp <= 0.0 and not getattr(active_entity, "is_infinite_hp", False):
-                vm_rt._pending_use_skill_one_more[active_entity.name].clear()
-                break
-            one_more_steps += 1
-            if one_more_steps > 16:
-                vm_rt._pending_use_skill_one_more[active_entity.name].clear()
-                break
-            ctrl_type = vm_rt._pending_use_skill_one_more[active_entity.name].pop(0)
-            one_more_kind = ctrl_map.get(ctrl_type, ActionKind.BASIC)
-            sub_defn = active_entity.kit.definition(one_more_kind)
-            if sub_defn.cost.sp != 0:
-                self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
-            sub_tgts = (
-                tuple(
-                    e.name for e in self.entities
-                    if getattr(e, "is_enemy", False)
-                    and not getattr(e, "is_countdown", False)
-                    and not getattr(e, "is_unselectable", False)
-                    and float(getattr(e, "current_hp", 0.0)) > 0.0
+        try:
+            while (
+                vm_rt is not None
+                and is_char_kit
+                and vm_rt._pending_use_skill_one_more.get(active_entity.name)
+            ):
+                if active_entity.current_hp <= 0.0 and not getattr(active_entity, "is_infinite_hp", False):
+                    vm_rt._pending_use_skill_one_more[active_entity.name].clear()
+                    break
+                one_more_steps += 1
+                if one_more_steps > 16:
+                    vm_rt._pending_use_skill_one_more[active_entity.name].clear()
+                    break
+                ctrl_type = vm_rt._pending_use_skill_one_more[active_entity.name].pop(0)
+                one_more_kind = ctrl_map.get(ctrl_type, ActionKind.BASIC)
+                sub_defn = active_entity.kit.definition(one_more_kind)
+                if sub_defn.cost.sp != 0:
+                    self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
+                sub_tgts = (
+                    tuple(
+                        e.name for e in self.entities
+                        if getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    )
+                    if sub_defn.target_mode == TargetMode.ALL_ENEMIES
+                    else tuple(
+                        t for t in (target_ids or ())
+                        if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
+                    )
                 )
-                if sub_defn.target_mode == TargetMode.ALL_ENEMIES
-                else tuple(
-                    t for t in (target_ids or ())
-                    if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
+
+                def _after_chain_exec(sub_sid: int) -> None:
+                    self._invoke_auto_chained_skill(active_entity.name, sub_sid)
+
+                def _after_chain_resolve() -> None:
+                    if not vm_rt._pending_use_skill_one_more.get(active_entity.name):
+                        self.scheduler.continuous_action_hold = False
+
+                self._run_kit_action_frame(
+                    active_entity,
+                    kind=one_more_kind,
+                    defn=sub_defn,
+                    action_type=sub_defn.name,
+                    description=f"施放【{sub_defn.name}】",
+                    target_ids=sub_tgts,
+                    is_natural_turn_action=is_natural_turn_action,
+                    schedule_category=schedule_category,
+                    owner_turn_id=owner_turn_id,
+                    owner_turn_actor_id=owner_turn_actor,
+                    should_publish=should_publish,
+                    after_execute_event_hook=_after_chain_exec,
+                    after_resolve_hook=_after_chain_resolve,
                 )
-            )
-
-            def _after_chain_exec(sub_sid: int) -> None:
-                self._invoke_auto_chained_skill(active_entity.name, sub_sid)
-
-            def _after_chain_resolve() -> None:
-                if not vm_rt._pending_use_skill_one_more.get(active_entity.name):
-                    self.scheduler.continuous_action_hold = False
-
-            self._run_kit_action_frame(
-                active_entity,
-                kind=one_more_kind,
-                defn=sub_defn,
-                action_type=sub_defn.name,
-                description=f"施放【{sub_defn.name}】",
-                target_ids=sub_tgts,
-                is_natural_turn_action=is_natural_turn_action,
-                schedule_category=schedule_category,
-                owner_turn_id=owner_turn_id,
-                owner_turn_actor_id=owner_turn_actor,
-                should_publish=should_publish,
-                after_execute_event_hook=_after_chain_exec,
-                after_resolve_hook=_after_chain_resolve,
-            )
-            self._invoke_sub_action_end(
-                active_entity,
-                sub_action_index=one_more_steps,
-                has_next_sub_action=bool(vm_rt._pending_use_skill_one_more.get(active_entity.name)),
-            )
+                self._invoke_sub_action_end(
+                    active_entity,
+                    sub_action_index=one_more_steps,
+                    has_next_sub_action=bool(vm_rt._pending_use_skill_one_more.get(active_entity.name)),
+                )
+        finally:
+            if vm_rt is not None and getattr(getattr(vm_rt, "lifecycle", None), "merged_attack_scope_active", False):
+                vm_rt.lifecycle.finish_merged_attack_scope()
         if one_more_steps > 0 and not (vm_rt and vm_rt._pending_use_skill_one_more.get(active_entity.name)):
             self.scheduler.continuous_action_hold = False
         elif not is_natural_turn_action and prev_hold:
