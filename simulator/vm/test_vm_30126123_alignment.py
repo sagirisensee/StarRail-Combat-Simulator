@@ -73,6 +73,13 @@ class TestVMStage30126123Alignment(unittest.TestCase):
             ["风堇", _NOV_ROBIN_PROFILE, "缇宝", "长夜月"],
         )
 
+    def test_vm_20261122_193501(self) -> None:
+        self._run_vm_case(
+            "193501",
+            "battle_20261122_193501.jsonl",
+            ["风堇", _NOV_ROBIN_PROFILE, "长夜月", "缇宝"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

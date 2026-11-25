@@ -36,8 +36,8 @@ class TestReconcileGenerator(unittest.TestCase):
         self.assertEqual(len(m4.team_names), 4)
         self.assertEqual(m4.team_names[0], "风堇")
 
-        m_new = extract_log_metadata(os.path.join(ROOT_DIR, "battle_logs", "battle_20261115_001502.jsonl"))
-        self.assertEqual(m_new.stage_id, 1043176)
+        m_new = extract_log_metadata(os.path.join(ROOT_DIR, "battle_logs", "battle_20261124_085116.jsonl"))
+        self.assertEqual(m_new.stage_id, 420564)
         self.assertGreaterEqual(len(m_new.team_names), 3)
 
     def test_reconcile_benchmark_155925_and_emit(self) -> None:

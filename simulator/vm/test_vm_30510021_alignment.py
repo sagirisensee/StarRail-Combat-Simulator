@@ -84,6 +84,14 @@ class TestVMStage30510021Alignment(unittest.TestCase):
             ["风堇", "缇宝_旧", "长夜月", "知更鸟•晴歌"],
         )
 
+    @pytest.mark.slow
+    def test_vm_log_20261101_171232_alignment(self) -> None:
+        self._run_vm_case(
+            "20261101_171232",
+            "battle_20261101_171232.jsonl",
+            ["风堇", "长夜月", "知更鸟•晴歌", "缇宝_旧"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

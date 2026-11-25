@@ -109,6 +109,18 @@ class TestVMStage30126122Alignment(unittest.TestCase):
     def test_vm_20261115_041608(self) -> None:
         self._run_vm_case("041608", "battle_20261115_041608.jsonl", ["风堇", "缇宝", "长夜月", _NOV_ROBIN_PROFILE])
 
+    @pytest.mark.slow
+    def test_vm_20261116_031107(self) -> None:
+        self._run_vm_case("031107", "battle_20261116_031107.jsonl", ["风堇", "长夜月"])
+
+    @pytest.mark.slow
+    def test_vm_20261115_060113(self) -> None:
+        self._run_vm_case("060113", "battle_20261115_060113.jsonl", ["风堇", "长夜月"])
+
+    @pytest.mark.slow
+    def test_vm_20261115_060344(self) -> None:
+        self._run_vm_case("060344", "battle_20261115_060344.jsonl", ["风堇", "缇宝"])
+
 
 if __name__ == "__main__":
     unittest.main()
