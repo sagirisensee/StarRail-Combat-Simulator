@@ -76,10 +76,10 @@ python scripts/inspect_ability.py --monster <id>
 遇到官方 JSON 中未实现的全新 AST 节点，分类分流：
 1. **纯表现层节点 → 剪枝白名单**：
    - 典型特征：`WaitAnimEvent`、`LevelAudioSwitch`、`ShowUI`、`GlobalTimeSlow`、`SetComfortZoneWidthOverride`、`SetEntityArtRotation`、`RetargetPerSequence` 等只涉及动画/音效/镜头的节点。
-   - 处理方式：统一加入 `simulator/vm/loader.py` 的 `PRUNABLE_PRESENTATION_TYPES`。
+   - 处理方式：通用/角色侧加入 `simulator/vm/loader.py` 的 `PRUNABLE_PRESENTATION_TYPES`，关卡侧加入 `simulator/vm/stage_prunable_types.py`。可用 `python -m simulator.vm.audit_vm_coverage` 审计未覆盖节点与 `IGNORED_*_TASK_STUBS` 存量。
 2. **机械语义 Opcode → 原生通用实现**：
    - 典型特征：修改动态变量、添加关卡 Ability、削韧、销毁实体、随机分支等（如 `SetDynamicEntityParam`、`AddStageAbilityByName`、`DamageStance`、`DestroyBattleCharacter`、`RandomConfig`）。
-   - 处理方式：在 `simulator/vm/executor.py` 或 `runtime.py` 原生通用实现，严禁硬编码特判。
+   - 处理方式：按职责归属在 `simulator/vm/ops/`（`predicates.py` / `combat_ops.py` / `modifier_ops.py` / `dynamic_ops.py` / `turn_ops.py` / `stage_ops.py`）、`executor.py` 或 `runtime.py` 原生通用实现，严禁硬编码特判。
 3. **高频深坑与陷阱规避**：
    - `DestroyBattleCharacter` 若带 `CharacterUniqueName` 且未提供 `TargetType`，**绝不可默认回退到 `ctx.caster_id`**（否则呼雷的 `RageEnd` 清理节点会把呼雷自身秒杀）。
    - `SummonMonster` 由 `BattleEvent`（如 `BattleEvent_20008`）或 `__LEVEL__` 发起时，`stage_runner.py` 需回退到场上存活 Boss/首个敌人作为召唤池上下文。
@@ -103,8 +103,11 @@ python scripts/inspect_ability.py --monster <id>
 **永远只看第 1 个出现 `err >= 0.01%` 的动作！** 后续误差 90% 都是前序 HP、韧性、忆质或击杀时机滚出来的雪崩。
 
 #### 1. 乘区比值数学定位法（严禁盲猜盲试）
-伤害公式为纯连乘体系：
-$$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult} \times \text{ResMult} \times \text{VulnMult} \times \text{DamageRedMult} \times \text{BrokenMult}$$
+常规伤害公式为纯连乘体系：
+$$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult} \times \text{ResMult} \times \text{VulnMult} \times \text{DamageRedMult} \times \text{BrokenMult} \times \text{CritMult}$$
+欢愉伤害（`ByElationDamage` / `ElationDamage`）不吃常规增伤，改吃独立欢愉增伤乘区：
+$$\text{ElationDmg} = \text{ElationBase}(Lv) \times \text{Pct} \times (1 + \text{Elation}) \times \text{PunchlineMult}(P) \times (1 + \text{ElationExtra}) \times \text{DefMult} \times \text{ResMult} \times \text{VulnMult} \times \text{DamageRedMult} \times \text{BrokenMult} \times \text{CritMult}$$
+其中常规 $\text{PunchlineMult}(P) = 1 + \frac{5P}{P+240}$（需同时核对 `AttackData_EnableElationPointMultiplier`、`AttackData_ElationPointNum` 与 `ElationEchoPoint`）。
 计算误差比值 $R = \frac{\text{GT Damage}}{\text{SIM Damage}}$，任何猜想必须能用该乘区公式严格解释：
 - **$R \approx 1.1111$ 或 $0.9000$（$-10.000\%$ 或 $+11.111\%$）**：**韧性减伤（0.9 vs 1.0）不一致**（对比敌方破韧状态）。绝不是易伤或自爆！
   - 若发生在 Boss 转阶段后：检查转阶段前是否已破韧（`stage_runner.py` 的 `was_broken` 规则）。
@@ -138,9 +141,13 @@ $$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult}
      ```powershell
      python -m pytest -v
      ```
-   - 涉及 `enemy_kit.py` / `stage_runner.py` / `reconcile/` 等底层改动时跑全量对账回归：
+   - 涉及 `core.py` / `status.py` / `lifecycle.py` / `enemy_kit.py` / `stage_runner.py` / `modifier_engine.py` / `reconcile/` 等底层改动时跑全量回归（含全部慢速黄金日志对齐、Free-Run 不变量与内核生命周期测试）：
      ```powershell
-     python -m pytest -m "slow or not slow" simulator/vm/test_vm_*.py -v
+     python -m pytest -m "slow or not slow" -v
+     ```
+   - 新增或清理 VM 算子后可运行覆盖率审计：
+     ```powershell
+     python -m simulator.vm.audit_vm_coverage
      ```
 4. **干净提交**：确认 `git status` 无遗留临时文件后提交。
 
@@ -149,12 +156,16 @@ $$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult}
 ## 4. 核心微内核架构与四层强制边界规范
 
 本项目采用**纯数据驱动的官方 `TurnBasedGameData` + `ConfigAbility` 虚拟机（`simulator/vm/`）** 架构：
-- **微内核零硬编码**：`core.py`, `scheduler.py`, `status.py`, `damage.py` 严禁出现具体角色名、怪物模板 ID 或关卡数值。
+- **微内核零硬编码**：`core.py`、`scheduler.py`、`status.py`、`damage.py`、`lifecycle.py` 严禁出现具体角色名、怪物模板 ID 或关卡数值。
+- **纯 VM 单一事实源（防回退红线）**：
+  - **单状态账本**：`simulator/status.py` 直接实时聚合 `ModifierEngine.iter_stat_modifiers()` / `iter_snapshot_buffs()`，严禁再引入 `VMMod::*` 镜像同步壳。
+  - **统一动作生命周期帧**：所有技能、插队、欢愉技与敌方行动统一经 `simulator/lifecycle.py` 的 `AbilityLifecycleRunner.run_ability_frame()` 执行，禁止旁路手动拼装钩子。
+  - **纯 VM 击破与多动**：弱点击破状态（`MCommon_Element_*`、`FormulaType == "ByBreakDamage"`）与敌方快速再动（`MCommon_FastAction`、`ByCompareSkillUsageLimit`）均由官方配置驱动，严禁新增类似旧 `BreakStatusHelper` / `windwalk` 的混合兼容壳。
 - **四层职责绝对隔离**：
   1. **数据驱动敌方套件 (`simulator/vm/enemy_kit.py`)**：仅执行官方 `ConfigAI` 与 `ConfigAbility` 确定的机制（多动、召唤、阶段切换、印记/Debuff、护盾/锁血拦截）。严禁硬编码我方角色名、中文怪名、玩家 UID 或随机点名序列。
-  2. **数据驱动关卡导演 (`simulator/vm/stage_director.py`)**：仅处理通用关卡事实：波次切换（`MoCWaveMode` / `AnomalyWaveMode`）、轮次边界、`BattleEvent` 调度与通用钩子。严禁写入单场随机命中序列。
-  3. **通用回放框架 (`simulator/golden/` & `simulator/golden_diff.py`)**：负责解析 Veritas JSONL、动态加载角色、注入暴击先知与驱动 `run_trajectory_replay()`。严禁写入 `if "<log_id>" in str(log_path)` 单场分支。
-  4. **单场日志 RNG 插件 (`simulator/plugins/log_<tag>.py` 或 `reconcile/auto_rng.py`)**：集中封装单场录制日志的全部随机真值（`NON_CRITS` 非暴击账本、点名序列与弹射命中）。
+  2. **数据驱动关卡导演 (`simulator/vm/stage_director.py` & `wave_modes.py`)**：仅处理通用关卡事实：波次切换（`MoCWaveMode` / `AnomalyWaveMode`）、轮次边界、`BattleEvent` 调度与通用钩子。严禁写入单场随机命中序列。
+  3. **通用回放与对账框架 (`simulator/golden/` & `simulator/vm/reconcile/runner.py`)**：负责解析 Veritas JSONL、动态加载角色、注入暴击先知并驱动全自动对账（`reconcile_log(..., force_data_driven=True, use_existing_plugin=False)`）。严禁写入 `if "<log_id>" in str(log_path)` 单场分支。
+  4. **机械随机真值提取 (`simulator/vm/reconcile/auto_rng.py` & `metadata.py`)**：集中从单场实机日志自动提取随机真值（非暴击账本、敌方点名、召唤 ID 与随机弹射命中）；不再维护手写 `simulator/plugins/log_<tag>.py`。
 
 ---
 
@@ -163,25 +174,29 @@ $$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult}
 ### 5.1 扩展未实现的官方 VM 节点 (`strict=True` 驱动)
 
 `TaskExecutor` 与 `ModifierEngine` 默认运行在 **`strict=True`** 模式下，遇到未知的 `Task` 或 `Predicate` `$type` 会直接抛出 `NotImplementedError`。扩展新能力时按以下 4 步归属：
-1. **纯表现节点**：仅涉及镜头/动画/特效/UI/音效的节点，加入 `simulator/vm/loader.py` 的 `PRUNABLE_PRESENTATION_TYPES`。
+1. **纯表现节点**：仅涉及镜头/动画/特效/UI/音效的节点，通用/角色侧加入 `simulator/vm/loader.py` 的 `PRUNABLE_PRESENTATION_TYPES`，关卡侧加入 `simulator/vm/stage_prunable_types.py`。
 2. **目标解析 (`TargetAlias` / `TargetType`)**：新增锚点或修饰符在 `simulator/vm/target_alias.py` 中按官方语义实现，注意保序去重与存活/不可选中过滤。
 3. **属性映射与二次转化隔离**：新增属性在 `simulator/vm/modifier_engine.py` 加入 `PROPERTY_TO_STAT`。二次转化（`*Convert`）务必同步登记 `CONVERT_PROPERTY_PAIR` 并标记 `StatusTag.EXCLUDE_FROM_STAT_TRANSFERS`，防止转化死循环。
-4. **算子归属四分流 (`simulator/vm/ops/`)**：
-   - 断言谓词加在 `predicates.py`；
-   - 数值、伤害、治疗、护盾、状态加在 `combat_ops.py`；
-   - 拉推条、召唤、插队加在 `turn_ops.py`；
-   - 控制流加在 `executor.py`。
+4. **算子归属六模块 + 控制流 (`simulator/vm/ops/`)**：
+   - `predicates.py`：断言谓词（`By*`）；
+   - `combat_ops.py`：伤害、治疗、护盾、削韧与能量；
+   - `modifier_ops.py`：Modifier 增删/叠层/属性、`ModifyDamageData`、欢愉点与战技点；
+   - `dynamic_ops.py`：动态变量读写、属性查询与表达式计算；
+   - `turn_ops.py`：拉推条、插队、召唤与阿哈时刻（`ElationTime`）；
+   - `stage_ops.py`：关卡能力、波次与 Boss 阶段切换；
+   - `executor.py`：控制流分发与任务模板展开。
    所有数值参数统一经 `self._eval_num(...)` 求值，自动兼容固定值与 `PostfixExpr` 逆波兰表达式。
 
 ### 5.2 VM 关键时序约定
 
+- **统一动作帧 (`AbilityLifecycleRunner.run_ability_frame`)**：所有技能/插队/欢愉技/敌方行动按统一前后钩子与事件时序运行，避免不同入口漏派发 `OnBeforeSkillUse` / `OnAfterSkillUse` / `OnActionEnd`。
 - **`OnEnterBattle` 全局升序**：`TurnSimulator.__init__` 在实体初始化后调用 `sim.vm_runtime.enter_battle()`，按 `_CallbackList.Priority` 升序（如 `-92 → -80 → 0`）执行，随后刷新实体 `OnAbilityPropertyChange` 区间监听。
-- **Modifier 衰减时钟 (`LifeStepMoment`)**：`ModifierPhase1End` 在 `TurnBeginEvent` 扣减；`TurnEnd` 在 `TurnEndEvent` 扣减。
+- **Modifier 衰减时钟 (`LifeStepMoment`)**：`ModifierPhase1End` 在 `TurnBeginEvent` 扣减；`TurnEnd` 在 `TurnEndEvent` 扣减；`SetModifierValue` 在 `ModifyFunction == "Set"` 将层数置 0 时不自动销毁 Modifier（供 `MCommon_FastAction` 等官方状态使用）。
 - **新实体入场光环补发**：通过 `CreateServant` 或波次切换创建新实体时，触发 `modifier_engine.on_entity_created()` / `attach_halos_to_new_entity()`，确保 `IsHaloStatus` 自动覆盖新入场忆灵或敌方。
 
 ---
 
-## 6. 全仓工程五大核心戒律与质量红线
+## 6. 全仓工程核心戒律与质量红线
 
 1. **❌ 戒律 1：严禁在核心引擎中硬编码具体角色名、技能名或角色 ID**：`core.py`、`scheduler.py`、`entity.py`、`effects.py`、`status.py` 必须保持纯净微内核。
 2. **❌ 戒律 2：严禁绕过 `CombatPort` 或 `VMRuntime` 契约直接篡改私有状态**：严禁静默吞掉未知 `$type` 掩盖实现缺失。

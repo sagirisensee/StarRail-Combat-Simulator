@@ -51,7 +51,7 @@ class ModifierOpsMixin:
                     m_cb.layer = max(0, int(round(m_cb.layer - val)))
                 else:
                     m_cb.layer = max(0, int(round(val)))
-            if vtype == "Layer" and m_cb.layer <= 0 and "RetainCountZero" not in m_cb.behavior_flags:
+            if vtype == "Layer" and mfunc != "Set" and m_cb.layer <= 0 and "RetainCountZero" not in m_cb.behavior_flags:
                 me.destroy_modifier(m_cb)
             return
         for tid in targets:
@@ -71,7 +71,7 @@ class ModifierOpsMixin:
                         m.layer = max(0, int(round(m.layer - val)))
                     else:
                         m.layer = max(0, int(round(val)))
-                if vtype == "Layer" and m.layer <= 0 and "RetainCountZero" not in m.behavior_flags:
+                if vtype == "Layer" and mfunc != "Set" and m.layer <= 0 and "RetainCountZero" not in m.behavior_flags:
                     me.destroy_modifier(m)
 
     def _op_add_modifier(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -188,8 +188,6 @@ class ModifierOpsMixin:
         if single_flag:
             flags.add(single_flag)
         pred = task.get("Predicate")
-        director = getattr(sim, "_stage_director", None)
-        break_helper = getattr(director, "_break_helper", None) if director is not None else None
         for tid in targets:
             if flags:
                 for m in list(me.get_modifiers(tid)):
@@ -204,8 +202,6 @@ class ModifierOpsMixin:
                             if not self.eval_predicate(pred, p_ctx):
                                 continue
                         me.destroy_modifier(m)
-            if "STAT_CTRL" in flags and break_helper is not None:
-                break_helper.quantum_entanglements.pop(tid, None)
 
     def _op_stack_property(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         prop_name = str(task.get("Property", ""))
@@ -222,8 +218,6 @@ class ModifierOpsMixin:
         count = max(1, int(round(self._eval_num(task.get("Numbers"), ctx, 1.0)))) if "Numbers" in task else 99
         req_flags = set(task.get("BehaviorFlags") or [])
         order = str(task.get("Order", "LastAdded"))
-        director = getattr(sim, "_stage_director", None)
-        break_helper = getattr(director, "_break_helper", None) if director is not None else None
         for tid in targets:
             sim.port.dispel(tid, is_debuff=True)
             mods = list(me.get_modifiers(tid))
@@ -248,17 +242,7 @@ class ModifierOpsMixin:
             else:
                 cands.sort(key=lambda m: getattr(m, "_spawn_order", 0))
             for m in cands[:count]:
-                if break_helper is not None:
-                    if m.name == "MCommon_BreakDebuff_Quantum":
-                        break_helper.quantum_entanglements.pop(tid, None)
-                    elif m.name == "MCommon_BreakDebuff_Wind":
-                        break_helper.wind_shears.pop(tid, None)
                 me.destroy_modifier(m)
-            if break_helper is not None and not req_flags and "Numbers" not in task:
-                break_helper.quantum_entanglements.pop(tid, None)
-                break_helper.wind_shears.pop(tid, None)
-            for m in list(me.get_modifiers(tid)):
-                me._sync_modifier_to_status_mgr(m)
 
     def _op_init_shield(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim

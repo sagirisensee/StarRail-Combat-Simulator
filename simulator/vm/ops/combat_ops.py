@@ -8,7 +8,7 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from ...actions import DamageType
-from ...damage import DamageBreakdown
+from ...damage import DamageBreakdown, DamageRequest
 from ...events import DamageAppliedEvent, HPLostEvent
 from ...lifecycle import emit_sim_event, enter_deathrattle_limbo
 from ...status import StatType
@@ -481,8 +481,11 @@ class CombatOpsMixin:
         final_formula = str(atk_prop.get("FinalFormulaType", ""))
         custom_name = _str_val(atk_prop.get("CustomName"))
         atk_type = str(atk_prop.get("AttackType", ctx.current_attack_type or "Normal"))
+        is_break_dmg_formula = formula_type == "ByBreakDamage"
         is_elation_dmg = (formula_type == "ByElationDamage") or (atk_type == "ElationDamage")
-        if formula_type == "ByElationDamage" and "ElationDamagePercentage" in atk_prop:
+        if is_break_dmg_formula and "BreakDamagePercentage" in atk_prop:
+            pct = self._eval_num(atk_prop.get("BreakDamagePercentage"), ctx, 0.0)
+        elif formula_type == "ByElationDamage" and "ElationDamagePercentage" in atk_prop:
             pct = self._eval_num(atk_prop.get("ElationDamagePercentage"), ctx, 0.0)
         else:
             pct = self._eval_num(atk_prop.get("DamagePercentage"), ctx, 0.0)
@@ -520,11 +523,22 @@ class CombatOpsMixin:
             "DOT": DamageType.DOT,
             "ElationDamage": DamageType.ELATION,
         }
-        damage_type = DamageType.ELATION if is_elation_dmg else dtype_map.get(atk_type, DamageType.BASIC)
+        if is_break_dmg_formula:
+            damage_type = DamageType.DOT if atk_type == "DOT" else DamageType.ADDITIONAL
+        elif is_elation_dmg:
+            damage_type = DamageType.ELATION
+        else:
+            damage_type = dtype_map.get(atk_type, DamageType.BASIC)
         is_true_dmg = damage_type == DamageType.TRUE
         is_dot_dmg = damage_type == DamageType.DOT
         is_additional_dmg = damage_type == DamageType.ADDITIONAL
-        is_nested_sub = is_true_dmg or is_dot_dmg or getattr(rt, "_in_after_attack", False) or is_equip_sub
+        is_nested_sub = (
+            is_true_dmg
+            or is_dot_dmg
+            or is_break_dmg_formula
+            or getattr(rt, "_in_after_attack", False)
+            or is_equip_sub
+        )
         real_targets = [tid for tid in targets if tid != "__LEVEL__"]
         return _DamageSpec(
             targets=targets,
@@ -651,6 +665,89 @@ class CombatOpsMixin:
                         sp_base = float(getattr(sk_spec, "sp_hit_base", 0.0) or 0.0)
                         break
         return sp_base
+
+    def _try_execute_break_damage(self, spec: _DamageSpec, ctx: ExecutionContext) -> bool:
+        """执行官方 `FormulaType == 'ByBreakDamage'` 击破持续伤害/纠缠/冻结结算。"""
+        if spec.formula_type != "ByBreakDamage":
+            return False
+        rt = self.rt
+        sim = rt.sim
+        atk_ent = sim.get_entity(spec.eff_attacker_id)
+        if atk_ent is None and ctx.modifier_instance is not None:
+            atk_ent = getattr(ctx.modifier_instance, "caster_snapshot_entity", None)
+        if atk_ent is None:
+            return True
+
+        atk_lvl = int(getattr(atk_ent, "level", 80) or 80)
+        cache = getattr(rt, "_break_base_cache", None)
+        if cache is None:
+            cache = {}
+            try:
+                for row in rt.loader._read_excel("AvatarBreakDamage.json"):
+                    lv = int(row.get("Level", 0) or 0)
+                    bv = row.get("BreakBaseDamage", {})
+                    if lv > 0:
+                        cache[lv] = float(bv.get("Value", 3767.5535) if isinstance(bv, Mapping) else bv)
+            except Exception:
+                pass
+            setattr(rt, "_break_base_cache", cache)
+        base_break = float(cache.get(atk_lvl, 3767.5535))
+
+        mod_inst = ctx.modifier_instance
+        snap_props = getattr(mod_inst, "caster_snapshot_props", None) if mod_inst is not None else None
+        if isinstance(snap_props, Mapping) and "BreakDamageAddedRatio" in snap_props:
+            be = float(snap_props["BreakDamageAddedRatio"])
+        elif isinstance(snap_props, Mapping) and "BreakDamageAddedRatioBase" in snap_props:
+            be = float(snap_props["BreakDamageAddedRatioBase"])
+        else:
+            be = float(getattr(atk_ent, "base_break_effect", 0.0) or 0.0)
+            sm = getattr(sim, "status_mgr", None)
+            if sm is not None:
+                be = sm.calculate_stat(atk_ent.name, be, StatType.BREAK_EFFECT)
+                if getattr(atk_ent, "is_memosprite", False) and getattr(atk_ent, "master_name", None):
+                    be = max(be, sm.calculate_stat(atk_ent.master_name, be, StatType.BREAK_EFFECT))
+
+        from ...effects import ApplyDamageEffect
+
+        for tid in spec.real_targets:
+            tgt_ent = sim.get_entity(tid)
+            if tgt_ent is None or float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
+                continue
+            if spec.element == "Quantum" and spec.atk_type == "Pursued":
+                tough_mult = 0.5 + (float(getattr(tgt_ent, "max_toughness", 0.0) or 0.0) / 120.0)
+                base_val = base_break * spec.pct * tough_mult * (1.0 + be)
+            elif spec.element == "Physical" and spec.atk_type == "DOT":
+                tough_mult = 0.5 + (float(getattr(tgt_ent, "max_toughness", 0.0) or 0.0) / 120.0)
+                hp_ratio = 0.07 if getattr(tgt_ent, "is_boss", False) else 0.16
+                base_val = min(float(tgt_ent.max_hp) * hp_ratio, 2.0 * base_break * tough_mult) * (1.0 + be)
+            else:
+                base_val = base_break * spec.pct * (1.0 + be)
+            tgt_res = (
+                float(tgt_ent.damage_res.get(spec.element, 0.0))
+                if isinstance(getattr(tgt_ent, "damage_res", None), dict)
+                else 0.0
+            )
+            req = DamageRequest(
+                attacker=atk_ent,
+                target=tgt_ent,
+                skill_multiplier=0.0,
+                flat_damage=base_val,
+                target_base_res=tgt_res,
+                target_is_broken=True,
+                force_crit=False,
+                ignore_dmg_boost=True,
+                damage_type=spec.damage_type,
+            )
+            sim.resolver.enqueue(
+                ApplyDamageEffect(
+                    request=req,
+                    element=spec.element,
+                    damage_tag=spec.damage_type.value,
+                    damage_type=spec.damage_type,
+                )
+            )
+        sim.resolver.resolve_all()
+        return True
 
     def _try_execute_base_damage_fastpath(
         self,
@@ -996,6 +1093,7 @@ class CombatOpsMixin:
                         damage_data=hit_dmg_data,
                         current_attack_type=spec.atk_type,
                     )
+                    me.notify_entangle_being_attacked(tid, spec.eff_attacker_id, attack_type=spec.atk_type)
                 if not spec.is_true_dmg:
                     (
                         hit_extra_dmg_boost,
@@ -1245,6 +1343,8 @@ class CombatOpsMixin:
     def _execute_damage(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         spec = self._parse_damage_spec(task, ctx)
         if spec is None:
+            return
+        if self._try_execute_break_damage(spec, ctx):
             return
         prep = self._prepare_attack_hooks(spec, ctx)
         if self._try_execute_base_damage_fastpath(spec, prep, ctx):

@@ -14,9 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
-from ..combat_port import BuffSpec
 from ..lifecycle import emit_sim_event
-from ..status import DurationTiming, Modifier, ModifierOp, StatType, StatusTag
+from ..status import ModifierOp, StatType, StatusTag
 from .expr import dotnet_hash, eval_dynamic_float
 from .target_alias import ExecutionContext, resolve_target_type
 
@@ -74,6 +73,8 @@ ELEMENT_RESISTANCE_DELTA_PROPS: Dict[str, str] = {
     "ImaginaryResistanceDelta": "Imaginary",
 }
 
+MAX_HP_AFFECTING_PROPS = frozenset({"MaxHP", "HPDelta", "HPAddedRatio", "HPConvert"})
+
 
 @dataclass
 class VMModifierInstance:
@@ -101,19 +102,16 @@ class VMModifierInstance:
     caster_snapshot_props: Dict[str, float] = field(default_factory=dict)
     _spawn_order: int = 0
     _destroyed: bool = False
+    _stats_detached: bool = False
     shield_value: float = 0.0
     shield_max: float = 0.0
     stacked_weaknesses: Dict[str, List[Tuple[str, Tuple[str, ...]]]] = field(default_factory=dict)
     weak_resistance_deltas: Dict[str, List[Tuple[str, str, float]]] = field(default_factory=dict)
     custom_strings: Dict[str, str] = field(default_factory=dict)
 
-    @property
-    def status_key(self) -> str:
-        return f"VMMod::{self.name}::{self.uid}"
-
 
 class ModifierEngine:
-    """官方 Modifier 宿主、属性同步与优先级事件调度引擎。"""
+    """官方 Modifier 宿主、属性与优先级事件调度引擎。"""
 
     def __init__(self, runtime: Any) -> None:
         self.rt = runtime
@@ -128,6 +126,7 @@ class ModifierEngine:
         self._checking_apc: Set[Tuple[int, int]] = set()
         self._apc_defer_depth: int = 0
         self._dirty_apc_entities: Set[str] = set()
+        self._deferred_prev_props_by_uid: Dict[int, Dict[str, float]] = {}
 
     def all_modifiers(self) -> List[VMModifierInstance]:
         return list(self.by_uid.values())
@@ -144,6 +143,30 @@ class ModifierEngine:
                 return True
         return False
 
+    def notify_entangle_being_attacked(
+        self,
+        owner_id: str,
+        attacker_id: str,
+        *,
+        attack_type: Optional[str] = None,
+    ) -> None:
+        """向受击敌方目标上的 MCommon_Element_Entangle 派发 OnBeforeBeingAttacked。"""
+        ent = self.rt.sim.get_entity(owner_id)
+        if ent is None or not getattr(ent, "is_enemy", False):
+            return
+        for m_entg in list(self.get_modifiers(owner_id, "MCommon_Element_Entangle")):
+            entg_ctx = ExecutionContext(
+                runtime=self.rt,
+                caster_id=m_entg.caster_id,
+                ability_name=m_entg.ability_name,
+                param_entity_id=attacker_id,
+                modifier_owner_id=owner_id,
+                modifier_instance=m_entg,
+                current_attack_type=attack_type,
+                custom_strings=dict(m_entg.custom_strings),
+            )
+            self.dispatch_modifier_callbacks(m_entg, "OnBeforeBeingAttacked", entg_ctx)
+
     def has_behavior_flag(self, owner_id: str, flag: str) -> bool:
         if flag in ("STAT_CTRL", "DisableAction"):
             sim = getattr(self.rt, "sim", None)
@@ -159,6 +182,108 @@ class ModifierEngine:
             if flag in m.behavior_flags:
                 return True
         return False
+
+    def iter_stat_modifiers(
+        self,
+        entity_name: str,
+        *,
+        exclude_tags: Tuple[str, ...] = (),
+        category: Optional[str] = None,
+    ):
+        """产出实体当前生效的 VM Modifier 属性项 `(StatType, ModifierOp, float)`，消除双账本镜像。"""
+        exclude_transfers = StatusTag.EXCLUDE_FROM_STAT_TRANSFERS in exclude_tags
+        for mod in self.by_owner.get(entity_name, ()):
+            if mod._stats_detached:
+                continue
+            props = self._deferred_prev_props_by_uid.get(mod.uid)
+            if props is None:
+                props = mod.properties
+            if not props:
+                continue
+            mapped: List[Tuple[StatType, ModifierOp, float]] = []
+            has_convert = False
+            has_vuln = False
+            for prop_name, val in props.items():
+                fval = float(val)
+                if abs(fval) < 1e-12:
+                    continue
+                mapping = PROPERTY_TO_STAT.get(prop_name)
+                if mapping is None:
+                    continue
+                stat_type, op, is_conv = mapping
+                if is_conv:
+                    has_convert = True
+                if stat_type == StatType.VULNERABILITY and fval > 0:
+                    has_vuln = True
+                mapped.append((stat_type, op, fval))
+            if not mapped:
+                continue
+            if has_convert and exclude_transfers:
+                continue
+            if category is not None:
+                mod_cat = "debuff" if ("STAT_DEBUFF" in mod.behavior_flags or has_vuln) else "buff"
+                if mod_cat != category:
+                    continue
+            for item in mapped:
+                yield item
+
+    def iter_snapshot_buffs(self, entity_name: str) -> List[Dict[str, Any]]:
+        """生成面向 `StatusManager.get_detailed_snapshot()` 的只读 VM 状态快照列表。"""
+        out: List[Dict[str, Any]] = []
+        sim = getattr(self.rt, "sim", None)
+        for mod in self.by_owner.get(entity_name, ()):
+            if mod._destroyed or mod._stats_detached:
+                continue
+            mod_strs: List[str] = []
+            has_vuln = False
+            for prop_name, val in mod.properties.items():
+                fval = float(val)
+                if abs(fval) < 1e-12:
+                    continue
+                mapping = PROPERTY_TO_STAT.get(prop_name)
+                if mapping is None:
+                    continue
+                m_stat, m_op, _ = mapping
+                if m_stat == StatType.VULNERABILITY and fval > 0:
+                    has_vuln = True
+                if m_stat == StatType.MAX_HP_PERCENT:
+                    if m_op == ModifierOp.PERCENT:
+                        mod_strs.append(f"生命上限 +{fval * 100:.1f}%")
+                    else:
+                        mod_strs.append(f"生命上限 +{fval:.0f}")
+                else:
+                    is_pct = (
+                        m_op == ModifierOp.PERCENT
+                        or m_stat in (
+                            StatType.ATK_PERCENT, StatType.SPEED, StatType.CRIT_RATE,
+                            StatType.CRIT_DMG, StatType.RES_PEN, StatType.DMG_BOOST,
+                            StatType.VULNERABILITY, StatType.DEF_SHRED, StatType.BREAK_EFFECT,
+                            StatType.EFFECT_RES,
+                        )
+                    )
+                    op_str = "%" if is_pct else ""
+                    val_disp = fval * 100.0 if is_pct else fval
+                    mod_strs.append(f"{m_stat.name} +{val_disp:.1f}{op_str}")
+            st_type = self.get_modifier_status_type(mod)
+            if st_type == "Debuff" or "STAT_DEBUFF" in mod.behavior_flags or has_vuln:
+                category = "debuff"
+            elif st_type == "Buff" or mod_strs:
+                category = "buff"
+            else:
+                category = "other"
+            src_ent = sim.get_entity(mod.caster_id) if sim is not None else None
+            src_name = getattr(src_ent, "name", mod.caster_id) if src_ent is not None else mod.caster_id
+            out.append({
+                "id": f"{mod.name}#{mod.uid}",
+                "name": mod.name,
+                "source": src_name,
+                "duration": mod.life_time,
+                "timing": mod.life_step_moment,
+                "stacks": mod.layer,
+                "category": category,
+                "modifiers_desc": ", ".join(mod_strs) if mod_strs else "特殊效果 / 机制生效中",
+            })
+        return out
 
     def get_modifier_status_type(self, mod: VMModifierInstance) -> str:
         """返回 Modifier 的官方 StatusType（先读自身/合成配置，再查官方 StatusConfig 系列表）。"""
@@ -269,8 +394,6 @@ class ModifierEngine:
         ent.damage_res = res
 
     def _lookup_modifier_config(self, mod_name: str, ability_name: str = "") -> Dict[str, Any]:
-        if mod_name.startswith("MCommon_BreakDebuff_"):
-            return {"StatusType": "Debuff", "Stacking": "Replace", "LifeTime": 1, "LifeStepMoment": "TurnStart"}
         # 1. 先查来源 Ability 的本地 Modifiers
         if ability_name:
             ab = self.rt.loader.get_ability(ability_name)
@@ -435,6 +558,7 @@ class ModifierEngine:
                     break
 
         is_new = target_existing is None
+        prev_props = {} if is_new else dict(target_existing.properties)
         caster_snap = self.rt.sim.get_entity(caster_id) if caster_id != "__LEVEL__" else None
         caster_snap_props = (
             self._snapshot_entity_props(caster_id)
@@ -513,54 +637,89 @@ class ModifierEngine:
             self.by_owner.setdefault(owner_id, []).append(mod)
             self.by_uid[uid] = mod
 
-        # 执行静态 Properties（若配置有直接写 Property 字段）
-        self._apply_static_modifier_props(mod)
-        if "MuteBreak" in mod.behavior_flags and owner_id != "__LEVEL__":
-            owner_ent = self.rt.sim.get_entity(owner_id)
-            if owner_ent is not None:
-                owner_ent.toughness_locked = True
-
-        if mod.life_time is not None and mod.life_step_moment == "TurnEnd":
-            sim = getattr(self.rt, "sim", None)
-            cur = getattr(sim, "_current_turn_entity", None)
-            if cur is not None and getattr(cur, "name", None) == owner_id:
-                skip_set = getattr(self, "_skip_turn_end_uids", None)
-                if skip_set is None:
-                    skip_set = set()
-                    self._skip_turn_end_uids = skip_set
-                skip_set.add(mod.uid)
-
-        # 触发 OnCreate (仅首次) 与 OnStack (每次)
-        mod_ctx = ExecutionContext(
-            runtime=self.rt,
-            caster_id=caster_id,
-            ability_name=mod.ability_name,
-            modifier_owner_id=owner_id,
-            modifier_instance=mod,
-            custom_strings=dict(mod.custom_strings),
-        )
-        if is_new:
-            self.dispatch_modifier_callbacks(mod, "OnCreate", mod_ctx)
-
-        # OnStack 前清空动态 StackProperty（允许同窗内多层乘算/覆盖重算）
-        self._apc_defer_depth += 1
-        prev_defer_uid = getattr(self, "_defer_sync_mod_uid", None)
-        self._defer_sync_mod_uid = mod.uid
+        had_defer_entry = mod.uid in self._deferred_prev_props_by_uid
+        prev_defer_entry = self._deferred_prev_props_by_uid.get(mod.uid)
+        self._deferred_prev_props_by_uid[mod.uid] = prev_props
         try:
-            mod.properties.clear()
-            mod.convert_properties.clear()
+            # 执行静态 Properties（若配置有直接写 Property 字段）
             self._apply_static_modifier_props(mod)
-            try:
-                self.dispatch_modifier_callbacks(mod, "OnStack", mod_ctx)
-            finally:
-                self._defer_sync_mod_uid = prev_defer_uid
-            self._sync_modifier_to_status_mgr(mod)
+            if "MuteBreak" in mod.behavior_flags and owner_id != "__LEVEL__":
+                owner_ent = self.rt.sim.get_entity(owner_id)
+                if owner_ent is not None:
+                    owner_ent.toughness_locked = True
 
-            # 触发全局 OnModifierAdd / OnListenModifierAdd / OnModifierOnStack / OnListenModifierOnStack
-            mod_status_type = self.get_modifier_status_type(mod)
+            if mod.life_time is not None and mod.life_step_moment == "TurnEnd":
+                sim = getattr(self.rt, "sim", None)
+                cur = getattr(sim, "_current_turn_entity", None)
+                if cur is not None and getattr(cur, "name", None) == owner_id:
+                    skip_set = getattr(self, "_skip_turn_end_uids", None)
+                    if skip_set is None:
+                        skip_set = set()
+                        self._skip_turn_end_uids = skip_set
+                    skip_set.add(mod.uid)
+
+            # 触发 OnCreate (仅首次) 与 OnStack (每次)
+            mod_ctx = ExecutionContext(
+                runtime=self.rt,
+                caster_id=caster_id,
+                ability_name=mod.ability_name,
+                modifier_owner_id=owner_id,
+                modifier_instance=mod,
+                custom_strings=dict(mod.custom_strings),
+            )
             if is_new:
+                self.dispatch_modifier_callbacks(mod, "OnCreate", mod_ctx)
+
+            # OnStack 前清空动态 StackProperty（允许同窗内多层乘算/覆盖重算）
+            self._apc_defer_depth += 1
+            try:
+                mod.properties.clear()
+                mod.convert_properties.clear()
+                self._apply_static_modifier_props(mod)
+                self.dispatch_modifier_callbacks(mod, "OnStack", mod_ctx)
+                owner_ent_hp = self.rt.sim.get_entity(owner_id) if owner_id != "__LEVEL__" else None
+                sm_add = getattr(self.rt.sim, "status_mgr", None) if owner_ent_hp is not None else None
+                need_hp_sync = (
+                    owner_ent_hp is not None
+                    and sm_add is not None
+                    and (
+                        any(p in MAX_HP_AFFECTING_PROPS for p in mod.properties)
+                        or any(p in MAX_HP_AFFECTING_PROPS for p in prev_props)
+                    )
+                )
+                old_max_hp_add: Optional[float] = (
+                    sm_add._calc_entity_max_hp(owner_ent_hp) if need_hp_sync else None
+                )
+                if had_defer_entry and prev_defer_entry is not None:
+                    self._deferred_prev_props_by_uid[mod.uid] = prev_defer_entry
+                else:
+                    self._deferred_prev_props_by_uid.pop(mod.uid, None)
+                self._apply_modifier_side_effects(mod, old_max_hp=old_max_hp_add)
+
+                # 触发全局 OnModifierAdd / OnListenModifierAdd / OnModifierOnStack / OnListenModifierOnStack
+                mod_status_type = self.get_modifier_status_type(mod)
+                if is_new:
+                    self.dispatch_event(
+                        "OnModifierAdd",
+                        owner_id=owner_id,
+                        param_entity_id=owner_id,
+                        param_entity2_id=caster_id,
+                        callback_modifier_name=mod_name,
+                        callback_behavior_flags=tuple(mod.behavior_flags),
+                        callback_status_type=mod_status_type,
+                        callback_modifier_instance=mod,
+                    )
+                    self.dispatch_event(
+                        "OnListenModifierAdd",
+                        param_entity_id=owner_id,
+                        param_entity2_id=caster_id,
+                        callback_modifier_name=mod_name,
+                        callback_behavior_flags=tuple(mod.behavior_flags),
+                        callback_status_type=mod_status_type,
+                        callback_modifier_instance=mod,
+                    )
                 self.dispatch_event(
-                    "OnModifierAdd",
+                    "OnModifierOnStack",
                     owner_id=owner_id,
                     param_entity_id=owner_id,
                     param_entity2_id=caster_id,
@@ -568,40 +727,27 @@ class ModifierEngine:
                     callback_behavior_flags=tuple(mod.behavior_flags),
                     callback_status_type=mod_status_type,
                     callback_modifier_instance=mod,
+                    exclude_modifier_uid=mod.uid,
                 )
                 self.dispatch_event(
-                    "OnListenModifierAdd",
+                    "OnListenModifierOnStack",
                     param_entity_id=owner_id,
                     param_entity2_id=caster_id,
                     callback_modifier_name=mod_name,
                     callback_behavior_flags=tuple(mod.behavior_flags),
                     callback_status_type=mod_status_type,
                     callback_modifier_instance=mod,
+                    exclude_modifier_uid=mod.uid,
                 )
-            self.dispatch_event(
-                "OnModifierOnStack",
-                owner_id=owner_id,
-                param_entity_id=owner_id,
-                param_entity2_id=caster_id,
-                callback_modifier_name=mod_name,
-                callback_behavior_flags=tuple(mod.behavior_flags),
-                callback_status_type=mod_status_type,
-                callback_modifier_instance=mod,
-                exclude_modifier_uid=mod.uid,
-            )
-            self.dispatch_event(
-                "OnListenModifierOnStack",
-                param_entity_id=owner_id,
-                param_entity2_id=caster_id,
-                callback_modifier_name=mod_name,
-                callback_behavior_flags=tuple(mod.behavior_flags),
-                callback_status_type=mod_status_type,
-                callback_modifier_instance=mod,
-                exclude_modifier_uid=mod.uid,
-            )
-            self._dirty_apc_entities.add(owner_id)
+                self._dirty_apc_entities.add(owner_id)
+            finally:
+                self._apc_defer_depth -= 1
         finally:
-            self._apc_defer_depth -= 1
+            if mod.uid in self._deferred_prev_props_by_uid:
+                if had_defer_entry and prev_defer_entry is not None:
+                    self._deferred_prev_props_by_uid[mod.uid] = prev_defer_entry
+                else:
+                    self._deferred_prev_props_by_uid.pop(mod.uid, None)
 
         if self._apc_defer_depth == 0:
             self._flush_dirty_apc()
@@ -805,12 +951,25 @@ class ModifierEngine:
                 if isinstance(d_rem, dict) and str(d_rem.get("DependentModifier") or "") == mod.name:
                     self.destroy_modifier(dep_mod, reason=reason)
 
-        # 从索引和 StatusManager 摘除
+        # 从索引摘除并同步受影响实体的生命上限/特殊副作用
+        owner_alive = mod.owner_id != "__LEVEL__" and owner_ent is not None
+        sm_rem = getattr(self.rt.sim, "status_mgr", None) if owner_alive else None
+        had_max_hp = any(p in MAX_HP_AFFECTING_PROPS for p in mod.properties)
+        old_max_hp_rem: Optional[float] = (
+            sm_rem._calc_entity_max_hp(owner_ent) if (had_max_hp and sm_rem is not None) else None
+        )
+        mod._stats_detached = True
         self.by_uid.pop(mod.uid, None)
         if mod.owner_id in self.by_owner:
             self.by_owner[mod.owner_id] = [m for m in self.by_owner[mod.owner_id] if m.uid != mod.uid]
-        if mod.owner_id != "__LEVEL__" and self.rt.sim.get_entity(mod.owner_id) is not None:
-            self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key, reason=reason)
+        if owner_alive:
+            if had_max_hp and sm_rem is not None and old_max_hp_rem is not None:
+                sm_rem.sync_entity_hp_after_max_hp_change(
+                    owner_ent,
+                    old_max_hp_rem,
+                    is_removal=True,
+                    reason=reason,
+                )
             if "DirtyHPRatio" in mod.properties:
                 self._recompute_dirty_hp_ratio(mod.owner_id)
             if any(p in mod.properties for p in ELEMENT_RESISTANCE_DELTA_PROPS):
@@ -876,6 +1035,13 @@ class ModifierEngine:
         is_convert: bool = False,
         is_refresh: bool = False,
     ) -> None:
+        is_deferred = mod.uid in self._deferred_prev_props_by_uid
+        old_max_hp_sp: Optional[float] = None
+        if not is_deferred and prop_name in MAX_HP_AFFECTING_PROPS and mod.owner_id != "__LEVEL__":
+            owner_ent = self.rt.sim.get_entity(mod.owner_id)
+            sm = getattr(self.rt.sim, "status_mgr", None) if owner_ent is not None else None
+            if owner_ent is not None and sm is not None:
+                old_max_hp_sp = sm._calc_entity_max_hp(owner_ent)
         if prop_name in CONVERT_PROPERTY_PAIR or is_convert:
             base_prop = CONVERT_PROPERTY_PAIR.get(prop_name, prop_name)
             if is_refresh:
@@ -889,73 +1055,48 @@ class ModifierEngine:
                 mod.properties[prop_name] = value
             else:
                 mod.properties[prop_name] = mod.properties.get(prop_name, 0.0) + value
-        if mod.uid != getattr(self, "_defer_sync_mod_uid", None):
-            self._sync_modifier_to_status_mgr(mod)
+        if not is_deferred:
+            self._apply_modifier_side_effects(mod, old_max_hp=old_max_hp_sp)
         if mod.owner_id != "__LEVEL__":
             if self._apc_defer_depth > 0:
                 self._dirty_apc_entities.add(mod.owner_id)
             else:
                 self.check_property_changes(mod.owner_id)
 
-    def _sync_modifier_to_status_mgr(self, mod: VMModifierInstance) -> None:
-        if mod.owner_id == "__LEVEL__" or self.rt.sim.get_entity(mod.owner_id) is None:
+    def _apply_modifier_side_effects(
+        self,
+        mod: VMModifierInstance,
+        *,
+        old_max_hp: Optional[float] = None,
+    ) -> None:
+        """同步非纯属性累加类副作用：SpeedOverride / BaseSpeed / DirtyHPRatio / 元素抗性 / MaxHP 缩放。"""
+        if mod.owner_id == "__LEVEL__":
             return
-        mods: List[Modifier] = []
-        tags = [StatusTag.SUPPRESS_STATUS_APPLY_EVENT]
-        has_convert = False
+        ent = self.rt.sim.get_entity(mod.owner_id)
+        if ent is None:
+            return
         for prop_name, val in mod.properties.items():
             if abs(val) < 1e-12:
                 continue
-            # SpeedOverride 单独处理：覆盖基础速度（为 0 时冻结自然跑条）
             if prop_name == "SpeedOverride":
-                ent = self.rt.sim.get_entity(mod.owner_id)
-                if ent is not None:
-                    ent.base_speed = float(val)
-                    if float(val) <= 0.0:
-                        ent.distance_remaining = 1e12
-                continue
-            if prop_name == "BaseSpeed":
-                ent = self.rt.sim.get_entity(mod.owner_id)
-                if ent is not None and getattr(ent, "is_countdown", False):
+                ent.base_speed = float(val)
+                if float(val) <= 0.0:
+                    ent.distance_remaining = 1e12
+            elif prop_name == "BaseSpeed":
+                if getattr(ent, "is_countdown", False):
                     ent.base_speed = max(1.0, float(val))
-                continue
-            if prop_name == "DirtyHPRatio":
+            elif prop_name == "DirtyHPRatio":
                 self._recompute_dirty_hp_ratio(mod.owner_id)
-                continue
-            if prop_name in ELEMENT_RESISTANCE_DELTA_PROPS:
-                continue
-            mapping = PROPERTY_TO_STAT.get(prop_name)
-            if mapping is None:
-                continue
-            stat_type, op, is_conv = mapping
-            if is_conv:
-                has_convert = True
-            mods.append(Modifier(stat=stat_type, op=op, value=float(val)))
 
         if any(p in mod.properties for p in ELEMENT_RESISTANCE_DELTA_PROPS):
             self.recompute_entity_damage_res(mod.owner_id)
 
-        if not mods:
-            self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key)
-            return
-
-        if has_convert:
-            tags.append(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS)
-        category = "debuff" if "STAT_DEBUFF" in mod.behavior_flags or any(
-            m.stat == StatType.VULNERABILITY and m.value > 0 for m in mods
-        ) else "buff"
-
-        self.rt.sim.port.upsert_status(BuffSpec(
-            key=mod.status_key,
-            name=mod.name,
-            source_id=mod.caster_id if self.rt.sim.get_entity(mod.caster_id) else mod.owner_id,
-            target_id=mod.owner_id,
-            modifiers=tuple(mods),
-            duration=None,  # 生命周期由 VMModifierInstance.life_time 精确托管
-            timing=DurationTiming.TARGET_TURN_END,
-            category=category,
-            tags=tuple(tags),
-        ))
+        if old_max_hp is not None and getattr(self.rt.sim, "status_mgr", None) is not None:
+            self.rt.sim.status_mgr.sync_entity_hp_after_max_hp_change(
+                ent,
+                old_max_hp,
+                is_removal=False,
+            )
 
     def _recompute_dirty_hp_ratio(self, owner_id: str) -> None:
         ent = self.rt.sim.get_entity(owner_id)
@@ -995,6 +1136,9 @@ class ModifierEngine:
         if ent is None:
             return {}
         port = self.rt.sim.port
+        be_val = float(port.stat(entity_id, StatType.BREAK_EFFECT))
+        if getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None):
+            be_val = max(be_val, float(port.stat(ent.master_name, StatType.BREAK_EFFECT)))
         return {
             "Attack": float(ent.atk),
             "BaseAttack": float(ent.base_atk),
@@ -1007,7 +1151,8 @@ class ModifierEngine:
             "BaseSpeed": float(ent.base_speed),
             "CriticalChanceBase": float(ent.crit_rate),
             "CriticalDamageBase": float(ent.crit_dmg),
-            "BreakDamageAddedRatioBase": float(port.stat(entity_id, StatType.BREAK_EFFECT)),
+            "BreakDamageAddedRatio": be_val,
+            "BreakDamageAddedRatioBase": be_val,
             "AllDamageTypeAddedRatio": float(port.stat(entity_id, StatType.DMG_BOOST)),
             "ElationDamageAddedRatio": float(port.stat(entity_id, StatType.ELATION)),
             "ElationDamageAddedRatioBase": float(
@@ -1128,6 +1273,11 @@ class ModifierEngine:
             return float(getattr(ent, "remaining_av", 0.0)) / 10.0
         if prop_name == "AllDamageTypeAddedRatio":
             return float(port.stat(entity_id, StatType.DMG_BOOST))
+        if prop_name in ("BreakDamageAddedRatio", "BreakDamageAddedRatioBase"):
+            be_val = float(port.stat(entity_id, StatType.BREAK_EFFECT))
+            if getattr(ent, "is_memosprite", False) and getattr(ent, "master_name", None):
+                be_val = max(be_val, float(port.stat(ent.master_name, StatType.BREAK_EFFECT)))
+            return be_val
         mapping = PROPERTY_TO_STAT.get(prop_name)
         if mapping is not None:
             return float(port.stat(entity_id, mapping[0]))

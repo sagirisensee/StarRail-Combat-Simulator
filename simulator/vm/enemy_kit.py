@@ -57,43 +57,113 @@ class DataDrivenEnemyKit(EnemyKit):
         self.runner = runner
         self.executed_skills: List[str] = []
         self._turn_count: int = 0
+        self._skill_usage_turn: Dict[str, int] = {}
+        self._ai_selected_targets: Dict[str, Tuple[str, ...]] = {}
         mrs = self.runner.get_enemy_state(owner_id)
-        rank = getattr(mrs.blueprint, "rank", "")
-        # 官方 OneMorePerTurn 机制: 纯数据驱动检测该怪物 Ability 配置是否包含 OneMorePerTurn
-        self.has_one_more: bool = False
-        _json_cfg = str(getattr(mrs.blueprint, "json_config_path", "") or "")
-        if _json_cfg and rank in ("Elite", "LittleBoss", "Boss", "BigBoss"):
-            from pathlib import Path as _Path
-            _tbgd = getattr(getattr(self.runner.factory, "stage_loader", None), "tbgd_root", None)
-            if _tbgd is not None:
-                _stem = _Path(_json_cfg).name.replace("_Config.json", "_Ability.json")
-                _ab_path = _Path(_tbgd) / "Config" / "ConfigAbility" / "Monster" / _stem
-                if _ab_path.exists():
-                    try:
-                        self.has_one_more = "OneMorePerTurn" in _ab_path.read_text(encoding="utf-8")
-                    except OSError:
-                        self.has_one_more = rank in ("Elite", "Boss", "BigBoss")
-                else:
-                    self.has_one_more = rank in ("Elite", "Boss", "BigBoss")
-            else:
-                self.has_one_more = rank in ("Elite", "Boss", "BigBoss")
-        else:
-            self.has_one_more = rank in ("Boss", "BigBoss")
-        # 官方 MCommon_FastAction (风行/如流星闪耀) 立即再动状态
-        self.windwalk_ready: bool = False
-        self.windwalk_target: Optional[str] = None
-        self._windwalk_initialized: bool = False
+        self.has_one_more: bool = self._detect_one_more_per_turn(mrs)
+        self._fast_action_provider_synced: bool = False
+        self._pending_fast_action_target: Optional[str] = None
         self._monster_dyn_initialized: bool = False
         self._marked_target: Optional[str] = None
 
-    def _ensure_windwalk_init(self, sim: TurnSimulator) -> None:
-        if self._windwalk_initialized:
+    def _detect_one_more_per_turn(self, mrs: Any) -> bool:
+        """从内存加载的官方 ConfigAbility AST 检测怪物是否具备 OneMorePerTurn 机制。"""
+        rank = str(getattr(mrs.blueprint, "rank", "") or "")
+        if rank not in ("Elite", "LittleBoss", "Boss", "BigBoss"):
+            return False
+        _json_cfg = str(getattr(mrs.blueprint, "json_config_path", "") or "")
+        game_loader = getattr(self.runner.factory, "game_loader", None)
+        stage_loader = getattr(self.runner.factory, "stage_loader", None)
+        if _json_cfg and game_loader is not None and stage_loader is not None:
+            char_cfg = stage_loader._load_char_config(_json_cfg) or {}
+            queue: List[str] = []
+            for ab in getattr(mrs.blueprint, "ability_list", ()) or ():
+                if ab:
+                    queue.append(str(ab))
+            for ab in char_cfg.get("AbilityList") or ():
+                if ab:
+                    queue.append(str(ab))
+            for sk in char_cfg.get("SkillList") or ():
+                if isinstance(sk, Mapping) and sk.get("EntryAbility"):
+                    queue.append(str(sk["EntryAbility"]))
+            for sb in char_cfg.get("SkillAbilityList") or ():
+                if isinstance(sb, Mapping):
+                    for ab in sb.get("AbilityList") or ():
+                        if ab:
+                            queue.append(str(ab))
+            visited: set[str] = set()
+            resolved_any = False
+
+            def _scan_node(node: Any) -> bool:
+                if node == "OneMorePerTurn":
+                    return True
+                if isinstance(node, Mapping):
+                    nt = node.get("$type", "")
+                    if nt == "RPG.GameCore.TriggerAbility":
+                        an = node.get("AbilityName")
+                        aval = an.get("Value") if isinstance(an, Mapping) else an
+                        if aval and str(aval) not in visited:
+                            queue.append(str(aval))
+                    elif nt == "RPG.GameCore.TriggerParallelAbility":
+                        for ent in node.get("ParallelAbilityList") or ():
+                            if isinstance(ent, Mapping):
+                                an = ent.get("AbilityName")
+                                aval = an.get("Value") if isinstance(an, Mapping) else an
+                                if aval and str(aval) not in visited:
+                                    queue.append(str(aval))
+                    return any(_scan_node(v) for v in node.values())
+                if isinstance(node, list):
+                    return any(_scan_node(item) for item in node)
+                return False
+
+            while queue:
+                ab_name = queue.pop(0)
+                if not ab_name or ab_name in visited:
+                    continue
+                visited.add(ab_name)
+                ab_doc = game_loader.get_ability(ab_name)
+                if not ab_doc:
+                    continue
+                resolved_any = True
+                if _scan_node(ab_doc):
+                    return True
+            if resolved_any:
+                return False
+        if _json_cfg:
+            return rank in ("Elite", "Boss", "BigBoss")
+        return rank in ("Boss", "BigBoss")
+
+    def _record_skill_usage(self, sim: TurnSimulator, sk_key: str) -> None:
+        """记录本实体与全局同 SkillID 的技能冷却基准回合（对应官方 ByCompareSkillUsageLimit / _GlobalDelay）。"""
+        if not sk_key:
             return
-        self._windwalk_initialized = True
-        mid = int(self.ai_spec.monster_template_id or 0)
-        if mid != 4022010:
+        self._skill_usage_turn[sk_key] = self._turn_count
+        sk = self.ai_spec.skills_by_key.get(sk_key)
+        sk_id = int(getattr(sk, "skill_id", 0) or 0) if sk is not None else 0
+        usage_key: Any = sk_id if sk_id > 0 else (int(self.ai_spec.monster_template_id or 0), sk_key)
+        global_usage = getattr(sim, "_global_skill_usage_turn", None)
+        if not isinstance(global_usage, dict):
+            global_usage = {}
+            setattr(sim, "_global_skill_usage_turn", global_usage)
+        global_usage[usage_key] = int(getattr(sim, "_turn_id", 0) or 0)
+
+    def _grant_fast_action(self, rt: Any, target_name: str) -> None:
+        """通过官方 MCommon_FastAction 状态授予目标单位立刻再动能力。"""
+        if rt is not None and target_name and not rt.modifier_engine.has_modifier(target_name, "MCommon_FastAction"):
+            rt.modifier_engine.add_modifier(
+                owner_id=target_name,
+                caster_id=self.owner_id,
+                mod_name="MCommon_FastAction",
+            )
+
+    def _sync_external_fast_action_provider(self, sim: TurnSimulator, rt: Any) -> None:
+        """消费回放插件注入的外部再动判定契约，并转换为官方 MCommon_FastAction。"""
+        if self._fast_action_provider_synced:
             return
-        # 解析代次与序号 (支持 <name>_3 / <name>_g1_3)
+        self._fast_action_provider_synced = True
+        wp = getattr(sim, "enemy_windwalk_provider", None)
+        if not callable(wp):
+            return
         gen, idx = 1, 0
         parts = self.owner_id.split("_")
         base_name = parts[0] if parts else self.owner_id
@@ -102,17 +172,13 @@ class DataDrivenEnemyKit(EnemyKit):
             idx = int(parts[-1])
         elif len(parts) >= 2 and parts[-1].isdigit():
             idx = int(parts[-1])
-        wp = getattr(sim, "enemy_windwalk_provider", None)
-        if wp is not None:
-            val = wp(self.owner_id, gen, idx)
-            if not val and idx > 0:
-                val = wp(f"{base_name}_g{gen}_{idx}", gen, idx)
-            if val is True:
-                self.windwalk_ready = True
-            elif isinstance(val, str) and val:
-                self.windwalk_target = val
-        elif gen == 1 and idx == 3:
-            self.windwalk_ready = True
+        val = wp(self.owner_id, gen, idx)
+        if not val and idx > 0:
+            val = wp(f"{base_name}_g{gen}_{idx}", gen, idx)
+        if val is True:
+            self._grant_fast_action(rt, self.owner_id)
+        elif isinstance(val, str) and val:
+            self._pending_fast_action_target = val
 
     def sync_phase(self, phase: int) -> None:
         if self.ai_executor.phase != phase:
@@ -418,15 +484,36 @@ class DataDrivenEnemyKit(EnemyKit):
             return False
 
         tinfo = str((ab.get("TargetInfo") or {}).get("TargetType", ""))
+        sk_key = str(getattr(sk, "skill_trigger_key", "") or "")
+        ai_picked = self._ai_selected_targets.pop(sk_key, ())
         target_ids: Tuple[str, ...] = (self.owner_id,)
         living_allies = _living_allies_ordered()
         has_dmg = _ab_uses_target(ab, {entry_ab})
+        ai_picked_alive = tuple(
+            tid
+            for tid in ai_picked
+            if (ent := sim.get_entity(tid)) is not None and ent.current_hp > 0.0
+        )
 
         if tinfo in ("Caster", "Self"):
             target_ids = (self.owner_id,)
         elif tinfo == "AllEnemy":
             if living_allies:
                 target_ids = tuple(e.name for e in living_allies)
+        elif tinfo == "FriendSelect":
+            if ai_picked_alive:
+                target_ids = (ai_picked_alive[0],)
+            else:
+                other_enemies = [
+                    e
+                    for e in sim.entities
+                    if e.is_enemy
+                    and not getattr(e, "is_countdown", False)
+                    and e.current_hp > 0.0
+                    and e.name != self.owner_id
+                ]
+                if other_enemies:
+                    target_ids = (other_enemies[0].name,)
         elif tinfo == "SkillPointEntity":
             other_enemies = [
                 e
@@ -443,7 +530,9 @@ class DataDrivenEnemyKit(EnemyKit):
                 )
                 target_ids = (other_enemies[0].name,)
         elif tinfo in ("SkillTargetEntityList", "EnemySelect", ""):
-            if has_dmg and living_allies:
+            if (not has_dmg) and ai_picked_alive:
+                target_ids = (ai_picked_alive[0],)
+            elif has_dmg and living_allies:
                 picked = self._select_targets(sim, getattr(sk, "target_selector", "single"))
                 target_provider = getattr(sim, "target_provider", None)
                 if callable(target_provider):
@@ -455,6 +544,10 @@ class DataDrivenEnemyKit(EnemyKit):
                         sim._current_enemy_skill_is_blast = prev_is_blast
                     if chosen is not None:
                         picked = [chosen]
+                elif ai_picked_alive:
+                    chosen_ai = next((e for e in living_allies if e.name == ai_picked_alive[0]), None)
+                    if chosen_ai is not None:
+                        picked = [chosen_ai]
                 diag_cb_t = getattr(sim, "timeline_diag_cb", None)
                 if callable(diag_cb_t):
                     diag_cb_t(
@@ -542,9 +635,10 @@ class DataDrivenEnemyKit(EnemyKit):
 
         self._turn_count += 1
         attacker = sim.get_entity(self.owner_id)
-        self._ensure_windwalk_init(sim)
+        rt = getattr(sim, "vm_runtime", None)
+        self._sync_external_fast_action_provider(sim, rt)
 
-        # 非攻击辅助回合（如流星铁鹰 Skill02【如流星闪耀】赋予友方风行）：
+        # 非攻击辅助回合（如赋予友方 MCommon_FastAction）：
         # 对具有 AIFlag 自切换能力或无任何伤害技能的纯辅助怪物，优先走官方 ConfigAI + ConfigAbility 分支
         has_dynamic_ai_flag = any(
             d.next_ai_flag is not None
@@ -570,33 +664,33 @@ class DataDrivenEnemyKit(EnemyKit):
             and not has_dynamic_ai_flag
             and skip_prov(attacker, sim.current_av)
         ):
-            if self.windwalk_target:
+            if self._pending_fast_action_target:
                 director = getattr(sim, "_stage_director", None)
                 t_ent = (
-                    director._resolve_enemy_target(self.windwalk_target)
+                    director._resolve_enemy_target(self._pending_fast_action_target)
                     if director is not None and hasattr(director, "_resolve_enemy_target")
-                    else sim.get_entity(self.windwalk_target)
+                    else sim.get_entity(self._pending_fast_action_target)
                 )
-                t_kit = getattr(t_ent, "kit", None) if t_ent is not None else None
-                if t_kit is not None and hasattr(t_kit, "windwalk_ready"):
-                    t_kit.windwalk_ready = True
-                self.windwalk_target = None
+                if t_ent is not None and t_ent.current_hp > 0.0:
+                    self._grant_fast_action(rt, t_ent.name)
+                self._pending_fast_action_target = None
             else:
                 wp = getattr(sim, "enemy_windwalk_provider", None)
                 if callable(wp):
                     for ally_e in sim.entities:
                         if not ally_e.is_enemy or ally_e.current_hp <= 0.0:
                             continue
-                        t_kit = getattr(ally_e, "kit", None)
-                        if t_kit is None or not hasattr(t_kit, "windwalk_ready"):
+                        if getattr(ally_e, "kit", None) is None:
                             continue
                         if wp(ally_e.name, 1, 0) is True:
-                            t_kit.windwalk_ready = True
+                            self._grant_fast_action(rt, ally_e.name)
+            for sup_sk in self.ai_executor.spec.skills_by_key.values():
+                if (not sup_sk.is_passive) and sup_sk.damage_type is None and sup_sk.skill_trigger_key:
+                    self._record_skill_usage(sim, sup_sk.skill_trigger_key)
             self.runner.on_turn_end(self.owner_id, current_av=sim.current_av)
             return None
 
         # 优先同步 VM 中的动态 AIFlag (如 Monster_W5_Fallen_00_AttackOrder 将 AIFlag 设为 2)
-        rt = getattr(sim, "vm_runtime", None)
         if rt is not None:
             from simulator.vm.expr import dotnet_hash
 
@@ -619,6 +713,71 @@ class DataDrivenEnemyKit(EnemyKit):
             can_one_more=can_one_more,
             next_turn_one_more=can_one_more,
         )
+
+    def _resolve_select_ai_skill_target(
+        self,
+        task: Mapping[str, Any],
+        ai_ctx: Any,
+        rt: Any,
+    ) -> None:
+        sk_name = str(task.get("SkillName") or "")
+        if not sk_name:
+            return
+        sim = rt.sim
+        skill_tinfo = ""
+        try:
+            mrs = self.runner.get_enemy_state(self.owner_id)
+            _json_cfg = str(getattr(mrs.blueprint, "json_config_path", "") or "")
+            stage_loader = getattr(self.runner.factory, "stage_loader", None)
+            if _json_cfg and stage_loader is not None:
+                char_cfg = stage_loader._load_char_config(_json_cfg) or {}
+                for sk_cfg in char_cfg.get("SkillList") or ():
+                    if isinstance(sk_cfg, Mapping) and str(sk_cfg.get("Name") or "") == sk_name:
+                        skill_tinfo = str(((sk_cfg.get("TargetInfo") or {}).get("TargetType")) or "")
+                        break
+        except KeyError:
+            pass
+        if "Friend" in skill_tinfo:
+            candidates = [
+                e.name
+                for e in sim.entities
+                if e.is_enemy
+                and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
+                and e.current_hp > 0.0
+            ]
+        else:
+            candidates = [
+                e.name
+                for e in sim.entities
+                if not e.is_enemy
+                and not getattr(e, "is_countdown", False)
+                and not getattr(e, "is_unselectable", False)
+                and e.current_hp > 0.0
+            ]
+
+        def _match_selector(cand_id: str, sel: Any) -> bool:
+            if not isinstance(sel, Mapping):
+                return True
+            st = str(sel.get("$type") or "")
+            inv = bool(sel.get("InverseResultFlag", False))
+            matched = True
+            if st == "RPG.GameCore.AIComposeSelector":
+                subs = sel.get("SelectorList") or ()
+                matched = all(_match_selector(cand_id, sub) for sub in subs)
+            elif st == "RPG.GameCore.AITaskTargetTypeSelector":
+                t_ids = rt.executor._resolve_targets(sel.get("TargetType"), ai_ctx)
+                matched = cand_id in t_ids
+            elif st == "RPG.GameCore.AIModifierNameSelector":
+                mn = sel.get("ModifierName")
+                mname = str(mn.get("Value") if isinstance(mn, Mapping) else (mn or ""))
+                matched = bool(mname and rt.modifier_engine.has_modifier(cand_id, mname))
+            return (not matched) if inv else matched
+
+        selector = task.get("Selector")
+        filtered = [cid for cid in candidates if _match_selector(cid, selector)]
+        if filtered:
+            self._ai_selected_targets[sk_name] = (filtered[0],)
 
     def execute_next_sub_action(
         self,
@@ -796,6 +955,8 @@ class DataDrivenEnemyKit(EnemyKit):
                                     _resolve_ai_skills(
                                         nodes.get("SuccessTaskList", []) if ok else nodes.get("FailedTaskList", [])
                                     )
+                                elif nt == "RPG.GameCore.SelectAISkillTarget":
+                                    self._resolve_select_ai_skill_target(nodes, ai_ctx, rt)
                                 elif nt == "RPG.GameCore.SequenceConfig":
                                     _resolve_ai_skills(nodes.get("TaskList", []))
 
@@ -870,6 +1031,8 @@ class DataDrivenEnemyKit(EnemyKit):
             # 3. 统一通过官方 ConfigAbility VM 执行技能（废除伤害/非伤害双轨分流）
             if sk.is_passive or attacker is None:
                 continue
+            if sk.skill_trigger_key:
+                self._record_skill_usage(sim, sk.skill_trigger_key)
             sim._pending_turn_reset_distance = STANDARD_ACTION_DISTANCE * float(getattr(sk, "delay_ratio", 1.0) or 1.0)
             diag_cb = getattr(sim, "timeline_diag_cb", None)
             if callable(diag_cb):
@@ -926,10 +1089,8 @@ class DataDrivenEnemyKit(EnemyKit):
             rt is not None
             and rt.modifier_engine.has_modifier(self.owner_id, "MCommon_FastAction")
         )
-        if attacker is not None and attacker.current_hp > 0.0 and (self.windwalk_ready or has_fast_action_mod):
-            self.windwalk_ready = False
-            if has_fast_action_mod and rt is not None:
-                rt.modifier_engine.remove_modifier(self.owner_id, "MCommon_FastAction")
+        if attacker is not None and attacker.current_hp > 0.0 and has_fast_action_mod and rt is not None:
+            rt.modifier_engine.remove_modifier(self.owner_id, "MCommon_FastAction")
             return EnemyActionResult(reset_distance=0.0)
 
         pending_reset = getattr(sim, "_pending_turn_reset_distance", None)

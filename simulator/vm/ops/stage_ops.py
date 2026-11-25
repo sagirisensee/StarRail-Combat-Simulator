@@ -528,8 +528,6 @@ class StageOpsMixin:
                                             round(float(getattr(sim, "current_av", 0.0)), 2),
                                         )
                                     )
-                            if entangle_applied:
-                                ent.delay_action(0.20 * (1.0 + atk_be))
                         emit_sim_event(
                             sim,
                             WeaknessBreakEvent(

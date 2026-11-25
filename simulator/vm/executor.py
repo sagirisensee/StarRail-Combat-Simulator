@@ -143,17 +143,75 @@ class TaskExecutor(
                 "OnListenBreak",
                 param_entity_id=evt.target_name,
             )
-            if (
-                evt.action_delay_pct > 0.0
-                and evt.element
-                and (evt.element != "Quantum" or getattr(evt, "entangle_applied", True))
-            ):
-                self.rt.modifier_engine.add_modifier(
-                    owner_id=evt.target_name,
-                    caster_id=evt.breaker_name,
-                    mod_name=f"MCommon_BreakDebuff_{evt.element}",
-                    ability_name="BreakDebuff",
-                )
+            if evt.action_delay_pct > 0.0 and evt.element:
+                elem_map = {
+                    "Physical": "MCommon_Element_Bleed",
+                    "Fire": "MCommon_Element_Burn",
+                    "Ice": "MCommon_Element_Frozen",
+                    "Lightning": "MCommon_Element_Electric",
+                    "Thunder": "MCommon_Element_Electric",
+                    "Wind": "MCommon_Element_Poison",
+                    "Quantum": "MCommon_Element_Entangle",
+                    "Imaginary": "MCommon_Element_Confine",
+                }
+                mod_name = elem_map.get(evt.element)
+                if mod_name and (evt.element != "Quantum" or getattr(evt, "entangle_applied", True)):
+                    dyn: Dict[int, float] = {}
+                    init_count: int | None = None
+                    init_life: float = 2.0
+                    if evt.element == "Quantum":
+                        init_life = 1.0
+                        dyn = {
+                            dotnet_hash("MDF_DamagePercentage"): 0.6,
+                            dotnet_hash("MDF_BeingHitDamageValue"): 0.0,
+                            dotnet_hash("MDF_ActionDelayRatio"): 0.20,
+                            560166466: 1.0,
+                            808921108: 5.0,
+                            dotnet_hash("Max_Count"): 5.0,
+                        }
+                    elif evt.element == "Wind":
+                        init_life = 2.0
+                        init_count = 3 if getattr(t_ent, "is_boss", False) else 1
+                        dyn = {
+                            dotnet_hash("MDF_DamagePercentage"): 1.0,
+                            dotnet_hash("DOT_TriggerRatio"): 1.0,
+                        }
+                    elif evt.element == "Fire":
+                        init_life = 2.0
+                        dyn = {
+                            dotnet_hash("MDF_DamagePercentage"): 1.0,
+                            dotnet_hash("DOT_TriggerRatio"): 1.0,
+                        }
+                    elif evt.element in ("Lightning", "Thunder"):
+                        init_life = 2.0
+                        dyn = {
+                            dotnet_hash("MDF_DamagePercentage"): 2.0,
+                            dotnet_hash("DOT_TriggerRatio"): 1.0,
+                        }
+                    elif evt.element == "Ice":
+                        init_life = 1.0
+                        dyn = {dotnet_hash("MDF_DamagePercentage"): 1.0}
+                    elif evt.element == "Physical":
+                        init_life = 2.0
+                        dyn = {
+                            dotnet_hash("MDF_DamagePercentage"): 2.0,
+                            dotnet_hash("DOT_TriggerRatio"): 1.0,
+                        }
+                    elif evt.element == "Imaginary":
+                        init_life = 1.0
+                        dyn = {
+                            dotnet_hash("MDF_ActionDelayRatio"): 0.30,
+                            -811945046: 0.10,
+                        }
+                    self.rt.modifier_engine.add_modifier(
+                        owner_id=evt.target_name,
+                        caster_id=evt.breaker_name,
+                        mod_name=mod_name,
+                        ability_name="",
+                        life_time=init_life,
+                        count=init_count,
+                        resolved_dynamics=dyn,
+                    )
 
     def _resolve_targets(self, target_spec: Any, ctx: ExecutionContext) -> List[str]:
         """解析 TargetType（支持 GlobalTargetAlias 查表与 TargetSequence.Sequence 管道）。"""

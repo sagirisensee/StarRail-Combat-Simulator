@@ -949,6 +949,26 @@ class PredicateOpsMixin:
             rhs = self._eval_num(pred.get("DPICNGBHFAC"), ctx, 0.0)
             return _compare_values(lhs, rhs, str(pred.get("EHCHAPPGJDJ") or "Equal"))
 
+        if t == "RPG.GameCore.ByCompareSkillUsageLimit":
+            sk_key = _str_val(pred.get("IDFromTriggerKey") or pred.get("SkillName"))
+            delay_req = int(round(self._eval_num(pred.get("ActionDelay"), ctx, 1.0)))
+            ent = sim.get_entity(ctx.caster_id)
+            kit = getattr(ent, "kit", None) if ent is not None else None
+            global_usage = getattr(sim, "_global_skill_usage_turn", None)
+            ai_spec = getattr(kit, "ai_spec", None) if kit is not None else None
+            sk_spec = ai_spec.skills_by_key.get(sk_key) if ai_spec is not None else None
+            sk_id = int(getattr(sk_spec, "skill_id", 0) or 0) if sk_spec is not None else 0
+            tpl_id = int(getattr(ai_spec, "monster_template_id", 0) or 0) if ai_spec is not None else 0
+            usage_key: Any = sk_id if sk_id > 0 else (tpl_id, sk_key)
+            if isinstance(global_usage, Mapping) and usage_key in global_usage:
+                cur_global_turn = int(getattr(sim, "_turn_id", 0) or 0)
+                return (cur_global_turn - int(global_usage[usage_key])) >= max(1, delay_req)
+            usage_map = getattr(kit, "_skill_usage_turn", None)
+            cur_turn = int(getattr(kit, "_turn_count", 0) or 0)
+            if not isinstance(usage_map, Mapping) or sk_key not in usage_map:
+                return True
+            return (cur_turn - int(usage_map[sk_key])) >= max(1, delay_req)
+
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None
         if runner is not None and hasattr(runner, "eval_stage_predicate"):

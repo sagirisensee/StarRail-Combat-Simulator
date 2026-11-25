@@ -91,5 +91,11 @@ TurnFrame (core.py)
 1. **敌我多动/连动 `TurnFrame` 统一 & `InterventionHook` 契约化**：`TurnSimulator._run_enemy_turn_frame` + `EnemyKit` 分步子动作契约与 `_run_char_one_more_chain` 彻底收口了敌方 `OneMorePerTurn`/`OneMore` 与我方 `UseSkillOneMore`；`replay.py` 全部 5 处动态回调统一收编为 `sim.intervention_hook = CallbackInterventionHook(...)`，`simulator/vm/` 核心非测试文件达到 `EventBus` 零订阅、零发布。
 2. **Free-Run Policy 烟雾与不变量回归**：落地 [`simulator/test_free_run_invariants.py`](../simulator/test_free_run_invariants.py)，彻底脱离 `battle_logs/` 与 `reconcile/`，在真实官方关卡 `30126122` / `30126121` / `30325041` / `420564` 上每步硬校验 `rt.lifecycle.assert_clean()`、调度器排空、SP/HP/能量/韧性/跑道与 AV 单调不变量。
 
+### 已完成（Phase 4 收口：混合兼容壳清理与双账本收敛）
+1. **双属性账本收敛为单真值**：废弃 `VMMod::*` 镜像状态与 `_sync_modifier_to_status_mgr`，`StatusManager.calculate_stat()` 与 `get_detailed_snapshot()` 直接读取 `VMRuntime.modifier_engine`（同时完整保留原生 `StatusInstance` 与 `MaxHP` 等比例血量缩放）。
+2. **纯 VM 弱点击破状态（`MCommon_Element_*` + `ByBreakDamage`）**：删除 `BreakStatusHelper` 与过渡期 `MCommon_BreakDebuff_*` 假状态，弱点击破统一挂载官方 `MCommon_Element_{Bleed,Burn,Frozen,Electric,Poison,Entangle,Confine}` 并由 `CombatOpsMixin` 执行 `FormulaType == "ByBreakDamage"` 结算（含纠缠受击叠层 `OnBeforeBeingAttacked`）。
+3. **纯数据驱动敌方再动与 AI 目标选择**：移除 `DataDrivenEnemyKit` 中的手写再动标记与直接磁盘 JSON 字符串扫描，改为基于内存 AST 检测 `OneMorePerTurn`、官方 `MCommon_FastAction` 状态、`ByCompareSkillUsageLimit` 与 `SelectAISkillTarget`。
+4. **废弃兼容空壳移除**：清理 `BloodDevourMechanicPlugin` 与 `GenericKit` 等零业务空壳。
+
 ### 后续演进建议（机制族横向扩充）
 - **极简探针日志（Probe Log）优先原则**：后续扩展全新角色/敌方/环境机制族（如 DoT 引爆、超击破、反击、特定混淆 `$type` 时序）时，优先录制 **1~2 名角色、1~3 动** 的单机制探针日志钉死内核铁律，同时用 `test_free_run_invariants.py` 与 `audit_vm_coverage.py` 做自动化泛化回归；全量深渊/末日/虚构日志仅作端到端回归防线。

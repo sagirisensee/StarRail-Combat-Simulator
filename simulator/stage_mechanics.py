@@ -48,54 +48,6 @@ def register_stage_mechanic(*names: str) -> Callable[[Type[StageMechanicPlugin]]
     return _decorator
 
 
-@register_stage_mechanic("血噬", "血嗜", "流血环境", "BloodDevour", "Bleed")
-class BloodDevourMechanicPlugin:
-    """【血噬/血嗜】关卡环境扣血机制插件：
-    - 实体入场召唤时，挂载环境状态标识供战斗视图透析；
-    - 我方角色回合开始时，造成环境生命削减 500 点。
-    """
-    def __init__(self, name: str = "血噬", bleed_damage: float = 500.0):
-        self.name = name
-        self.bleed_damage = bleed_damage
-
-    def _apply_stage_status(self, port: Any, entity_name: str) -> None:
-        port.upsert_status(BuffSpec(
-            key=f"Stage_Mechanic_{self.name}_{entity_name}",
-            name=self.name,
-            source_id=entity_name,
-            target_id=entity_name,
-            modifiers=(),
-            duration=None,
-            timing=DurationTiming.TARGET_TURN_END,
-            category="other",
-            tags=(StatusTag.AURA_SHARED, StatusTag.SUPPRESS_STATUS_APPLY_EVENT),
-            description="关卡全局环境机制"
-        ))
-
-    def on_battle_start(self, sim: Any) -> None:
-        for e in sim.entities:
-            self._apply_stage_status(sim.port, e.name)
-
-    def on_turn_begin(self, active_entity: Any, sim: Any) -> None:
-        if active_entity.is_enemy or getattr(active_entity, "is_countdown", False):
-            return
-        sim.port.lose_hp(active_entity.name, self.bleed_damage, cause="stage_mechanic_bleed_turn_begin")
-
-    def on_entity_summoned(self, entity: Any, sim: Any) -> None:
-        self._apply_stage_status(sim.port, entity.name)
-
-
-# 向因果追踪器自注册本机制的扣血来源描述 (供 tracer 因果报表引用, 核心层不写死本机制信息)
-from .tracer import ActionCausalTracer as _Tracer
-
-_Tracer.register_cause_plugin(
-    "stage_mechanic_bleed_turn_begin",
-    "关卡",
-    "《血噬》 (Stage Mechanic)",
-    "回合开始受到 500 点环境流血伤害",
-)
-
-
 class GenericStageMechanicPlugin:
     """通用默认关卡机制插件（仅挂载状态标记，无额外扣血动作）。"""
     def __init__(self, name: str):

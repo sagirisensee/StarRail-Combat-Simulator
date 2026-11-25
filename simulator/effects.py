@@ -504,7 +504,7 @@ class EffectResolver:
                                     entangle_applied = bool(
                                         debuff_prov(effect.attacker, target, "Quantum_Entanglement", round(float(av), 2))
                                     )
-                            if entangle_applied:
+                            if entangle_applied and vm_rt is None:
                                 self.enqueue(DelayActionEffect(
                                     source_name="量子纠缠推条",
                                     target=target,

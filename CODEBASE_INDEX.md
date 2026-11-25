@@ -27,7 +27,7 @@
 | [`simulator/vm/loader.py`](simulator/vm/loader.py) | `GameDataLoader`, `CompiledCharacterSpec`, `prune_ability` | 索引 `data/TurnBasedGameData` Excel 与 Config JSON，编译 `ReadInfo` 动态参数表并裁剪纯表现层节点 |
 | [`simulator/vm/expr.py`](simulator/vm/expr.py) | `dotnet_hash`, `CompiledPostfixExpr`, `eval_dynamic_float` | `.NET` 32-bit 哈希（LRU 缓存）与 `PostfixExpr` 字节码求值器（现代 `17` / 早期 `10` + 预解码缓存） |
 | [`simulator/vm/target_alias.py`](simulator/vm/target_alias.py) | `ExecutionContext`, `resolve_target_alias`, `resolve_target_type` | 官方目标别名解析、集合 `+` / `-` 运算与 `.GetServant` / `.GetSummoner` 链式后缀 |
-| [`simulator/vm/modifier_engine.py`](simulator/vm/modifier_engine.py) | `ModifierEngine`, `VMModifierInstance`, `PROPERTY_TO_STAT` | Modifier 叠层/生命周期、`StatusManager` 同步、`*Convert` 防自循环、Priority 回调与光环 |
+| [`simulator/vm/modifier_engine.py`](simulator/vm/modifier_engine.py) | `ModifierEngine`, `VMModifierInstance`, `PROPERTY_TO_STAT` | Modifier 叠层/生命周期、面向 `StatusManager` 的只读属性汇总接口、`*Convert` 防自循环、Priority 回调与光环 |
 | [`simulator/vm/executor.py`](simulator/vm/executor.py) | `TaskExecutor` | 官方 AST `Task` & `Predicate` 严格模式主调度器（组合 `ops/` 三个 Mixin） |
 | [`simulator/vm/ops/`](simulator/vm/ops/) | `PredicateOpsMixin`, `CombatOpsMixin`, `TurnOpsMixin` | 拆分为断言 (`predicates.py`)、伤害/治疗/护盾/状态 (`combat_ops.py`)、拉推条/召唤/插队 (`turn_ops.py`) |
 | [`simulator/vm/runtime.py`](simulator/vm/runtime.py) | `VMRuntime`, `ConfigAbilityKitAdapter`, `ConfigAbilityLightConeAdapter`, `ConfigAbilityRelicAdapter` | `TurnSimulator` 统一 VM 运行时协调器、`EventBus` 桥接与 `protocols.py` 适配器实现 |
@@ -55,9 +55,9 @@
 | [`simulator/lifecycle.py`](simulator/lifecycle.py) | `ExecutionLifecycle`, `AbilityFrameSpec`, `InterventionHook`, `CallbackInterventionHook`, `DamageHitSnapshot`, `dispatch_combat_fact`, `emit_sim_event` | 统一 Ability/Attack 帧、8 阶段 `SettlementBarrier`、受控伤害目标捕获与确定性内核事实路由（`EventBus` 降格为只读） |
 | [`simulator/scheduler.py`](simulator/scheduler.py) | `ActionScheduler` | 五级优先级派生队列调度器与 `drain_window()` / `drain_at_boundary()` 受控排空窗口 |
 | [`simulator/entity.py`](simulator/entity.py) | `Entity` | 战斗实体模型、静态白字与动态属性只读 `@property` |
-| [`simulator/protocols.py`](simulator/protocols.py) | `KitHandler`, `LightConeHandler`, `RelicSetHandler`, `GenericKit`, `apply_equipped_relics_affixes` | 角色/光锥/遗器行为处理器统一抽象协议层 |
+| [`simulator/protocols.py`](simulator/protocols.py) | `KitHandler`, `LightConeHandler`, `RelicSetHandler`, `apply_equipped_relics_affixes` | 角色/光锥/遗器行为处理器统一抽象协议层 |
 | [`simulator/combat_port.py`](simulator/combat_port.py) | `CombatPort`, `SimulatorCombatPort`, `BuffSpec` | 插件安全窄接口契约、召唤物入场四阶段屏障与事务桥接 |
-| [`simulator/status.py`](simulator/status.py) | `StatusManager`, `StatType`, `StatusTag`, `DurationTiming` | 动态属性管线、4 类时钟与语义标签隔离 |
+| [`simulator/status.py`](simulator/status.py) | `StatusManager`, `StatType`, `StatusTag`, `DurationTiming` | 单账本动态属性管线（直读 VM `ModifierEngine` + 原生测试态）、4 类时钟与语义标签隔离 |
 | [`simulator/events.py`](simulator/events.py) | `EventBus`, `BattleEvent` 派生类 | 不可变领域事实事件总线 |
 | [`simulator/effects.py`](simulator/effects.py) | `EffectResolver` | 效果事务队列与多态伤害拦截/分摊结算 |
 | [`simulator/damage.py`](simulator/damage.py) | `DamageCalculator`, `DamageRequest`, `DamageBreakdown` | 8 大乘区纯函数伤害计算器 |
@@ -65,7 +65,7 @@
 | [`simulator/inspector.py`](simulator/inspector.py) & [`tracer.py`](simulator/tracer.py) | `BattleInspector`, `ActionCausalTracer` | 只读战场快照查询与动作级因果链路追踪 |
 | [`simulator/vm/enemy_kit.py`](simulator/vm/enemy_kit.py) & [`simulator/vm/enemy_port.py`](simulator/vm/enemy_port.py) | `DataDrivenEnemyKit`, `DataDrivenEnemyCombatPort`, `EnemySubActionOutcome` | 纯数据驱动敌方分步子动作/AI 执行与护盾/锁血拦截 |
 | [`simulator/test_free_run_invariants.py`](simulator/test_free_run_invariants.py) | `TestFreeRunInvariants` | 脱离 `battle_logs/` 与 `reconcile/` 的无日志自由策略跑图与全量状态不变量套件 |
-| [`simulator/vm/stage_director.py`](simulator/vm/stage_director.py) & [`simulator/stage_mechanics.py`](simulator/stage_mechanics.py) | `DataDrivenStageDirector`, `BreakStatusHelper`, `StageMechanicPlugin` | 数据驱动波次换波、弱点击破辅助与通用关卡环境插件 |
+| [`simulator/vm/stage_director.py`](simulator/vm/stage_director.py) & [`simulator/stage_mechanics.py`](simulator/stage_mechanics.py) | `DataDrivenStageDirector`, `StageMechanicPlugin` | 数据驱动波次换波与通用关卡环境插件 |
 
 ---
 

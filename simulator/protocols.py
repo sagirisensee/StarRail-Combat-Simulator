@@ -113,35 +113,6 @@ class KitHandler(ABC):
         return state
 
 
-class GenericKit(KitHandler):
-    """通用保底 Kit（仅用于脱离 VM 单独构造 Entity 时的单测占位）。"""
-
-    def definition(self, kind: ActionKind) -> AbilityDefinition:
-        from .actions import ResourceCost, TargetMode
-
-        if kind == ActionKind.SKILL:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=1), name="战技")
-        if kind == ActionKind.ULTIMATE:
-            return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(energy=120.0), name="终结技")
-        return AbilityDefinition(kind=kind, target_mode=TargetMode.SINGLE_ENEMY, cost=ResourceCost(sp=-1), name="普攻")
-
-    def execute(self, ctx: ActionContext) -> None:
-        from .actions import DamageType
-
-        target = ctx.target_ids[0] if ctx.target_ids else (
-            self.port.enemies(self.owner_id)[0] if self.port.enemies(self.owner_id) else self.owner_id
-        )
-        if ctx.kind == ActionKind.SKILL:
-            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=2.0, toughness_damage=20.0, damage_type=DamageType.SKILL)
-            self.port.gain_energy(self.owner_id, 30.0)
-        elif ctx.kind == ActionKind.ULTIMATE:
-            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=3.0, toughness_damage=30.0, damage_type=DamageType.ULTIMATE)
-            self.port.gain_energy(self.owner_id, 5.0)
-        else:
-            self.port.attack(self.owner_id, target, element="Physical", atk_multiplier=1.0, toughness_damage=10.0, damage_type=DamageType.BASIC)
-            self.port.gain_energy(self.owner_id, 20.0)
-
-
 class LightConeHandler(ABC):
     """光锥运行时处理器抽象基类。"""
 

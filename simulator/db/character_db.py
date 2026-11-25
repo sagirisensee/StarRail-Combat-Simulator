@@ -494,7 +494,7 @@ class CharacterDB:
             profile = self.get_by_name(str(avatar_id_or_name_or_profile))
 
         from ..core import Entity
-        from ..protocols import GenericKit, apply_equipped_relics_affixes
+        from ..protocols import apply_equipped_relics_affixes
 
         if not profile:
             char_name = str(avatar_id_or_name_or_profile)
@@ -508,14 +508,14 @@ class CharacterDB:
                 current_hp=10000.0,
                 energy=0.0,
                 max_energy=120.0,
-                kit=GenericKit(owner_id=char_name, port=None, eidolon=0),
+                kit=None,
                 distance_remaining=10000.0,
                 policy=policy,
                 is_enemy=False
             )
 
         panel = profile.panel
-        kit_inst = GenericKit(owner_id=profile.name, port=None, eidolon=profile.eidolon)
+        kit_inst = None
         max_energy = float(AVATAR_STATS.get(profile.avatar_id, {}).get("max_energy") or 120.0)
 
         # 局内光锥/遗器被动统一由 ConfigAbility VM 适配器挂载，此处仅输出纯局外面板实体

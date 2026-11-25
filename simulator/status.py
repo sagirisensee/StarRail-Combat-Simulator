@@ -170,6 +170,41 @@ class StatusManager:
         white_hp = getattr(target, "base_white_hp", 0.0) or base_max_hp
         return self.calculate_stat(target.name, base_max_hp, StatType.MAX_HP_PERCENT, white_base=white_hp)
 
+    def sync_entity_hp_after_max_hp_change(
+        self,
+        target: Any,
+        old_max: float,
+        *,
+        is_removal: bool = False,
+        reason: str = "EXPLICIT",
+    ) -> float:
+        """按新旧 MaxHP 差值等比缩放或钳位实体当前生命值，返回 `new_max - old_max`。"""
+        new_max = self._calc_entity_max_hp(target)
+        cap = target.effective_hp_cap(new_max) if hasattr(target, "effective_hp_cap") else new_max
+        hp_delta = new_max - old_max
+        cur_hp = float(getattr(target, "current_hp", 0.0))
+        if not is_removal:
+            if old_max > 0 and old_max != float("inf"):
+                if hp_delta > 0 and cur_hp > 0:
+                    target.current_hp = min(cap, cur_hp * (new_max / old_max))
+                elif hp_delta < 0:
+                    if not getattr(target, "is_countdown", False) and cur_hp > 0:
+                        target.current_hp = max(1.0, min(cap, cur_hp * (new_max / old_max)))
+                    elif cur_hp > cap:
+                        target.current_hp = cap
+            return hp_delta
+
+        is_valid_entity = (
+            not getattr(target, "is_countdown", False)
+            and bool(self.simulator and self.simulator.get_entity(getattr(target, "name", "")) is not None)
+        )
+        if reason in ("EXPIRED", "EXPLICIT") and is_valid_entity and 0 < new_max < old_max and cur_hp > 1.0:
+            scaled_hp = cur_hp * (new_max / old_max)
+            target.current_hp = max(1.0, min(cap, scaled_hp))
+        elif 0 < cap != float("inf") and cur_hp > cap:
+            target.current_hp = cap
+        return hp_delta
+
     def add_status(self, status: StatusInstance):
         """向目标添加状态（严格执行 REPLACE/STACK/INDEPENDENT 策略与数值更新，并自动同步动态生命上限差值与父子拓扑）。"""
         target = status.target
@@ -249,21 +284,7 @@ class StatusManager:
 
         # 4. 同步动态生命上限差值
         if old_max > 0 and old_max != float("inf"):
-            new_max = self._calc_entity_max_hp(target)
-            cap = target.effective_hp_cap(new_max) if hasattr(target, "effective_hp_cap") else new_max
-            hp_delta = new_max - old_max
-            if hp_delta > 0 and getattr(target, "current_hp", 0.0) > 0:
-                target.current_hp = min(cap, target.current_hp * (new_max / old_max))
-            elif hp_delta < 0:
-                if (
-                    not getattr(target, "is_countdown", False)
-                    and old_max > 0
-                    and getattr(target, "current_hp", 0.0) > 0
-                ):
-                    target.current_hp = max(1.0, min(cap, target.current_hp * (new_max / old_max)))
-                elif getattr(target, "current_hp", 0.0) > cap:
-                    target.current_hp = cap
-
+            hp_delta = self.sync_entity_hp_after_max_hp_change(target, old_max, is_removal=False)
             if abs(hp_delta) > 1e-4 and StatusTag.SUPPRESS_STATUS_APPLY_EVENT not in (status.tags or ()) and self.simulator and (hasattr(self.simulator, "event_bus") or hasattr(self.simulator, "emit_event")):
                 from .events import StatusApplyEvent
                 from .lifecycle import emit_sim_event
@@ -334,20 +355,9 @@ class StatusManager:
                 self.statuses[t_name] = [s for s in self.statuses[t_name] if getattr(s, "uid", None) != u]
 
         # 统一结算所有受影响实体的动态生命上限约束
-        port = getattr(self.simulator, "port", None) if self.simulator else None
         for tgt in affected_targets:
-            old_max, old_hp = old_hp_map.get(id(tgt), (0.0, 0.0))
-            new_max = self._calc_entity_max_hp(tgt)
-            cap = tgt.effective_hp_cap(new_max) if hasattr(tgt, "effective_hp_cap") else new_max
-            is_valid_entity = (
-                not getattr(tgt, "is_countdown", False)
-                and (self.simulator and self.simulator.get_entity(getattr(tgt, "name", "")) is not None)
-            )
-            if reason in ("EXPIRED", "EXPLICIT") and is_valid_entity and 0 < new_max < old_max and old_hp > 1.0:
-                scaled_hp = old_hp * (new_max / old_max)
-                tgt.current_hp = max(1.0, min(cap, scaled_hp))
-            elif 0 < cap != float("inf") and getattr(tgt, "current_hp", 0.0) > cap:
-                tgt.current_hp = cap
+            old_max, _old_hp = old_hp_map.get(id(tgt), (0.0, 0.0))
+            self.sync_entity_hp_after_max_hp_change(tgt, old_max, is_removal=True, reason=reason)
 
         # 发布到期/删除事实事件
         if reason == "EXPIRED" and self.simulator and (hasattr(self.simulator, "event_bus") or hasattr(self.simulator, "emit_event")):
@@ -400,6 +410,8 @@ class StatusManager:
 
     def tick_on_turn_begin(self, actor: Any):
         """在回合开始时结算 TARGET_TURN_START 与 CASTER_TURN_START 类型的状态。"""
+        if not self._by_uid and not any(self.statuses.values()):
+            return
         # 1. 作为目标自身回合开始
         self._tick_and_clean(
             condition=lambda s: s.target.name == actor.name and s.timing == DurationTiming.TARGET_TURN_START,
@@ -415,6 +427,8 @@ class StatusManager:
 
     def tick_on_turn_end(self, actor: Any):
         """在回合结束时结算 TARGET_TURN_END 与 CASTER_TURN_END 类型的状态。"""
+        if not self._by_uid and not any(self.statuses.values()):
+            return
         # 1. 作为目标自身行动结束
         self._tick_and_clean(
             condition=lambda s: s.target.name == actor.name and s.timing == DurationTiming.TARGET_TURN_END,
@@ -499,54 +513,54 @@ class StatusManager:
         flat_sum = 0.0
         pct_sum = 0.0
 
+        def _accumulate(mod_stat: StatType, mod_op: ModifierOp, total_mod_val: float) -> None:
+            nonlocal flat_sum, pct_sum
+            if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+                if mod_stat in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
+                    if mod_op == ModifierOp.ADD:
+                        if mod_stat in (StatType.ATK_PERCENT, StatType.ATK):
+                            pct_sum += total_mod_val
+                        else:
+                            flat_sum += total_mod_val
+                    elif mod_op == ModifierOp.PERCENT:
+                        pct_sum += total_mod_val
+            elif stat_type == StatType.SPEED and mod_stat == StatType.SPEED:
+                if mod_op == ModifierOp.ADD:
+                    flat_sum += total_mod_val
+                elif mod_op == ModifierOp.PERCENT:
+                    pct_sum += total_mod_val
+            elif stat_type in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE) and mod_stat in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE):
+                if mod_op == ModifierOp.ADD:
+                    flat_sum += total_mod_val
+                elif mod_op == ModifierOp.PERCENT:
+                    pct_sum += total_mod_val
+            elif stat_type == StatType.MAX_HP_PERCENT and mod_stat == StatType.MAX_HP_PERCENT:
+                if mod_op == ModifierOp.PERCENT:
+                    pct_sum += total_mod_val
+                elif mod_op == ModifierOp.ADD:
+                    if total_mod_val > 1.0:
+                        flat_sum += total_mod_val
+                    else:
+                        pct_sum += total_mod_val
+            elif mod_stat == stat_type:
+                if mod_op == ModifierOp.ADD:
+                    flat_sum += total_mod_val
+                elif mod_op == ModifierOp.PERCENT:
+                    pct_sum += total_mod_val
+
         for status in self.get_statuses(entity_name, exclude_tags=exclude_tags, category=category):
             for mod in status.modifiers:
-                # 攻击力属性统一聚合 (包含 ATK_BASE, ATK_PERCENT, ATK)
-                if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
-                    if mod.stat in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
-                        total_mod_val = mod.value * status.stacks
-                        if mod.op == ModifierOp.ADD:
-                            if mod.stat in (StatType.ATK_PERCENT, StatType.ATK):
-                                pct_sum += total_mod_val
-                            else:
-                                flat_sum += total_mod_val
-                        elif mod.op == ModifierOp.PERCENT:
-                            pct_sum += total_mod_val
+                _accumulate(mod.stat, mod.op, mod.value * status.stacks)
 
-                # 速度属性统一聚合
-                elif stat_type == StatType.SPEED and mod.stat == StatType.SPEED:
-                    total_mod_val = mod.value * status.stacks
-                    if mod.op == ModifierOp.ADD:
-                        flat_sum += total_mod_val
-                    elif mod.op == ModifierOp.PERCENT:
-                        pct_sum += total_mod_val
-
-                # 防御属性统一聚合
-                elif stat_type in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE) and mod.stat in (StatType.DEF_PERCENT, StatType.DEF, StatType.DEF_BASE):
-                    total_mod_val = mod.value * status.stacks
-                    if mod.op == ModifierOp.ADD:
-                        flat_sum += total_mod_val
-                    elif mod.op == ModifierOp.PERCENT:
-                        pct_sum += total_mod_val
-
-                # 生命上限统一聚合 (支持百分比与固定数值)
-                elif stat_type == StatType.MAX_HP_PERCENT and mod.stat == StatType.MAX_HP_PERCENT:
-                    total_mod_val = mod.value * status.stacks
-                    if mod.op == ModifierOp.PERCENT:
-                        pct_sum += total_mod_val
-                    elif mod.op == ModifierOp.ADD:
-                        if total_mod_val > 1.0:
-                            flat_sum += total_mod_val
-                        else:
-                            pct_sum += total_mod_val
-
-                # 其他属性 (CRIT_RATE, CRIT_DMG, DMG_BOOST, RES_PEN, VULNERABILITY 等)
-                elif mod.stat == stat_type:
-                    total_mod_val = mod.value * status.stacks
-                    if mod.op == ModifierOp.ADD:
-                        flat_sum += total_mod_val
-                    elif mod.op == ModifierOp.PERCENT:
-                        pct_sum += total_mod_val
+        vm_rt = getattr(self.simulator, "vm_runtime", None) if self.simulator else None
+        me = getattr(vm_rt, "modifier_engine", None) if vm_rt is not None else None
+        if me is not None:
+            for mod_stat, mod_op, mod_val in me.iter_stat_modifiers(
+                entity_name,
+                exclude_tags=exclude_tags,
+                category=category,
+            ):
+                _accumulate(mod_stat, mod_op, mod_val)
 
         if stat_type in (StatType.ATK_BASE, StatType.ATK_PERCENT, StatType.ATK):
             eff_base = white_base if white_base > 0 else base_val
@@ -637,6 +651,11 @@ class StatusManager:
                 "category": getattr(s, "category", "buff"),
                 "modifiers_desc": desc
             })
+
+        vm_rt_snap = getattr(self.simulator, "vm_runtime", None) if self.simulator else None
+        me_snap = getattr(vm_rt_snap, "modifier_engine", None) if vm_rt_snap is not None else None
+        if me_snap is not None:
+            active_buffs.extend(me_snap.iter_snapshot_buffs(name))
 
         buffs_list = [b for b in active_buffs if b.get("category", "buff") == "buff"]
         debuffs_list = [b for b in active_buffs if b.get("category", "buff") == "debuff"]

@@ -7,15 +7,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from simulator.core import Entity, TurnSimulator
 from simulator.events import (
-    DamageAppliedEvent,
     EnemyDefeatedEvent,
     HPLostEvent,
     TurnBeginEvent,
-    WeaknessBreakEvent,
 )
 from simulator.lifecycle import emit_sim_event
 from simulator.vm.enemy_port import BaseEnemyCombatPortImpl
-from simulator.vm.wave_modes import AnomalyWaveMode, BreakStatusHelper, MoCWaveMode
+from simulator.vm.wave_modes import AnomalyWaveMode, MoCWaveMode
 from simulator.status import StatType
 from simulator.vm.enemy_kit import DataDrivenEnemyKit
 from simulator.vm.stage_ai import CompiledMonsterAISpec, StageAILoader
@@ -57,7 +55,6 @@ class DataDrivenStageDirector:
             if self._is_moc
             else AnomalyWaveMode(max_waves=self.max_waves)
         )
-        self._break_helper = BreakStatusHelper(sim)
         self._ai_cache: Dict[int, CompiledMonsterAISpec] = dict(ai_by_monster_id or {})
         self._last_cycle: int = sim.current_cycle
         self.aha_special_damage: float = 0.0
@@ -526,15 +523,8 @@ class DataDrivenStageDirector:
                             ent.current_toughness = max(0.0, ent.current_toughness - float(entry_toughness))
             self._entry_weakness_break = None
 
-    def on_damage_applied(self, event: DamageAppliedEvent) -> None:
-        self._break_helper.on_damage_applied(event)
-
-    def on_weakness_break(self, event: WeaknessBreakEvent) -> None:
-        self._break_helper.on_weakness_break(event)
-
     def on_turn_begin(self, event: TurnBeginEvent) -> None:
         self._check_aha_special_damage_events()
-        self._break_helper.on_turn_begin(event)
         actor_ent = self.sim.get_entity(event.actor_name)
         if actor_ent is not None and getattr(actor_ent, "is_countdown", False):
             sched = getattr(self.sim, "scheduler", None)
@@ -717,8 +707,12 @@ class DataDrivenStageDirector:
         ent.current_hp = max(0.0, ent.current_hp - raw_aha_dmg)
         self.aha_special_damage += dmg
         if actual > 0.0:
-            self._break_helper.add_quantum_stack(ent.name)
             if vm_rt is not None:
+                vm_rt.modifier_engine.notify_entangle_being_attacked(
+                    ent.name,
+                    "阿哈",
+                    attack_type="ElationDamage",
+                )
                 vm_rt.modifier_engine.dispatch_event(
                     "OnHPChange",
                     owner_id=ent.name,

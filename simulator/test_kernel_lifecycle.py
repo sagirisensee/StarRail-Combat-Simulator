@@ -43,7 +43,6 @@ from simulator.vm.enemy_port import (
 from simulator.vm.executor import TaskExecutor
 from simulator.vm.runtime import VMRuntime
 from simulator.vm.stage_sim_adapter import DataDrivenStageDirector, build_data_driven_stage
-from simulator.vm.wave_modes import BreakStatusHelper
 
 
 def _build_synthetic_vm_env() -> Tuple[TurnSimulator, VMRuntime, Entity, Entity, Entity]:
@@ -325,7 +324,7 @@ class TestKernelLifecycle(unittest.TestCase):
             self.assertIn(required_task, tasks)
 
     def test_event_bus_has_zero_vm_or_stage_combat_subscribers(self) -> None:
-        """EventBus 已降格为纯只读广播：VMRuntime / TaskExecutor / StageDirector / BreakStatusHelper 零订阅。"""
+        """EventBus 已降格为纯只读广播：VMRuntime / TaskExecutor / StageDirector 零订阅。"""
         ally = Entity(
             name="TestTrailblazer",
             base_speed=140.0,
@@ -342,7 +341,7 @@ class TestKernelLifecycle(unittest.TestCase):
                 bound_self = getattr(cb, "__self__", None)
                 self.assertNotIsInstance(
                     bound_self,
-                    (VMRuntime, TaskExecutor, DataDrivenStageDirector, BreakStatusHelper),
+                    (VMRuntime, TaskExecutor, DataDrivenStageDirector),
                 )
 
     def test_kernel_fact_routing_order_independent_of_observer_subscription_order(self) -> None:
@@ -623,6 +622,238 @@ class TestKernelLifecycle(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             with rt.lifecycle.capture_damage_targets(ally.name):
                 raise RuntimeError("capture scope aborted")
+        rt.lifecycle.assert_clean()
+
+    def test_single_stat_ledger_zero_mirror_statuses_in_vm_mode(self) -> None:
+        """VM ModifierEngine 与 StatusManager 收敛为单账本：无镜像状态且实时联动属性与 MaxHP 等比例缩放。"""
+        from simulator.status import StatType
+
+        ally = Entity(
+            name="单账本测试",
+            base_speed=100.0,
+            base_atk=1200.0,
+            base_white_atk=1000.0,
+            max_hp=5000.0,
+            current_hp=2500.0,
+            base_white_hp=4000.0,
+            is_enemy=False,
+        )
+        enemy = Entity(
+            name="单账本木桩",
+            base_speed=90.0,
+            base_atk=500.0,
+            max_hp=100_000.0,
+            current_hp=100_000.0,
+            is_enemy=True,
+        )
+        sim = TurnSimulator(entities=[ally, enemy], use_techniques=False, auto_ult=False)
+        rt = VMRuntime(sim)
+        sim.vm_runtime = rt
+        rt.loader._global_mod_by_name["MSynth_StatLedgerBuff"] = {
+            "Properties": {
+                "HPAddedRatio": {"IsDynamic": False, "FixedValue": {"Value": 0.5}},
+                "AttackAddedRatio": {"IsDynamic": False, "FixedValue": {"Value": 0.4}},
+            }
+        }
+        try:
+            rt.modifier_engine.add_modifier(
+                owner_id=ally.name,
+                caster_id=ally.name,
+                mod_name="MSynth_StatLedgerBuff",
+            )
+            self.assertEqual(sim.status_mgr.get_statuses(ally.name), [])
+            self.assertAlmostEqual(sim.port.max_hp(ally.name), 7000.0, places=4)
+            self.assertAlmostEqual(ally.current_hp, 3500.0, places=4)
+            self.assertAlmostEqual(
+                sim.status_mgr.calculate_stat(ally.name, 1200.0, StatType.ATK_BASE, white_base=1000.0),
+                1600.0,
+                places=4,
+            )
+            snap = sim.status_mgr.get_detailed_snapshot(ally)
+            self.assertTrue(any(b["id"].startswith("MSynth_StatLedgerBuff#") for b in snap["all_statuses"]))
+
+            rt.modifier_engine.remove_modifier(ally.name, "MSynth_StatLedgerBuff")
+            self.assertEqual(sim.status_mgr.get_statuses(ally.name), [])
+            self.assertAlmostEqual(sim.port.max_hp(ally.name), 5000.0, places=4)
+            self.assertAlmostEqual(ally.current_hp, 2500.0, places=4)
+            self.assertAlmostEqual(
+                sim.status_mgr.calculate_stat(ally.name, 1200.0, StatType.ATK_BASE, white_base=1000.0),
+                1200.0,
+                places=4,
+            )
+            rt.lifecycle.assert_clean()
+        finally:
+            rt.loader._global_mod_by_name.pop("MSynth_StatLedgerBuff", None)
+
+    def test_official_vm_break_modifiers_entangle_and_poison_without_break_helper(self) -> None:
+        """弱点击破改由官方 MCommon_Element_* 与 ByBreakDamage 纯 VM 结算，不再依赖外挂辅助类。"""
+        from simulator.events import WeaknessBreakEvent
+        from simulator.vm.executor import ExecutionContext
+
+        ally = Entity(
+            name="破韧角色",
+            base_speed=120.0,
+            base_atk=1500.0,
+            base_break_effect=1.0,
+            max_hp=5000.0,
+            current_hp=5000.0,
+            element="Quantum",
+            level=80,
+            is_enemy=False,
+        )
+        _sim_st, director = build_data_driven_stage(30126122, [ally])
+        self.assertFalse(hasattr(director, "_break_helper"))
+        self.assertFalse(hasattr(director, "on_weakness_break"))
+        self.assertFalse(hasattr(director, "on_damage_applied"))
+
+        enemy_q = Entity(
+            name="量子弱点敌方",
+            base_speed=100.0,
+            base_atk=800.0,
+            base_def=1000.0,
+            level=80,
+            max_hp=50_000.0,
+            current_hp=50_000.0,
+            max_toughness=30.0,
+            current_toughness=0.0,
+            is_broken=True,
+            is_enemy=True,
+            weaknesses=["Quantum"],
+        )
+        boss_w = Entity(
+            name="风弱点首领",
+            base_speed=100.0,
+            base_atk=800.0,
+            base_def=1000.0,
+            level=80,
+            max_hp=100_000.0,
+            current_hp=100_000.0,
+            max_toughness=90.0,
+            current_toughness=0.0,
+            is_broken=True,
+            is_enemy=True,
+            is_boss=True,
+            weaknesses=["Wind"],
+        )
+        sim = TurnSimulator(entities=[ally, enemy_q, boss_w], use_techniques=False, auto_ult=False)
+        rt = VMRuntime(sim)
+        sim.vm_runtime = rt
+
+        sim.emit_event(
+            WeaknessBreakEvent(
+                av=0.0,
+                cycle=0,
+                breaker_name=ally.name,
+                target_name=enemy_q.name,
+                element="Quantum",
+                break_damage=0.0,
+                action_delay_pct=0.25,
+                entangle_applied=True,
+            )
+        )
+        self.assertTrue(rt.modifier_engine.has_modifier(enemy_q.name, "MCommon_Element_Entangle"))
+        ent_mods = rt.modifier_engine.get_modifiers(enemy_q.name, "MCommon_Element_Entangle")
+        self.assertEqual(ent_mods[0].layer, 1)
+
+        ctx = ExecutionContext(
+            runtime=rt,
+            caster_id=ally.name,
+            ability_name="TestEntangleHit",
+            ability_target_ids=(enemy_q.name,),
+            skill_target_ids=(enemy_q.name,),
+        )
+        rt.execute_tasks(
+            [
+                {
+                    "$type": "RPG.GameCore.DamageByAttackProperty",
+                    "TargetType": {"$type": "RPG.GameCore.TargetAlias", "Alias": "AbilityTargetEntity"},
+                    "AttackProperty": {
+                        "$type": "RPG.GameCore.AttackData",
+                        "DamageType": {"DamageType": "Quantum"},
+                        "DamagePercentage": {"IsDynamic": False, "FixedValue": {"Value": 1.0}},
+                        "AttackType": "Normal",
+                    },
+                }
+            ],
+            ctx,
+        )
+        sim.resolver.resolve_all()
+        self.assertEqual(ent_mods[0].layer, 2)
+
+        hp_before_turn = enemy_q.current_hp
+        sim.emit_event(
+            TurnBeginEvent(
+                av=10.0,
+                cycle=0,
+                actor_id=enemy_q.name,
+                actor_name=enemy_q.name,
+                speed=enemy_q.speed,
+                turn_id=1,
+            )
+        )
+        sim.resolver.resolve_all()
+        self.assertLess(enemy_q.current_hp, hp_before_turn)
+        self.assertFalse(rt.modifier_engine.has_modifier(enemy_q.name, "MCommon_Element_Entangle"))
+
+        sim.emit_event(
+            WeaknessBreakEvent(
+                av=10.0,
+                cycle=0,
+                breaker_name=ally.name,
+                target_name=boss_w.name,
+                element="Wind",
+                break_damage=0.0,
+                action_delay_pct=0.25,
+            )
+        )
+        self.assertTrue(rt.modifier_engine.has_modifier(boss_w.name, "MCommon_Element_Poison"))
+        poison_mods = rt.modifier_engine.get_modifiers(boss_w.name, "MCommon_Element_Poison")
+        self.assertEqual(poison_mods[0].layer, 3)
+        self.assertAlmostEqual(float(poison_mods[0].life_time or 0.0), 2.0, places=4)
+        rt.lifecycle.assert_clean()
+
+    def test_enemy_fast_action_uses_official_vm_modifier_without_windwalk_flags(self) -> None:
+        """敌方立刻再动收敛为官方 MCommon_FastAction 状态，零保留手工风行布尔壳且破韧自动清除。"""
+        from simulator.vm.enemy_kit import DataDrivenEnemyKit
+        from simulator.vm.enemy_port import EnemyActionContext
+
+        ally = Entity(
+            name="快动测试角色",
+            base_speed=140.0,
+            base_atk=1500.0,
+            max_hp=5000.0,
+            current_hp=5000.0,
+            is_enemy=False,
+        )
+        sim, _director = build_data_driven_stage(30126122, [ally])
+        enemy = next(e for e in sim.entities if e.is_enemy)
+        kit = enemy.kit
+        self.assertIsInstance(kit, DataDrivenEnemyKit)
+        self.assertFalse(any("windwalk" in attr for attr in vars(kit)))
+        self.assertFalse(hasattr(kit, "_ensure_windwalk_init"))
+
+        rt = getattr(sim, "vm_runtime", None) or VMRuntime(sim)
+        sim.vm_runtime = rt
+        rt.modifier_engine.add_modifier(
+            owner_id=enemy.name,
+            caster_id=enemy.name,
+            mod_name="MCommon_FastAction",
+        )
+        self.assertTrue(rt.modifier_engine.has_modifier(enemy.name, "MCommon_FastAction"))
+
+        session = kit.begin_turn_session(EnemyActionContext(action_id="fast_1", actor_id=enemy.name))
+        self.assertIsNotNone(session)
+        res = kit.finish_turn_session(session)
+        self.assertEqual(res.reset_distance, 0.0)
+        self.assertFalse(rt.modifier_engine.has_modifier(enemy.name, "MCommon_FastAction"))
+
+        rt.modifier_engine.add_modifier(
+            owner_id=enemy.name,
+            caster_id=enemy.name,
+            mod_name="MCommon_FastAction",
+        )
+        rt.modifier_engine.dispatch_event("OnBeingBreak", owner_id=enemy.name, param_entity_id=ally.name)
+        self.assertFalse(rt.modifier_engine.has_modifier(enemy.name, "MCommon_FastAction"))
         rt.lifecycle.assert_clean()
 
 

@@ -91,6 +91,7 @@ class DamageRequest:
     elation_point_num: float = 0.0      # 计入本段伤害的笑点数 P
     extra_elation: float = 0.0          # Attacker_ElationDamageAddedRatio
     extra_elation_extra: float = 0.0    # Attacker_ElationDamageExtraAddedRatio (增笑)
+    ignore_dmg_boost: bool = False      # 击破持续伤害/纠缠跳过攻击者增伤区 (ByBreakDamage / ByPureDamage)
     property_source: Optional[Any] = None  # OverrideDamagePropertySource: 决定攻击端面板/双暴/穿透/欢愉度等属性来源
 
 
@@ -187,8 +188,11 @@ class DamageCalculator:
 
         crit_mult = (1.0 + crit_dmg) if is_crit else 1.0
 
-        # 3. 增伤区 (欢愉伤害不吃常规属性/全伤增伤, 改吃 (1+欢愉度)*(1+5P/(P+240))*(1+增笑))
-        if is_elation_dmg:
+        # 3. 增伤区 (ByBreakDamage 不吃增伤; 欢愉伤害不吃常规属性/全伤增伤, 改吃 (1+欢愉度)*(1+5P/(P+240))*(1+增笑))
+        if getattr(req, "ignore_dmg_boost", False):
+            dmg_boost = 0.0
+            dmg_boost_mult = 1.0
+        elif is_elation_dmg:
             base_elation = float(getattr(stat_src, "base_elation", 0.0) or 0.0)
             if sim_ctx:
                 mgr_el = sim_ctx.status_mgr

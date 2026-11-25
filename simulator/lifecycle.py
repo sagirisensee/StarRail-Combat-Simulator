@@ -944,14 +944,10 @@ def dispatch_combat_fact(sim: Any, event: Any) -> None:
         executor = getattr(vm_rt, "executor", None) if vm_rt is not None else None
         if executor is not None and hasattr(executor, "on_damage_applied"):
             executor.on_damage_applied(event)
-        if director is not None and hasattr(director, "on_damage_applied"):
-            director.on_damage_applied(event)
     elif isinstance(event, WeaknessBreakEvent):
         executor = getattr(vm_rt, "executor", None) if vm_rt is not None else None
         if executor is not None and hasattr(executor, "on_weakness_break"):
             executor.on_weakness_break(event)
-        if director is not None and hasattr(director, "on_weakness_break"):
-            director.on_weakness_break(event)
 
 
 def emit_sim_event(sim: Any, event: Any) -> None:
