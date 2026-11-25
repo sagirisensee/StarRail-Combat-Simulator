@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from simulator.core import Entity, TurnSimulator
@@ -12,6 +13,7 @@ from simulator.vm.enemy_port import (
     EnemyActionContext,
     EnemyActionResult,
     EnemyKit,
+    EnemySubActionOutcome,
     STANDARD_ACTION_DISTANCE,
 )
 from simulator.vm.stage_ai import (
@@ -22,8 +24,24 @@ from simulator.vm.stage_ai import (
 from simulator.vm.stage_runner import StageRunner
 
 
+@dataclass
+class _EnemyTurnSession:
+    """敌方单个自然回合的分步子动作会话（由 TurnSimulator.TurnFrame 驱动）。"""
+
+    sim: TurnSimulator
+    attacker: Optional[Entity]
+    rt: Any
+    can_one_more: bool
+    next_turn_one_more: bool
+    action_idx: int = 0
+    last_rt_om: bool = False
+    pending_skills: List[AISkillActionSpec] = field(default_factory=list)
+
+
 class DataDrivenEnemyKit(EnemyKit):
     """Pure data-driven ``EnemyKit`` backed by ``CompiledMonsterAISpec`` & ``StageRunner``."""
+
+    supports_staged_sub_actions: bool = True
 
     def __init__(
         self,
@@ -460,45 +478,40 @@ class DataDrivenEnemyKit(EnemyKit):
         hit_targets: List[str] = []
         hit_avatars: List[str] = []
         hit_sp_owners: List[str] = []
-        from simulator.events import DamageAppliedEvent
-
-        def _on_vm_dmg(ev: Any) -> None:
-            if getattr(ev, "attacker_name", None) != self.owner_id:
-                return
-            tnm = str(getattr(ev, "target_name", ""))
-            tent = sim.get_entity(tnm)
-            if tent is not None and not tent.is_enemy and not getattr(tent, "is_countdown", False):
-                if tnm not in hit_targets:
-                    hit_targets.append(tnm)
-                is_memo = bool(getattr(tent, "is_memosprite", False))
-                if not is_memo and tnm not in hit_avatars:
-                    hit_avatars.append(tnm)
-                sp_owner = (getattr(tent, "master_name", None) or tnm) if is_memo else tnm
-                if sp_owner not in hit_sp_owners:
-                    hit_sp_owners.append(sp_owner)
-
-        sim.event_bus.subscribe(DamageAppliedEvent, _on_vm_dmg)
+        hit_snaps: List[Any] = []
         try:
-            rt.lifecycle.run_ability_frame(
-                AbilityFrameSpec(
-                    caster_id=self.owner_id,
-                    ability_name=entry_ab,
-                    target_ids=target_ids,
-                    skill_target_ids=target_ids,
-                    skill_name=str(getattr(sk, "skill_trigger_key", "") or ""),
-                    emit_before_skill=True,
-                    before_skill_targets_as_attack=True,
-                    end_being_attacked_on_exit=True,
-                    emit_after_skill=True,
-                    emit_settle_callback=True,
+            with rt.lifecycle.capture_damage_targets(self.owner_id) as hit_snaps:
+                rt.lifecycle.run_ability_frame(
+                    AbilityFrameSpec(
+                        caster_id=self.owner_id,
+                        ability_name=entry_ab,
+                        target_ids=target_ids,
+                        skill_target_ids=target_ids,
+                        skill_name=str(getattr(sk, "skill_trigger_key", "") or ""),
+                        emit_before_skill=True,
+                        before_skill_targets_as_attack=True,
+                        end_being_attacked_on_exit=True,
+                        emit_after_skill=True,
+                        emit_settle_callback=True,
+                    )
                 )
-            )
         finally:
-            subs = sim.event_bus._subscribers.get(DamageAppliedEvent)
-            if isinstance(subs, list) and _on_vm_dmg in subs:
-                subs.remove(_on_vm_dmg)
             rt._current_enemy_sp_hit_base = prev_sp_base
             rt._current_enemy_skill_has_damage = prev_has_dmg
+
+        for snap in hit_snaps:
+            if not snap.is_enemy and not snap.is_countdown:
+                if snap.target_name not in hit_targets:
+                    hit_targets.append(snap.target_name)
+                if not snap.is_memosprite and snap.target_name not in hit_avatars:
+                    hit_avatars.append(snap.target_name)
+                sp_owner = (
+                    (snap.master_name or snap.target_name)
+                    if snap.is_memosprite
+                    else snap.target_name
+                )
+                if sp_owner not in hit_sp_owners:
+                    hit_sp_owners.append(sp_owner)
 
         skill_audit_cb = getattr(sim, "on_enemy_skill_resolved", None)
         if callable(skill_audit_cb) and (hit_avatars or hit_sp_owners):
@@ -518,7 +531,7 @@ class DataDrivenEnemyKit(EnemyKit):
 
         return tuple(hit_targets)
 
-    def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
+    def begin_turn_session(self, ctx: EnemyActionContext) -> Optional[_EnemyTurnSession]:
         sim: TurnSimulator = self.port.sim
         self.runner.on_turn_begin(self.owner_id, current_av=sim.current_av)
 
@@ -580,7 +593,7 @@ class DataDrivenEnemyKit(EnemyKit):
                         if wp(ally_e.name, 1, 0) is True:
                             t_kit.windwalk_ready = True
             self.runner.on_turn_end(self.owner_id, current_av=sim.current_av)
-            return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+            return None
 
         # 优先同步 VM 中的动态 AIFlag (如 Monster_W5_Fallen_00_AttackOrder 将 AIFlag 设为 2)
         rt = getattr(sim, "vm_runtime", None)
@@ -599,294 +612,310 @@ class DataDrivenEnemyKit(EnemyKit):
         # 3. 若技能执行中执行了 RemoveModifier("OneMorePerTurn")（如蓄力 Skill03），则失去额外行动机会；
         # 4. 若技能执行中执行了 AddModifier("OneMorePerTurn")（如终极技 Skill04），则为下次回合赋予额外行动额度。
         can_one_more = getattr(self, "has_one_more", False)
-        next_turn_one_more = can_one_more
+        return _EnemyTurnSession(
+            sim=sim,
+            attacker=attacker,
+            rt=rt,
+            can_one_more=can_one_more,
+            next_turn_one_more=can_one_more,
+        )
 
-        action_idx = 0
-        while action_idx < 8:
-            has_runtime_one_more = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
-            if action_idx == 1 and not can_one_more and not has_runtime_one_more:
-                break
-            if action_idx >= 2 and not has_runtime_one_more:
-                break
-            action_idx += 1
-            if action_idx >= 2 and rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore"):
-                om_mods = rt.modifier_engine.get_modifiers(self.owner_id, "OneMore")
-                if action_idx == 2 and om_mods and getattr(om_mods[0], "life_time", None) is not None and om_mods[0].life_time >= 2:
-                    om_mods[0].life_time -= 1
-                else:
-                    rt.modifier_engine.remove_modifier(self.owner_id, "OneMore")
+    def execute_next_sub_action(
+        self,
+        session: _EnemyTurnSession,
+        sub_action_index: int,
+    ) -> Optional[EnemySubActionOutcome]:
+        sim = session.sim
+        attacker = session.attacker
+        rt = session.rt
 
-            if rt is not None:
-                from simulator.vm.expr import dotnet_hash
-                from simulator.vm.executor import ExecutionContext
-
-                vm_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
-                if vm_flag > 0:
-                    self.ai_executor.ai_flag = int(round(vm_flag))
-                else:
-                    rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
-                prev_ai_flag = self.ai_executor.ai_flag
-                eval_ctx = ExecutionContext(
-                    runtime=rt,
-                    caster_id=self.owner_id,
-                    ability_name="",
-                    ability_target_ids=(self.owner_id,),
-                    modifier_owner_id=self.owner_id,
+        while True:
+            if not session.pending_skills:
+                if session.action_idx >= 8:
+                    return None
+                has_runtime_one_more = (
+                    rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
                 )
-                actions: Tuple[AISkillActionSpec, ...] = self.ai_executor.select_next_actions(
-                    predicate_evaluator=lambda p: rt.executor.eval_predicate(p, eval_ctx)
-                )
-            else:
-                actions = self.ai_executor.select_next_actions()
-            if not actions:
-                break
-            if rt is not None:
-                from simulator.vm.expr import dotnet_hash
+                if session.action_idx == 1 and not session.can_one_more and not has_runtime_one_more:
+                    return None
+                if session.action_idx >= 2 and not has_runtime_one_more:
+                    return None
+                session.action_idx += 1
+                session.last_rt_om = has_runtime_one_more
+                if (
+                    session.action_idx >= 2
+                    and rt is not None
+                    and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
+                ):
+                    om_mods = rt.modifier_engine.get_modifiers(self.owner_id, "OneMore")
+                    if (
+                        session.action_idx == 2
+                        and om_mods
+                        and getattr(om_mods[0], "life_time", None) is not None
+                        and om_mods[0].life_time >= 2
+                    ):
+                        om_mods[0].life_time -= 1
+                    else:
+                        rt.modifier_engine.remove_modifier(self.owner_id, "OneMore")
 
-                matched_dec = getattr(self.ai_executor, "last_matched_decision", None)
-                if matched_dec is not None and isinstance(matched_dec.root_task, Mapping):
+                if rt is not None:
+                    from simulator.vm.expr import dotnet_hash
                     from simulator.vm.executor import ExecutionContext
 
-                    ai_ctx = ExecutionContext(
+                    vm_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
+                    if vm_flag > 0:
+                        self.ai_executor.ai_flag = int(round(vm_flag))
+                    else:
+                        rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
+                    prev_ai_flag = self.ai_executor.ai_flag
+                    eval_ctx = ExecutionContext(
                         runtime=rt,
                         caster_id=self.owner_id,
                         ability_name="",
                         ability_target_ids=(self.owner_id,),
                         modifier_owner_id=self.owner_id,
                     )
-                    root_type = str(matched_dec.root_task.get("$type", "") or "")
-                    if root_type and root_type != "RPG.GameCore.SequenceConfig":
-                        root_tasks = [matched_dec.root_task]
-                    else:
-                        root_tasks = matched_dec.root_task.get("TaskList", [])
-                    has_dynamic_root = any(
-                        isinstance(t, Mapping)
-                        and t.get("$type")
-                        in (
-                            "RPG.GameCore.PredicateTaskList",
-                            "RPG.GameCore.Retarget",
-                            "RPG.GameCore.SetDynamicValueByAddValue",
-                            "RPG.GameCore.SequenceConfig",
-                        )
-                        for t in root_tasks
+                    actions: Tuple[AISkillActionSpec, ...] = self.ai_executor.select_next_actions(
+                        predicate_evaluator=lambda p: rt.executor.eval_predicate(p, eval_ctx)
                     )
-                    if not has_dynamic_root:
-                        rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
-                        ai_tasks = [
-                            t for t in root_tasks
-                            if isinstance(t, Mapping)
-                            and (
-                                t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
-                                or (
-                                    t.get("$type") in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue")
-                                    and (t.get("DynamicKey") or {}).get("Value") != "AIFlag"
-                                )
-                            )
-                        ]
-                        if ai_tasks:
-                            rt.executor.execute_tasks(ai_tasks, ai_ctx)
-                    # 动态求值 ConfigAI RootTask 中的条件/目标重选与 AIFlag 自增，精确还原官方分支技能选择
-                    if has_dynamic_root:
-                        self.ai_executor.ai_flag = prev_ai_flag
-                        rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(prev_ai_flag))
-                        resolved_skill_names: List[str] = []
-
-                        def _resolve_ai_skills(nodes: Any) -> None:
-                            if isinstance(nodes, list):
-                                for item in nodes:
-                                    _resolve_ai_skills(item)
-                                return
-                            if not isinstance(nodes, Mapping):
-                                return
-                            nt = nodes.get("$type", "")
-                            if nt == "RPG.GameCore.UseSkill" and nodes.get("SkillName"):
-                                resolved_skill_names.append(str(nodes["SkillName"]))
-                            elif nt in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier"):
-                                rt.executor.execute_task(nodes, ai_ctx)
-                                mn = nodes.get("ModifierName")
-                                mval = mn.get("Value") if isinstance(mn, Mapping) else mn
-                                if mval == "OneMorePerTurn":
-                                    nonlocal can_one_more, next_turn_one_more
-                                    if nt == "RPG.GameCore.RemoveModifier":
-                                        can_one_more = False
-                                        next_turn_one_more = False
-                                    elif nt == "RPG.GameCore.AddModifier":
-                                        next_turn_one_more = True
-                            elif nt in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue"):
-                                rt.executor.execute_task(nodes, ai_ctx)
-                                dk = nodes.get("DynamicKey")
-                                dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
-                                if dk_name == "AIFlag":
-                                    new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
-                                    if new_flag > 0:
-                                        self.ai_executor.ai_flag = int(round(new_flag))
-                            elif nt == "RPG.GameCore.SetDynamicValueByAddValue":
-                                rt.executor.execute_task(nodes, ai_ctx)
-                                dk = nodes.get("Key") or nodes.get("DynamicKey")
-                                dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
-                                if dk_name == "AIFlag":
-                                    new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
-                                    if new_flag > 0:
-                                        self.ai_executor.ai_flag = int(round(new_flag))
-                            elif nt == "RPG.GameCore.Retarget":
-                                cands = rt.executor._resolve_targets(nodes.get("TargetType"), ai_ctx)
-                                pred = nodes.get("Predicate")
-                                matched_tgts: List[str] = []
-                                for tid in cands:
-                                    if pred:
-                                        t_ctx = ai_ctx.clone(param_entity_id=tid)
-                                        try:
-                                            ok = rt.executor.eval_predicate(pred, t_ctx)
-                                        except NotImplementedError:
-                                            ok = False
-                                        if not ok:
-                                            continue
-                                    matched_tgts.append(tid)
-                                if matched_tgts:
-                                    _resolve_ai_skills(nodes.get("TaskList", []))
-                                else:
-                                    _resolve_ai_skills(nodes.get("FailedTaskList", []))
-                            elif nt == "RPG.GameCore.PredicateTaskList":
-                                pred = nodes.get("Predicate")
-                                try:
-                                    ok = rt.executor.eval_predicate(pred, ai_ctx) if pred else True
-                                except NotImplementedError:
-                                    ok = False
-                                _resolve_ai_skills(
-                                    nodes.get("SuccessTaskList", []) if ok else nodes.get("FailedTaskList", [])
-                                )
-                            elif nt == "RPG.GameCore.SequenceConfig":
-                                _resolve_ai_skills(nodes.get("TaskList", []))
-
-                        _resolve_ai_skills(root_tasks)
-                        if resolved_skill_names:
-                            dyn_actions = tuple(
-                                self.ai_spec.skills_by_key[sk_name]
-                                for sk_name in resolved_skill_names
-                                if sk_name in self.ai_spec.skills_by_key
-                            )
-                            if dyn_actions:
-                                actions = dyn_actions
-
-            for sk in actions:
-                self.executed_skills.append(sk.skill_trigger_key)
-
-                # 1. Execute official ConfigAbility AST tasks (e.g. SummonMonster)
-                entry_ab = self._get_entry_ability_name(sk.skill_trigger_key)
-                if entry_ab:
-                    if rt is None:
-                        self._execute_ability_tasks(entry_ab)
-                    game_loader = getattr(self.runner.factory, "game_loader", None)
-                    if game_loader:
-                        ab_cands = [entry_ab]
-                        if "_Phase01" in entry_ab:
-                            ab_cands.append(entry_ab.replace("_Phase01", "_Phase02"))
-                        for cand_ab in ab_cands:
-                            ab_doc = game_loader.get_ability(cand_ab)
-                            if not ab_doc:
-                                continue
-
-                            def _scan_one_more(node: Any) -> Tuple[bool, bool]:
-                                rem = add = False
-                                if isinstance(node, dict):
-                                    t_nd = node.get("$type", "")
-                                    mn = node.get("ModifierName")
-                                    mval = mn.get("Value") if isinstance(mn, dict) else mn
-                                    if mval == "OneMorePerTurn":
-                                        if t_nd == "RPG.GameCore.RemoveModifier":
-                                            rem = True
-                                        elif t_nd == "RPG.GameCore.AddModifier":
-                                            add = True
-                                    for v in node.values():
-                                        r2, a2 = _scan_one_more(v)
-                                        rem = rem or r2
-                                        add = add or a2
-                                elif isinstance(node, list):
-                                    for it in node:
-                                        r2, a2 = _scan_one_more(it)
-                                        rem = rem or r2
-                                        add = add or a2
-                                return rem, add
-
-                            has_rem, has_add = _scan_one_more(ab_doc)
-                            if has_rem:
-                                can_one_more = False
-                                next_turn_one_more = False
-                                if rt is not None:
-                                    rt.modifier_engine.remove_modifier(self.owner_id, "OneMorePerTurn")
-                            if has_add:
-                                next_turn_one_more = True
-
-                # 2. Sync any newly spawned monsters to TurnSimulator
-                director = getattr(sim, "_stage_director", None)
-                if director and hasattr(director, "sync_spawned_entities"):
-                    director.sync_spawned_entities()
-
-                # 3. 统一通过官方 ConfigAbility VM 执行技能（废除伤害/非伤害双轨分流）
-                if sk.is_passive or attacker is None:
-                    continue
-                sim._pending_turn_reset_distance = STANDARD_ACTION_DISTANCE * float(getattr(sk, "delay_ratio", 1.0) or 1.0)
-                diag_cb = getattr(sim, "timeline_diag_cb", None)
-                if callable(diag_cb):
-                    diag_cb(
-                        "ESKILL",
-                        f"{self.owner_id} idx={action_idx} key={sk.skill_trigger_key} "
-                        f"can_om={can_one_more} rt_om={has_runtime_one_more}",
-                    )
-                resolved: Tuple[str, ...] = ()
-                if entry_ab and rt is not None:
-                    resolved = self._execute_vm_skill(entry_ab, sim, sk, attacker)
                 else:
-                    # 仅无 VM / 无 ConfigAbility 的极简单元测试回退
-                    mult = sk.param(0, default=0.0)
-                    if mult > 0.0 and sk.damage_type is not None:
-                        targets = self._select_targets(sim, sk.target_selector)
-                        resolved = self.enemy_port.apply_enemy_attack(
-                            owner_id=self.owner_id,
-                            target_ids=tuple(t.name for t in targets),
-                            multiplier=mult,
-                            element=sk.element or "Physical",
-                            hit_energy=float(sk.sp_hit_base or getattr(attacker, "hit_energy", 5.0) or 5.0),
-                            hits=max(1, int(getattr(sk, "hit_count", 1) or 1)),
-                            blast=bool(getattr(sk, "is_blast", False)),
-                            increment_action_seq=True,
+                    actions = self.ai_executor.select_next_actions()
+                if not actions:
+                    return None
+                if rt is not None:
+                    from simulator.vm.expr import dotnet_hash
+
+                    matched_dec = getattr(self.ai_executor, "last_matched_decision", None)
+                    if matched_dec is not None and isinstance(matched_dec.root_task, Mapping):
+                        from simulator.vm.executor import ExecutionContext
+
+                        ai_ctx = ExecutionContext(
+                            runtime=rt,
+                            caster_id=self.owner_id,
+                            ability_name="",
+                            ability_target_ids=(self.owner_id,),
+                            modifier_owner_id=self.owner_id,
                         )
-                if resolved and sk.skill_trigger_key in ("Skill01", "Skill03"):
-                    self._marked_target = resolved[0]
+                        root_type = str(matched_dec.root_task.get("$type", "") or "")
+                        if root_type and root_type != "RPG.GameCore.SequenceConfig":
+                            root_tasks = [matched_dec.root_task]
+                        else:
+                            root_tasks = matched_dec.root_task.get("TaskList", [])
+                        has_dynamic_root = any(
+                            isinstance(t, Mapping)
+                            and t.get("$type")
+                            in (
+                                "RPG.GameCore.PredicateTaskList",
+                                "RPG.GameCore.Retarget",
+                                "RPG.GameCore.SetDynamicValueByAddValue",
+                                "RPG.GameCore.SequenceConfig",
+                            )
+                            for t in root_tasks
+                        )
+                        if not has_dynamic_root:
+                            rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(self.ai_executor.ai_flag))
+                            ai_tasks = [
+                                t for t in root_tasks
+                                if isinstance(t, Mapping)
+                                and (
+                                    t.get("$type") in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier")
+                                    or (
+                                        t.get("$type") in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue")
+                                        and (t.get("DynamicKey") or {}).get("Value") != "AIFlag"
+                                    )
+                                )
+                            ]
+                            if ai_tasks:
+                                rt.executor.execute_tasks(ai_tasks, ai_ctx)
+                        # 动态求值 ConfigAI RootTask 中的条件/目标重选与 AIFlag 自增，精确还原官方分支技能选择
+                        if has_dynamic_root:
+                            self.ai_executor.ai_flag = prev_ai_flag
+                            rt.set_dynamic_value(self.owner_id, dotnet_hash("AIFlag"), float(prev_ai_flag))
+                            resolved_skill_names: List[str] = []
 
-                has_om_after = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
-                has_next_sub_action = bool(
-                    attacker is not None
-                    and attacker.current_hp > 0.0
-                    and (
-                        (action_idx == 1 and (can_one_more or has_om_after))
-                        or (action_idx >= 2 and has_om_after)
-                    )
+                            def _resolve_ai_skills(nodes: Any) -> None:
+                                if isinstance(nodes, list):
+                                    for item in nodes:
+                                        _resolve_ai_skills(item)
+                                    return
+                                if not isinstance(nodes, Mapping):
+                                    return
+                                nt = nodes.get("$type", "")
+                                if nt == "RPG.GameCore.UseSkill" and nodes.get("SkillName"):
+                                    resolved_skill_names.append(str(nodes["SkillName"]))
+                                elif nt in ("RPG.GameCore.AddModifier", "RPG.GameCore.RemoveModifier"):
+                                    rt.executor.execute_task(nodes, ai_ctx)
+                                    mn = nodes.get("ModifierName")
+                                    mval = mn.get("Value") if isinstance(mn, Mapping) else mn
+                                    if mval == "OneMorePerTurn":
+                                        if nt == "RPG.GameCore.RemoveModifier":
+                                            session.can_one_more = False
+                                            session.next_turn_one_more = False
+                                        elif nt == "RPG.GameCore.AddModifier":
+                                            session.next_turn_one_more = True
+                                elif nt in ("RPG.GameCore.DefineDynamicValue", "RPG.GameCore.SetDynamicValue"):
+                                    rt.executor.execute_task(nodes, ai_ctx)
+                                    dk = nodes.get("DynamicKey")
+                                    dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
+                                    if dk_name == "AIFlag":
+                                        new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
+                                        if new_flag > 0:
+                                            self.ai_executor.ai_flag = int(round(new_flag))
+                                elif nt == "RPG.GameCore.SetDynamicValueByAddValue":
+                                    rt.executor.execute_task(nodes, ai_ctx)
+                                    dk = nodes.get("Key") or nodes.get("DynamicKey")
+                                    dk_name = dk.get("Value") if isinstance(dk, Mapping) else str(dk or "")
+                                    if dk_name == "AIFlag":
+                                        new_flag = rt.get_dynamic_value(self.owner_id, dotnet_hash("AIFlag"))
+                                        if new_flag > 0:
+                                            self.ai_executor.ai_flag = int(round(new_flag))
+                                elif nt == "RPG.GameCore.Retarget":
+                                    cands = rt.executor._resolve_targets(nodes.get("TargetType"), ai_ctx)
+                                    pred = nodes.get("Predicate")
+                                    matched_tgts: List[str] = []
+                                    for tid in cands:
+                                        if pred:
+                                            t_ctx = ai_ctx.clone(param_entity_id=tid)
+                                            try:
+                                                ok = rt.executor.eval_predicate(pred, t_ctx)
+                                            except NotImplementedError:
+                                                ok = False
+                                            if not ok:
+                                                continue
+                                        matched_tgts.append(tid)
+                                    if matched_tgts:
+                                        _resolve_ai_skills(nodes.get("TaskList", []))
+                                    else:
+                                        _resolve_ai_skills(nodes.get("FailedTaskList", []))
+                                elif nt == "RPG.GameCore.PredicateTaskList":
+                                    pred = nodes.get("Predicate")
+                                    try:
+                                        ok = rt.executor.eval_predicate(pred, ai_ctx) if pred else True
+                                    except NotImplementedError:
+                                        ok = False
+                                    _resolve_ai_skills(
+                                        nodes.get("SuccessTaskList", []) if ok else nodes.get("FailedTaskList", [])
+                                    )
+                                elif nt == "RPG.GameCore.SequenceConfig":
+                                    _resolve_ai_skills(nodes.get("TaskList", []))
+
+                            _resolve_ai_skills(root_tasks)
+                            if resolved_skill_names:
+                                dyn_actions = tuple(
+                                    self.ai_spec.skills_by_key[sk_name]
+                                    for sk_name in resolved_skill_names
+                                    if sk_name in self.ai_spec.skills_by_key
+                                )
+                                if dyn_actions:
+                                    actions = dyn_actions
+                session.pending_skills.extend(actions)
+
+            if not session.pending_skills:
+                return None
+
+            sk = session.pending_skills.pop(0)
+            self.executed_skills.append(sk.skill_trigger_key)
+
+            # 1. Execute official ConfigAbility AST tasks (e.g. SummonMonster)
+            entry_ab = self._get_entry_ability_name(sk.skill_trigger_key)
+            if entry_ab:
+                if rt is None:
+                    self._execute_ability_tasks(entry_ab)
+                game_loader = getattr(self.runner.factory, "game_loader", None)
+                if game_loader:
+                    ab_cands = [entry_ab]
+                    if "_Phase01" in entry_ab:
+                        ab_cands.append(entry_ab.replace("_Phase01", "_Phase02"))
+                    for cand_ab in ab_cands:
+                        ab_doc = game_loader.get_ability(cand_ab)
+                        if not ab_doc:
+                            continue
+
+                        def _scan_one_more(node: Any) -> Tuple[bool, bool]:
+                            rem = add = False
+                            if isinstance(node, dict):
+                                t_nd = node.get("$type", "")
+                                mn = node.get("ModifierName")
+                                mval = mn.get("Value") if isinstance(mn, dict) else mn
+                                if mval == "OneMorePerTurn":
+                                    if t_nd == "RPG.GameCore.RemoveModifier":
+                                        rem = True
+                                    elif t_nd == "RPG.GameCore.AddModifier":
+                                        add = True
+                                for v in node.values():
+                                    r2, a2 = _scan_one_more(v)
+                                    rem = rem or r2
+                                    add = add or a2
+                            elif isinstance(node, list):
+                                for it in node:
+                                    r2, a2 = _scan_one_more(it)
+                                    rem = rem or r2
+                                    add = add or a2
+                            return rem, add
+
+                        has_rem, has_add = _scan_one_more(ab_doc)
+                        if has_rem:
+                            session.can_one_more = False
+                            session.next_turn_one_more = False
+                            if rt is not None:
+                                rt.modifier_engine.remove_modifier(self.owner_id, "OneMorePerTurn")
+                        if has_add:
+                            session.next_turn_one_more = True
+
+            # 2. Sync any newly spawned monsters to TurnSimulator
+            director = getattr(sim, "_stage_director", None)
+            if director and hasattr(director, "sync_spawned_entities"):
+                director.sync_spawned_entities()
+
+            # 3. 统一通过官方 ConfigAbility VM 执行技能（废除伤害/非伤害双轨分流）
+            if sk.is_passive or attacker is None:
+                continue
+            sim._pending_turn_reset_distance = STANDARD_ACTION_DISTANCE * float(getattr(sk, "delay_ratio", 1.0) or 1.0)
+            diag_cb = getattr(sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                diag_cb(
+                    "ESKILL",
+                    f"{self.owner_id} idx={session.action_idx} key={sk.skill_trigger_key} "
+                    f"can_om={session.can_one_more} rt_om={session.last_rt_om}",
                 )
+            resolved: Tuple[str, ...] = ()
+            if entry_ab and rt is not None:
+                resolved = self._execute_vm_skill(entry_ab, sim, sk, attacker)
+            else:
+                # 仅无 VM / 无 ConfigAbility 的极简单元测试回退
+                mult = sk.param(0, default=0.0)
+                if mult > 0.0 and sk.damage_type is not None:
+                    targets = self._select_targets(sim, sk.target_selector)
+                    resolved = self.enemy_port.apply_enemy_attack(
+                        owner_id=self.owner_id,
+                        target_ids=tuple(t.name for t in targets),
+                        multiplier=mult,
+                        element=sk.element or "Physical",
+                        hit_energy=float(sk.sp_hit_base or getattr(attacker, "hit_energy", 5.0) or 5.0),
+                        hits=max(1, int(getattr(sk, "hit_count", 1) or 1)),
+                        blast=bool(getattr(sk, "is_blast", False)),
+                        increment_action_seq=True,
+                    )
+            if resolved and sk.skill_trigger_key in ("Skill01", "Skill03"):
+                self._marked_target = resolved[0]
 
-                sched_pre = getattr(sim, "scheduler", None)
-                if has_next_sub_action or (sched_pre is not None and sched_pre.has_pending()):
-                    rt_sub = getattr(sim, "vm_runtime", None)
-                    if rt_sub is not None:
-                        rt_sub.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=self.owner_id)
-
-                sub_cb = getattr(sim, "on_enemy_sub_action_end", None)
-                if callable(sub_cb) and has_next_sub_action:
-                    sched = getattr(sim, "scheduler", None)
-                    if sched is not None:
-                        with sched.drain_window():
-                            sub_cb()
-                            if sched.has_pending():
-                                sched.drain()
-                    else:
-                        sub_cb()
-
-                if attacker is None or attacker.current_hp <= 0.0:
-                    break
+            has_om_after = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
+            has_next_sub_action = bool(
+                attacker is not None
+                and attacker.current_hp > 0.0
+                and (
+                    (session.action_idx == 1 and (session.can_one_more or has_om_after))
+                    or (session.action_idx >= 2 and has_om_after)
+                )
+            )
             if attacker is None or attacker.current_hp <= 0.0:
-                break
+                session.pending_skills.clear()
+            return EnemySubActionOutcome(executed=True, has_next_sub_action=has_next_sub_action)
 
-        self.has_one_more = next_turn_one_more
+    def finish_turn_session(self, session: _EnemyTurnSession) -> EnemyActionResult:
+        sim = session.sim
+        attacker = session.attacker
+        self.has_one_more = session.next_turn_one_more
         rt = getattr(sim, "vm_runtime", None)
         if rt is not None and attacker is not None and attacker.current_hp > 0.0:
             rt.end_being_attacked()
@@ -908,6 +937,25 @@ class DataDrivenEnemyKit(EnemyKit):
             return EnemyActionResult(reset_distance=float(pending_reset))
 
         return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+
+    def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
+        session = self.begin_turn_session(ctx)
+        if session is None:
+            return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+        boundary = getattr(session.sim, "_on_turn_sub_action_boundary", None)
+        for sub_idx in range(1, 33):
+            outcome = self.execute_next_sub_action(session, sub_idx)
+            if outcome is None:
+                break
+            if outcome.executed and callable(boundary) and session.attacker is not None:
+                boundary(
+                    session.attacker,
+                    sub_action_index=sub_idx,
+                    has_next_sub_action=outcome.has_next_sub_action,
+                )
+            if session.attacker is None or session.attacker.current_hp <= 0.0:
+                break
+        return self.finish_turn_session(session)
 
     def get_kit_state(self) -> Dict[str, Any]:
         return {

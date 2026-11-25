@@ -13,7 +13,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 from .events import (
     ActionEndEvent,
@@ -81,6 +81,108 @@ class AbilityFrameSpec:
     emit_action_end_hooks: bool = False
     emit_insert_finish: bool = False
     emit_settle_callback: bool = False
+
+
+@dataclass(frozen=True)
+class DamageHitSnapshot:
+    """同步采集的受击目标快照，避免忆灵退场后延迟读取失效。"""
+
+    target_name: str
+    is_enemy: bool
+    is_countdown: bool
+    is_memosprite: bool
+    master_name: Optional[str] = None
+
+
+class InterventionHook:
+    """微内核调度外部干预契约，替代散落在 TurnSimulator 上的动态猴子补丁属性。"""
+
+    def on_sub_action_end(
+        self,
+        actor: Any,
+        *,
+        sub_action_index: int,
+        has_next_sub_action: bool,
+    ) -> None:
+        pass
+
+    def on_pre_turn_end(self, actor: Any) -> None:
+        pass
+
+    def on_turn_action_completed(self, actor: Any) -> None:
+        pass
+
+    def on_auto_chained_skill(self, actor_name: str, skill_id: int) -> None:
+        pass
+
+    def decide_insert_action(
+        self,
+        actor_name: str,
+    ) -> Optional[Tuple[Optional[Any], Optional[Tuple[str, ...]]]]:
+        return None
+
+
+class CallbackInterventionHook(InterventionHook):
+    """基于可选回调函数的轻量 InterventionHook 实现。"""
+
+    def __init__(
+        self,
+        *,
+        on_sub_action_end: Optional[Callable[..., None]] = None,
+        on_pre_turn_end: Optional[Callable[[Any], None]] = None,
+        on_turn_action_completed: Optional[Callable[[Any], None]] = None,
+        on_auto_chained_skill: Optional[Callable[[str, int], None]] = None,
+        decide_insert_action: Optional[
+            Callable[[str], Optional[Tuple[Optional[Any], Optional[Tuple[str, ...]]]]]
+        ] = None,
+    ) -> None:
+        self._on_sub_action_end = on_sub_action_end
+        self._on_pre_turn_end = on_pre_turn_end
+        self._on_turn_action_completed = on_turn_action_completed
+        self._on_auto_chained_skill = on_auto_chained_skill
+        self._decide_insert_action = decide_insert_action
+
+    @property
+    def has_pre_turn_end(self) -> bool:
+        return self._on_pre_turn_end is not None
+
+    @property
+    def has_turn_action_completed(self) -> bool:
+        return self._on_turn_action_completed is not None
+
+    def on_sub_action_end(
+        self,
+        actor: Any,
+        *,
+        sub_action_index: int,
+        has_next_sub_action: bool,
+    ) -> None:
+        if self._on_sub_action_end is not None:
+            self._on_sub_action_end(
+                actor,
+                sub_action_index=sub_action_index,
+                has_next_sub_action=has_next_sub_action,
+            )
+
+    def on_pre_turn_end(self, actor: Any) -> None:
+        if self._on_pre_turn_end is not None:
+            self._on_pre_turn_end(actor)
+
+    def on_turn_action_completed(self, actor: Any) -> None:
+        if self._on_turn_action_completed is not None:
+            self._on_turn_action_completed(actor)
+
+    def on_auto_chained_skill(self, actor_name: str, skill_id: int) -> None:
+        if self._on_auto_chained_skill is not None:
+            self._on_auto_chained_skill(actor_name, skill_id)
+
+    def decide_insert_action(
+        self,
+        actor_name: str,
+    ) -> Optional[Tuple[Optional[Any], Optional[Tuple[str, ...]]]]:
+        if self._decide_insert_action is not None:
+            return self._decide_insert_action(actor_name)
+        return None
 
 
 def is_entity_alive_or_limbo(ent: Any) -> bool:
@@ -158,6 +260,7 @@ class ExecutionLifecycle:
         self.pending_dead_enemies: List[str] = []
         self.pending_listen_die: List[str] = []
         self.active_deathrattle_entities: Set[str] = set()
+        self._damage_hit_recorders: List[Tuple[str, List[DamageHitSnapshot]]] = []
 
     @property
     def in_attack_scope(self) -> bool:
@@ -211,6 +314,8 @@ class ExecutionLifecycle:
             reasons.append(f"pending_listen_die={self.pending_listen_die}")
         if self.active_deathrattle_entities:
             reasons.append(f"active_deathrattle_entities={sorted(self.active_deathrattle_entities)}")
+        if self._damage_hit_recorders:
+            reasons.append(f"damage_hit_recorders={len(self._damage_hit_recorders)}")
         return reasons
 
     @property
@@ -625,6 +730,43 @@ class ExecutionLifecycle:
             self.open_enemy_attack = None
         self.rt.modifier_engine.dispatch_event("OnListenAfterAttack", param_entity_id=atk)
 
+    @contextmanager
+    def capture_damage_targets(self, attacker_id: str) -> Iterator[List[DamageHitSnapshot]]:
+        """在作用域内按内核伤害事实同步收集指定攻击者命中的受击目标快照。"""
+        recorded: List[DamageHitSnapshot] = []
+        entry = (attacker_id, recorded)
+        self._damage_hit_recorders.append(entry)
+        try:
+            yield recorded
+        finally:
+            try:
+                self._damage_hit_recorders.remove(entry)
+            except ValueError:
+                pass
+
+    def record_damage_applied(self, event: DamageAppliedEvent) -> None:
+        """在 DamageAppliedEvent 发生瞬间采集目标快照，避免后续退场导致状态丢失。"""
+        if not self._damage_hit_recorders:
+            return
+        atk = getattr(event, "attacker_name", None)
+        tnm = str(getattr(event, "target_name", "") or "")
+        sim = getattr(self.rt, "sim", None)
+        if not tnm or sim is None:
+            return
+        tent = sim.get_entity(tnm)
+        if tent is None:
+            return
+        snap = DamageHitSnapshot(
+            target_name=tnm,
+            is_enemy=bool(getattr(tent, "is_enemy", False)),
+            is_countdown=bool(getattr(tent, "is_countdown", False)),
+            is_memosprite=bool(getattr(tent, "is_memosprite", False)),
+            master_name=getattr(tent, "master_name", None),
+        )
+        for rec_atk, snaps in self._damage_hit_recorders:
+            if atk == rec_atk and all(s.target_name != tnm for s in snaps):
+                snaps.append(snap)
+
     def run_ability_frame(self, spec: AbilityFrameSpec) -> None:
         """统一执行任意 ConfigAbility 帧：前置钩子 -> 攻击作用域 -> 技能基础回能 -> 后置收口钩子。"""
         rt = self.rt
@@ -797,6 +939,8 @@ def dispatch_combat_fact(sim: Any, event: Any) -> None:
         if vm_rt is not None and hasattr(vm_rt, "on_enemy_defeated"):
             vm_rt.on_enemy_defeated(event)
     elif isinstance(event, DamageAppliedEvent):
+        if vm_rt is not None and getattr(vm_rt, "lifecycle", None) is not None:
+            vm_rt.lifecycle.record_damage_applied(event)
         executor = getattr(vm_rt, "executor", None) if vm_rt is not None else None
         if executor is not None and hasattr(executor, "on_damage_applied"):
             executor.on_damage_applied(event)

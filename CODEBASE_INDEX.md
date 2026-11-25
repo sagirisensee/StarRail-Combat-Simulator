@@ -13,9 +13,8 @@
 ## 📌 当前基线状态
 
 - **纯数据驱动架构收敛完成**：所有旧手写角色/敌方/光锥/遗器/关卡代码及 Nanoka 中间层已彻底清除；面板数值由 [tables.py](simulator/db/tables.py) 直读官方 `ExcelOutput`，战斗逻辑由 `simulator/vm/` 解释官方 `ConfigAbility` + `ConfigAI`。
-- **关卡 `30126122` 全部 9 份官方日志 `< 0.01%` 门禁全绿**：
-  - 双人/三人/四人全覆盖（`155925`, `184651`, `184845`, `204943`, `205144`, `220255`, `221208`, `222204`, `041608`），总伤与每回合逐动误差均 `< 0.01%`（其中 `041608` 四人队 `total_err=0.0000%`, `max_turn_err=0.0000%`）。
-- **全仓测试**：`pytest simulator/ -v` 共 **59/59 项测试全绿**。
+- **微内核三阶段收敛与 Free-Run 自证完成**：`ExecutionLifecycle` + `AbilityFrameSpec` + `InterventionHook` + 分步敌方子动作协议已消除 `EventBus` 双向耦合与动态猴子补丁；脱离日志的 Free-Run 不变量套件见 [`simulator/test_free_run_invariants.py`](simulator/test_free_run_invariants.py)。
+- **全仓对齐与回归测试**：已涵盖 `30126121` / `30126122` / `30126123` / `30325041–43` / `30510021` / `420564–84` 共 24 份官方实机日志（`< 0.0001%` 归零，三方命中零错配）及内核/Free-Run 单测套件（见下文全量运行命令）。
 
 ---
 
@@ -52,8 +51,8 @@
 
 | 文件 | 核心类 / 符号 | 职责说明 |
 | :--- | :--- | :--- |
-| [`simulator/core.py`](simulator/core.py) | `TurnSimulator` | AV 跑条调度微内核、`_run_kit_action_frame()`、秘技顺序与 `emit_event()` 事实路由编排 |
-| [`simulator/lifecycle.py`](simulator/lifecycle.py) | `ExecutionLifecycle`, `AbilityFrameSpec`, `dispatch_combat_fact`, `emit_sim_event` | 统一 Ability/Attack 帧、8 阶段 `SettlementBarrier` 与确定性内核事实路由（`EventBus` 降格为只读） |
+| [`simulator/core.py`](simulator/core.py) | `TurnSimulator` | AV 跑条调度微内核、`_run_kit_action_frame()`、`_run_enemy_turn_frame()`、`_run_char_one_more_chain()`、`InterventionHook` 与 `emit_event()` 事实路由编排 |
+| [`simulator/lifecycle.py`](simulator/lifecycle.py) | `ExecutionLifecycle`, `AbilityFrameSpec`, `InterventionHook`, `CallbackInterventionHook`, `DamageHitSnapshot`, `dispatch_combat_fact`, `emit_sim_event` | 统一 Ability/Attack 帧、8 阶段 `SettlementBarrier`、受控伤害目标捕获与确定性内核事实路由（`EventBus` 降格为只读） |
 | [`simulator/scheduler.py`](simulator/scheduler.py) | `ActionScheduler` | 五级优先级派生队列调度器与 `drain_window()` / `drain_at_boundary()` 受控排空窗口 |
 | [`simulator/entity.py`](simulator/entity.py) | `Entity` | 战斗实体模型、静态白字与动态属性只读 `@property` |
 | [`simulator/protocols.py`](simulator/protocols.py) | `KitHandler`, `LightConeHandler`, `RelicSetHandler`, `GenericKit`, `apply_equipped_relics_affixes` | 角色/光锥/遗器行为处理器统一抽象协议层 |
@@ -64,7 +63,8 @@
 | [`simulator/damage.py`](simulator/damage.py) | `DamageCalculator`, `DamageRequest`, `DamageBreakdown` | 8 大乘区纯函数伤害计算器 |
 | [`simulator/actions.py`](simulator/actions.py) & [`sp.py`](simulator/sp.py) | `ActionKind`, `DamageType`, `SkillPointManager` | 动作/伤害分类枚举与战技点池管理 |
 | [`simulator/inspector.py`](simulator/inspector.py) & [`tracer.py`](simulator/tracer.py) | `BattleInspector`, `ActionCausalTracer` | 只读战场快照查询与动作级因果链路追踪 |
-| [`simulator/vm/enemy_kit.py`](simulator/vm/enemy_kit.py) & [`simulator/vm/enemy_port.py`](simulator/vm/enemy_port.py) | `DataDrivenEnemyKit`, `DataDrivenEnemyCombatPort` | 纯数据驱动敌方行为协议与攻击/扩散/弹射/受击回能执行端口 |
+| [`simulator/vm/enemy_kit.py`](simulator/vm/enemy_kit.py) & [`simulator/vm/enemy_port.py`](simulator/vm/enemy_port.py) | `DataDrivenEnemyKit`, `DataDrivenEnemyCombatPort`, `EnemySubActionOutcome` | 纯数据驱动敌方分步子动作/AI 执行与护盾/锁血拦截 |
+| [`simulator/test_free_run_invariants.py`](simulator/test_free_run_invariants.py) | `TestFreeRunInvariants` | 脱离 `battle_logs/` 与 `reconcile/` 的无日志自由策略跑图与全量状态不变量套件 |
 | [`simulator/vm/stage_director.py`](simulator/vm/stage_director.py) & [`simulator/stage_mechanics.py`](simulator/stage_mechanics.py) | `DataDrivenStageDirector`, `BreakStatusHelper`, `StageMechanicPlugin` | 数据驱动波次换波、弱点击破辅助与通用关卡环境插件 |
 
 ---
@@ -91,4 +91,4 @@
 | **调试 `PostfixExpr` 或数值加载** | [`simulator/vm/expr.py`](simulator/vm/expr.py)<br>[`simulator/vm/loader.py`](simulator/vm/loader.py) | 注意现代（`17`）与早期（`10`）字节码差异，用 `dotnet_hash` 核对 Key |
 | **调试敌方 AI / 换波 / 锁血 / 护盾** | [`simulator/vm/enemy_kit.py`](simulator/vm/enemy_kit.py)<br>[`simulator/vm/stage_director.py`](simulator/vm/stage_director.py)<br>[`simulator/vm/stage_runner.py`](simulator/vm/stage_runner.py) | 严禁写死中文怪物名，按 `monster_template_id` 或官方配置字段判定 |
 | **调试轨迹回放或时序对齐** | [`simulator/golden/parser.py`](simulator/golden/parser.py)<br>[`simulator/golden/replay.py`](simulator/golden/replay.py) | 严禁在通用回放中硬编码单场日志分支，单场随机真值一律放 `simulator/plugins/` |
-| **运行全套回归测试** | `pytest simulator/ -v` | 59 项全绿；关卡 30126122 门禁 `< 0.01%` |
+| **运行全套回归测试** | `python -m pytest -m "slow or not slow" -v` | 涵盖内核生命周期、Free-Run 不变量与全部 24 份官方日志对齐用例（`< 0.0001%`） |

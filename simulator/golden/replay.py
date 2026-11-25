@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from simulator.actions import ActionKind
 from simulator.events import ActionExecuteEvent, BattleEvent
+from simulator.lifecycle import CallbackInterventionHook
 from simulator.golden.models import (
     SPIRIT_TRAJECTORY_SKILLS,
     Decision,
@@ -558,8 +559,47 @@ def run_trajectory_replay(
             return
         _on_turn_action_completed(actor_ent, pre_turn_end=True)
 
-    sim.pre_turn_end_hook = _pre_turn_end_hook
-    sim.turn_action_completed_hook = _on_turn_action_completed
+    def _on_sub_action_end(
+        actor_ent: Any,
+        *,
+        sub_action_index: int,
+        has_next_sub_action: bool,
+    ) -> None:
+        if not (getattr(actor_ent, "is_enemy", False) and has_next_sub_action):
+            return
+        if not ult_queue:
+            return
+        u_item = ult_queue[0][1]
+        cur_t = getattr(sim, "current_turn_entity", None)
+        now_sub_av = float(getattr(sim, "current_av", 0.0))
+        u_ent_d = sim.get_entity(u_item.actor)
+        diag_cb = getattr(sim, "timeline_diag_cb", None)
+        if callable(diag_cb):
+            e_cur = float(getattr(u_ent_d, "energy", 0.0)) if u_ent_d is not None else -1.0
+            e_max = float(getattr(u_ent_d, "max_energy", 0.0)) if u_ent_d is not None else -1.0
+            diag_cb(
+                "SUB_END",
+                f"turn={getattr(cur_t, 'name', None)} head={u_item.actor}@{u_item.av:.4f} "
+                f"now={now_sub_av:.4f} betw={getattr(u_item, 'between_enemy_sub_actions', False)} "
+                f"ow={getattr(u_item, 'turn_owner', '')} E={e_cur:.2f}/{e_max:.2f}",
+            )
+        if not getattr(u_item, "between_enemy_sub_actions", False):
+            u_ow = _resolve_turn_owner(getattr(u_item, "turn_owner", ""))
+            if not (
+                cur_t is not None
+                and getattr(cur_t, "is_enemy", False)
+                and u_ow
+                and (
+                    getattr(cur_t, "name", "").replace("_", "") == u_ow.replace("_", "")
+                    if u_ow[-1:].isdigit()
+                    else getattr(cur_t, "name", "").startswith(u_ow)
+                )
+            ):
+                return
+        if u_item.av > now_sub_av + 1e-4:
+            return
+        if u_ent_d is not None and float(u_ent_d.energy) >= float(u_ent_d.max_energy) - 1e-6:
+            _fire_due_ults(allow_cur_enemy=True)
 
     actor_queues = defaultdict(deque)
     for idx, i in enumerate(timeline):
@@ -627,8 +667,13 @@ def run_trajectory_replay(
             fired_master.add(_idx)
             replay.turn_matched += 1
 
-    sim.insert_action_decision_provider = lambda actor_name: _pop_actor_decision(actor_name, require_due=True)
-    sim.on_auto_chained_skill = _on_auto_chained_skill
+    sim.intervention_hook = CallbackInterventionHook(
+        on_sub_action_end=_on_sub_action_end,
+        on_pre_turn_end=_pre_turn_end_hook,
+        on_turn_action_completed=_on_turn_action_completed,
+        on_auto_chained_skill=_on_auto_chained_skill,
+        decide_insert_action=lambda actor_name: _pop_actor_decision(actor_name, require_due=True),
+    )
     if director is not None and hasattr(director, "drain_opening_actions"):
         before_master_len = len(master_fired)
         director.drain_opening_actions()
@@ -751,43 +796,6 @@ def run_trajectory_replay(
         actor_ent = sim.advance_to_next_turn()
         if director is not None:
             director.after_step()
-
-        def _on_sub_action_end() -> None:
-            if not ult_queue:
-                return
-            u_item = ult_queue[0][1]
-            cur_t = getattr(sim, "current_turn_entity", None)
-            now_sub_av = float(getattr(sim, "current_av", 0.0))
-            u_ent_d = sim.get_entity(u_item.actor)
-            diag_cb = getattr(sim, "timeline_diag_cb", None)
-            if callable(diag_cb):
-                e_cur = float(getattr(u_ent_d, "energy", 0.0)) if u_ent_d is not None else -1.0
-                e_max = float(getattr(u_ent_d, "max_energy", 0.0)) if u_ent_d is not None else -1.0
-                diag_cb(
-                    "SUB_END",
-                    f"turn={getattr(cur_t, 'name', None)} head={u_item.actor}@{u_item.av:.4f} "
-                    f"now={now_sub_av:.4f} betw={getattr(u_item, 'between_enemy_sub_actions', False)} "
-                    f"ow={getattr(u_item, 'turn_owner', '')} E={e_cur:.2f}/{e_max:.2f}",
-                )
-            if not getattr(u_item, "between_enemy_sub_actions", False):
-                u_ow = _resolve_turn_owner(getattr(u_item, "turn_owner", ""))
-                if not (
-                    cur_t is not None
-                    and getattr(cur_t, "is_enemy", False)
-                    and u_ow
-                    and (
-                        getattr(cur_t, "name", "").replace("_", "") == u_ow.replace("_", "")
-                        if u_ow[-1:].isdigit()
-                        else getattr(cur_t, "name", "").startswith(u_ow)
-                    )
-                ):
-                    return
-            if u_item.av > now_sub_av + 1e-4:
-                return
-            if u_ent_d is not None and float(u_ent_d.energy) >= float(u_ent_d.max_energy) - 1e-6:
-                _fire_due_ults(allow_cur_enemy=True)
-
-        sim.on_enemy_sub_action_end = _on_sub_action_end
         if (
             float(getattr(sim, "current_av", 0.0)) < 1e-4
             or (

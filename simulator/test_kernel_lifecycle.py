@@ -17,18 +17,29 @@ from simulator.entity import Entity
 from simulator.events import (
     ActionEndEvent,
     ActionExecuteEvent,
+    DamageAppliedEvent,
     EnemyDefeatedEvent,
     PrimaryDamageCompleteEvent,
     TurnBeginEvent,
+    TurnEndEvent,
 )
 from simulator.lifecycle import (
     AbilityFrameSpec,
+    CallbackInterventionHook,
     ExecutionPhase,
     enter_deathrattle_limbo,
     increment_deathrattle_actions,
 )
 from simulator.protocols import KitHandler
 from simulator.vm.audit_vm_coverage import VMCoverageAuditor, extract_executor_supported_types
+from simulator.vm.enemy_port import (
+    BaseEnemyCombatPortImpl,
+    EnemyActionContext,
+    EnemyActionResult,
+    EnemyKit,
+    EnemySubActionOutcome,
+    STANDARD_ACTION_DISTANCE,
+)
 from simulator.vm.executor import TaskExecutor
 from simulator.vm.runtime import VMRuntime
 from simulator.vm.stage_sim_adapter import DataDrivenStageDirector, build_data_driven_stage
@@ -489,6 +500,129 @@ class TestKernelLifecycle(unittest.TestCase):
             ],
         )
         self.assertFalse(sim.scheduler.continuous_action_hold)
+        rt.lifecycle.assert_clean()
+
+    def test_vm_layer_has_zero_event_bus_subscribe_or_publish(self) -> None:
+        """Phase 3 收口：核心 VM 层（simulator/vm 与 simulator/vm/ops 非测试模块）零 EventBus 订阅或发布。"""
+        vm_root = Path(__file__).resolve().parent / "vm"
+        candidates = list(vm_root.glob("*.py")) + list((vm_root / "ops").glob("*.py"))
+        offenders: List[str] = []
+        for py_path in sorted(candidates):
+            if py_path.name.startswith("test_") or py_path.name.startswith("_test_"):
+                continue
+            text = py_path.read_text(encoding="utf-8")
+            for idx, line in enumerate(text.splitlines(), start=1):
+                if "event_bus.subscribe(" in line or ".event_bus.publish(" in line:
+                    offenders.append(f"{py_path.relative_to(vm_root)}:{idx}: {line.strip()}")
+        self.assertEqual(offenders, [], f"发现残留 VM EventBus 耦合: {offenders}")
+
+    def test_staged_enemy_sub_action_loop_and_intervention_hook_contract(self) -> None:
+        """敌方分步子动作循环与 InterventionHook 契约：按确定顺序触发子动作边界、追击与回合钩子。"""
+        sim, rt, ally, _enemy_a, _lvl = _build_synthetic_vm_env()
+        enemy_b = sim.get_entity("目标B")
+        assert enemy_b is not None
+        trace: List[str] = []
+
+        orig_dispatch = rt.modifier_engine.dispatch_event
+
+        def _spy_dispatch(event_name: str, **kwargs: Any) -> Any:
+            if event_name == "OnListenBeforeTurnPhase1End":
+                trace.append("OnListenBeforeTurnPhase1End")
+            return orig_dispatch(event_name, **kwargs)
+
+        rt.modifier_engine.dispatch_event = _spy_dispatch  # type: ignore[method-assign]
+        sim.event_bus.subscribe(TurnEndEvent, lambda e: trace.append("TurnEnd"))
+
+        class _StagedTestEnemyKit(EnemyKit):
+            supports_staged_sub_actions: bool = True
+
+            def begin_turn_session(self, ctx: EnemyActionContext) -> Any:
+                return {"ctx": ctx}
+
+            def execute_next_sub_action(
+                self,
+                session: Any,
+                sub_action_index: int,
+            ) -> EnemySubActionOutcome | None:
+                if sub_action_index == 1:
+                    trace.append("sub1")
+                    sim.scheduler.enqueue(
+                        ally.name,
+                        lambda: trace.append("followup"),
+                        name="测试追击",
+                        category=ActionScheduleCategory.FOLLOW_UP,
+                    )
+                    return EnemySubActionOutcome(executed=True, has_next_sub_action=True)
+                if sub_action_index == 2:
+                    trace.append("sub2")
+                    return EnemySubActionOutcome(executed=True, has_next_sub_action=False)
+                return None
+
+            def finish_turn_session(self, session: Any) -> EnemyActionResult:
+                return EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+
+            def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:
+                raise AssertionError("staged EnemyKit 不应走 legacy execute_turn()")
+
+        def _on_sub_end(actor: Any, *, sub_action_index: int, has_next_sub_action: bool) -> None:
+            self.assertEqual(sim.scheduler._action_frame_depth, 0)
+            trace.append(f"hook:sub_end({sub_action_index},{has_next_sub_action})")
+
+        enemy_b.kit = _StagedTestEnemyKit(enemy_b.name, BaseEnemyCombatPortImpl(sim))
+        sim.intervention_hook = CallbackInterventionHook(
+            on_sub_action_end=_on_sub_end,
+            on_pre_turn_end=lambda actor: trace.append("hook:pre_turn_end"),
+            on_turn_action_completed=lambda actor: trace.append("hook:turn_done"),
+        )
+
+        sim.execute_current_turn(actor=enemy_b)
+
+        self.assertEqual(
+            trace,
+            [
+                "sub1",
+                "OnListenBeforeTurnPhase1End",
+                "hook:sub_end(1,True)",
+                "followup",
+                "sub2",
+                "hook:pre_turn_end",
+                "OnListenBeforeTurnPhase1End",
+                "TurnEnd",
+                "hook:turn_done",
+            ],
+        )
+        rt.lifecycle.assert_clean()
+
+    def test_capture_damage_targets_records_snapshot_and_cleans_up_on_exception(self) -> None:
+        """capture_damage_targets 应在伤害瞬间采集快照（早于退场清理）并在异常时自动清理。"""
+        sim, rt, ally, _enemy_a, _lvl = _build_synthetic_vm_env()
+        snaps: List[Any] = []
+        with rt.lifecycle.capture_damage_targets(ally.name) as captured:
+            snaps = captured
+            sim.emit_event(
+                DamageAppliedEvent(
+                    av=0.0,
+                    cycle=0,
+                    attacker_name=ally.name,
+                    target_name="目标B",
+                    damage=250.0,
+                    is_crit=True,
+                    breakdown=None,
+                    target_hp_left=4750.0,
+                )
+            )
+            # 模拟退场后才退出作用域（类似忆灵瞬间退场）
+            sim.entities[:] = [e for e in sim.entities if e.name != "目标B"]
+
+        self.assertEqual(len(snaps), 1)
+        self.assertEqual(snaps[0].target_name, "目标B")
+        self.assertTrue(snaps[0].is_enemy)
+        self.assertFalse(snaps[0].is_memosprite)
+        rt.lifecycle.assert_clean()
+
+        with self.assertRaises(RuntimeError):
+            with rt.lifecycle.capture_damage_targets(ally.name):
+                raise RuntimeError("capture scope aborted")
         rt.lifecycle.assert_clean()
 
 

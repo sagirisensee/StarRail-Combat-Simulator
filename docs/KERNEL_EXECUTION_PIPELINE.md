@@ -16,9 +16,9 @@
    - 悬停置位、动作计数递减、即时退场与延迟 `OnListenCharacterDie` 在 `combat_ops.py`、`stage_ops.py`、`turn_ops.py` 与 `runtime.py` 中重复实现。
 4. **`_action_frame_depth` 手工归零外泄**
    - [`simulator/vm/runtime.py`](../simulator/vm/runtime.py)、[`simulator/vm/enemy_kit.py`](../simulator/vm/enemy_kit.py) 与 [`simulator/vm/stage_director.py`](../simulator/vm/stage_director.py) 在 6 处直接读写 `sched._action_frame_depth = 0` 来绕过原子帧拦截，缺少统一的受保护边界入口。
-5. **敌方多动与连动未纳入 `TurnFrame`（敌方部分仍待 Phase 3 合并）**
-   - 我方主动作、`UseSkillOneMore` 连动与终结技抢断已在 Phase 2 收编至 `TurnSimulator._run_kit_action_frame`，全部 VM Ability 帧（我方、敌方、追击、欢愉技、`BattleEvent`）已统一收编至 `ExecutionLifecycle.run_ability_frame(AbilityFrameSpec)`；
-   - 敌方 `OneMorePerTurn` / `OneMore` 多动循环仍驻留在 [`simulator/vm/enemy_kit.py`](../simulator/vm/enemy_kit.py) 的 `while action_idx < 8` 中。
+5. **敌方多动与连动未纳入 `TurnFrame`（已在 Phase 3 收口）**
+   - 我方主动作、`UseSkillOneMore` 连动与终结技抢断已在 Phase 2 收编至 `TurnSimulator._run_kit_action_frame` 与 `_run_char_one_more_chain`，全部 VM Ability 帧（我方、敌方、追击、欢愉技、`BattleEvent`）已统一收编至 `ExecutionLifecycle.run_ability_frame(AbilityFrameSpec)`；
+   - Phase 3 已在 `EnemyKit` 引入分步子动作契约（`EnemySubActionOutcome`、`begin_turn_session` / `execute_next_sub_action` / `finish_turn_session`），由 `TurnSimulator._run_enemy_turn_frame` 与 `_on_turn_sub_action_boundary` 统一驱动敌方多动、子动作间隙 `OnListenBeforeTurnPhase1End` 与受控 `drain_window()`，并将 `enemy_kit.py` 最后一处 `event_bus.subscribe` 迁移至 `ExecutionLifecycle.capture_damage_targets()`；同时以显式 `InterventionHook` / `CallbackInterventionHook` 取代 `replay.py` 挂在 `sim` 上的 5 个动态猴子补丁属性。
 6. **VM 静态覆盖率审计器失真**
    - [`simulator/vm/audit_vm_coverage.py`](../simulator/vm/audit_vm_coverage.py) 在 `TaskExecutor` 拆分出 `_TASK_DISPATCH` 分发表后漏扫了全部静态注册条目，导致 5 星角色/光锥/遗器覆盖率错误显示为 `2.1%` / `0.0%`。
 
@@ -60,13 +60,14 @@ TurnFrame (core.py)
 
 | 模块 | 核心职责 |
 | :--- | :--- |
-| [`simulator/lifecycle.py`](../simulator/lifecycle.py) | 定义 `ExecutionPhase`、`AfterAttackPayload`、`AbilityFrameSpec`、`ExecutionLifecycle`（含 8 阶段 `settle_attack_boundary()` 与 `run_ability_frame()`）、`dispatch_combat_fact()` 与 `emit_sim_event()` |
-| [`simulator/core.py`](../simulator/core.py) | 新增 `TurnSimulator.emit_event()` 显式路由内核事实，新增 `_run_kit_action_frame()` 统一主行动 / `UseSkillOneMore` / 终结技动作帧 |
+| [`simulator/lifecycle.py`](../simulator/lifecycle.py) | 定义 `ExecutionPhase`、`AfterAttackPayload`、`AbilityFrameSpec`、`DamageHitSnapshot`、`InterventionHook` / `CallbackInterventionHook`、`ExecutionLifecycle`（含 8 阶段 `settle_attack_boundary()`、`run_ability_frame()` 与 `capture_damage_targets()`）、`dispatch_combat_fact()` 与 `emit_sim_event()` |
+| [`simulator/core.py`](../simulator/core.py) | 新增 `TurnSimulator.emit_event()` 显式路由内核事实，`_run_kit_action_frame()`、`_run_char_one_more_chain()`、`_run_enemy_turn_frame()` 与 `_on_turn_sub_action_boundary()` 统一敌我动作/多动帧与 `InterventionHook` 干预契约 |
 | [`simulator/scheduler.py`](../simulator/scheduler.py) | 新增 `ActionScheduler.drain_window()` 与 `ActionScheduler.drain_at_boundary()` 上下文管理器，所有动作事件走 `emit_sim_event` |
-| [`simulator/vm/runtime.py`](../simulator/vm/runtime.py)<br>[`simulator/vm/executor.py`](../simulator/vm/executor.py)<br>[`simulator/vm/stage_director.py`](../simulator/vm/stage_director.py) | **彻底移除全部 14 处 `event_bus.subscribe` 战斗逻辑回调**，改为由 `dispatch_combat_fact` 按 `VMRuntime/TaskExecutor -> StageDirector` 固定顺序显式调用；`EventBus` 降格为纯只读观测总线（仅日志录制与因果追踪消费） |
-| [`simulator/vm/ops/combat_ops.py`](../simulator/vm/ops/combat_ops.py)<br>[`simulator/vm/ops/stage_ops.py`](../simulator/vm/ops/stage_ops.py)<br>[`simulator/vm/ops/turn_ops.py`](../simulator/vm/ops/turn_ops.py)<br>[`simulator/vm/enemy_kit.py`](../simulator/vm/enemy_kit.py) | 删除重复 Ability 前后置钩子/回能模板代码与多套收口分支，统一走 `lifecycle.run_ability_frame()` 与 `emit_sim_event()` |
+| [`simulator/vm/runtime.py`](../simulator/vm/runtime.py)<br>[`simulator/vm/executor.py`](../simulator/vm/executor.py)<br>[`simulator/vm/stage_director.py`](../simulator/vm/stage_director.py) | **彻底移除全部 `event_bus.subscribe` 战斗逻辑回调**，改为由 `dispatch_combat_fact` 按 `VMRuntime/TaskExecutor -> StageDirector` 固定顺序显式调用；`EventBus` 降格为纯只读观测总线（仅日志录制与因果追踪消费） |
+| [`simulator/vm/ops/combat_ops.py`](../simulator/vm/ops/combat_ops.py)<br>[`simulator/vm/ops/stage_ops.py`](../simulator/vm/ops/stage_ops.py)<br>[`simulator/vm/ops/turn_ops.py`](../simulator/vm/ops/turn_ops.py)<br>[`simulator/vm/enemy_kit.py`](../simulator/vm/enemy_kit.py)<br>[`simulator/vm/enemy_port.py`](../simulator/vm/enemy_port.py) | 删除重复 Ability 前后置钩子/回能模板代码与多套收口分支，统一走 `lifecycle.run_ability_frame()`、`capture_damage_targets()`、`EnemyKit` 分步子动作契约与 `emit_sim_event()` |
+| [`simulator/golden/replay.py`](../simulator/golden/replay.py) | 通过单一 `sim.intervention_hook = CallbackInterventionHook(...)` 接入，移除 5 处动态属性猴子补丁 |
 | [`simulator/vm/audit_vm_coverage.py`](../simulator/vm/audit_vm_coverage.py) | 补充解析 `TaskExecutor._TASK_DISPATCH` 分发表全部键，恢复真实静态覆盖率审计 |
-| [`simulator/test_kernel_lifecycle.py`](../simulator/test_kernel_lifecycle.py) | 对 8 阶段栅栏顺序、非嵌套统一路径、亡语悬停、异常不泄漏、`drain_window`、`EventBus` 零战斗订阅、`run_ability_frame`、`_run_kit_action_frame` 与覆盖审计建立秒级单元测试 |
+| [`simulator/test_kernel_lifecycle.py`](../simulator/test_kernel_lifecycle.py)<br>[`simulator/test_free_run_invariants.py`](../simulator/test_free_run_invariants.py) | 单元测试覆盖 8 阶段栅栏、亡语悬停、零 VM 订阅、`InterventionHook` 与分步敌方多动契约；Free-Run 套件脱离 `battle_logs/` 独立验证 `30126122` / `30126121` / `30325041` / `420564` 物理不变量 |
 
 ---
 
@@ -84,12 +85,11 @@ TurnFrame (core.py)
 
 ---
 
-## 四、后续路线图（Phase 2 & Phase 3）
+## 四、Phase 3 收口产物与后续机制扩展方向
 
-### Phase 2：`TurnFrame` 与连动/多动统一
-1. 将敌方 `OneMorePerTurn` / `OneMore` 子动作循环（[`simulator/vm/enemy_kit.py`](../simulator/vm/enemy_kit.py)）与我方 `UseSkillOneMore`（[`simulator/core.py`](../simulator/core.py)）统一收编为内核 `TurnFrame` 子阶段（`SubAction` 帧），让敌我子动作间的终结技插队、追击与 `OnListenBeforeTurnPhase1End` 通过同一套 `TurnFrame` 边界声明完成。
-2. 将 `replay.py` 中的 `pre_turn_end_hook` / `turn_action_completed_hook` / `on_enemy_sub_action_end` 等外部回调升级为显式的调度介入点契约（`InterventionHook`）。
+### 已完成（Phase 3 收口）
+1. **敌我多动/连动 `TurnFrame` 统一 & `InterventionHook` 契约化**：`TurnSimulator._run_enemy_turn_frame` + `EnemyKit` 分步子动作契约与 `_run_char_one_more_chain` 彻底收口了敌方 `OneMorePerTurn`/`OneMore` 与我方 `UseSkillOneMore`；`replay.py` 全部 5 处动态回调统一收编为 `sim.intervention_hook = CallbackInterventionHook(...)`，`simulator/vm/` 核心非测试文件达到 `EventBus` 零订阅、零发布。
+2. **Free-Run Policy 烟雾与不变量回归**：落地 [`simulator/test_free_run_invariants.py`](../simulator/test_free_run_invariants.py)，彻底脱离 `battle_logs/` 与 `reconcile/`，在真实官方关卡 `30126122` / `30126121` / `30325041` / `420564` 上每步硬校验 `rt.lifecycle.assert_clean()`、调度器排空、SP/HP/能量/韧性/跑道与 AV 单调不变量。
 
-### Phase 3：无日志自由运行测试 & 极简探针工作流
-1. **Free-Run Policy 烟雾与不变量回归**：构建不依赖 `battle_logs/` 与 `reconcile/` 外挂的 4 人队自由策略跑图测试，每回合断言 `rt.lifecycle.assert_clean()`、SP/能量守恒与无死循环。
-2. **极简探针日志（Probe Log）优先原则**：探索未知内核机制（如新 `BattleEvent`、多段亡语嵌套、特定混淆 `$type` 时序）时，优先录制 **1~2 名角色、1~3 动** 的单机制探针日志钉死内核铁律并固化进 `test_kernel_lifecycle.py`，全量深渊/末日/虚构/欢愉日志仅作端到端回归防线。
+### 后续演进建议（机制族横向扩充）
+- **极简探针日志（Probe Log）优先原则**：后续扩展全新角色/敌方/环境机制族（如 DoT 引爆、超击破、反击、特定混淆 `$type` 时序）时，优先录制 **1~2 名角色、1~3 动** 的单机制探针日志钉死内核铁律，同时用 `test_free_run_invariants.py` 与 `audit_vm_coverage.py` 做自动化泛化回归；全量深渊/末日/虚构日志仅作端到端回归防线。

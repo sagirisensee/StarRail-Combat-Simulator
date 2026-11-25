@@ -34,8 +34,18 @@ class EnemyActionResult:
             raise ValueError("reset_distance must be finite and non-negative")
 
 
+@dataclass(frozen=True)
+class EnemySubActionOutcome:
+    """单次敌方子动作的执行结果，由内核 TurnFrame 统一协调间隙钩子与多动循环。"""
+
+    executed: bool = True
+    has_next_sub_action: bool = False
+
+
 class EnemyKit(ABC):
     """敌方专属 Kit 基类，由 DataDrivenEnemyKit 实现。"""
+
+    supports_staged_sub_actions: bool = False
 
     def __init__(self, owner_id: str, port: Any) -> None:
         self.owner_id = owner_id
@@ -43,6 +53,19 @@ class EnemyKit(ABC):
 
     def on_battle_start(self) -> Optional[EnemyActionResult]:
         return None
+
+    def begin_turn_session(self, ctx: EnemyActionContext) -> Any:
+        return None
+
+    def execute_next_sub_action(
+        self,
+        session: Any,
+        sub_action_index: int,
+    ) -> Optional[EnemySubActionOutcome]:
+        return None
+
+    def finish_turn_session(self, session: Any) -> EnemyActionResult:
+        return EnemyActionResult()
 
     @abstractmethod
     def execute_turn(self, ctx: EnemyActionContext) -> EnemyActionResult:

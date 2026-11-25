@@ -24,7 +24,7 @@ from .effects import (
 from .sp import SkillPointManager
 from .status import StatusManager, StatType
 from .actions import ActionKind, ActionContext, ActionScheduleCategory, TargetMode
-from .lifecycle import dispatch_combat_fact
+from .lifecycle import InterventionHook, dispatch_combat_fact
 from .scheduler import ActionScheduler
 
 
@@ -100,6 +100,7 @@ class TurnSimulator:
         ]
         self.battle_started: bool = False
         self._in_technique_phase: bool = False
+        self.intervention_hook: Optional[InterventionHook] = None
 
         # 注册事件总线转发至各实体挂载的技能套件、光锥与遗器
         def _forward_event_to_handlers(evt: BattleEvent):
@@ -614,6 +615,220 @@ class TurnSimulator:
                     action_id=self._action_seq,
                 ))
 
+    def _has_pre_turn_end_hook(self) -> bool:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            if hasattr(hook, "has_pre_turn_end"):
+                return bool(hook.has_pre_turn_end)
+            return True
+        return callable(getattr(self, "pre_turn_end_hook", None))
+
+    def _invoke_pre_turn_end(self, actor: Entity) -> None:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            hook.on_pre_turn_end(actor)
+            return
+        pre_hook = getattr(self, "pre_turn_end_hook", None)
+        if callable(pre_hook):
+            pre_hook(actor)
+
+    def _has_turn_action_completed_hook(self) -> bool:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            if hasattr(hook, "has_turn_action_completed"):
+                return bool(hook.has_turn_action_completed)
+            return True
+        return callable(getattr(self, "turn_action_completed_hook", None))
+
+    def _invoke_turn_action_completed(self, actor: Entity) -> None:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            hook.on_turn_action_completed(actor)
+            return
+        comp_hook = getattr(self, "turn_action_completed_hook", None)
+        if callable(comp_hook):
+            comp_hook(actor)
+
+    def _invoke_sub_action_end(
+        self,
+        actor: Entity,
+        *,
+        sub_action_index: int,
+        has_next_sub_action: bool,
+    ) -> None:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            hook.on_sub_action_end(
+                actor,
+                sub_action_index=sub_action_index,
+                has_next_sub_action=has_next_sub_action,
+            )
+            return
+        if getattr(actor, "is_enemy", False) and has_next_sub_action:
+            sub_cb = getattr(self, "on_enemy_sub_action_end", None)
+            if callable(sub_cb):
+                sub_cb()
+
+    def _invoke_auto_chained_skill(self, actor_name: str, skill_id: int) -> None:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            hook.on_auto_chained_skill(actor_name, skill_id)
+            return
+        on_chain = getattr(self, "on_auto_chained_skill", None)
+        if callable(on_chain):
+            on_chain(actor_name, skill_id)
+
+    def decide_insert_action(
+        self,
+        actor_name: str,
+    ) -> Optional[Tuple[Optional[ActionKind], Optional[Tuple[str, ...]]]]:
+        hook = getattr(self, "intervention_hook", None)
+        if hook is not None:
+            return hook.decide_insert_action(actor_name)
+        provider = getattr(self, "insert_action_decision_provider", None)
+        return provider(actor_name) if callable(provider) else None
+
+    def _on_turn_sub_action_boundary(
+        self,
+        actor: Entity,
+        *,
+        sub_action_index: int,
+        has_next_sub_action: bool,
+    ) -> None:
+        if has_next_sub_action or self.scheduler.has_pending():
+            vm_rt = getattr(self, "vm_runtime", None)
+            if vm_rt is not None:
+                vm_rt.modifier_engine.dispatch_event(
+                    "OnListenBeforeTurnPhase1End",
+                    param_entity_id=actor.name,
+                )
+        if has_next_sub_action:
+            with self.scheduler.drain_window():
+                self._invoke_sub_action_end(
+                    actor,
+                    sub_action_index=sub_action_index,
+                    has_next_sub_action=True,
+                )
+                if self.scheduler.has_pending():
+                    self.scheduler.drain()
+
+    def _run_enemy_turn_frame(self, active_entity: Entity) -> None:
+        from simulator.vm.enemy_port import (
+            EnemyActionContext,
+            EnemyActionResult,
+            STANDARD_ACTION_DISTANCE,
+        )
+
+        ctx = EnemyActionContext(
+            action_id=f"{active_entity.name}_{self.current_av:.1f}_{self._action_seq}",
+            actor_id=active_entity.name,
+        )
+        if getattr(active_entity.kit, "supports_staged_sub_actions", False):
+            session = active_entity.kit.begin_turn_session(ctx)
+            if session is not None:
+                for sub_idx in range(1, 33):
+                    outcome = active_entity.kit.execute_next_sub_action(session, sub_idx)
+                    if outcome is None:
+                        break
+                    if outcome.executed:
+                        self._on_turn_sub_action_boundary(
+                            active_entity,
+                            sub_action_index=sub_idx,
+                            has_next_sub_action=outcome.has_next_sub_action,
+                        )
+                    if active_entity.current_hp <= 0.0 and not getattr(active_entity, "is_infinite_hp", False):
+                        break
+                res = active_entity.kit.finish_turn_session(session)
+            else:
+                res = EnemyActionResult(reset_distance=STANDARD_ACTION_DISTANCE)
+        else:
+            res = active_entity.kit.execute_turn(ctx)
+        self._pending_turn_reset_distance = res.reset_distance
+
+    def _run_char_one_more_chain(
+        self,
+        active_entity: Entity,
+        *,
+        is_char_kit: bool,
+        target_ids: Optional[Tuple[str, ...]],
+        is_natural_turn_action: bool,
+        schedule_category: Optional[ActionScheduleCategory],
+        owner_turn_id: Optional[int],
+        owner_turn_actor: Optional[str],
+        should_publish: bool,
+        prev_hold: bool,
+    ) -> None:
+        vm_rt = getattr(self, "vm_runtime", None)
+        one_more_steps = 0
+        ctrl_map = {
+            "ControlSkill01": ActionKind.BASIC,
+            "ControlSkill02": ActionKind.SKILL,
+            "ControlSkill03": ActionKind.ULTIMATE,
+        }
+        while (
+            vm_rt is not None
+            and is_char_kit
+            and vm_rt._pending_use_skill_one_more.get(active_entity.name)
+        ):
+            if active_entity.current_hp <= 0.0 and not getattr(active_entity, "is_infinite_hp", False):
+                vm_rt._pending_use_skill_one_more[active_entity.name].clear()
+                break
+            one_more_steps += 1
+            if one_more_steps > 16:
+                vm_rt._pending_use_skill_one_more[active_entity.name].clear()
+                break
+            ctrl_type = vm_rt._pending_use_skill_one_more[active_entity.name].pop(0)
+            one_more_kind = ctrl_map.get(ctrl_type, ActionKind.BASIC)
+            sub_defn = active_entity.kit.definition(one_more_kind)
+            if sub_defn.cost.sp != 0:
+                self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
+            sub_tgts = (
+                tuple(
+                    e.name for e in self.entities
+                    if getattr(e, "is_enemy", False)
+                    and not getattr(e, "is_countdown", False)
+                    and not getattr(e, "is_unselectable", False)
+                    and float(getattr(e, "current_hp", 0.0)) > 0.0
+                )
+                if sub_defn.target_mode == TargetMode.ALL_ENEMIES
+                else tuple(
+                    t for t in (target_ids or ())
+                    if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
+                )
+            )
+
+            def _after_chain_exec(sub_sid: int) -> None:
+                self._invoke_auto_chained_skill(active_entity.name, sub_sid)
+
+            def _after_chain_resolve() -> None:
+                if not vm_rt._pending_use_skill_one_more.get(active_entity.name):
+                    self.scheduler.continuous_action_hold = False
+
+            self._run_kit_action_frame(
+                active_entity,
+                kind=one_more_kind,
+                defn=sub_defn,
+                action_type=sub_defn.name,
+                description=f"施放【{sub_defn.name}】",
+                target_ids=sub_tgts,
+                is_natural_turn_action=is_natural_turn_action,
+                schedule_category=schedule_category,
+                owner_turn_id=owner_turn_id,
+                owner_turn_actor_id=owner_turn_actor,
+                should_publish=should_publish,
+                after_execute_event_hook=_after_chain_exec,
+                after_resolve_hook=_after_chain_resolve,
+            )
+            self._invoke_sub_action_end(
+                active_entity,
+                sub_action_index=one_more_steps,
+                has_next_sub_action=bool(vm_rt._pending_use_skill_one_more.get(active_entity.name)),
+            )
+        if one_more_steps > 0 and not (vm_rt and vm_rt._pending_use_skill_one_more.get(active_entity.name)):
+            self.scheduler.continuous_action_hold = False
+        elif not is_natural_turn_action and prev_hold:
+            self.scheduler.continuous_action_hold = prev_hold
+
     def _execute_action(
         self,
         active_entity: Entity,
@@ -716,9 +931,7 @@ class TurnSimulator:
                     active_entity.action_callback(active_entity, self.resolver, actual_action)
                 elif active_entity.is_enemy:
                     if getattr(active_entity, "kit", None) is not None and isinstance(active_entity.kit, EnemyKit):
-                        ctx = EnemyActionContext(action_id=f"{active_entity.name}_{self.current_av:.1f}_{self._action_seq}", actor_id=active_entity.name)
-                        res = active_entity.kit.execute_turn(ctx)
-                        self._pending_turn_reset_distance = res.reset_distance
+                        self._run_enemy_turn_frame(active_entity)
                     else:
                         allies = [e for e in self.entities if not e.is_enemy and not getattr(e, "is_countdown", False)]
                         if allies:
@@ -750,73 +963,17 @@ class TurnSimulator:
                         action_id=self._action_seq
                     ))
 
-            vm_rt = getattr(self, "vm_runtime", None)
-            one_more_steps = 0
-            while (
-                vm_rt is not None
-                and is_char_kit
-                and vm_rt._pending_use_skill_one_more.get(active_entity.name)
-            ):
-                if active_entity.current_hp <= 0.0 and not getattr(active_entity, "is_infinite_hp", False):
-                    vm_rt._pending_use_skill_one_more[active_entity.name].clear()
-                    break
-                one_more_steps += 1
-                if one_more_steps > 16:
-                    vm_rt._pending_use_skill_one_more[active_entity.name].clear()
-                    break
-                ctrl_type = vm_rt._pending_use_skill_one_more[active_entity.name].pop(0)
-                ctrl_map = {
-                    "ControlSkill01": ActionKind.BASIC,
-                    "ControlSkill02": ActionKind.SKILL,
-                    "ControlSkill03": ActionKind.ULTIMATE,
-                }
-                one_more_kind = ctrl_map.get(ctrl_type, ActionKind.BASIC)
-                sub_defn = active_entity.kit.definition(one_more_kind)
-                if sub_defn.cost.sp != 0:
-                    self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
-                sub_tgts = (
-                    tuple(
-                        e.name for e in self.entities
-                        if getattr(e, "is_enemy", False)
-                        and not getattr(e, "is_countdown", False)
-                        and not getattr(e, "is_unselectable", False)
-                        and float(getattr(e, "current_hp", 0.0)) > 0.0
-                    )
-                    if sub_defn.target_mode == TargetMode.ALL_ENEMIES
-                    else tuple(
-                        t for t in (target_ids or ())
-                        if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
-                    )
-                )
-
-                def _after_chain_exec(sub_sid: int) -> None:
-                    on_chain = getattr(self, "on_auto_chained_skill", None)
-                    if callable(on_chain):
-                        on_chain(active_entity.name, sub_sid)
-
-                def _after_chain_resolve() -> None:
-                    if not vm_rt._pending_use_skill_one_more.get(active_entity.name):
-                        self.scheduler.continuous_action_hold = False
-
-                self._run_kit_action_frame(
-                    active_entity,
-                    kind=one_more_kind,
-                    defn=sub_defn,
-                    action_type=sub_defn.name,
-                    description=f"施放【{sub_defn.name}】",
-                    target_ids=sub_tgts,
-                    is_natural_turn_action=is_natural_turn_action,
-                    schedule_category=schedule_category,
-                    owner_turn_id=owner_turn_id,
-                    owner_turn_actor_id=owner_turn_actor,
-                    should_publish=should_publish,
-                    after_execute_event_hook=_after_chain_exec,
-                    after_resolve_hook=_after_chain_resolve,
-                )
-            if one_more_steps > 0 and not (vm_rt and vm_rt._pending_use_skill_one_more.get(active_entity.name)):
-                self.scheduler.continuous_action_hold = False
-            elif not is_natural_turn_action and prev_hold:
-                self.scheduler.continuous_action_hold = prev_hold
+            self._run_char_one_more_chain(
+                active_entity,
+                is_char_kit=is_char_kit,
+                target_ids=target_ids,
+                is_natural_turn_action=is_natural_turn_action,
+                schedule_category=schedule_category,
+                owner_turn_id=owner_turn_id,
+                owner_turn_actor=owner_turn_actor,
+                should_publish=should_publish,
+                prev_hold=prev_hold,
+            )
 
     def execute_extra_turn(
         self,
@@ -948,23 +1105,20 @@ class TurnSimulator:
 
         # 若当前处于连续行动锁定 (如 Archer 灵子回路连接尚未结束)，挂起自然回合结束直至锁定解除
         if not self.scheduler.continuous_action_hold:
-            pre_hook = getattr(self, "pre_turn_end_hook", None)
-            if pre_hook is not None:
-                pre_hook(active_entity)
+            if self._has_pre_turn_end_hook():
+                self._invoke_pre_turn_end(active_entity)
                 self.scheduler.drain()
                 if self.auto_ult and not self.scheduler.continuous_action_hold:
                     self.check_and_cast_ultimates()
             self._end_current_turn(active_entity)
-            hook = getattr(self, "turn_action_completed_hook", None)
-            if hook is not None:
-                hook(active_entity)
+            if self._has_turn_action_completed_hook():
+                self._invoke_turn_action_completed(active_entity)
                 self.scheduler.drain()
                 if self.auto_ult and not self.scheduler.continuous_action_hold:
                     self.check_and_cast_ultimates()
         else:
-            hook = getattr(self, "turn_action_completed_hook", None)
-            if hook is not None:
-                hook(active_entity)
+            if self._has_turn_action_completed_hook():
+                self._invoke_turn_action_completed(active_entity)
                 self.scheduler.drain()
         return active_entity
 

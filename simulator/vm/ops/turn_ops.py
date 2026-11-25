@@ -466,8 +466,10 @@ class TurnOpsMixin:
                     prev_ins = getattr(rt, "_in_insert_action", False)
                     rt._in_insert_action = True
                     try:
-                        provider = getattr(sim, "insert_action_decision_provider", None)
-                        dec = provider(a_id) if callable(provider) else None
+                        decide_fn = getattr(sim, "decide_insert_action", None)
+                        if not callable(decide_fn):
+                            decide_fn = getattr(sim, "insert_action_decision_provider", None)
+                        dec = decide_fn(a_id) if callable(decide_fn) else None
                         first_kind = dec[0] if (dec is not None and dec[0] is not None) else ActionKind.BASIC
                         first_tgts = dec[1] if (dec is not None and dec[1] is not None) else _tgts
                         sim._execute_action(
@@ -486,7 +488,7 @@ class TurnOpsMixin:
                             if a_ent.current_hp <= 0.0 and not getattr(a_ent, "is_infinite_hp", False):
                                 sim.scheduler.continuous_action_hold = False
                                 break
-                            nxt_dec = provider(a_id) if callable(provider) else None
+                            nxt_dec = decide_fn(a_id) if callable(decide_fn) else None
                             if nxt_dec is None or nxt_dec[0] is None:
                                 sim.scheduler.continuous_action_hold = False
                                 break
