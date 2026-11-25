@@ -21,6 +21,7 @@ from simulator.vm._test_stage_30126122_refs import (
     PEGASUS_HP,
     SPROUT_HP,
 )
+from simulator.vm.executor import IGNORED_MECHANICAL_TASK_STUBS
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.stage_prunable_types import (
     ALL_SAFE_PRUNABLE_TYPES,
@@ -39,6 +40,7 @@ class TestStagePrunableTypes(unittest.TestCase):
         # Prunable presentation/meta nodes must never overlap with mechanical nodes
         self.assertEqual(ALL_SAFE_PRUNABLE_TYPES & STAGE_MECHANICAL_TASK_TYPES, set())
         self.assertEqual(ALL_SAFE_PRUNABLE_TYPES & STAGE_MECHANICAL_PREDICATE_TYPES, set())
+        self.assertEqual(IGNORED_MECHANICAL_TASK_STUBS & ALL_SAFE_PRUNABLE_TYPES, set())
 
         self.assertEqual(classify_node_type("RPG.GameCore.AnimSetParameter"), "prunable_presentation")
         self.assertEqual(classify_node_type("RPG.GameCore.ShowBossInfoBar"), "prunable_presentation")

@@ -16,7 +16,53 @@ from .expr import dotnet_hash, eval_dynamic_float
 from .loader import PRUNABLE_PRESENTATION_TYPES
 from .ops import CombatOpsMixin, PredicateOpsMixin, TurnOpsMixin
 from .ops.predicates import _compare_values, _is_alive, _str_val
+from .stage_prunable_types import is_safe_prunable_type
 from .target_alias import ExecutionContext, resolve_target_type
+
+
+# 未实现 / 暂忽略的机械层运行时占位符：仅在 TaskExecutor 执行阶段按需跳过，
+# 绝不可合入 loader.PRUNABLE_PRESENTATION_TYPES 以免加载期静默丢弃 AST 语义。
+IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
+    "RPG.GameCore.AttachEntityUnselectable",
+    "RPG.GameCore.AttachEntityDeparted",
+    "RPG.GameCore.SetMonsterEnergyBarState",
+    "RPG.GameCore.TriggerCustomString",
+    "RPG.GameCore.ChangeCharacterRowData",
+    "RPG.GameCore.StackStatusResistance",
+    "RPG.GameCore.SetResilience",
+    "RPG.GameCore.CharacterChangePhase",
+    "RPG.GameCore.LockActionDelayChange",
+    "RPG.GameCore.LockTargetActionDelay",
+    "RPG.GameCore.AttachSkillTypeDisable",
+    "RPG.GameCore.SummonPartner",
+    "RPG.GameCore.Remodifier",
+    "RPG.GameCore.TriggerModifierCustomEvent",
+    "RPG.GameCore.SetStanceCount",
+    "RPG.GameCore.PerformDelayExecute",
+    "RPG.GameCore.RemoveEntityFromRelationGroup",
+    "RPG.GameCore.SetEntityRelationGroup",
+    "RPG.GameCore.SwitchCaseByAttackDamageType",
+    "RPG.GameCore.TargetFetchUniqueNameEntity",
+    "RPG.GameCore.TargetFilterAliveState",
+    "RPG.GameCore.TriggerBreak",
+}
+
+# 已确认在当前对账口径下无独立战斗副作用的混淆 $type 占位符
+IGNORED_OBFUSCATED_TASK_STUBS: Set[str] = {
+    "LMKKFPJBAFD",
+    "BIEFKHPDHPI",
+    "MJHAGGNNBIK",
+    "FOIBLOANLCJ",
+    "CKCOFEAAJII",
+    "KADCLBEPFPL",
+    "NDFKINKPKHF",
+    "EOPFECKEAIK",
+    "GFODFDCBFJF",
+    "IKAHOOLKHDN",
+    "HGHNFLIFOGP",
+    "PGFAJJBCMDK",
+    "MBFDBNPKBBM",
+}
 
 
 class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
@@ -1846,9 +1892,6 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                         ent.current_hp = ent.max_hp
             return
 
-        if t in ("FBCGHKLKHJN", "LMKKFPJBAFD", "BIEFKHPDHPI"):
-            return
-
         if t == "RPG.GameCore.AttachAvatarChange":
             self._execute_attach_avatar_change(task, ctx)
             return
@@ -2199,60 +2242,8 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             self._execute_damage({"TargetType": tgt_spec, "AttackProperty": task}, ctx)
             return
 
-        if t in (
-            "RPG.GameCore.AttachEntityUnselectable",
-            "RPG.GameCore.OverrideMonsterRankScore",
-            "RPG.GameCore.SetCharacterVisibleInViewMode",
-            "RPG.GameCore.SetLocalOffsetAsMoveTarget",
-            "RPG.GameCore.SetMonsterEnergyBarState",
-            "RPG.GameCore.TriggerCustomString",
-            "RPG.GameCore.AttachEntityDeparted",
-            "RPG.GameCore.ChangeCharacterRowData",
-            "RPG.GameCore.SetTeamFormation",
-            "RPG.GameCore.SetEntityForbidCameraDither",
-            "RPG.GameCore.SetEntityVisible",
-            "RPG.GameCore.TutorialTaskUnlock",
-            "OOCOGGMJLBN",
-            "RPG.GameCore.StackStatusResistance",
-            "RPG.GameCore.SetResilience",
-            "RPG.GameCore.CharacterChangePhase",
-            "RPG.GameCore.LockActionDelayChange",
-            "RPG.GameCore.LockTargetActionDelay",
-            "RPG.GameCore.AttachSkillTypeDisable",
-            "RPG.GameCore.SummonPartner",
-            "RPG.GameCore.Remodifier",
-            "RPG.GameCore.TriggerModifierCustomEvent",
-            "RPG.GameCore.SetStanceCount",
-            "RPG.GameCore.AudioSetRTPCValueByRatio",
-            "RPG.GameCore.DisableHeadLookAtOverride",
-            "RPG.GameCore.PerformDelayExecute",
-            "RPG.GameCore.RemoveEntityFromRelationGroup",
-            "RPG.GameCore.SetCharacterAlwaysIdleState",
-            "RPG.GameCore.SetCharacterAtlasFaceEmotion",
-            "RPG.GameCore.SetCharacterFormation",
-            "RPG.GameCore.SetEntityForceVisible",
-            "RPG.GameCore.SetEntityRelationGroup",
-            "RPG.GameCore.ShowBattleScreenEffect",
-            "RPG.GameCore.StartAim",
-            "RPG.GameCore.SwitchCaseByAttackDamageType",
-            "RPG.GameCore.TargetFetchUniqueNameEntity",
-            "RPG.GameCore.TargetFilterAliveState",
-            "RPG.GameCore.TriggerBreak",
-            "MJHAGGNNBIK",
-            "FOIBLOANLCJ",
-            "CKCOFEAAJII",
-            "KADCLBEPFPL",
-            "NDFKINKPKHF",
-            "EOPFECKEAIK",
-            "GFODFDCBFJF",
-            "IKAHOOLKHDN",
-            "HGHNFLIFOGP",
-            "PGFAJJBCMDK",
-            "MBFDBNPKBBM",
-        ):
+        if t in IGNORED_MECHANICAL_TASK_STUBS or t in IGNORED_OBFUSCATED_TASK_STUBS:
             return
-
-        from .stage_prunable_types import is_safe_prunable_type
 
         if is_safe_prunable_type(t):
             return

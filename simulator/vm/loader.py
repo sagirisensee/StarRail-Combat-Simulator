@@ -33,8 +33,50 @@ DEFAULT_TBGD_ROOT = (
 _ABILITY_INDEX_CACHE_VERSION = 2
 _ABILITY_INDEX_MEM_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
-# 经实证确认的纯表现/客户端无逻辑副作用节点，加载期裁剪以压缩 AST 体积
-PRUNABLE_PRESENTATION_TYPES: Set[str] = {
+# 关卡/怪物纯表现、镜头、音效与元评分节点（供 stage_prunable_types 与 PRUNABLE_PRESENTATION_TYPES 复用唯一真源）
+STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES: Set[str] = {
+    "RPG.GameCore.AnimSetParameter",
+    "RPG.GameCore.CharacterReactionAnimConfig",
+    "RPG.GameCore.LevelAudioState",
+    "RPG.GameCore.MakeCharacterHUDVisible",
+    "RPG.GameCore.ModifyDefaultTeamFormation",
+    "RPG.GameCore.MoveToTargetList",
+    "RPG.GameCore.ResetHeadLookAt",
+    "RPG.GameCore.SetEffectAnimatorTrigger",
+    "RPG.GameCore.SetSimulationSpeedEnable",
+    "RPG.GameCore.SetTeamRootOffset",
+    "RPG.GameCore.ShowAttackTime",
+    "RPG.GameCore.ShowBattleAlert",
+    "RPG.GameCore.ShowBattleEventButton",
+    "RPG.GameCore.ShowBossInfoBar",
+    "RPG.GameCore.ShowSkillTextDialog",
+    "RPG.GameCore.SkillExecutionStart",
+    "RPG.GameCore.SetCharacterShowSummonUI",
+    "RPG.GameCore.ShowBattleVersusBarCountDownEffect",
+    "RPG.GameCore.SetCountDownWarning",
+    "RPG.GameCore.AddChallengeBossInfoPanelState",
+    "RPG.GameCore.RemoveChallengeBossInfoPanelState",
+    "RPG.GameCore.OverrideEntityModifierPhaseCamera",
+    "RPG.GameCore.PlayScreenTransfer",
+    "RPG.GameCore.WaitAbilityStartTimeStamp",
+    "RPG.GameCore.SetMonsterNameBoardMaxBuffCount",
+    "RPG.GameCore.SetModifierOverrideNameForStatus",
+    "RPG.GameCore.ReleaseCharacterHUDVisibleControl",
+    "RPG.GameCore.AddTargetStancePreshowConfig",
+    "RPG.GameCore.SwitchChallengeBossInfoPanelState",
+}
+
+STAGE_PRUNABLE_META_SCORING_TYPES: Set[str] = {
+    "RPG.GameCore.CreateBattleTarget",
+    "RPG.GameCore.NotifyFeverTimeInfoChange",
+    "RPG.GameCore.NotifyVersusBarQuestChange",
+    "RPG.GameCore.SetBattleAchievement",
+    "RPG.GameCore.SetBattleScoringItem",
+    "RPG.GameCore.SetBattleTargetProgress",
+    "RPG.GameCore.ShowEvolveBuildGearSelectInBattle",
+}
+
+_CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.VCameraConfigChange",
     "RPG.GameCore.VCameraNoiseChange",
     "RPG.GameCore.WaitAnimState",
@@ -118,23 +160,6 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.ModifierAttachEffect",
     "RPG.GameCore.ModifierOverrideOnHitEffect",
     "RPG.GameCore.ShowEntityFloatMessage",
-    # 关卡 / 怪物纯表现、HUD、镜头、音效与元评分节点（加载期直接裁剪，不进执行循环）
-    "RPG.GameCore.AnimSetParameter",
-    "RPG.GameCore.CharacterReactionAnimConfig",
-    "RPG.GameCore.LevelAudioState",
-    "RPG.GameCore.MakeCharacterHUDVisible",
-    "RPG.GameCore.ModifyDefaultTeamFormation",
-    "RPG.GameCore.MoveToTargetList",
-    "RPG.GameCore.ResetHeadLookAt",
-    "RPG.GameCore.SetEffectAnimatorTrigger",
-    "RPG.GameCore.SetSimulationSpeedEnable",
-    "RPG.GameCore.SetTeamRootOffset",
-    "RPG.GameCore.ShowAttackTime",
-    "RPG.GameCore.ShowBattleAlert",
-    "RPG.GameCore.ShowBattleEventButton",
-    "RPG.GameCore.ShowBossInfoBar",
-    "RPG.GameCore.ShowSkillTextDialog",
-    "RPG.GameCore.SkillExecutionStart",
     "RPG.GameCore.SkillPerformFinish",
     "RPG.GameCore.ShowActionBarEffect",
     "RPG.GameCore.TriggerUITopEffect",
@@ -157,28 +182,27 @@ PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.RefreshChangePhaseUI",
     "RPG.GameCore.StackStatusDesc",
     "RPG.GameCore.LinearProjectileData",
-    "RPG.GameCore.CreateBattleTarget",
-    "RPG.GameCore.NotifyFeverTimeInfoChange",
-    "RPG.GameCore.NotifyVersusBarQuestChange",
-    "RPG.GameCore.SetBattleAchievement",
-    "RPG.GameCore.SetBattleScoringItem",
-    "RPG.GameCore.SetBattleTargetProgress",
-    "RPG.GameCore.ShowEvolveBuildGearSelectInBattle",
     "RPG.GameCore.ToggleUITop",
-    "RPG.GameCore.SetCharacterShowSummonUI",
-    "RPG.GameCore.ShowBattleVersusBarCountDownEffect",
-    "RPG.GameCore.SetCountDownWarning",
-    "RPG.GameCore.AddChallengeBossInfoPanelState",
-    "RPG.GameCore.RemoveChallengeBossInfoPanelState",
-    "RPG.GameCore.OverrideEntityModifierPhaseCamera",
-    "RPG.GameCore.PlayScreenTransfer",
-    "RPG.GameCore.WaitAbilityStartTimeStamp",
-    "RPG.GameCore.SetMonsterNameBoardMaxBuffCount",
-    "RPG.GameCore.SetModifierOverrideNameForStatus",
-    "RPG.GameCore.ReleaseCharacterHUDVisibleControl",
-    "RPG.GameCore.AddTargetStancePreshowConfig",
-    "RPG.GameCore.SwitchChallengeBossInfoPanelState",
+    "RPG.GameCore.OverrideMonsterRankScore",
+    "RPG.GameCore.SetCharacterVisibleInViewMode",
+    "RPG.GameCore.SetLocalOffsetAsMoveTarget",
+    "RPG.GameCore.TutorialTaskUnlock",
+    "RPG.GameCore.AudioSetRTPCValueByRatio",
+    "RPG.GameCore.DisableHeadLookAtOverride",
+    "RPG.GameCore.SetCharacterAlwaysIdleState",
+    "RPG.GameCore.SetCharacterAtlasFaceEmotion",
+    "RPG.GameCore.SetCharacterFormation",
+    "RPG.GameCore.SetEntityForceVisible",
+    "RPG.GameCore.ShowBattleScreenEffect",
+    "RPG.GameCore.StartAim",
 }
+
+# 经实证确认的纯表现/客户端无逻辑副作用节点，加载期裁剪以压缩 AST 体积
+PRUNABLE_PRESENTATION_TYPES: Set[str] = (
+    set(_CORE_PRUNABLE_PRESENTATION_TYPES)
+    | STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES
+    | STAGE_PRUNABLE_META_SCORING_TYPES
+)
 
 
 def prune_task_list(tasks: Any) -> List[Dict[str, Any]]:

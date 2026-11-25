@@ -13,53 +13,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Set
 
-from simulator.vm.loader import PRUNABLE_PRESENTATION_TYPES, prune_task_list
-
-# Pure presentation / animation / camera / audio / HUD nodes identified from
-# BattleEvent & Monster Top-25 coverage audit.
-STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES: Set[str] = {
-    "RPG.GameCore.AnimSetParameter",
-    "RPG.GameCore.CharacterReactionAnimConfig",
-    "RPG.GameCore.LevelAudioState",
-    "RPG.GameCore.MakeCharacterHUDVisible",
-    "RPG.GameCore.ModifyDefaultTeamFormation",
-    "RPG.GameCore.MoveToTargetList",
-    "RPG.GameCore.ResetHeadLookAt",
-    "RPG.GameCore.SetEffectAnimatorTrigger",
-    "RPG.GameCore.SetSimulationSpeedEnable",
-    "RPG.GameCore.SetTeamRootOffset",
-    "RPG.GameCore.ShowAttackTime",
-    "RPG.GameCore.ShowBattleAlert",
-    "RPG.GameCore.ShowBattleEventButton",
-    "RPG.GameCore.ShowBossInfoBar",
-    "RPG.GameCore.ShowSkillTextDialog",
-    "RPG.GameCore.SkillExecutionStart",
-    "RPG.GameCore.SetCharacterShowSummonUI",
-    "RPG.GameCore.ShowBattleVersusBarCountDownEffect",
-    "RPG.GameCore.SetCountDownWarning",
-    "RPG.GameCore.AddChallengeBossInfoPanelState",
-    "RPG.GameCore.RemoveChallengeBossInfoPanelState",
-    "RPG.GameCore.OverrideEntityModifierPhaseCamera",
-    "RPG.GameCore.PlayScreenTransfer",
-    "RPG.GameCore.WaitAbilityStartTimeStamp",
-    "RPG.GameCore.SetMonsterNameBoardMaxBuffCount",
-    "RPG.GameCore.SetModifierOverrideNameForStatus",
-    "RPG.GameCore.ReleaseCharacterHUDVisibleControl",
-    "RPG.GameCore.AddTargetStancePreshowConfig",
-    "RPG.GameCore.SwitchChallengeBossInfoPanelState",
-}
-
-# Meta / achievement / out-of-combat scoring / UI notification nodes that have
-# zero impact on damage, toughness, energy, or action-value scheduling.
-STAGE_PRUNABLE_META_SCORING_TYPES: Set[str] = {
-    "RPG.GameCore.CreateBattleTarget",
-    "RPG.GameCore.NotifyFeverTimeInfoChange",
-    "RPG.GameCore.NotifyVersusBarQuestChange",
-    "RPG.GameCore.SetBattleAchievement",
-    "RPG.GameCore.SetBattleScoringItem",
-    "RPG.GameCore.SetBattleTargetProgress",
-    "RPG.GameCore.ShowEvolveBuildGearSelectInBattle",
-}
+from simulator.vm.loader import (
+    PRUNABLE_PRESENTATION_TYPES,
+    STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES,
+    STAGE_PRUNABLE_META_SCORING_TYPES,
+    prune_task_list,
+)
 
 STAGE_PRUNABLE_PRESENTATION_TYPES: Set[str] = (
     STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES | STAGE_PRUNABLE_META_SCORING_TYPES
