@@ -6,9 +6,15 @@ import unittest
 from simulator.core import TurnSimulator
 from simulator.entity import Entity
 from simulator.events import HealAppliedEvent
-from simulator.vm.executor import ExecutionContext
+from simulator.vm.executor import (
+    ExecutionContext,
+    IGNORED_MECHANICAL_TASK_STUBS,
+    IGNORED_OBFUSCATED_TASK_STUBS,
+    TaskExecutor,
+)
 from simulator.vm.expr import dotnet_hash
 from simulator.vm.runtime import VMRuntime
+from simulator.vm.stage_prunable_types import ALL_SAFE_PRUNABLE_TYPES
 
 
 def _make_sim_with_vm() -> tuple[TurnSimulator, VMRuntime, Entity, Entity]:
@@ -186,6 +192,23 @@ class TestVMOpcodeSemantics(unittest.TestCase):
         self.assertGreater(ally.current_hp, hp_before)
         self.assertGreater(len(heals), 0)
         self.assertLess(ally.remaining_av, av_before)
+
+    def test_task_dispatch_table_integrity_and_disjointness(self) -> None:
+        """校验 TaskExecutor._TASK_DISPATCH 覆盖与忽略注册表互斥，且未知节点保持 strict 报错。"""
+        dispatch = TaskExecutor._TASK_DISPATCH
+        self.assertGreaterEqual(len(dispatch), 100)
+        self.assertTrue(all(callable(fn) for fn in dispatch.values()))
+
+        dispatch_keys = set(dispatch.keys())
+        self.assertEqual(dispatch_keys & ALL_SAFE_PRUNABLE_TYPES, set())
+        self.assertEqual(dispatch_keys & IGNORED_MECHANICAL_TASK_STUBS, set())
+        self.assertEqual(dispatch_keys & IGNORED_OBFUSCATED_TASK_STUBS, set())
+        self.assertEqual(IGNORED_MECHANICAL_TASK_STUBS & IGNORED_OBFUSCATED_TASK_STUBS, set())
+
+        _, rt, _, _ = _make_sim_with_vm()
+        ctx = ExecutionContext(runtime=rt, caster_id="测试角色", ability_name="TestSynth")
+        with self.assertRaises(NotImplementedError):
+            rt.execute_tasks([{"$type": "RPG.GameCore.NonExistentTestTask"}], ctx)
 
 
 if __name__ == "__main__":
