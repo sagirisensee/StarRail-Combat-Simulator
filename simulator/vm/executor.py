@@ -881,6 +881,8 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             count = max(1, int(round(self._eval_num(task.get("Numbers"), ctx, 1.0)))) if "Numbers" in task else 99
             req_flags = set(task.get("BehaviorFlags") or [])
             order = str(task.get("Order", "LastAdded"))
+            director = getattr(sim, "_stage_director", None)
+            break_helper = getattr(director, "_break_helper", None) if director is not None else None
             for tid in targets:
                 sim.port.dispel(tid, is_debuff=True)
                 mods = list(me.get_modifiers(tid))
@@ -905,7 +907,15 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                 else:
                     cands.sort(key=lambda m: getattr(m, "_spawn_order", 0))
                 for m in cands[:count]:
+                    if break_helper is not None:
+                        if m.name == "MCommon_BreakDebuff_Quantum":
+                            break_helper.quantum_entanglements.pop(tid, None)
+                        elif m.name == "MCommon_BreakDebuff_Wind":
+                            break_helper.wind_shears.pop(tid, None)
                     me.destroy_modifier(m)
+                if break_helper is not None and not req_flags and "Numbers" not in task:
+                    break_helper.quantum_entanglements.pop(tid, None)
+                    break_helper.wind_shears.pop(tid, None)
                 for m in list(me.get_modifiers(tid)):
                     me._sync_modifier_to_status_mgr(m)
             return
@@ -974,7 +984,10 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                     if k in ("$type", "TargetType"):
                         continue
                     if isinstance(v, (dict, int, float)):
-                        ctx.damage_data[k] = ctx.damage_data.get(k, 0.0) + self._eval_num(v, ctx, 0.0)
+                        if k == "AttackData_ConstFinalDamage":
+                            ctx.damage_data[k] = self._eval_num(v, ctx, 0.0)
+                        else:
+                            ctx.damage_data[k] = ctx.damage_data.get(k, 0.0) + self._eval_num(v, ctx, 0.0)
             return
 
         if t in ("RPG.GameCore.LoseHPByRatio", "RPG.GameCore.LoseHP"):
@@ -1476,14 +1489,6 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
                                 owner_ent.toughness_dmg_reduction = 0.0
                         except KeyError:
                             pass
-            return
-
-        if t == "PGFAJJBCMDK":
-            owner_id = ctx.modifier_owner_id or ctx.caster_id
-            owner_ent = sim.get_entity(owner_id) if owner_id else None
-            if owner_ent is not None:
-                owner_ent.barrier_guarded = True
-                owner_ent.toughness_locked = True
             return
 
         if t == "RPG.GameCore.SetControlSkillMapping":
@@ -2242,6 +2247,7 @@ class TaskExecutor(PredicateOpsMixin, CombatOpsMixin, TurnOpsMixin):
             "GFODFDCBFJF",
             "IKAHOOLKHDN",
             "HGHNFLIFOGP",
+            "PGFAJJBCMDK",
             "MBFDBNPKBBM",
         ):
             return

@@ -155,6 +155,7 @@ class StageRunner:
             hashed_cv[dotnet_hash(k)] = v
         for idx, sid in enumerate(blueprint.summon_ids, start=1):
             hashed_cv.setdefault(dotnet_hash(f"SummonID{idx:02d}"), sid)
+            hashed_cv.setdefault(dotnet_hash(f"_SummonID{idx:02d}"), sid)
 
         tpl_id = getattr(blueprint, "monster_template_id", 0)
         loader = getattr(self.factory, "stage_loader", None)
@@ -510,6 +511,11 @@ class StageRunner:
         new_hp = mrs.blueprint.phase_max_hps[new_phase - 1]
         mrs.entity.max_hp = new_hp
         mrs.entity.current_hp = new_hp
+        phase_toughnesses = getattr(mrs.blueprint, "phase_max_toughnesses", ())
+        if phase_toughnesses and (new_phase - 1) < len(phase_toughnesses):
+            new_toughness = float(phase_toughnesses[new_phase - 1])
+            if new_toughness > 0.0:
+                mrs.entity.max_toughness = new_toughness
         was_broken = bool(mrs.entity.is_broken or mrs.entity.current_toughness <= 0.0)
         self.execute_reset_stance(monster_name, forbid_when_empty=False)
         if new_phase >= 2 and was_broken:
@@ -618,7 +624,13 @@ class StageRunner:
 
             bp = self.built_stage.get_summon_blueprint(mid, wave_index=self.state.wave_index)
             caster_mrs.summon_seq += 1
-            summon_name = f"{bp.name}_{caster_mrs.summon_seq}"
+            if not hasattr(self, "_summon_seq_by_name"):
+                self._summon_seq_by_name: Dict[str, int] = {}
+            self._summon_seq_by_name[bp.name] = self._summon_seq_by_name.get(bp.name, 0) + 1
+            summon_name = f"{bp.name}_{self._summon_seq_by_name[bp.name]}"
+            while summon_name in self._enemy_by_name:
+                self._summon_seq_by_name[bp.name] += 1
+                summon_name = f"{bp.name}_{self._summon_seq_by_name[bp.name]}"
 
             if delay_ratio_override is not None:
                 dr = self._resolve_monster_num(
@@ -636,7 +648,7 @@ class StageRunner:
 
             if loc_type == "KeepOnEdge":
                 caster_idx = next(
-                    (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_name),
+                    (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_mrs.entity.name),
                     len(self.state.enemies),
                 )
                 insert_left = (caster_mrs.summon_seq % 2 == 1)
@@ -646,7 +658,7 @@ class StageRunner:
                 self.state.enemies.insert(insert_idx, mrs)
             elif loc_type == "AroundCaster":
                 caster_idx = next(
-                    (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_name),
+                    (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_mrs.entity.name),
                     len(self.state.enemies),
                 )
                 mrs = self._register_enemy(ent, bp)

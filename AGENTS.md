@@ -8,7 +8,7 @@
 2. **单关绝对聚焦（严禁多线开工）**：一次**只能聚焦推进 1 个关卡 / 1 份实机日志**。在前一个关卡实现全量 `< 0.0001%` 归零前，**严禁**在同一次会话中交叉对账其他关卡或切换日志，防止上下文剧烈抖动与自我干扰。
 3. **强制 `--av-budget` 截断验证**：调试具体动作时，**必须**携带 `--av-budget <av + 1.0>` 截断模拟（执行仅需 0.5 秒）；仅在当前分歧点完全修复、确认前后多动是否过线或全量交付时，方可放开 budget 跑全场。
 4. **5分钟定性与“事不过二”收束（防盲猜内卷与爆 Quota）**：
-   - **5分钟快速定性**：遇到分歧点，前 5 分钟内必须通过 `diff_log_turn.py --av <av> --timeline` 输出最早分歧动作的 SIM 全乘区与 GT 伤害，计算精确比值 $R = \text{GT} / \text{SIM}$。
+   - **5分钟快速定性**：遇到分歧点，前 5 分钟内必须通过 `diff_log_turn.py --av <av> --av-budget <av+1> --timeline --summary` 输出最早分歧动作的 SIM 全乘区与 GT 伤害，计算精确比值 $R = \text{GT} / \text{SIM}$。
    - **数学证伪（严禁盲改试错）**：提出任何假设（自爆易伤、减伤层数、倍率反了）前，必须先算该假设的理论影响是否与比值 $R$ 吻合。数学上无法解释 $R$ 的假设直接在纸面淘汰，严禁盲改代码验证。
    - **事不过二强制收束**：同一分歧点尝试修复 2 次仍未归零，严禁无休止内卷或跨关卡跳跃，必须主动停下，保存代码并向用户汇报当前定位、比值 $R$、各乘区分解与两次尝试结论。
 
@@ -23,9 +23,9 @@
    python scripts/diff_log_turn.py <battle_log.jsonl> [--extra-maze-buffs <id1,id2>]
    ```
 2. **定位到具体 AV 后，强制加 `--av-budget` 截断并聚焦时间线**：
-   单动分歧优先单独传 `--av <av> --av-budget <av+1> --timeline`（输出 GT `[SKILL]` 行与 SIM 全乘区 `base / dmg% / def / res / vuln / crit`，减伤/护盾附带 `red=` / `bar=`）：
+   单动分歧优先传 `--av <av> --av-budget <av+1> --timeline --summary`（输出 GT `[SKILL]` 行、SIM 全乘区 `base / dmg% / def / res / vuln / crit`，减伤/护盾附带 `red=` / `bar=`，并附带 `reconcile_log` 逐动汇总）：
    ```powershell
-   python scripts/diff_log_turn.py <battle_log.jsonl> [--extra-maze-buffs ...] --av <av> --av-budget <av+1> --timeline
+   python scripts/diff_log_turn.py <battle_log.jsonl> [--extra-maze-buffs ...] --av <av> --av-budget <av+1> --timeline --summary
    ```
 3. **常用选项**：
    - `--av <float>` / `--av-window <float>`：定位目标 AV 窗口（默认半径 `0.20`）；

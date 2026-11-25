@@ -639,6 +639,13 @@ class SimulatorCombatPort:
                         self.sim.notify_entity_ready(ent.name, allow_jump_natural=True)
                     except TypeError:
                         self.sim.notify_entity_ready(ent.name)
+            else:
+                rq = getattr(self.sim, "_ready_queue", None)
+                if isinstance(rq, list) and ent.name in rq:
+                    rq.remove(ent.name)
+                nd = getattr(self.sim, "_natural_due_names", None)
+                if isinstance(nd, set):
+                    nd.discard(ent.name)
 
     def set_base_speed(self, entity_id: str, speed: float) -> None:
         ent = self._get_entity(entity_id)

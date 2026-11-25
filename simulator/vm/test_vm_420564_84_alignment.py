@@ -1,5 +1,5 @@
 # coding: utf-8
-"""关卡 420584 / 420574（末日幻影）官方 ConfigAbility VM 纯自动机械提取对账测试。"""
+"""关卡 420564 / 420574 / 420584（末日幻影）官方 ConfigAbility VM 纯自动机械提取对账测试。"""
 
 import os
 import unittest
@@ -13,7 +13,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 
 
 class TestVMStage420564To84Alignment(unittest.TestCase):
-    """验证末日幻影 420584 / 420574 在官方 ConfigAbility VM + 纯机械日志提取（零手写插件）下的全量对齐与三方命中零错配。"""
+    """验证末日幻影 420564 / 420574 / 420584 在官方 ConfigAbility VM + 纯机械日志提取（零手写插件）下的全量对齐与三方命中零错配。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -79,6 +79,13 @@ class TestVMStage420564To84Alignment(unittest.TestCase):
             "420574_085908",
             "battle_20261124_085908.jsonl",
             extra_maze_buff_ids=(3111065,),
+        )
+
+    def test_vm_420564_20261124_085116(self) -> None:
+        self._run_vm_case(
+            "420564_085116",
+            "battle_20261124_085116.jsonl",
+            extra_maze_buff_ids=(3111096, 3034013),
         )
 
 

@@ -272,6 +272,13 @@ class EffectResolver:
             before = effect.target.distance_remaining
             effect.target.delay_action(effect.percent)
             after = effect.target.distance_remaining
+            if after > 1e-6:
+                rq = getattr(self.simulator, "_ready_queue", None)
+                if isinstance(rq, list) and effect.target.name in rq:
+                    rq.remove(effect.target.name)
+                nd = getattr(self.simulator, "_natural_due_names", None)
+                if isinstance(nd, set):
+                    nd.discard(effect.target.name)
             bus.publish(ActionDelayEvent(
                 av=round(av, 2),
                 cycle=cycle,

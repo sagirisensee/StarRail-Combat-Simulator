@@ -101,13 +101,14 @@ class PredicateOpsMixin:
                     if found:
                         mod = found[0]
                         break
+            if mod is None:
+                return False
             vtype = pred.get("ValueType", "Layer")
             lhs = 0.0
-            if mod is not None:
-                if vtype == "Layer":
-                    lhs = float(mod.layer)
-                elif vtype == "LifeTime":
-                    lhs = float(mod.life_time or 0.0)
+            if vtype == "Layer":
+                lhs = float(mod.layer)
+            elif vtype == "LifeTime":
+                lhs = float(mod.life_time or 0.0)
             rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
@@ -678,6 +679,9 @@ class PredicateOpsMixin:
                     allowed.add(normalize_element(str(dt_val)))
             if not allowed:
                 return False
+            if ctx.damage_data is not None and "Element" in ctx.damage_data:
+                cur_elem = normalize_element(str(ctx.damage_data.get("Element", "")))
+                return bool(cur_elem and cur_elem in allowed)
             if "TargetType" in pred:
                 targets = self._resolve_targets(pred.get("TargetType"), ctx)
                 return any(
@@ -685,8 +689,7 @@ class PredicateOpsMixin:
                     for tid in targets
                     if sim.get_entity(tid) is not None
                 )
-            cur_elem = normalize_element(str((ctx.damage_data or {}).get("Element", "")))
-            return bool(cur_elem and cur_elem in allowed)
+            return False
 
         if t == "RPG.GameCore.ByIsInsertAction":
             return bool(ctx.current_attack_type in ("Insert", "Pursued") or getattr(rt, "_in_insert_action", False))

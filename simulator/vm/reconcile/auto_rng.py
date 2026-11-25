@@ -266,10 +266,15 @@ def attach_auto_rng_plugin(
 
     def _resolve_sub_rec(rec: EnemyHitRecord, sub_offset: int) -> Tuple[EnemyHitRecord, bool]:
         if len(rec.sub_records) >= 2:
-            if len(set(rec.sub_records[0].hit_allies)) >= 3 and any(
-                len(set(sr.hit_allies)) == 1 for sr in rec.sub_records[1:]
-            ):
-                return rec, False
+            if len(set(rec.sub_records[0].hit_allies)) >= 3:
+                if any(len(set(sr.hit_allies)) == 1 for sr in rec.sub_records[1:]):
+                    return rec, False
+                memo_subs = [
+                    sr for sr in rec.sub_records[1:]
+                    if not sr.hit_allies and (sr.first_memo_owner or sr.sp_gain_counts)
+                ]
+                if memo_subs:
+                    return memo_subs[min(sub_offset, len(memo_subs) - 1)], True
             return rec.sub_records[min(sub_offset, len(rec.sub_records) - 1)], True
         return rec, False
 

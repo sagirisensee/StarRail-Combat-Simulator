@@ -148,6 +148,8 @@ class CompiledMonsterPhaseSpec:
     max_hp_multiplier: float
     max_hp: float
     raw_max_hp: float
+    stance_multiplier: float = 1.0
+    max_toughness: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -965,33 +967,42 @@ class StageDataLoader:
             if isinstance(char_cfg.get("DynamicValues"), Mapping)
             else {}
         )
+        from simulator.vm.expr import eval_dynamic_float
+
+        def _dyn_resolver(h: int) -> float:
+            read_info = dyn_floats.get(str(h), {}).get("ReadInfo", {})
+            if read_info.get("Type") == "SkillParam":
+                trig_key = str(read_info.get("TriggerKey", ""))
+                param_idx = int(read_info.get("Index", 0))
+                if trig_key in skills_by_key:
+                    return float(skills_by_key[trig_key].param(param_idx, 1.0))
+            return 0.0
+
+        def _resolve_phase_ratio(ratio_cfg: Any) -> float:
+            if not isinstance(ratio_cfg, Mapping):
+                return 1.0
+            if not ratio_cfg.get("IsDynamic", False):
+                val = _unwrap_value(ratio_cfg.get("FixedValue"), 1.0)
+                return float(val) if val > 0.0 else 1.0
+            # Note: Phase ratios read dynamic skill parameters via PostfixExpr (base param if override is -1)
+            val = eval_dynamic_float(ratio_cfg, _dyn_resolver, 1.0)
+            return float(val) if val > 0.0 else 1.0
+
         phase_list_raw = char_cfg.get("PhaseList", [])
         phases: list[CompiledMonsterPhaseSpec] = []
         if phase_list_raw:
             for p_entry in phase_list_raw:
                 pnum = int(p_entry.get("PhaseNum", len(phases) + 1))
-                ratio_mult = 1.0
-                ratio_cfg = p_entry.get("PhaseMaxHPRatio")
-                if isinstance(ratio_cfg, Mapping):
-                    if not ratio_cfg.get("IsDynamic", False):
-                        ratio_mult = _unwrap_value(ratio_cfg.get("FixedValue"), 1.0)
-                    else:
-                        dyn_hashes = ratio_cfg.get("PostfixExpr", {}).get("DynamicHashes", [])
-                        if dyn_hashes:
-                            h_str = str(dyn_hashes[0])
-                            read_info = dyn_floats.get(h_str, {}).get("ReadInfo", {})
-                            if read_info.get("Type") == "SkillParam":
-                                trig_key = str(read_info.get("TriggerKey", ""))
-                                param_idx = int(read_info.get("Index", 0))
-                                if trig_key in skills_by_key:
-                                    # Note: PhaseMaxHPRatio reads the skill parameter (base param if override is -1)
-                                    ratio_mult = skills_by_key[trig_key].param(param_idx, 1.0)
+                ratio_mult = _resolve_phase_ratio(p_entry.get("PhaseMaxHPRatio"))
+                stance_mult = _resolve_phase_ratio(p_entry.get("PhaseStanceRatio"))
                 phases.append(
                     CompiledMonsterPhaseSpec(
                         phase_num=pnum,
                         max_hp_multiplier=ratio_mult,
                         max_hp=hp * ratio_mult,
                         raw_max_hp=raw_hp * ratio_mult,
+                        stance_multiplier=stance_mult,
+                        max_toughness=toughness * stance_mult,
                     )
                 )
         else:
@@ -1001,6 +1012,8 @@ class StageDataLoader:
                     max_hp_multiplier=1.0,
                     max_hp=hp,
                     raw_max_hp=raw_hp,
+                    stance_multiplier=1.0,
+                    max_toughness=toughness,
                 )
             )
 

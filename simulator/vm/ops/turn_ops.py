@@ -244,7 +244,13 @@ class TurnOpsMixin:
                         3 if prio == "MonsterDeathRattle"
                         else (
                             4 if prio == "MonsterForceKill"
-                            else (5 if prio == "MonsterSummon" else (6 if prio == "MonsterChangePhase" else 10))
+                            else (
+                                5 if prio == "MonsterSummon"
+                                else (
+                                    6 if prio == "MonsterChangePhase"
+                                    else (7 if prio == "MonsterBattleCry" else 10)
+                                )
+                            )
                         )
                     )
                 )
@@ -258,6 +264,7 @@ class TurnOpsMixin:
                     preempt_follow_up=(
                         prio in (
                             "AvatarBuffSelf",
+                            "MonsterBattleCry",
                             "MonsterChangeState",
                             "MonsterChangePhase",
                             "MonsterForceKill",

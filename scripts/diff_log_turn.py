@@ -30,17 +30,10 @@ from simulator.events import (
     EnemyDefeatedEvent,
     TurnBeginEvent,
 )
-from simulator.golden import (
-    attach_exact_crit_oracle,
-    extract_timeline,
-    run_trajectory_replay,
-)
-from simulator.vm.factory import build_vm_team
 from simulator.vm.loader import GameDataLoader
-from simulator.vm.reconcile.auto_rng import attach_auto_rng_plugin
 from simulator.vm.reconcile.metadata import extract_log_metadata
 from simulator.vm.reconcile.models import DEFAULT_CHAR_DB_PATH, LogMetadata, ReconcileReport
-from simulator.vm.reconcile.runner import build_stage_for_id, reconcile_log
+from simulator.vm.reconcile.runner import reconcile_log
 
 
 def _parse_extra_buffs(raw: Optional[str]) -> Tuple[int, ...]:
@@ -212,38 +205,6 @@ def _print_sim_timeline_block(log_path: str, target_av: float, window: float, li
     print(f"  => SIM window player non-DoT total = {tot_dmg:,.2f}")
 
 
-def _run_sim_timeline_only(
-    log_path: str,
-    char_db: CharacterDB,
-    vm_loader: GameDataLoader,
-    meta: LogMetadata,
-    extra_buffs: Tuple[int, ...],
-    target_av: float,
-    window: float,
-    av_budget: Optional[float],
-) -> None:
-    tl = extract_timeline(log_path)
-    team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader)
-    sim, director, _mode = build_stage_for_id(
-        meta.stage_id,
-        team,
-        technique_users=[e.name for e in team],
-        force_data_driven=True,
-        extra_maze_buff_ids=extra_buffs,
-        entry_element=meta.entry_element,
-        entry_toughness=meta.entry_toughness,
-    )
-    attach_exact_crit_oracle(sim, log_path=log_path, non_crits=set())
-    attach_auto_rng_plugin(sim, meta)
-
-    lines_out: List[str] = []
-    tot_dmg = [0.0]
-    _attach_sim_timeline_recorder(sim, target_av, window, lines_out, tot_dmg)
-    budget = av_budget if av_budget is not None else (target_av + window + 0.3)
-    run_trajectory_replay(sim, director, tl, av_budget=budget, log_path=log_path)
-    _print_sim_timeline_block(log_path, target_av, window, lines_out, tot_dmg[0])
-
-
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="GT vs SIM 快速诊断工具")
     parser.add_argument("logs", nargs="+", help="一个或多个 battle_logs/*.jsonl")
@@ -267,41 +228,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     for lp in args.logs:
         meta = extract_log_metadata(lp, db=char_db)
-        if args.timeline and args.av is not None:
+        show_timeline = bool(args.timeline and args.av is not None)
+        sim_lines: List[str] = []
+        tot_dmg = [0.0]
+        on_sim_ready = None
+        if show_timeline:
             _print_gt_timeline(lp, args.av, args.av_window)
-            if args.summary:
-                sim_lines: List[str] = []
-                tot_dmg = [0.0]
 
-                def _on_sim_ready(sim: Any) -> None:
-                    sim_lines.clear()
-                    tot_dmg[0] = 0.0
-                    _attach_sim_timeline_recorder(sim, args.av, args.av_window, sim_lines, tot_dmg)
+            def _on_sim_ready(sim: Any) -> None:
+                sim_lines.clear()
+                tot_dmg[0] = 0.0
+                _attach_sim_timeline_recorder(sim, args.av, args.av_window, sim_lines, tot_dmg)
 
-                r = reconcile_log(
-                    lp,
-                    db=char_db,
-                    loader=vm_loader,
-                    meta=meta,
-                    extra_maze_buff_ids=extra_buffs,
-                    av_budget=eff_budget,
-                    threshold=args.threshold,
-                    on_sim_ready=_on_sim_ready,
-                )
-                _print_sim_timeline_block(lp, args.av, args.av_window, sim_lines, tot_dmg[0])
-                _print_summary(lp, meta, extra_buffs, r, threshold=args.threshold)
-            else:
-                _run_sim_timeline_only(lp, char_db, vm_loader, meta, extra_buffs, args.av, args.av_window, eff_budget)
-        else:
-            r = reconcile_log(
-                lp,
-                db=char_db,
-                loader=vm_loader,
-                meta=meta,
-                extra_maze_buff_ids=extra_buffs,
-                av_budget=eff_budget,
-                threshold=args.threshold,
-            )
+            on_sim_ready = _on_sim_ready
+
+        # 统一经 reconcile_log 运行，确保自动推断 non_crits 与 RNG overrides 始终生效
+        r = reconcile_log(
+            lp,
+            db=char_db,
+            loader=vm_loader,
+            meta=meta,
+            extra_maze_buff_ids=extra_buffs,
+            av_budget=eff_budget,
+            threshold=args.threshold,
+            on_sim_ready=on_sim_ready,
+        )
+        if show_timeline:
+            _print_sim_timeline_block(lp, args.av, args.av_window, sim_lines, tot_dmg[0])
+        if not show_timeline or args.summary:
             _print_summary(lp, meta, extra_buffs, r, threshold=args.threshold)
     return 0
 

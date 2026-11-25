@@ -120,6 +120,7 @@ class EnemyEntityBlueprint:
     stance_count: int = 1
     stance_type: Optional[str] = None
     custom_value_tags: Tuple[str, ...] = ()
+    phase_max_toughnesses: Tuple[float, ...] = ()
 
     @classmethod
     def from_compiled_monster(cls, spec: CompiledMonsterSpec) -> "EnemyEntityBlueprint":
@@ -131,6 +132,14 @@ class EnemyEntityBlueprint:
             norm_res.setdefault(el, 0.0)
 
         phase_hps = tuple(p.max_hp for p in spec.phases) if spec.phases else (spec.hp,)
+        phase_toughnesses = (
+            tuple(
+                p.max_toughness if p.max_toughness > 0.0 else spec.toughness
+                for p in spec.phases
+            )
+            if spec.phases
+            else (spec.toughness,)
+        )
         return cls(
             monster_id=spec.monster_id,
             monster_template_id=spec.monster_template_id,
@@ -159,6 +168,7 @@ class EnemyEntityBlueprint:
             stance_count=max(1, int(getattr(spec, "stance_count", 1) or 1)),
             stance_type=normalize_element(getattr(spec, "stance_type", None)) or None,
             custom_value_tags=tuple(getattr(spec, "custom_value_tags", ())),
+            phase_max_toughnesses=phase_toughnesses,
         )
 
     def to_entity(
@@ -171,6 +181,11 @@ class EnemyEntityBlueprint:
         """Instantiate a simulator ``Entity`` populated with this blueprint's stats."""
         idx = max(0, min(len(self.phase_max_hps) - 1, phase - 1))
         hp = self.phase_max_hps[idx]
+        tough = (
+            self.phase_max_toughnesses[idx]
+            if idx < len(self.phase_max_toughnesses) and self.phase_max_toughnesses[idx] > 0.0
+            else self.max_toughness
+        )
         dist = self.initial_distance if initial_distance is None else float(initial_distance)
 
         ent = Entity(
@@ -182,8 +197,8 @@ class EnemyEntityBlueprint:
             base_def=self.base_def,
             base_effect_res=self.effect_res,
             level=self.level,
-            max_toughness=self.max_toughness,
-            current_toughness=self.max_toughness,
+            max_toughness=tough,
+            current_toughness=tough,
             weaknesses=list(self.weaknesses),
             is_enemy=True,
             is_boss=self.is_boss,
@@ -195,6 +210,7 @@ class EnemyEntityBlueprint:
         ent.monster_id = self.monster_id  # type: ignore[attr-defined]
         ent.monster_template_id = self.monster_template_id  # type: ignore[attr-defined]
         ent.phase_max_hps = self.phase_max_hps  # type: ignore[attr-defined]
+        ent.phase_max_toughnesses = self.phase_max_toughnesses or (self.max_toughness,)  # type: ignore[attr-defined]
         ent.debuff_resist = dict(self.debuff_resist)  # type: ignore[attr-defined]
         ent.status_probability = self.status_probability  # type: ignore[attr-defined]
         ent.monster_rank = self.rank  # type: ignore[attr-defined]

@@ -417,7 +417,7 @@ class CombatOpsMixin:
                     current_attack_type=atk_type,
                 )
 
-        dmg_data: Dict[str, Any] = {}
+        dmg_data: Dict[str, Any] = {"Element": element}
         if not is_true_dmg:
             me.dispatch_event(
                 "OnBeforeHitAll",
@@ -725,8 +725,8 @@ class CombatOpsMixin:
                 tgt_extra_vuln = 0.0
                 tgt_extra_def_ignore = 0.0
                 tgt_extra_res_pen = 0.0
+                tgt_hit_data: Dict[str, Any] = {"Element": element}
                 if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and not is_true_dmg:
-                    tgt_hit_data: Dict[str, Any] = {}
                     me.dispatch_event(
                         "OnBeforeBeingHitAll",
                         owner_id=tid,
@@ -762,6 +762,15 @@ class CombatOpsMixin:
                         "OnBeforeHit",
                         owner_id=eff_attacker_id,
                         param_entity_id=tid,
+                        attack_target_ids=tuple(targets),
+                        damage_data=hit_dmg_data,
+                        current_attack_type=atk_type,
+                    )
+                if not is_nested_sub and not is_additional_dmg:
+                    me.dispatch_event(
+                        "OnBeforeBeingHit",
+                        owner_id=tid,
+                        param_entity_id=eff_attacker_id,
                         attack_target_ids=tuple(targets),
                         damage_data=hit_dmg_data,
                         current_attack_type=atk_type,
@@ -802,6 +811,18 @@ class CombatOpsMixin:
                             applied_def_red = True
                         cur_last_def_red = float(getattr(tgt_ent, "_vm_last_def_red", 0.0) or 0.0)
                         setattr(tgt_ent, "_vm_last_def_red", cur_last_def_red + hit_def_red_delta)
+                    const_final_dmg: Optional[float] = None
+                    if "AttackData_ConstFinalDamage" in hit_dmg_data:
+                        const_final_dmg = float(hit_dmg_data["AttackData_ConstFinalDamage"])
+                    elif (
+                        tgt_ent is not None
+                        and getattr(tgt_ent, "is_enemy", False)
+                        and "AttackData_ConstFinalDamage" in tgt_hit_data
+                    ):
+                        const_final_dmg = float(tgt_hit_data["AttackData_ConstFinalDamage"])
+                    if const_final_dmg is not None and const_final_dmg <= 0.0 and tgt_ent is not None:
+                        tgt_ent.damage_reduction = 1.0
+                        applied_def_red = True
                 else:
                     hit_extra_dmg_boost = extra_dmg_boost
                     hit_extra_def_ignore = extra_def_ignore
@@ -817,47 +838,50 @@ class CombatOpsMixin:
                     )
                     if abs(brk_eff) > 1e-12:
                         hit_eff_stance *= max(0.0, 1.0 + brk_eff)
-                sim.port.attack(
-                    eff_attacker_id,
-                    tid,
-                    element=element,
-                    atk_multiplier=hit_eff_pct,
-                    flat_damage=hit_eff_flat,
-                    toughness_damage=hit_eff_stance,
-                    scaling_stat=scaling_stat,
-                    damage_type=damage_type,
-                    force_crit=(False if is_dot_dmg else None),
-                    extra_dmg_boost=hit_extra_dmg_boost,
-                    extra_def_ignore=hit_extra_def_ignore + tgt_extra_def_ignore,
-                    extra_res_pen=hit_extra_res_pen + tgt_extra_res_pen,
-                    extra_vuln=hit_extra_vuln + tgt_extra_vuln,
-                    extra_crit_dmg=hit_extra_crit_dmg,
-                    vm_hit_hooks_applied=not is_true_dmg,
-                    source_entity=(
-                        getattr(ctx.modifier_instance, "caster_snapshot_entity", None)
-                        if ctx.modifier_instance is not None
-                        else None
-                    ),
-                )
-                if not is_true_dmg and not is_dot_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
-                    caster_ent = sim.get_entity(eff_attacker_id)
-                    if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
-                        sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
-                        if sp_base <= 0.0 and ctx.ability_name:
-                            mspec = getattr(getattr(caster_ent, "kit", None), "ai_spec", None)
-                            if mspec is not None:
-                                for sk_key, sk_spec in getattr(mspec, "skills_by_key", {}).items():
-                                    if sk_key and (f"_{sk_key}_" in ctx.ability_name or ctx.ability_name.endswith(f"_{sk_key}")):
-                                        sp_base = float(getattr(sk_spec, "sp_hit_base", 0.0) or 0.0)
-                                        break
-                        sp_ratio = self._eval_num(atk_prop.get("SPHitRatio"), ctx, 0.0)
-                        sp_hit = sp_base * sp_ratio * hit_split
-                        if sp_hit > 0.0:
-                            energy_tid = (getattr(tgt_ent, "master_name", None) or tid) if getattr(tgt_ent, "is_memosprite", False) else tid
-                            sim.port.gain_hit_energy(energy_tid, base_amount=sp_hit)
+                prev_active_atk = getattr(rt, "_active_damage_attacker_id", None)
+                rt._active_damage_attacker_id = eff_attacker_id
                 try:
+                    sim.port.attack(
+                        eff_attacker_id,
+                        tid,
+                        element=element,
+                        atk_multiplier=hit_eff_pct,
+                        flat_damage=hit_eff_flat,
+                        toughness_damage=hit_eff_stance,
+                        scaling_stat=scaling_stat,
+                        damage_type=damage_type,
+                        force_crit=(False if is_dot_dmg else None),
+                        extra_dmg_boost=hit_extra_dmg_boost,
+                        extra_def_ignore=hit_extra_def_ignore + tgt_extra_def_ignore,
+                        extra_res_pen=hit_extra_res_pen + tgt_extra_res_pen,
+                        extra_vuln=hit_extra_vuln + tgt_extra_vuln,
+                        extra_crit_dmg=hit_extra_crit_dmg,
+                        vm_hit_hooks_applied=not is_true_dmg,
+                        source_entity=(
+                            getattr(ctx.modifier_instance, "caster_snapshot_entity", None)
+                            if ctx.modifier_instance is not None
+                            else None
+                        ),
+                    )
+                    if not is_true_dmg and not is_dot_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
+                        caster_ent = sim.get_entity(eff_attacker_id)
+                        if caster_ent is not None and getattr(caster_ent, "is_enemy", False):
+                            sp_base = float(getattr(rt, "_current_enemy_sp_hit_base", 0.0))
+                            if sp_base <= 0.0 and ctx.ability_name:
+                                mspec = getattr(getattr(caster_ent, "kit", None), "ai_spec", None)
+                                if mspec is not None:
+                                    for sk_key, sk_spec in getattr(mspec, "skills_by_key", {}).items():
+                                        if sk_key and (f"_{sk_key}_" in ctx.ability_name or ctx.ability_name.endswith(f"_{sk_key}")):
+                                            sp_base = float(getattr(sk_spec, "sp_hit_base", 0.0) or 0.0)
+                                            break
+                            sp_ratio = self._eval_num(atk_prop.get("SPHitRatio"), ctx, 0.0)
+                            sp_hit = sp_base * sp_ratio * hit_split
+                            if sp_hit > 0.0:
+                                energy_tid = (getattr(tgt_ent, "master_name", None) or tid) if getattr(tgt_ent, "is_memosprite", False) else tid
+                                sim.port.gain_hit_energy(energy_tid, base_amount=sp_hit)
                     sim.resolver.resolve_all()
                 finally:
+                    rt._active_damage_attacker_id = prev_active_atk
                     if tgt_ent is not None:
                         if applied_def_red:
                             tgt_ent.damage_reduction = prev_dmg_red
@@ -1105,15 +1129,24 @@ class CombatOpsMixin:
                 if dyn_set and max_hp > 0:
                     rt.set_dynamic_value(ctx.caster_id, dotnet_hash(dyn_set), actual_loss / max_hp)
                 if getattr(ent, "is_enemy", False):
+                    eff_killer = ctx.caster_id or ""
+                    if not eff_killer or eff_killer in ("__LEVEL__", tid):
+                        cand = ctx.param_entity_id
+                        if cand and cand not in ("__LEVEL__", tid) and sim.get_entity(cand) is not None:
+                            eff_killer = cand
+                        else:
+                            act_atk = getattr(rt, "_active_damage_attacker_id", None)
+                            if act_atk and act_atk not in ("__LEVEL__", tid):
+                                eff_killer = act_atk
                     director = getattr(sim, "_stage_director", None)
                     runner = getattr(director, "runner", None) if director is not None else None
                     if runner is not None:
                         try:
                             mrs = runner.get_enemy_state(tid)
                             if getattr(mrs, "_limbo_pending", False):
-                                if not rt.trigger_or_defer_limbo(tid, ctx.caster_id):
+                                if not rt.trigger_or_defer_limbo(tid, eff_killer):
                                     setattr(mrs, "_limbo_pending", False)
-                                    me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=ctx.caster_id)
+                                    me.dispatch_event("OnLimboWaitHeal", owner_id=tid, param_entity_id=eff_killer)
                         except KeyError:
                             pass
                     if ent.current_hp <= 0.0:
@@ -1128,7 +1161,7 @@ class CombatOpsMixin:
                             EnemyDefeatedEvent(
                                 av=float(sim.current_av),
                                 cycle=int(sim.current_cycle),
-                                attacker_name=ctx.caster_id or "",
+                                attacker_name=eff_killer or "",
                                 target_name=tid,
                             )
                         )
@@ -1138,7 +1171,7 @@ class CombatOpsMixin:
                                 q = []
                                 rt._pending_dying_enemies = q
                             if not any(x[0] == tid for x in q):
-                                q.append((tid, ctx.caster_id))
+                                q.append((tid, eff_killer))
                             pending_dead = getattr(rt, "_pending_dead_enemies", None)
                             if pending_dead is None:
                                 pending_dead = []
@@ -1146,8 +1179,8 @@ class CombatOpsMixin:
                             if tid not in pending_dead:
                                 pending_dead.append(tid)
                         else:
-                            me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=ctx.caster_id)
-                            me.dispatch_event("OnBeingLimbo", owner_id=tid, param_entity_id=ctx.caster_id)
+                            me.dispatch_event("OnBeforeDying", owner_id=tid, param_entity_id=eff_killer)
+                            me.dispatch_event("OnBeingLimbo", owner_id=tid, param_entity_id=eff_killer)
                             if has_dr:
                                 me.strip_for_deathrattle(tid)
                             active_dr = getattr(rt, "_active_deathrattle_entities", None)
@@ -1156,7 +1189,7 @@ class CombatOpsMixin:
                                 rt._active_deathrattle_entities = active_dr
                             active_dr.add(tid)
                             try:
-                                me.dispatch_event("OnDeathrattle", owner_id=tid, param_entity_id=ctx.caster_id)
+                                me.dispatch_event("OnDeathrattle", owner_id=tid, param_entity_id=eff_killer)
                             finally:
                                 active_dr.discard(tid)
                             rt.finalize_inline_deathrattle(tid)

@@ -56,6 +56,16 @@ CONVERT_PROPERTY_PAIR: Dict[str, str] = {
     "HealRatioConvert": "HealRatioBase",
 }
 
+ELEMENT_RESISTANCE_DELTA_PROPS: Dict[str, str] = {
+    "PhysicalResistanceDelta": "Physical",
+    "FireResistanceDelta": "Fire",
+    "IceResistanceDelta": "Ice",
+    "ThunderResistanceDelta": "Lightning",
+    "WindResistanceDelta": "Wind",
+    "QuantumResistanceDelta": "Quantum",
+    "ImaginaryResistanceDelta": "Imaginary",
+}
+
 
 @dataclass
 class VMModifierInstance:
@@ -237,13 +247,16 @@ class ModifierEngine:
             if m._destroyed:
                 continue
             deltas = m.weak_resistance_deltas.get(entity_id)
-            if not deltas:
-                continue
-            for stype, elem, val in deltas:
-                if stype == "Delta":
-                    res[elem] = float(res.get(elem, 0.0)) + float(val)
-                else:
-                    res[elem] = float(val)
+            if deltas:
+                for stype, elem, val in deltas:
+                    if stype == "Delta":
+                        res[elem] = float(res.get(elem, 0.0)) + float(val)
+                    else:
+                        res[elem] = float(val)
+            if m.owner_id == entity_id:
+                for prop_name, elem in ELEMENT_RESISTANCE_DELTA_PROPS.items():
+                    if prop_name in m.properties:
+                        res[elem] = float(res.get(elem, 0.0)) + float(m.properties[prop_name])
         ent.damage_res = res
 
     def _lookup_modifier_config(self, mod_name: str, ability_name: str = "") -> Dict[str, Any]:
@@ -489,7 +502,7 @@ class ModifierEngine:
                 self._defer_sync_mod_uid = prev_defer_uid
             self._sync_modifier_to_status_mgr(mod)
 
-            # 触发全局 OnModifierAdd / OnListenModifierAdd / OnModifierOnStack
+            # 触发全局 OnModifierAdd / OnListenModifierAdd / OnModifierOnStack / OnListenModifierOnStack
             mod_status_type = self.get_modifier_status_type(mod)
             if is_new:
                 self.dispatch_event(
@@ -512,6 +525,15 @@ class ModifierEngine:
             self.dispatch_event(
                 "OnModifierOnStack",
                 owner_id=owner_id,
+                param_entity_id=owner_id,
+                param_entity2_id=caster_id,
+                callback_modifier_name=mod_name,
+                callback_behavior_flags=tuple(mod.behavior_flags),
+                callback_status_type=mod_status_type,
+                exclude_modifier_uid=mod.uid,
+            )
+            self.dispatch_event(
+                "OnListenModifierOnStack",
                 param_entity_id=owner_id,
                 param_entity2_id=caster_id,
                 callback_modifier_name=mod_name,
@@ -711,6 +733,8 @@ class ModifierEngine:
             self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key, reason=reason)
             if "DirtyHPRatio" in mod.properties:
                 self._recompute_dirty_hp_ratio(mod.owner_id)
+            if any(p in mod.properties for p in ELEMENT_RESISTANCE_DELTA_PROPS):
+                self.recompute_entity_damage_res(mod.owner_id)
         if mod.stacked_weaknesses:
             for tid, ops in list(mod.stacked_weaknesses.items()):
                 had_prot = any(op == "Protected" for op, _ in ops)
@@ -816,6 +840,8 @@ class ModifierEngine:
             if prop_name == "DirtyHPRatio":
                 self._recompute_dirty_hp_ratio(mod.owner_id)
                 continue
+            if prop_name in ELEMENT_RESISTANCE_DELTA_PROPS:
+                continue
             mapping = PROPERTY_TO_STAT.get(prop_name)
             if mapping is None:
                 continue
@@ -823,6 +849,9 @@ class ModifierEngine:
             if is_conv:
                 has_convert = True
             mods.append(Modifier(stat=stat_type, op=op, value=float(val)))
+
+        if any(p in mod.properties for p in ELEMENT_RESISTANCE_DELTA_PROPS):
+            self.recompute_entity_damage_res(mod.owner_id)
 
         if not mods:
             self.rt.sim.status_mgr.remove_status(mod.owner_id, mod.status_key)

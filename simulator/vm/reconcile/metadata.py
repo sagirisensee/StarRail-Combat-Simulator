@@ -75,6 +75,7 @@ def extract_log_metadata(
     # 无归属回合（阿哈回合）追踪
     cur_none_had_skill = False
     cur_none_enemy_dmgs: List[Tuple[int, float]] = []
+    cur_none_last_drop_euid: Optional[int] = None
     cur_none_lethal_euids: Set[int] = set()
     cur_none_ally_chips: List[str] = []
     cur_none_ally_sp_counts: Dict[str, int] = {}
@@ -91,9 +92,11 @@ def extract_log_metadata(
     pending_player_atk: Optional[Tuple[float, str]] = None
     pending_player_hit_euids: List[int] = []
     pending_player_dmg_confirmed_euids: List[int] = []
+    pending_player_sp_euids: List[int] = []
     pending_player_hit_dmgs: Dict[int, float] = {}
     pending_hit_hp_euids: List[int] = []
     pending_hit_direct_euid: Optional[int] = None
+    pending_hit_sp_euid: Optional[int] = None
     last_player_hit_euid: Optional[int] = None
     pending_player_primary_dmg_hits = 0
     pending_player_is_servant = False
@@ -102,7 +105,7 @@ def extract_log_metadata(
     player_enemy_targets_raw: Dict[Tuple[float, str], List[int]] = {}
     servant_targets_raw: Dict[Tuple[float, str], List[Optional[int]]] = {}
     pending_player_atk_records: List[
-        Tuple[Tuple[float, str], bool, int, str, int, List[int], List[int], Dict[int, float]]
+        Tuple[Tuple[float, str], bool, int, str, int, List[int], List[int], Dict[int, float], List[int]]
     ] = []
     servant_skill_effects = _get_servant_skill_effects()
     avatar_skill_effects = _get_avatar_skill_effects()
@@ -130,7 +133,7 @@ def extract_log_metadata(
         return None
 
     def _flush_pending_player_atk() -> None:
-        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_dmg_confirmed_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits, last_player_hit_euid, pending_hit_direct_euid
+        nonlocal pending_player_atk, pending_player_hit_euids, pending_player_dmg_confirmed_euids, pending_player_sp_euids, pending_player_hit_dmgs, pending_player_primary_dmg_hits, last_player_hit_euid, pending_hit_direct_euid, pending_hit_sp_euid
         nonlocal pending_player_is_servant, pending_player_skill_id, pending_player_skill_type
         if cur_player_sk_info is not None and pending_player_hit_dmgs:
             skill_atk_dmgs.setdefault(cur_player_sk_info[2], {}).update(pending_player_hit_dmgs)
@@ -145,14 +148,17 @@ def extract_log_metadata(
                     list(pending_player_hit_euids),
                     list(pending_player_dmg_confirmed_euids),
                     dict(pending_player_hit_dmgs),
+                    list(pending_player_sp_euids),
                 )
             )
         pending_player_atk = None
         pending_player_hit_euids = []
         pending_player_dmg_confirmed_euids = []
+        pending_player_sp_euids = []
         pending_player_hit_dmgs = {}
         pending_hit_hp_euids.clear()
         pending_hit_direct_euid = None
+        pending_hit_sp_euid = None
         last_player_hit_euid = None
         pending_player_primary_dmg_hits = 0
         pending_player_is_servant = False
@@ -200,7 +206,7 @@ def extract_log_metadata(
 
     def _flush_turn() -> None:
         nonlocal cur_enemy_uid, cur_hit_order, cur_hit_set, cur_hit_counts, cur_hit_dmgs, cur_clamped_hp_names, cur_small_hp_drops, cur_sub_hits, cur_sub_actions, cur_sub_sp_gains, cur_sub_first_memo, cur_sub_pending_sp_owner, cur_sub_action_details, cur_small_heal_uids, cur_sp_gain_counts, cur_first_memo_owner, pending_first_sp_owner, last_enemy_hit_sp
-        nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts, cur_none_pending_hp_chip_uid
+        nonlocal cur_turn_owner_team, cur_none_had_skill, cur_none_enemy_dmgs, cur_none_last_drop_euid, cur_none_lethal_euids, cur_none_ally_chips, cur_none_ally_sp_counts, cur_none_pending_hp_chip_uid
         if cur_enemy_uid is not None:
             if pending_first_sp_owner is not None and not cur_hit_order and cur_first_memo_owner is None:
                 cur_first_memo_owner = pending_first_sp_owner
@@ -297,6 +303,7 @@ def extract_log_metadata(
         last_enemy_hit_sp = 0.0
         cur_none_had_skill = False
         cur_none_enemy_dmgs = []
+        cur_none_last_drop_euid = None
         cur_none_lethal_euids = set()
         cur_none_ally_chips = []
         cur_none_ally_sp_counts = {}
@@ -343,6 +350,12 @@ def extract_log_metadata(
             obj = json.loads(line)
             ev = obj.get("event")
             data = obj.get("data") or {}
+            if not (
+                ev == "OnStatChange"
+                and (data.get("entity") or {}).get("team") == "Enemy"
+                and (data.get("property") or {}).get("type") == "CurrentHP"
+            ):
+                cur_none_last_drop_euid = None
 
             if ev == "OnBattleBegin":
                 stage_id = int(data.get("stage_id") or 0)
@@ -454,12 +467,19 @@ def extract_log_metadata(
                     )
                     if confirmed_euid is not None and dtype not in ("Break", "Additional", "True"):
                         pending_player_dmg_confirmed_euids.append(confirmed_euid)
+                        if (
+                            pending_hit_sp_euid is not None
+                            and dtype != "Follow-Up"
+                            and pending_hit_sp_euid not in pending_player_sp_euids
+                        ):
+                            pending_player_sp_euids.append(pending_hit_sp_euid)
                         dmg_val = float(data.get("damage") or 0.0)
                         if dmg_val > pending_player_hit_dmgs.get(confirmed_euid, 0.0):
                             pending_player_hit_dmgs[confirmed_euid] = dmg_val
                     if dtype != "Break":
                         pending_hit_hp_euids.clear()
                         pending_hit_direct_euid = None
+                        pending_hit_sp_euid = None
                         last_player_hit_euid = None
                 atk_ent = data.get("attacker") or {}
                 if dtype in ("Additional", "True"):
@@ -531,6 +551,7 @@ def extract_log_metadata(
                     if ptype == "CurrentSP":
                         if pending_player_atk is not None and pending_hit_hp_euids and val > 0.0:
                             pending_hit_direct_euid = uid
+                            pending_hit_sp_euid = uid
                         if (
                             cur_enemy_uid is None
                             and paused_enemy_ctx is not None
@@ -580,10 +601,18 @@ def extract_log_metadata(
                         if cur_turn_owner_team is None and not cur_none_had_skill and prev is not None:
                             if val < prev - 1.0:
                                 cur_none_enemy_dmgs.append((uid, prev - val))
+                                cur_none_last_drop_euid = uid
                                 if val <= 1e-3:
                                     cur_none_lethal_euids.add(uid)
                             elif abs(val - prev) <= 1.0 and val > 1e-3:
-                                cur_none_enemy_dmgs.append((uid, 0.0))
+                                if cur_none_last_drop_euid == uid and abs(val - prev) <= 1e-3:
+                                    # 紧随扣血之后同 UID 相同数值的 CurrentHP 广播是贪饕 DirtyHPRatio 同步回声，非护盾吸收命中
+                                    cur_none_last_drop_euid = None
+                                else:
+                                    cur_none_enemy_dmgs.append((uid, 0.0))
+                                    cur_none_last_drop_euid = None
+                            else:
+                                cur_none_last_drop_euid = None
                         elif pending_player_atk is not None and (
                             prev is None
                             or val < prev - 1.0
@@ -928,10 +957,12 @@ def extract_log_metadata(
         p_hit_euids_raw,
         p_dmg_confirmed_raw,
         p_hit_dmgs_raw,
+        p_sp_euids_raw,
     ) in pending_player_atk_records:
         p_hit_euids = [u for u in p_hit_euids_raw if u not in non_formation_euids] if non_formation_euids else p_hit_euids_raw
         p_dmg_confirmed = [u for u in p_dmg_confirmed_raw if u not in non_formation_euids] if non_formation_euids else p_dmg_confirmed_raw
         p_hit_dmgs = {u: d for u, d in p_hit_dmgs_raw.items() if u not in non_formation_euids} if non_formation_euids else p_hit_dmgs_raw
+        p_sp_euids = [u for u in p_sp_euids_raw if u not in non_formation_euids] if non_formation_euids else p_sp_euids_raw
         if p_is_servant:
             sk_eff = servant_skill_effects.get(p_skill_id, "")
             if sk_eff == "SingleAttack":
@@ -940,10 +971,13 @@ def extract_log_metadata(
                 )
             elif sk_eff in ("AoEAttack", "Blast", "Bounce"):
                 inferred_primary: Optional[int] = None
-                if sk_eff in ("AoEAttack", "Blast") and len(p_hit_dmgs) >= 2:
-                    sorted_dmgs = sorted(p_hit_dmgs.items(), key=lambda kv: kv[1], reverse=True)
-                    if sorted_dmgs[1][1] > 0.0 and sorted_dmgs[0][1] > sorted_dmgs[1][1] * 1.4:
-                        inferred_primary = sorted_dmgs[0][0]
+                if sk_eff in ("AoEAttack", "Blast"):
+                    if len(p_sp_euids) == 1:
+                        inferred_primary = p_sp_euids[0]
+                    elif len(p_hit_dmgs) >= 2:
+                        sorted_dmgs = sorted(p_hit_dmgs.items(), key=lambda kv: kv[1], reverse=True)
+                        if sorted_dmgs[1][1] > 0.0 and sorted_dmgs[0][1] > sorted_dmgs[1][1] * 1.4:
+                            inferred_primary = sorted_dmgs[0][0]
                 servant_targets_raw.setdefault(p_atk, []).append(inferred_primary)
             elif not sk_eff:
                 _servant_euid = _servant_primary_euid(p_dmg_confirmed if p_dmg_confirmed else p_hit_euids)

@@ -366,6 +366,24 @@ class TestStageRunner(unittest.TestCase):
         self.assertEqual(cycles_seen, [1])
         self.assertEqual(pf_runner.state.current_cycle, 1)
 
+    def test_phase_stance_ratio_scaling_on_phase_transition(self) -> None:
+        runner = StageRunner(420564)
+        w0 = runner.start_stage()
+        pam = next(e for e in w0 if getattr(e, "monster_id", 0) == 501402404)
+        self.assertTrue(math.isclose(pam.max_toughness, 1440.0, rel_tol=1e-9))
+        self.assertTrue(math.isclose(pam.current_toughness, 1440.0, rel_tol=1e-9))
+
+        pam.current_toughness = 0.0
+        pam.is_broken = True
+        runner.execute_stage_task(
+            {"$type": "RPG.GameCore.SetMonsterPhase", "SetMode": "Inc"},
+            caster_name=pam.name,
+        )
+        self.assertEqual(runner.get_enemy_state(pam.name).phase, 2)
+        self.assertTrue(math.isclose(pam.max_toughness, 2520.0, rel_tol=1e-9))
+        self.assertTrue(math.isclose(pam.current_toughness, 2520.0, rel_tol=1e-9))
+        self.assertFalse(pam.is_broken)
+
 
 if __name__ == "__main__":
     unittest.main()
