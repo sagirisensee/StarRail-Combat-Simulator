@@ -17,6 +17,7 @@ SKIP_SENTINEL = "__SKIP__"
 
 _SERVANT_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
 _AVATAR_SKILL_EFFECT_CACHE: Optional[Dict[int, str]] = None
+_AVATAR_SKILL_TRIGGER_KEY_CACHE: Optional[Dict[int, str]] = None
 _AVATAR_SKILL_STANCE_CACHE: Optional[Dict[int, float]] = None
 _AVATAR_SKILL_STANCE_PAIR_CACHE: Optional[Dict[int, Tuple[float, float]]] = None
 _AVATAR_DAMAGE_TYPE_CACHE: Optional[Dict[int, str]] = None
@@ -69,6 +70,31 @@ def _get_avatar_skill_effects() -> Dict[int, str]:
         except Exception:
             pass
     _AVATAR_SKILL_EFFECT_CACHE = out
+    return out
+
+
+def _get_avatar_skill_trigger_keys() -> Dict[int, str]:
+    """从官方 ExcelOutput/AvatarSkillConfig.json 加载 SkillID -> SkillTriggerKey 映射。"""
+    global _AVATAR_SKILL_TRIGGER_KEY_CACHE
+    if _AVATAR_SKILL_TRIGGER_KEY_CACHE is not None:
+        return _AVATAR_SKILL_TRIGGER_KEY_CACHE
+    out: Dict[int, str] = {}
+    path = os.path.join(
+        ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput", "AvatarSkillConfig.json"
+    )
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if isinstance(rows, list):
+                for row in rows:
+                    sid = int(row.get("SkillID") or 0)
+                    tkey = str(row.get("SkillTriggerKey") or "")
+                    if sid and tkey and sid not in out:
+                        out[sid] = tkey
+        except Exception:
+            pass
+    _AVATAR_SKILL_TRIGGER_KEY_CACHE = out
     return out
 
 
@@ -224,10 +250,12 @@ class LogMetadata:
     enemy_uid_map: Dict[int, str] = field(default_factory=dict)
     ally_ult_targets: Dict[str, List[str]] = field(default_factory=dict)
     enemy_retarget_picks: List[Tuple[float, int, int]] = field(default_factory=list)
+    random_config_draws: List[Tuple[float, int, int]] = field(default_factory=list)
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)
     servant_targets: Dict[Tuple[float, str], List[Optional[str]]] = field(default_factory=dict)
     aha_turns: List[AhaTurnRecord] = field(default_factory=list)
     windwalk_enemy_uids: Set[int] = field(default_factory=set)
+    windwalk_events: List[Tuple[float, int]] = field(default_factory=list)
     slow_hits: Set[Tuple[float, str]] = field(default_factory=set)
     quantum_entangle_resists: Set[Tuple[float, str]] = field(default_factory=set)
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = field(default_factory=dict)
@@ -273,6 +301,8 @@ class ReconcileReport:
     unresolved_ambiguous_slots: int = 0
     non_crits: Set[Tuple[int, int]] = field(default_factory=set)
     enemy_hit_mismatches: List[EnemyHitMismatch] = field(default_factory=list)
+    ult_energy_granted: float = 0.0
+    non_crit_details: List[str] = field(default_factory=list)
 
 
 def _extract_tag(log_path: str) -> str:

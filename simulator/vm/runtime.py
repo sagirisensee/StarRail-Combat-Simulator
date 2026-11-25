@@ -18,6 +18,7 @@ from ..events import (
     EnemyDefeatedEvent,
     HealAppliedEvent,
     HPLostEvent,
+    SPChangeEvent,
     SpiritDespawnEvent,
     SpiritSummonedEvent,
     TurnBeginEvent,
@@ -70,23 +71,29 @@ class VMRuntime:
         self.turn_control_skill_snapshot: Dict[str, str] = {}
         self.dynamic_entity_params: Dict[Tuple[str, str], List[str]] = {}
         self.hp_shared_groups: Dict[str, str] = {}
+        self.skill_property_overrides: Dict[str, List[Dict[str, Any]]] = {}
+        self.entity_boost_points: Dict[str, float] = {}
+        self.entity_skill_tags: Dict[str, Dict[str, Set[Tuple[int, int]]]] = {}
+        self.entity_removed_skill_tags: Dict[str, Dict[str, Set[Tuple[int, int]]]] = {}
+        self._pending_use_skill_one_more: Dict[str, List[str]] = {}
+        self.in_elation_time: bool = False
+        self.elation_time_override_points: float = 0.0
+        self.elation_time_custom_tag: str = ""
+        self.elation_time_units: List[str] = []
+        self.has_paused_elation_time: bool = False
+        self.entity_dynamic_strings: Dict[str, Dict[str, str]] = {}
         self.sim.event_bus.subscribe(TurnBeginEvent, self._on_turn_begin)
         self.sim.event_bus.subscribe(TurnEndEvent, self._on_turn_end)
         self.sim.event_bus.subscribe(ActionExecuteEvent, self._on_action_execute)
         self.sim.event_bus.subscribe(ActionEndEvent, self._on_action_end)
         self.sim.event_bus.subscribe(HPLostEvent, self._on_hp_lost)
         self.sim.event_bus.subscribe(HealAppliedEvent, self._on_heal_applied)
+        self.sim.event_bus.subscribe(SPChangeEvent, self._on_sp_change)
         self.sim.event_bus.subscribe(SpiritDespawnEvent, self._on_spirit_despawn)
         self.sim.event_bus.subscribe(EnemyDefeatedEvent, self._on_enemy_defeated)
 
     def resolve_global_target_alias(self, alias_name: str) -> Optional[Dict[str, Any]]:
-        if not self._global_aliases_loaded:
-            self.loader.ensure_ability_index()
-            for data in self.loader._file_cache.values():
-                if isinstance(data, dict) and isinstance(data.get("GlobalTargetAlias"), dict):
-                    self.global_target_aliases.update(data["GlobalTargetAlias"])
-            self._global_aliases_loaded = True
-        return self.global_target_aliases.get(alias_name)
+        return self.loader.get_global_target_alias(alias_name)
 
     def begin_attack_scope(self) -> None:
         self._attack_scope_depth += 1
@@ -343,6 +350,8 @@ class VMRuntime:
             setattr(ent, "_die_immediately_after_deathrattle", False)
             setattr(ent, "_in_deathrattle_limbo", False)
             ent.current_hp = 0.0
+            if getattr(ent, "is_memosprite", False) and hasattr(self.sim, "port"):
+                self.sim.port.despawn_spirit(entity_id, reason="death")
             self.modifier_engine.destroy_all_for_entity(entity_id)
             if getattr(ent, "_deferred_listen_die", False):
                 setattr(ent, "_deferred_listen_die", False)
@@ -375,6 +384,8 @@ class VMRuntime:
         local_ctx: Optional[ExecutionContext] = None,
     ) -> float:
         if local_ctx is not None:
+            if local_ctx.template_dynamics is not None and hash_val in local_ctx.template_dynamics:
+                return local_ctx.template_dynamics[hash_val]
             if hash_val in local_ctx.local_dynamics:
                 return local_ctx.local_dynamics[hash_val]
             if local_ctx.modifier_instance is not None and hash_val in local_ctx.modifier_instance.dynamic_values:
@@ -437,7 +448,9 @@ class VMRuntime:
                 eq = self.equip_dynamics[(entity_id, ability_name)]
                 if key_hash in eq:
                     eq[key_hash] = float(value)
-        self.modifier_engine.check_dynamic_value_changes(entity_id, key_hash, old_val, float(value))
+        self.modifier_engine.check_dynamic_value_changes(
+            entity_id, key_hash, old_val, float(value), modifier=modifier
+        )
 
     def modify_elation_points(self, value: float, *, mode: str = "add") -> None:
         old_val = float(self.elation_points)
@@ -448,6 +461,19 @@ class VMRuntime:
         actual_delta = new_val - old_val
         self.elation_points = new_val
         self.modifier_engine.check_elation_point_changes(old_val, new_val, actual_delta)
+
+    def get_elation_points_for_query(self, owner_id: str, query_type: Optional[str] = None) -> float:
+        if str(query_type or "") == "KGCEIIJFCKE":
+            return float(self.elation_points or 0.0)
+        if getattr(self, "in_elation_time", False):
+            ov_pt = float(getattr(self, "elation_time_override_points", 0.0) or 0.0)
+            if ov_pt > 0.0:
+                return ov_pt
+        if not getattr(self, "in_elation_time", False) and owner_id and owner_id != "__LEVEL__":
+            echo_pt = float(self.modifier_engine.get_entity_property(owner_id, "ElationEchoPoint") or 0.0)
+            if echo_pt > 0.0:
+                return echo_pt
+        return float(self.elation_points or 0.0)
 
     def find_template(self, tpl_name: str, ability_name: str = "") -> Optional[List[Dict[str, Any]]]:
         if ability_name:
@@ -476,6 +502,7 @@ class VMRuntime:
         current_skill_type: str = "",
         current_attack_type: str = "",
         local_dynamics: Optional[Dict[int, float]] = None,
+        custom_strings: Optional[Dict[str, str]] = None,
     ) -> None:
         ab = self.loader.get_ability(ability_name)
         if ab is None:
@@ -491,6 +518,7 @@ class VMRuntime:
             current_skill_type=current_skill_type,
             current_attack_type=current_attack_type,
             local_dynamics=dict(local_dynamics) if local_dynamics else {},
+            custom_strings=dict(custom_strings) if custom_strings else {},
         )
         has_add = bool(ab.get("OnAdd"))
         has_start = "OnStart" in ab
@@ -588,6 +616,7 @@ class VMRuntime:
                 base_break_effect=getattr(master, "base_break_effect", 0.0),
                 base_err=getattr(master, "base_err", 1.0),
                 base_dmg_boost=getattr(master, "base_dmg_boost", 0.0),
+                base_elation=getattr(master, "base_elation", 0.0),
                 element=master.element,
                 path=master.path,
                 is_memosprite=True,
@@ -602,6 +631,7 @@ class VMRuntime:
             sv_entity.base_white_hp = sv_white_hp
             sv_entity.base_white_speed = sv_white_speed
             sv_entity.base_dmg_boost = getattr(master, "base_dmg_boost", 0.0)
+            sv_entity.base_elation = getattr(master, "base_elation", 0.0)
             sv_entity.current_hp = sv_max_hp
             sv_entity.master_name = master_id
 
@@ -699,6 +729,7 @@ class VMRuntime:
                 director = getattr(self.sim, "_stage_director", None)
                 if director is not None and hasattr(director, "sync_spawned_entities"):
                     director.sync_spawned_entities()
+        self.modifier_engine.dispatch_event("OnListenAllowAction", param_entity_id=evt.actor_name)
 
     def _on_turn_end(self, evt: TurnEndEvent) -> None:
         self.turn_control_skill_snapshot.pop(evt.actor_name, None)
@@ -711,7 +742,7 @@ class VMRuntime:
         finally:
             self._in_turn_phase1_end = False
         ent = self.sim.get_entity(evt.actor_name)
-        if ent is not None and getattr(ent, "is_enemy", False) and getattr(ent, "current_hp", 0.0) > 0.0:
+        if ent is not None and (getattr(ent, "is_enemy", False) or getattr(ent, "is_battle_event", False)) and getattr(ent, "current_hp", 0.0) > 0.0:
             self.modifier_engine.dispatch_event("OnPhase2", owner_id=evt.actor_name, param_entity_id=evt.actor_name)
             sched_p2 = getattr(self.sim, "scheduler", None)
             if sched_p2 is not None and sched_p2.has_pending():
@@ -752,6 +783,9 @@ class VMRuntime:
     def _on_action_execute(self, evt: ActionExecuteEvent) -> None:
         sk_type = self._normalize_skill_type(evt)
         if evt.actor_name in self.entity_specs:
+            ent = self.sim.get_entity(evt.actor_name)
+            if isinstance(getattr(ent, "kit", None), ConfigAbilityKitAdapter):
+                return
             self.modifier_engine.dispatch_event(
                 "OnBeforeSkillUse",
                 owner_id=evt.actor_name,
@@ -767,27 +801,30 @@ class VMRuntime:
     def _on_action_end(self, evt: ActionEndEvent) -> None:
         self.end_being_attacked()
         sk_type = self._normalize_skill_type(evt)
+        in_hold = bool(getattr(getattr(self.sim, "scheduler", None), "continuous_action_hold", False))
         if evt.actor_name in self.entity_specs:
             self.modifier_engine.dispatch_event(
                 "OnAfterSkillUse",
                 owner_id=evt.actor_name,
                 current_skill_type=sk_type,
             )
-            self.modifier_engine.dispatch_event("OnActionEnd", owner_id=evt.actor_name)
+            if not in_hold:
+                self.modifier_engine.dispatch_event("OnActionEnd", owner_id=evt.actor_name)
         self.modifier_engine.dispatch_event(
             "OnListenAfterSkillUse",
             param_entity_id=evt.actor_name,
             current_skill_type=sk_type,
         )
-        self.modifier_engine.dispatch_event("OnListenActionEnd", param_entity_id=evt.actor_name)
-        self.modifier_engine.dispatch_event(
-            "CheckParamFlagCallBack",
-            param_entity_id=evt.actor_name,
-            param_flags=("CallBack_SettleSkillOrInsertAbility",),
-        )
-        if evt.actor_name in self.entity_specs:
-            self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
-        self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
+        if not in_hold:
+            self.modifier_engine.dispatch_event("OnListenActionEnd", param_entity_id=evt.actor_name)
+            self.modifier_engine.dispatch_event(
+                "CheckParamFlagCallBack",
+                param_entity_id=evt.actor_name,
+                param_flags=("CallBack_SettleSkillOrInsertAbility",),
+            )
+            if evt.actor_name in self.entity_specs:
+                self.modifier_engine.dispatch_event("OnAfterAction", owner_id=evt.actor_name)
+            self.modifier_engine.dispatch_event("OnListenAfterAction", param_entity_id=evt.actor_name)
 
     def _on_hp_lost(self, evt: HPLostEvent) -> None:
         self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.entity_name, change_value=-evt.amount)
@@ -798,8 +835,19 @@ class VMRuntime:
             self.modifier_engine.dispatch_event("OnHPChange", owner_id=evt.target_name, change_value=float(evt.amount))
             self.modifier_engine.dispatch_event("OnListenHPChange", param_entity_id=evt.target_name, change_value=float(evt.amount))
 
+    def _on_sp_change(self, evt: SPChangeEvent) -> None:
+        if evt.delta != 0:
+            self.modifier_engine.dispatch_event(
+                "OnListenBpChange",
+                param_entity_id=evt.actor_name,
+                change_value=float(evt.delta),
+            )
+
     def _on_spirit_despawn(self, evt: SpiritDespawnEvent) -> None:
-        if self.modifier_engine.has_modifier(evt.spirit_name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
+        done_set = getattr(self, "_pre_despawn_trigger_death_done", None)
+        if done_set and evt.spirit_name in done_set:
+            done_set.discard(evt.spirit_name)
+        elif self.modifier_engine.has_modifier(evt.spirit_name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=evt.spirit_name, param_entity_id=evt.spirit_name)
         elif evt.owner_name and self.modifier_engine.has_modifier(evt.owner_name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=evt.owner_name, param_entity_id=evt.spirit_name)
@@ -897,6 +945,13 @@ class ConfigAbilityKitAdapter(KitHandler):
             for item in self.spec.config.get("SkillList", [])
             if isinstance(item, dict) and item.get("Name")
         }
+        self._hold_turn_skills: set[str] = {
+            item.get("Name", "")
+            for item in self.spec.config.get("SkillList", [])
+            if isinstance(item, dict)
+            and item.get("Name")
+            and (item.get("AutoStandbyOnSkillFinish") is False or "FakeSkillConfig" in item)
+        }
         self._registered = False
         self._passives_triggered = False
 
@@ -933,6 +988,10 @@ class ConfigAbilityKitAdapter(KitHandler):
                         if ab_name and ab_name not in seen_init:
                             seen_init.add(ab_name)
                             rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,))
+            for ab_name in getattr(self.spec, "extra_passive_abilities", ()):
+                if ab_name and ab_name not in seen_init:
+                    seen_init.add(ab_name)
+                    rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,))
         return rt
 
     def _has_runtime_modifier(self, mod_name: str) -> bool:
@@ -1001,16 +1060,38 @@ class ConfigAbilityKitAdapter(KitHandler):
             if self.unit_id == 11512 and sk_key == "Skill01":
                 return ResourceCost(sp=-1)
             return ResourceCost(sp=0)
+        sp_val = default_sp
         row = self._resolve_skill_row(sk_key)
         if row is not None:
             bp_need = row.get("BPNeed")
             bp_add = row.get("BPAdd")
             if isinstance(bp_need, dict) and float(bp_need.get("Value", 0.0)) > 0:
-                return ResourceCost(sp=int(round(float(bp_need["Value"]))))
-            if isinstance(bp_add, dict) and float(bp_add.get("Value", 0.0)) > 0:
-                return ResourceCost(sp=-int(round(float(bp_add["Value"]))))
-            return ResourceCost(sp=0)
-        return ResourceCost(sp=default_sp)
+                sp_val = int(round(float(bp_need["Value"])))
+            elif isinstance(bp_add, dict) and float(bp_add.get("Value", 0.0)) > 0:
+                sp_val = -int(round(float(bp_add["Value"])))
+            else:
+                sp_val = 0
+        rt = self._runtime or (
+            getattr(self.port.sim, "vm_runtime", None)
+            if (self.port and getattr(self.port, "sim", None))
+            else None
+        )
+        if rt is not None and sp_val > 0:
+            for ov in rt.skill_property_overrides.get(self.owner_id, ()):
+                if ov.get("PropertyType") == "BPNeed" and (
+                    not ov.get("SkillName") or ov.get("SkillName") == sk_key
+                ):
+                    op = str(ov.get("OperatorType", "Set"))
+                    if op == "Unset":
+                        continue
+                    val = float(ov.get("Value", 0.0))
+                    if op == "Mul":
+                        sp_val = int(round(sp_val * val))
+                    elif op == "Add":
+                        sp_val = int(round(sp_val + val))
+                    else:
+                        sp_val = int(round(val))
+        return ResourceCost(sp=sp_val)
 
     def definition(self, kind: ActionKind) -> AbilityDefinition:
         if self.is_servant:
@@ -1089,8 +1170,18 @@ class ConfigAbilityKitAdapter(KitHandler):
             }
             ctrl_t, def_key, sk_type = sk_map.get(ctx.kind, ("ControlSkill01", "Skill01", "Normal"))
             sk_key = self._resolve_control_skill_key(ctrl_t, def_key)
+            if ctx.kind in (ActionKind.BASIC, ActionKind.SKILL):
+                rt.sim.scheduler.continuous_action_hold = (sk_key in self._hold_turn_skills)
 
         ab_list = self._skill_abilities.get(sk_key, [])
+        if self.owner_id in rt.skill_property_overrides:
+            rt.skill_property_overrides[self.owner_id] = [
+                ov
+                for ov in rt.skill_property_overrides[self.owner_id]
+                if ov.get("SkillName") and ov.get("SkillName") != sk_key
+            ]
+            if not rt.skill_property_overrides[self.owner_id]:
+                rt.skill_property_overrides.pop(self.owner_id, None)
         t_info = self._skill_target_infos.get(sk_key) or {}
         t_type = str(t_info.get("TargetType", ""))
         if t_type == "EnemySelect":
@@ -1182,7 +1273,20 @@ class ConfigAbilityKitAdapter(KitHandler):
         else:
             eff_targets = ctx.target_ids
 
-        # 在执行 Ability 前以当前 SkillTargetEntityList 分发 OnListenBeforeSkillUse（支撑光锥 23052 等读取 ParamEntitySkillTargetEntityList）
+        if ctx.kind == ActionKind.ULTIMATE:
+            rt.modifier_engine.dispatch_event(
+                "OnListenUltraSkillPrepare",
+                param_entity_id=self.owner_id,
+            )
+
+        # 在执行 Ability 前以当前 SkillTargetEntityList 分发 OnBeforeSkillUse 与 OnListenBeforeSkillUse（支撑 23057 GetSkillAllTarget 与 23052 ParamEntitySkillTargetEntityList）
+        rt.modifier_engine.dispatch_event(
+            "OnBeforeSkillUse",
+            owner_id=self.owner_id,
+            skill_target_ids=eff_targets,
+            param_skill_targets=eff_targets,
+            current_skill_type=sk_type,
+        )
         rt.modifier_engine.dispatch_event(
             "OnListenBeforeSkillUse",
             param_entity_id=self.owner_id,
@@ -1207,15 +1311,20 @@ class ConfigAbilityKitAdapter(KitHandler):
             entry = [entry_ab] if (entry_ab and not entry_ab.endswith("_Camera")) else (
                 [a for a in ab_list if a.endswith("_Phase01")] or [a for a in ab_list if not a.endswith("_Camera")]
             )
-            for ab_name in entry[:1]:
-                rt.trigger_ability(
-                    caster_id=self.owner_id,
-                    ability_name=ab_name,
-                    target_ids=eff_targets,
-                    skill_target_ids=eff_targets,
-                    current_skill_type=sk_type,
-                    current_attack_type=sk_type,
-                )
+            prev_sk_name = getattr(rt, "_current_skill_name", "")
+            rt._current_skill_name = sk_key
+            try:
+                for ab_name in entry[:1]:
+                    rt.trigger_ability(
+                        caster_id=self.owner_id,
+                        ability_name=ab_name,
+                        target_ids=eff_targets,
+                        skill_target_ids=eff_targets,
+                        current_skill_type=sk_type,
+                        current_attack_type=sk_type,
+                    )
+            finally:
+                rt._current_skill_name = prev_sk_name
         finally:
             rt.end_attack_scope()
             sp_granted_by_task = rt._skill_sp_ratio_granted

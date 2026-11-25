@@ -66,7 +66,7 @@ class Path(str, Enum):
             "knight": cls.PRESERVATION, "preservation": cls.PRESERVATION, "6": cls.PRESERVATION,
             "priest": cls.ABUNDANCE, "abundance": cls.ABUNDANCE, "7": cls.ABUNDANCE,
             "memory": cls.REMEMBRANCE, "remembrance": cls.REMEMBRANCE, "8": cls.REMEMBRANCE,
-            "elation": cls.ELATION
+            "elation": cls.ELATION, "9": cls.ELATION
         }
         return mapping.get(str(val).lower(), cls.DESTRUCTION)
 

@@ -293,7 +293,26 @@ class EffectResolver:
             if effect.delta > 0:
                 self.simulator.sp.generate(effect.delta, effect.actor_name, effect.reason, av)
             elif effect.delta < 0:
-                self.simulator.sp.consume(abs(effect.delta), effect.actor_name, effect.reason, av)
+                need = abs(effect.delta)
+                vm_rt = getattr(self.simulator, "vm_runtime", None)
+                if vm_rt is not None and effect.actor_name in vm_rt.entity_boost_points:
+                    avail_extra = int(vm_rt.entity_boost_points.get(effect.actor_name, 0.0))
+                    used_extra = min(need, max(0, avail_extra))
+                    if used_extra > 0:
+                        vm_rt.entity_boost_points[effect.actor_name] = float(max(0, avail_extra - used_extra))
+                        need -= used_extra
+                if need > 0:
+                    self.simulator.sp.consume(need, effect.actor_name, effect.reason, av)
+            diag_cb = getattr(self.simulator, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                vm_rt = getattr(self.simulator, "vm_runtime", None)
+                extra_bp = int(vm_rt.entity_boost_points.get(effect.actor_name, 0.0)) if vm_rt is not None else 0
+                diag_cb(
+                    "SP",
+                    f"{effect.actor_name} delta={effect.delta:+d} "
+                    f"team_sp={self.simulator.sp.current_sp}/{self.simulator.sp.max_sp} "
+                    f"extra_bp={extra_bp} cause={effect.reason}",
+                )
             bus.publish(SPChangeEvent(
                 av=round(av, 2),
                 cycle=cycle,
@@ -558,6 +577,9 @@ class EffectResolver:
                     kit = getattr(ent, "kit", None)
                     if kit is not None and hasattr(kit, "intercept_incoming_damage"):
                         raw_dmg = kit.intercept_incoming_damage(target.name, raw_dmg)
+
+                if vm_rt is not None and not is_true_dmg and raw_dmg > 0.0:
+                    raw_dmg = vm_rt.modifier_engine.intercept_team_block_damage(target.name, raw_dmg)
 
                 # 3. 护盾优先吸收 (砂金、杰帕德等)
                 if hasattr(target, "shield") and target.shield > 0:

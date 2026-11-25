@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from ...actions import AbilityDefinition, ActionKind, ActionScheduleCategory, ResourceCost, TargetMode
 from ...entity import Entity
+from ...events import ActionExecuteEvent
 from ...status import StatType
 from ..expr import dotnet_hash
 from ..loader import CompiledCharacterSpec
@@ -16,6 +17,23 @@ from .predicates import _str_val
 
 class TurnOpsMixin:
     """TurnInsertAbility / CreateServant / CreateBattleEvent / AttachAvatarChange 算子实现。"""
+
+    def _resolve_dynamic_strings(self, raw_strs: Any, ctx: ExecutionContext) -> Dict[str, str]:
+        out: Dict[str, str] = {}
+        if not isinstance(raw_strs, Mapping):
+            return out
+        ent_strs = getattr(self.rt, "entity_dynamic_strings", {}).get(ctx.caster_id, {})
+        for k, v in raw_strs.items():
+            if isinstance(v, Mapping) and v.get("Custom"):
+                ck = str(v.get("Key") or "")
+                out[str(k)] = str(ctx.custom_strings.get(ck, ent_strs.get(ck, "")))
+            elif isinstance(v, Mapping):
+                raw_v = v.get("Value") if "Value" in v else v.get("RawString", "")
+                raw_s = str(raw_v or "")
+                out[str(k)] = str(ctx.custom_strings.get(raw_s, ent_strs.get(raw_s, raw_s)))
+            elif v is not None:
+                out[str(k)] = str(v)
+        return out
 
     def _resolve_insert_skill_meta(self, actor_id: str, ab_name: str) -> Tuple[int, float]:
         spec = self.rt.entity_specs.get(actor_id)
@@ -274,6 +292,82 @@ class TurnOpsMixin:
                     immediate_priority=imm_prio,
                     allow_limbo=allow_limbo,
                 )
+            elif "SkillIndex" in task and not is_level_caster:
+                sk_idx = int(round(self._eval_num(task.get("SkillIndex"), ctx, 0.0)))
+                spec = rt.entity_specs.get(tid)
+                skill_list = (spec.config.get("SkillList") or []) if spec is not None else []
+                sk_entry = skill_list[sk_idx] if 0 <= sk_idx < len(skill_list) else None
+                entry_ab = str(sk_entry.get("EntryAbility") or "") if isinstance(sk_entry, Mapping) else ""
+                if not entry_ab:
+                    continue
+                sk_type = str(sk_entry.get("SkillType") or "Elation")
+                preset_targets = tuple(self._resolve_targets(ability_tgt_spec, ctx)) if ability_tgt_spec is not None else ()
+                raw_dyn = task.get("DynamicValues")
+                insert_dyn: Dict[int, float] = (
+                    {dotnet_hash(str(k)): self._eval_num(v, ctx, 0.0) for k, v in raw_dyn.items()}
+                    if isinstance(raw_dyn, Mapping)
+                    else {}
+                )
+                insert_strs = self._resolve_dynamic_strings(task.get("DynamicStrings"), ctx)
+                active_pred = task.get("ActivePredicate")
+                pred_ctx = ctx.clone()
+                imm_prio = 1 if prio in ("StartElationTime", "RestartElationTime") else 2
+
+                def _run_insert_skill_index(
+                    a_id: str = tid,
+                    ab: str = entry_ab,
+                    _sk_t: str = sk_type,
+                    _tgts: Tuple[str, ...] = preset_targets,
+                    _is_en: bool = is_enemy_caster,
+                    _dyn: Dict[int, float] = insert_dyn,
+                    _strs: Dict[str, str] = insert_strs,
+                    _active_pred: Any = active_pred,
+                    _pred_ctx: ExecutionContext = pred_ctx,
+                ) -> None:
+                    if isinstance(_active_pred, Mapping) and not self.eval_predicate(_active_pred, _pred_ctx):
+                        return
+                    a_ent = sim.get_entity(a_id)
+                    if a_ent is None or (float(getattr(a_ent, "current_hp", 0.0)) <= 0.0 and not getattr(a_ent, "is_infinite_hp", False)):
+                        return
+                    if _tgts:
+                        eff_tgts = _tgts
+                    elif _is_en:
+                        eff_tgts = tuple(
+                            e.name for e in sim.entities
+                            if not e.is_enemy and not getattr(e, "is_countdown", False) and e.current_hp > 0
+                        )
+                    else:
+                        eff_tgts = tuple(
+                            e.name for e in sim.entities
+                            if e.is_enemy and (e.current_hp > 0 or getattr(e, "_in_deathrattle_limbo", False))
+                        )
+                    rt.begin_attack_scope()
+                    try:
+                        rt.trigger_ability(
+                            caster_id=a_id,
+                            ability_name=ab,
+                            target_ids=eff_tgts,
+                            skill_target_ids=eff_tgts,
+                            current_skill_type=_sk_t,
+                            current_attack_type=_sk_t,
+                            local_dynamics=_dyn,
+                            custom_strings=_strs,
+                        )
+                    finally:
+                        rt.end_attack_scope()
+
+                sim.scheduler.enqueue(
+                    tid,
+                    _run_insert_skill_index,
+                    name=entry_ab,
+                    category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+                    action_kind=ActionKind.TALENT,
+                    skill_id=0,
+                    publish_execute_event=False,
+                    preempt_follow_up=True,
+                    immediate_priority=imm_prio,
+                    allow_limbo=allow_limbo,
+                )
             elif getattr(ent, "is_memosprite", False):
                 kit = getattr(ent, "kit", None)
                 defn = None
@@ -332,6 +426,353 @@ class TurnOpsMixin:
                     action_kind=(getattr(defn, "kind", ActionKind.BASIC) if defn is not None else ActionKind.BASIC),
                     skill_id=d_skill_id,
                 )
+            elif task.get("SkillType") in ("ControlSkill01", "ControlSkill02", "ControlSkill03"):
+                ctrl_map = {
+                    "ControlSkill01": ActionKind.BASIC,
+                    "ControlSkill02": ActionKind.SKILL,
+                    "ControlSkill03": ActionKind.ULTIMATE,
+                }
+                act_kind = ctrl_map[str(task["SkillType"])]
+                kit = getattr(ent, "kit", None)
+                defn = None
+                if kit is not None:
+                    try:
+                        defn = kit.definition(act_kind)
+                    except Exception:
+                        defn = None
+                ins_skill_id = int(getattr(defn, "skill_id", 0) or 0)
+                ins_skill_name = str(getattr(defn, "name", "") or f"{tid}_{task['SkillType']}")
+                preset_targets = tuple(self._resolve_targets(ability_tgt_spec, ctx)) if ability_tgt_spec is not None else ()
+
+                def _run_avatar_insert_action(
+                    a_ent: Entity = ent,
+                    _kind: ActionKind = act_kind,
+                    _tgts: Tuple[str, ...] = preset_targets,
+                ) -> None:
+                    if a_ent.current_hp <= 0.0 and not getattr(a_ent, "is_infinite_hp", False):
+                        return
+                    sim._execute_action(
+                        a_ent,
+                        action_override=_kind,
+                        target_ids=_tgts,
+                        is_natural_turn_action=False,
+                        advance_policy=False,
+                    )
+
+                sim.scheduler.enqueue(
+                    tid,
+                    _run_avatar_insert_action,
+                    name=ins_skill_name,
+                    category=(
+                        ActionScheduleCategory.AUTO_SKILL
+                        if task.get("AutoCast")
+                        else ActionScheduleCategory.IMMEDIATE_EXTRA_TURN
+                    ),
+                    action_kind=act_kind,
+                    skill_id=ins_skill_id,
+                )
+            elif not is_level_caster:
+                custom_tags = tuple(_str_val(ct) for ct in (task.get("CustomTags") or ()) if _str_val(ct))
+                ins_name = custom_tags[0] if custom_tags else f"{tid}_InsertAction"
+                pre_check = task.get("PreCheck")
+                if isinstance(pre_check, Mapping) and (
+                    pre_check.get("Type") == "AbilityOwnerInsertUnusedCount"
+                    or pre_check.get("$type") in ("AbilityOwnerInsertUnusedCount", "IKDAKCBKFAB")
+                ):
+                    cnt_spec = pre_check.get("HOCMHABKLGJ") if "HOCMHABKLGJ" in pre_check else pre_check.get("Count")
+                    max_unused = int(round(self._eval_num(cnt_spec, ctx, 1.0)))
+                    if sim.scheduler.count_pending_actions(tid, ins_name) >= max_unused:
+                        continue
+                kit = getattr(ent, "kit", None)
+                defn = None
+                if kit is not None:
+                    try:
+                        defn = kit.definition(ActionKind.BASIC)
+                    except Exception:
+                        defn = None
+                ins_skill_id = int(getattr(defn, "skill_id", 0) or 0)
+                preset_targets = tuple(self._resolve_targets(ability_tgt_spec, ctx)) if ability_tgt_spec is not None else ()
+                active_pred = task.get("ActivePredicate")
+                pred_ctx = ctx.clone()
+
+                def _run_avatar_tag_insert_action(
+                    a_id: str = tid,
+                    a_ent: Entity = ent,
+                    _tgts: Tuple[str, ...] = preset_targets,
+                    _tags: Tuple[str, ...] = custom_tags,
+                    _active_pred: Any = active_pred,
+                    _pred_ctx: ExecutionContext = pred_ctx,
+                ) -> None:
+                    if isinstance(_active_pred, Mapping) and not self.eval_predicate(_active_pred, _pred_ctx):
+                        return
+                    if a_ent.current_hp <= 0.0 and not getattr(a_ent, "is_infinite_hp", False):
+                        return
+                    me = rt.modifier_engine
+                    me.dispatch_event("OnBeforeInsertActionPrepare", owner_id=a_id, param_entity_id=a_id, param_strings=_tags)
+                    me.dispatch_event("OnInsertActionStart", owner_id=a_id, param_entity_id=a_id, param_strings=_tags)
+                    me.dispatch_event("OnListenInsertActionStart", param_entity_id=a_id, param_strings=_tags)
+                    prev_ins = getattr(rt, "_in_insert_action", False)
+                    rt._in_insert_action = True
+                    try:
+                        provider = getattr(sim, "insert_action_decision_provider", None)
+                        dec = provider(a_id) if callable(provider) else None
+                        first_kind = dec[0] if (dec is not None and dec[0] is not None) else ActionKind.BASIC
+                        first_tgts = dec[1] if (dec is not None and dec[1] is not None) else _tgts
+                        sim._execute_action(
+                            a_ent,
+                            action_override=first_kind,
+                            target_ids=first_tgts,
+                            is_natural_turn_action=False,
+                            advance_policy=False,
+                        )
+                        hold_guard = 0
+                        while getattr(sim.scheduler, "continuous_action_hold", False):
+                            hold_guard += 1
+                            if hold_guard >= 32:
+                                sim.scheduler.continuous_action_hold = False
+                                break
+                            if a_ent.current_hp <= 0.0 and not getattr(a_ent, "is_infinite_hp", False):
+                                sim.scheduler.continuous_action_hold = False
+                                break
+                            nxt_dec = provider(a_id) if callable(provider) else None
+                            if nxt_dec is None or nxt_dec[0] is None:
+                                sim.scheduler.continuous_action_hold = False
+                                break
+                            sim._execute_action(
+                                a_ent,
+                                action_override=nxt_dec[0],
+                                target_ids=nxt_dec[1] if nxt_dec[1] is not None else (),
+                                is_natural_turn_action=False,
+                                advance_policy=False,
+                            )
+                    finally:
+                        rt._in_insert_action = prev_ins
+                    me.dispatch_event("OnInsertActionFinish", owner_id=a_id, param_entity_id=a_id, param_strings=_tags)
+                    me.dispatch_event("OnListenInsertActionFinish", param_entity_id=a_id, param_strings=_tags)
+                    me.dispatch_event("OnListenAllowAction", param_entity_id=a_id)
+
+                sim.scheduler.enqueue(
+                    tid,
+                    _run_avatar_tag_insert_action,
+                    name=ins_name,
+                    category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+                    action_kind=ActionKind.BASIC,
+                    skill_id=ins_skill_id,
+                )
+
+    def _execute_use_skill_one_more(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = (
+            self._resolve_targets(task.get("TargetType"), ctx)
+            if "TargetType" in task
+            else ([ctx.caster_id] if ctx.caster_id else [])
+        )
+        ctrl_type = str(task.get("SkillType") or "ControlSkill01")
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            self.rt._pending_use_skill_one_more.setdefault(tid, []).append(ctrl_type)
+
+    def _execute_start_elation_time(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行官方 ELLFLJKDCAE（开启阿哈时刻 ElationTime 并按 ElationSkill.PriorityValue 依次施放欢愉技）。"""
+        rt = self.rt
+        sim = rt.sim
+        me = rt.modifier_engine
+        raw_targets = self._resolve_targets(task.get("HILNFHCPEAD"), ctx)
+        excl_flags = {str(f) for f in (task.get("HMOBDKGBECE") or ()) if f}
+
+        candidates: List[Dict[str, Any]] = []
+        for idx, tid in enumerate(raw_targets):
+            if not tid or tid == "__LEVEL__":
+                continue
+            ent = sim.get_entity(tid)
+            if ent is None or (float(getattr(ent, "current_hp", 0.0)) <= 0.0 and not getattr(ent, "is_infinite_hp", False)):
+                continue
+            if excl_flags and any(me.has_behavior_flag(tid, flg) for flg in excl_flags):
+                continue
+            spec = rt.entity_specs.get(tid)
+            if spec is None:
+                continue
+            dyn_tags = rt.entity_skill_tags.get(tid, {})
+            rem_tags = rt.entity_removed_skill_tags.get(tid, {})
+            chosen_sk = None
+            first_elation_sk = None
+            for sk in (spec.config.get("SkillList") or ()):
+                if not isinstance(sk, Mapping) or str(sk.get("SkillType") or "") != "Elation":
+                    continue
+                sk_name = str(sk.get("Name") or "")
+                if (8, 1) in rem_tags.get(sk_name, ()):
+                    continue
+                if first_elation_sk is None:
+                    first_elation_sk = sk
+                has_dyn = (8, 1) in dyn_tags.get(sk_name, ())
+                has_stat = any(
+                    isinstance(tg, Mapping)
+                    and int(tg.get("EnumIndex", 0) or 0) == 8
+                    and int(tg.get("Value", 0) or 0) == 1
+                    for tg in (sk.get("Tags") or ())
+                )
+                if has_dyn or has_stat:
+                    chosen_sk = sk
+                    break
+            if chosen_sk is None:
+                chosen_sk = first_elation_sk
+            if chosen_sk is None:
+                continue
+            sk_name = str(chosen_sk.get("Name") or "")
+            entry_ab = str(chosen_sk.get("EntryAbility") or "")
+            if not entry_ab:
+                continue
+            sk_id, sp_base = self._resolve_insert_skill_meta(tid, entry_ab)
+            prio_val = rt.loader.get_elation_skill_priority(sk_id) if sk_id > 0 else 500
+            t_info = (chosen_sk.get("TargetInfo") or {}).get("TargetType", "")
+            candidates.append(
+                {
+                    "tid": tid,
+                    "sk_name": sk_name,
+                    "entry_ab": entry_ab,
+                    "skill_id": sk_id,
+                    "sp_base": sp_base,
+                    "prio": prio_val,
+                    "orig_idx": idx,
+                    "target_type": str(t_info or ""),
+                }
+            )
+
+        candidates.sort(key=lambda u: (u["prio"], u["orig_idx"]))
+        ov_pt = self._eval_num(task.get("CKLLHFKPACB"), ctx, -1.0)
+        tag_spec = task.get("GEIGNKLEOBD")
+        if isinstance(tag_spec, Mapping) and tag_spec.get("Custom"):
+            custom_tag = str(ctx.custom_strings.get(str(tag_spec.get("Key") or ""), ""))
+        else:
+            custom_tag = _str_val(tag_spec)
+
+        rt.in_elation_time = True
+        rt.elation_time_override_points = float(ov_pt) if ov_pt > 0.0 else 0.0
+        rt.elation_time_custom_tag = custom_tag
+        rt.elation_time_units = [u["tid"] for u in candidates]
+        p_strs = (custom_tag,) if custom_tag and custom_tag != "-1" else ()
+        me.dispatch_event("OnListenElationTimeStart", param_entity_id=ctx.caster_id, param_strings=p_strs)
+
+        for u in candidates:
+            def _run_elation_unit(_u: Dict[str, Any] = u) -> None:
+                a_id = _u["tid"]
+                a_ent = sim.get_entity(a_id)
+                if a_ent is None or (float(getattr(a_ent, "current_hp", 0.0)) <= 0.0 and not getattr(a_ent, "is_infinite_hp", False)):
+                    return
+                t_type = _u["target_type"]
+                if t_type in ("Caster", "Self"):
+                    eff_tgts = (a_id,)
+                elif t_type in ("AllTeamMember", "AllLightTeam", "AllLightMember"):
+                    eff_tgts = tuple(
+                        e.name
+                        for e in sim.entities
+                        if not getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_battle_event", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    )
+                else:
+                    eff_tgts = tuple(
+                        e.name
+                        for e in sorted(
+                            (
+                                e for e in sim.entities
+                                if getattr(e, "is_enemy", False)
+                                and not getattr(e, "is_countdown", False)
+                                and not getattr(e, "is_unselectable", False)
+                                and float(getattr(e, "current_hp", 0.0)) > 0.0
+                            ),
+                            key=lambda x: getattr(x, "_spawn_seq", 0),
+                        )
+                    )
+                    if not eff_tgts:
+                        return
+                sim._action_seq += 1
+                sim._av_batch_seq += 1
+                sim.event_bus.publish(ActionExecuteEvent(
+                    av=round(sim.current_av, 2),
+                    cycle=sim.current_cycle,
+                    actor_id=a_id,
+                    actor_name=a_id,
+                    action_type=_u["entry_ab"],
+                    description=f"施放欢愉技【{_u['entry_ab']}】",
+                    action_kind=ActionKind.TALENT,
+                    skill_config_id=_u["skill_id"],
+                    action_id=sim._action_seq,
+                ))
+                prev_sk_name = getattr(rt, "_current_skill_name", "")
+                rt._current_skill_name = _u["sk_name"]
+                prev_sp_base = rt._active_skill_sp_base
+                prev_sp_granted = rt._skill_sp_ratio_granted
+                rt._active_skill_sp_base = _u["sp_base"]
+                rt._skill_sp_ratio_granted = False
+                me.dispatch_event("OnBeforeSkillUse", owner_id=a_id, skill_target_ids=eff_tgts, param_skill_targets=eff_tgts, current_skill_type="Elation")
+                me.dispatch_event("OnListenBeforeSkillUse", param_entity_id=a_id, skill_target_ids=eff_tgts, param_skill_targets=eff_tgts, current_skill_type="Elation")
+                rt.begin_attack_scope()
+                try:
+                    rt.trigger_ability(
+                        caster_id=a_id,
+                        ability_name=_u["entry_ab"],
+                        target_ids=eff_tgts,
+                        skill_target_ids=eff_tgts,
+                        current_skill_type="Elation",
+                        current_attack_type="ElationDamage",
+                    )
+                finally:
+                    rt.end_attack_scope()
+                    sp_granted = rt._skill_sp_ratio_granted
+                    rt._active_skill_sp_base = prev_sp_base
+                    rt._skill_sp_ratio_granted = prev_sp_granted
+                    rt._current_skill_name = prev_sk_name
+                if _u["sp_base"] > 0 and not sp_granted and sim.port and a_id != "__LEVEL__":
+                    err = sim.port.stat(a_id, StatType.ERR) or 1.0
+                    sim.port.gain_energy(a_id, _u["sp_base"] * err, cause=f"欢愉技回能 {_u['entry_ab']}")
+                me.dispatch_event("OnAfterSkillUse", owner_id=a_id, current_skill_type="Elation")
+                me.dispatch_event("OnActionEnd", owner_id=a_id)
+                me.dispatch_event("OnListenAfterSkillUse", param_entity_id=a_id, current_skill_type="Elation")
+                me.dispatch_event("OnListenActionEnd", param_entity_id=a_id)
+                me.dispatch_event("OnAfterAction", owner_id=a_id)
+                me.dispatch_event("OnListenAfterAction", param_entity_id=a_id)
+                me.dispatch_event(
+                    "CheckParamFlagCallBack",
+                    param_entity_id=a_id,
+                    param_flags=("CallBack_SettleSkillOrInsertAbility",),
+                )
+
+            sim.scheduler.enqueue(
+                u["tid"],
+                _run_elation_unit,
+                name=u["entry_ab"],
+                category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+                action_kind=ActionKind.TALENT,
+                skill_id=u["skill_id"],
+                publish_execute_event=False,
+                preempt_follow_up=True,
+                immediate_priority=8,
+            )
+
+        be_id = ctx.caster_id
+        def _finish_elation_time(_be_id: str = be_id, _p_strs: Tuple[str, ...] = p_strs) -> None:
+            me.dispatch_event("OnListenElationTimeWaitEnd", param_entity_id=_be_id, param_strings=_p_strs)
+            me.dispatch_event("OnListenElationTimeEnd", param_entity_id=_be_id, param_strings=_p_strs)
+            rt.in_elation_time = False
+            rt.elation_time_override_points = 0.0
+            rt.elation_time_custom_tag = ""
+            rt.elation_time_units = []
+
+        sim.scheduler.enqueue(
+            be_id,
+            _finish_elation_time,
+            name="EndElationTime",
+            category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+            action_kind=ActionKind.TALENT,
+            skill_id=0,
+            publish_execute_event=False,
+            preempt_follow_up=True,
+            immediate_priority=9,
+            allow_limbo=True,
+        )
 
     def _execute_create_servant(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -440,7 +881,7 @@ class TurnOpsMixin:
         else:
             spd = 140.0
 
-        if event_sub_type == "DummyCharacter":
+        if event_sub_type in ("DummyCharacter", "Elation"):
             self._create_dummy_character_battle_event(
                 event_id=event_id,
                 be_name=be_name,
@@ -451,6 +892,7 @@ class TurnOpsMixin:
                 param_list=param_list,
                 task=task,
                 ctx=ctx,
+                event_sub_type=event_sub_type,
             )
             return
 
@@ -525,6 +967,7 @@ class TurnOpsMixin:
         param_list: List[float],
         task: Mapping[str, Any],
         ctx: ExecutionContext,
+        event_sub_type: str = "DummyCharacter",
     ) -> None:
         rt = self.rt
         sim = rt.sim
@@ -629,7 +1072,7 @@ class TurnOpsMixin:
                 avatar_id=event_id,
             )
             be_ent.is_battle_event = True  # type: ignore[attr-defined]
-            be_ent.is_dummy = True  # type: ignore[attr-defined]
+            be_ent.is_dummy = (event_sub_type == "DummyCharacter")  # type: ignore[attr-defined]
             sim.add_entity(be_ent, trigger_battle_start=False)
         else:
             be_ent.level = stage_level
@@ -641,12 +1084,17 @@ class TurnOpsMixin:
             be_ent.distance_remaining = 10000.0
             be_ent.master_name = ctx.caster_id
             be_ent.is_battle_event = True  # type: ignore[attr-defined]
-            be_ent.is_dummy = True  # type: ignore[attr-defined]
+            be_ent.is_dummy = (event_sub_type == "DummyCharacter")  # type: ignore[attr-defined]
 
         passive_entries: List[str] = []
         collect_ab_names: List[str] = list(ab_names) + [
             str(a) for a in char_cfg.get("AbilityList", []) if isinstance(a, str) and a
         ]
+        for sa in char_cfg.get("SkillAbilityList", []):
+            if isinstance(sa, Mapping):
+                for a in sa.get("AbilityList", []):
+                    if isinstance(a, str) and a:
+                        collect_ab_names.append(a)
         default_skill_key = "Skill01"
         for sk_entry in char_cfg.get("SkillList", []):
             if not isinstance(sk_entry, Mapping):
@@ -787,7 +1235,30 @@ class TurnOpsMixin:
                     finally:
                         rt.end_attack_scope()
 
-        be_ent.kit = _DummyCharacterBattleEventKit(be_name)
+        class _ElationBattleEventKit:
+            def __init__(self, owner_id: str) -> None:
+                self.owner_id = owner_id
+                self.port = sim.port
+
+            def definition(self, kind: Any) -> Any:
+                return AbilityDefinition(
+                    kind=ActionKind.BASIC,
+                    target_mode=TargetMode.SELF,
+                    name=f"BattleEvent_{event_id}_Turn",
+                    cost=ResourceCost(sp=0),
+                    skill_id=0,
+                )
+
+            def decide_action(self, act_ctx: Any) -> Any:
+                return ActionKind.BASIC
+
+            def choose_action(self, act_ctx: Any) -> Any:
+                return ActionKind.BASIC
+
+            def execute(self, act_ctx: Any) -> None:
+                return
+
+        be_ent.kit = _ElationBattleEventKit(be_name) if event_sub_type == "Elation" else _DummyCharacterBattleEventKit(be_name)
 
         be_spec = CompiledCharacterSpec(
             unit_id=event_id,

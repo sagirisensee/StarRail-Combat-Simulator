@@ -56,6 +56,13 @@ class StageOpsMixin:
                     owner_id=master_id,
                     param_entity_id=tid,
                 )
+                if not mute_death:
+                    me.dispatch_event("OnTriggerDeath", owner_id=tid, param_entity_id=tid)
+                    done_set = getattr(rt, "_pre_despawn_trigger_death_done", None)
+                    if done_set is None:
+                        done_set = set()
+                        setattr(rt, "_pre_despawn_trigger_death_done", done_set)
+                    done_set.add(tid)
             prev_hp = float(getattr(ent, "current_hp", 0.0))
             was_limbo = bool(getattr(ent, "_in_deathrattle_limbo", False))
             was_deferred_die = bool(getattr(ent, "_deferred_listen_die", False))

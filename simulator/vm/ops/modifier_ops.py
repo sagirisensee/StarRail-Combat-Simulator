@@ -30,10 +30,30 @@ class ModifierOpsMixin:
     def _op_set_modifier_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         me = self.rt.modifier_engine
         targets = self._resolve_targets(task.get("TargetType"), ctx) if "TargetType" in task else [ctx.modifier_owner_id or ctx.caster_id]
-        mname = _str_val(task.get("ModifierName"))
+        mname_spec = task.get("ModifierName")
+        mname = _str_val(mname_spec)
         mfunc = str(task.get("ModifyFunction", "Set"))
         vtype = str(task.get("ValueType") or "Layer")
         val = self._eval_num(task.get("Value"), ctx, -1.0 if mfunc == "Add" else 0.0)
+        if mname == "ParamModifier" and ctx.callback_modifier_instance is not None:
+            m_cb = ctx.callback_modifier_instance
+            if vtype == "LifeTime":
+                if mfunc == "Add":
+                    m_cb.life_time = (m_cb.life_time or 0.0) + val
+                elif mfunc in ("Sub", "Minus"):
+                    m_cb.life_time = max(0.0, (m_cb.life_time or 0.0) - val)
+                else:
+                    m_cb.life_time = None if val < 0.0 else val
+            elif vtype == "Layer":
+                if mfunc == "Add":
+                    m_cb.layer = max(0, int(round(m_cb.layer + val)))
+                elif mfunc in ("Sub", "Minus"):
+                    m_cb.layer = max(0, int(round(m_cb.layer - val)))
+                else:
+                    m_cb.layer = max(0, int(round(val)))
+            if vtype == "Layer" and m_cb.layer <= 0 and "RetainCountZero" not in m_cb.behavior_flags:
+                me.destroy_modifier(m_cb)
+            return
         for tid in targets:
             mods = [ctx.modifier_instance] if (not mname and ctx.modifier_instance is not None) else me.get_modifiers(tid, mname)
             for m in mods:
@@ -43,7 +63,7 @@ class ModifierOpsMixin:
                     elif mfunc in ("Sub", "Minus"):
                         m.life_time = max(0.0, (m.life_time or 0.0) - val)
                     else:
-                        m.life_time = val
+                        m.life_time = None if val < 0.0 else val
                 elif vtype == "Layer":
                     if mfunc == "Add":
                         m.layer = max(0, int(round(m.layer + val)))
@@ -58,7 +78,13 @@ class ModifierOpsMixin:
         sim = self.rt.sim
         me = self.rt.modifier_engine
         targets = self._resolve_targets(task.get("TargetType"), ctx)
-        mname = _str_val(task.get("ModifierName"))
+        mname_spec = task.get("ModifierName")
+        ref_mname = _str_val(task.get("ReferenceModifierName"))
+        if isinstance(mname_spec, Mapping) and mname_spec.get("Custom"):
+            custom_key = str(mname_spec.get("Key") or "")
+            mname = ctx.custom_strings.get(custom_key) or ref_mname
+        else:
+            mname = _str_val(mname_spec) or ref_mname
         chance_spec = task.get("Chance")
         chance_val: Optional[float] = None
         if chance_spec is not None:
@@ -122,6 +148,8 @@ class ModifierOpsMixin:
                 count=cnt,
                 max_layer=max_l,
                 ctx=ctx,
+                reference_mod_name=ref_mname,
+                dynamic_strings=task.get("DynamicStrings"),
             )
 
     def _op_remove_modifier(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -159,12 +187,22 @@ class ModifierOpsMixin:
         single_flag = str(task.get("BehaviorFlag", "") or "")
         if single_flag:
             flags.add(single_flag)
+        pred = task.get("Predicate")
         director = getattr(sim, "_stage_director", None)
         break_helper = getattr(director, "_break_helper", None) if director is not None else None
         for tid in targets:
             if flags:
                 for m in list(me.get_modifiers(tid)):
                     if m.behavior_flags & flags:
+                        if pred is not None:
+                            p_ctx = ctx.clone(
+                                param_entity_id=tid,
+                                callback_modifier_instance=m,
+                                callback_modifier_name=m.name,
+                                callback_behavior_flags=frozenset(m.behavior_flags),
+                            )
+                            if not self.eval_predicate(pred, p_ctx):
+                                continue
                         me.destroy_modifier(m)
             if "STAT_CTRL" in flags and break_helper is not None:
                 break_helper.quantum_entanglements.pop(tid, None)
@@ -341,7 +379,11 @@ class ModifierOpsMixin:
                 if k in ("$type", "TargetType"):
                     continue
                 if isinstance(v, (dict, int, float)):
-                    if k == "AttackData_ConstFinalDamage":
+                    if k in (
+                        "AttackData_ConstFinalDamage",
+                        "AttackData_ElationPointNum",
+                        "AttackData_EnableElationPointMultiplier",
+                    ):
                         ctx.damage_data[k] = self._eval_num(v, ctx, 0.0)
                     else:
                         ctx.damage_data[k] = ctx.damage_data.get(k, 0.0) + self._eval_num(v, ctx, 0.0)
@@ -358,6 +400,7 @@ class ModifierOpsMixin:
 
     def _op_modify_special_sp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
+        me = self.rt.modifier_engine
         targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
         for tid in targets:
             if not tid or tid == "__LEVEL__":
@@ -381,6 +424,10 @@ class ModifierOpsMixin:
                     delta += max_ep * self._eval_num(task.get("AddMaxSPRatio"), ctx, 0.0)
                 new_ep = float(ent.energy) + delta
                 ent.energy = max(0.0, min(max_ep, new_ep)) if max_ep > 0.0 else max(0.0, new_ep)
+            if me._apc_defer_depth > 0:
+                me._dirty_apc_entities.add(ep_tid)
+            else:
+                me.check_property_changes(ep_tid)
 
     def _op_modify_action_delay(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
@@ -502,8 +549,13 @@ class ModifierOpsMixin:
 
     def _op_modify_elation_points(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         val = self._eval_num(task.get("AJHHCOHFIFA"), ctx, 0.0)
-        mode = "set" if str(task.get("FKCKKFALPBK", "")) == "DADCFBHGLOH" else "add"
-        self.rt.modify_elation_points(val, mode=mode)
+        op = str(task.get("FKCKKFALPBK", ""))
+        if op == "DADCFBHGLOH":
+            self.rt.modify_elation_points(val, mode="set")
+        elif op == "NOKLNMBGACJ":
+            self.rt.modify_elation_points(-val, mode="add")
+        else:
+            self.rt.modify_elation_points(val, mode="add")
 
     def _op_set_target_unique_name(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         targets = self._resolve_targets(task.get("TargetType"), ctx)
@@ -512,18 +564,32 @@ class ModifierOpsMixin:
         if uname and targets:
             self.rt.named_targets[uname] = list(targets)
 
+    def _op_release_target_unique_name(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        un_obj = task.get("UniqueName")
+        uname = str(un_obj.get("RawString", "")) if isinstance(un_obj, Mapping) else _str_val(un_obj)
+        if uname:
+            self.rt.named_targets.pop(uname, None)
+
     def _op_set_entity_action_state(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
         targets = self._resolve_targets(task.get("TargetType"), ctx)
         active = bool(task.get("ActionState", True))
+        uname = str(task.get("UniqueName") or "__default__")
         for tid in targets:
             ent = sim.get_entity(tid)
             if ent is None:
                 continue
+            keys = getattr(ent, "_action_state_false_keys", None)
+            if keys is None:
+                keys = set()
+                setattr(ent, "_action_state_false_keys", keys)
             if not active:
+                keys.add(uname)
                 ent.distance_remaining = 1e12
-            elif ent.distance_remaining >= 1e11:
-                ent.distance_remaining = 10000.0
+            else:
+                keys.discard(uname)
+                if not keys and ent.distance_remaining >= 1e11:
+                    ent.distance_remaining = 10000.0
 
     def _op_set_control_skill_mapping(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sk_key = str(task.get("SkillTriggerKey") or "")
@@ -539,3 +605,256 @@ class ModifierOpsMixin:
     def _op_attack_data(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         tgt_spec = task.get("TargetType") or {"Alias": "AbilityTargetEntity"}
         self._execute_damage({"TargetType": tgt_spec, "AttackProperty": task}, ctx)
+
+    def _op_modify_current_modifier_dynamic_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        me = self.rt.modifier_engine
+        mod = ctx.modifier_instance or ctx.callback_modifier_instance
+        if mod is None:
+            return
+        key_h = dotnet_hash(_str_val(task.get("FHLJGDGMMHK")))
+        val = self._eval_num(task.get("KHBBNDBJAFK"), ctx, 0.0)
+        mfunc = str(task.get("FKCKKFALPBK") or "Set")
+        old_val = float(mod.dynamic_values.get(key_h, 0.0))
+        if mfunc == "Add":
+            new_val = old_val + val
+        elif mfunc in ("Sub", "Minus"):
+            new_val = old_val - val
+        else:
+            new_val = val
+        mod.dynamic_values[key_h] = float(new_val)
+        me.check_dynamic_value_changes(mod.owner_id, key_h, old_val, float(new_val), modifier=mod)
+
+    def _op_modify_property(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        sim = self.rt.sim
+        me = self.rt.modifier_engine
+        targets = (
+            self._resolve_targets(task.get("TargetType"), ctx)
+            if "TargetType" in task
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        prop = str(task.get("Property") or "")
+        mfunc = str(task.get("ModifyFunction") or "Add")
+        val = self._eval_num(task.get("ModifyValue") if "ModifyValue" in task else task.get("Value"), ctx, 0.0)
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            ent = sim.get_entity(tid)
+            if ent is None:
+                continue
+            if prop == "CurExtraSpecialSP":
+                cur_val = float(getattr(ent, "extra_special_sp", 0.0) or 0.0)
+                if mfunc == "Set":
+                    nxt = val
+                elif mfunc in ("Sub", "Minus"):
+                    nxt = cur_val - val
+                else:
+                    nxt = cur_val + val
+                max_extra = me.get_entity_property(tid, "MaxExtraSpecialSP")
+                nxt = max(0.0, min(max_extra, nxt)) if max_extra > 0.0 else max(0.0, nxt)
+                setattr(ent, "extra_special_sp", float(nxt))
+            elif ctx.modifier_instance is not None and ctx.modifier_instance.owner_id == tid:
+                cur_val = float(ctx.modifier_instance.properties.get(prop, 0.0))
+                if mfunc == "Set":
+                    delta = val - cur_val
+                elif mfunc in ("Sub", "Minus"):
+                    delta = -val
+                else:
+                    delta = val
+                me.stack_property(ctx.modifier_instance, prop, delta)
+                continue
+            if me._apc_defer_depth > 0:
+                me._dirty_apc_entities.add(tid)
+            else:
+                me.check_property_changes(tid)
+
+    def _op_modify_skill_property_by_name(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = (
+            self._resolve_targets(task.get("TargetType"), ctx)
+            if "TargetType" in task
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        sk_name = _str_val(task.get("SkillName"))
+        props = task.get("Properties") or ()
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            ov_list = self.rt.skill_property_overrides.setdefault(tid, [])
+            for p in props:
+                if not isinstance(p, Mapping):
+                    continue
+                prop_type = str(p.get("PropertyType") or "")
+                op = str(p.get("OperatorType") or "Set")
+                if op == "Unset":
+                    ov_list[:] = [
+                        ov
+                        for ov in ov_list
+                        if not (
+                            ov.get("PropertyType") == prop_type
+                            and (not sk_name or ov.get("SkillName") == sk_name)
+                        )
+                    ]
+                    continue
+                ov_list.append(
+                    {
+                        "SkillName": sk_name,
+                        "PropertyType": prop_type,
+                        "OperatorType": op,
+                        "Value": self._eval_num(p.get("Value"), ctx, 0.0) if "Value" in p else 0.0,
+                    }
+                )
+            if not ov_list:
+                self.rt.skill_property_overrides.pop(tid, None)
+
+    def _op_set_skill_tag(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = (
+            self._resolve_targets(task.get("TargetType") or task.get("HILNFHCPEAD"), ctx)
+            if ("TargetType" in task or "HILNFHCPEAD" in task)
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        sk_key = str(task.get("CIDCEJCGOGB") or "")
+        tag_items = task.get("DCLGGMAEMAO") or ()
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            tag_map = self.rt.entity_skill_tags.setdefault(tid, {})
+            tag_set = tag_map.setdefault(sk_key, set())
+            rem_set = self.rt.entity_removed_skill_tags.get(tid, {}).get(sk_key)
+            for tg in tag_items:
+                if isinstance(tg, Mapping):
+                    pair = (int(tg.get("EnumIndex", 0) or 0), int(tg.get("Value", 0) or 0))
+                    tag_set.add(pair)
+                    if rem_set is not None:
+                        rem_set.discard(pair)
+
+    def _op_remove_skill_tag(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = (
+            self._resolve_targets(task.get("TargetType") or task.get("HILNFHCPEAD"), ctx)
+            if ("TargetType" in task or "HILNFHCPEAD" in task)
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        sk_key = str(task.get("CIDCEJCGOGB") or "")
+        tag_items = task.get("DCLGGMAEMAO") or ()
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            tag_set = self.rt.entity_skill_tags.get(tid, {}).get(sk_key)
+            rem_map = self.rt.entity_removed_skill_tags.setdefault(tid, {})
+            rem_set = rem_map.setdefault(sk_key, set())
+            for tg in tag_items:
+                if isinstance(tg, Mapping):
+                    pair = (int(tg.get("EnumIndex", 0) or 0), int(tg.get("Value", 0) or 0))
+                    if tag_set is not None:
+                        tag_set.discard(pair)
+                    rem_set.add(pair)
+
+    def _op_modify_team_boost_point_max(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        sim = self.rt.sim
+        mfunc = str(task.get("ModifyFunction", "Add"))
+        mval = int(round(self._eval_num(task.get("ModifyValue"), ctx, 0.0)))
+        cur_max = int(sim.sp.max_sp)
+        if mfunc == "Set":
+            new_max = mval
+        elif mfunc == "Add":
+            new_max = cur_max + mval
+        elif mfunc in ("Sub", "Minus"):
+            new_max = cur_max - mval
+        else:
+            raise NotImplementedError(f"Unsupported ModifyTeamBoostPointMax ModifyFunction: {mfunc!r}")
+        sim.port.set_sp_cap(max(1, new_max))
+
+    def _op_init_team_block(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        rate = max(0.0, min(1.0, self._eval_num(task.get("OJGEEODEMMO"), ctx, 1.0)))
+        val = max(0.0, self._eval_num(task.get("MCNPMDPMCKM"), ctx, 0.0))
+        mod = ctx.modifier_instance
+        if mod is not None:
+            setattr(mod, "team_block_rate", rate)
+            setattr(mod, "team_block_max", val)
+            setattr(mod, "team_block_cur", val)
+            setattr(mod, "team_block_predicate", task.get("GODIODIIBNC"))
+            mod.dynamic_values[dotnet_hash("MDF_TeamBlockValue")] = val
+
+    def _op_modify_team_block(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        mfunc = str(task.get("HJOALLKGNGP", "Set"))
+        val = self._eval_num(task.get("MIOOGEBNBGL"), ctx, 0.0)
+        mod = ctx.modifier_instance
+        if mod is not None:
+            cur = float(getattr(mod, "team_block_cur", 0.0))
+            if mfunc == "Add":
+                new_val = max(0.0, cur + val)
+            elif mfunc in ("Sub", "Minus"):
+                new_val = max(0.0, cur - val)
+            else:
+                new_val = max(0.0, val)
+            setattr(mod, "team_block_cur", new_val)
+            setattr(mod, "team_block_max", max(float(getattr(mod, "team_block_max", 0.0)), new_val))
+            self.rt.set_dynamic_value(mod.owner_id, dotnet_hash("MDF_TeamBlockValue"), new_val, modifier=mod)
+
+    def _op_consume_elation_echo_point(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        amt = max(0.0, self._eval_num(task.get("AHCBJENOJHJ"), ctx, 0.0))
+        if amt <= 0.0:
+            return
+        targets = self._resolve_targets(task.get("HILNFHCPEAD"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
+        target_mname = str(task.get("EMFAHIBNJMP") or "")
+        echo_hash = dotnet_hash("ElationEchoPoint")
+        me = self.rt.modifier_engine
+        for tid in targets:
+            remaining = amt
+            for m in list(me.get_modifiers(tid)):
+                if m._destroyed:
+                    continue
+                if target_mname:
+                    if m.name != target_mname:
+                        continue
+                elif "ElationEchoPoint" not in m.behavior_flags:
+                    continue
+                cur_m = float(m.dynamic_values.get(echo_hash, m.properties.get("ElationEchoPoint", 0.0)))
+                if cur_m <= 0.0:
+                    continue
+                take = min(cur_m, remaining)
+                new_m = max(0.0, cur_m - take)
+                remaining -= take
+                self.rt.set_dynamic_value(tid, echo_hash, new_m, modifier=m)
+                if "ElationEchoPoint" in m.properties and abs(float(m.properties.get("ElationEchoPoint", 0.0)) - new_m) > 1e-9:
+                    m.properties["ElationEchoPoint"] = new_m
+                    me.check_property_changes(tid)
+                if new_m <= 1e-9 and not m._destroyed:
+                    me.destroy_modifier(m)
+                if remaining <= 1e-9:
+                    break
+
+    def _op_modify_elation_echo_add_data(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        pending = getattr(self.rt, "_pending_elation_echo_add", None)
+        if not isinstance(pending, dict):
+            return
+        if "MFIBFJPLCOG" in task:
+            pending["flag"] = bool(task.get("MFIBFJPLCOG"))
+        if "EIMIIHEDKFM" in task:
+            pending["mult"] = float(pending.get("mult", 1.0)) * self._eval_num(task.get("EIMIIHEDKFM"), ctx, 1.0)
+        if "PPBNKKKIIIN" in task:
+            pending["bonus"] = float(pending.get("bonus", 0.0)) + self._eval_num(task.get("PPBNKKKIIIN"), ctx, 0.0)
+
+    def _op_modify_entity_boost_point(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = (
+            self._resolve_targets(task["TargetType"], ctx)
+            if "TargetType" in task
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        mfunc = str(task.get("ModifyFunction") or "Set")
+        val = self._eval_num(task.get("ModifyValue"), ctx, 0.0)
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            cur = float(self.rt.entity_boost_points.get(tid, 0.0))
+            if mfunc == "Set":
+                new_val = max(0.0, val)
+            elif mfunc == "Add":
+                new_val = max(0.0, cur + val)
+            elif mfunc == "Sub":
+                new_val = max(0.0, cur - val)
+            else:
+                raise NotImplementedError(f"Unsupported ModifyEntityBoostPoint ModifyFunction: {mfunc!r}")
+            self.rt.entity_boost_points[tid] = new_val
+            diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                diag_cb("SP", f"EBP {tid} {mfunc} {val:g} -> {new_val:g}")
+            self.rt.modifier_engine.check_property_changes(tid)

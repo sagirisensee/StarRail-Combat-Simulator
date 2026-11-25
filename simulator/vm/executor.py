@@ -44,7 +44,6 @@ IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
     "RPG.GameCore.LockTargetActionDelay",
     "RPG.GameCore.AttachSkillTypeDisable",
     "RPG.GameCore.SummonPartner",
-    "RPG.GameCore.Remodifier",
     "RPG.GameCore.TriggerModifierCustomEvent",
     "RPG.GameCore.SetStanceCount",
     "RPG.GameCore.PerformDelayExecute",
@@ -54,6 +53,10 @@ IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
     "RPG.GameCore.TargetFetchUniqueNameEntity",
     "RPG.GameCore.TargetFilterAliveState",
     "RPG.GameCore.TriggerBreak",
+    "RPG.GameCore.SwitchByCommandType",
+    "RPG.GameCore.AutoUseUltraSkill",
+    "RPG.GameCore.ToggleSpecialSkillMark",
+    "RPG.GameCore.StackCrazyAIBehavior",
 }
 
 # 已确认在当前对账口径下无独立战斗副作用的混淆 $type 占位符
@@ -71,6 +74,30 @@ IGNORED_OBFUSCATED_TASK_STUBS: Set[str] = {
     "HGHNFLIFOGP",
     "PGFAJJBCMDK",
     "MBFDBNPKBBM",
+    "NKLOMENKLHK",
+    "NIDNKHHNCDD",
+    "CANBAEOKAJD",
+    "AFGOLNPFJIF",
+    "AOMNGKKKCOI",
+    "BALFAPGPFGA",
+    "BCNMIFBIGIE",
+    "BFKKNBNIBFB",
+    "CAJDCGPFPBA",
+    "CPFPIKGBLFK",
+    "EGKMFINAFHB",
+    "HCBPOFFBEOH",
+    "KJNHIELIFEK",
+    "LBMLBLLLMGG",
+    "MMBPCMGMMIH",
+    "NGLKHNKNBDC",
+    "OLCFDLCNOHH",
+    "CGHBOOLNOOJ",
+    "MFHGBPDJJPE",
+    "LLFEHBKEFDM",
+    "MJAPKPPJNLF",
+    "PCKCEGKJFAO",
+    "FCCIDFIMONC",
+    "PHJFJAOILHD",
 }
 
 
@@ -255,6 +282,18 @@ class TaskExecutor(
         else:
             self.execute_tasks(task.get("FailedTaskList", []), ctx)
 
+    def _op_switch_case(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        branches = task.get("TaskList") or task.get("CaseTaskList") or ()
+        for branch in branches:
+            if not isinstance(branch, Mapping):
+                continue
+            pred = branch.get("Predicate")
+            if pred is None or self.eval_predicate(pred, ctx):
+                tasks = branch.get("SuccessTaskList") if "SuccessTaskList" in branch else branch.get("TaskList", [])
+                self.execute_tasks(tasks or (), ctx)
+                return
+        self.execute_tasks(task.get("DefaultTaskList", []), ctx)
+
     def _op_switch_case_by_dynamic_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         if "Switch" in task:
             val = self._eval_num(task.get("Switch"), ctx, 0.0)
@@ -272,8 +311,15 @@ class TaskExecutor(
         self.execute_tasks(task.get("DefaultTaskList", []), ctx)
 
     def _op_condition_loop_execute_task_list(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        max_loop = (
+            max(0, min(64, int(round(self._eval_num(task.get("MaxLoopCount"), ctx, 0.0)))))
+            if "MaxLoopCount" in task
+            else None
+        )
         guard = 0
         while self.eval_predicate(task.get("Predicate"), ctx):
+            if max_loop is not None and guard >= max_loop:
+                break
             guard += 1
             if guard > 64:
                 raise RuntimeError("ConditionLoopExecuteTaskList 超过安全循环次数上限")
@@ -283,6 +329,31 @@ class TaskExecutor(
         cnt = max(0, min(64, int(round(self._eval_num(task.get("MaxLoopCount"), ctx, 0.0)))))
         for _ in range(cnt):
             self.execute_tasks(task.get("TaskList", []), ctx)
+
+    def _build_template_sub_ctx(self, task: Mapping[str, Any], ctx: ExecutionContext) -> ExecutionContext:
+        sub_dyn = dict(ctx.local_dynamics)
+        for k, v in (task.get("DynamicValues") or {}).items():
+            sub_dyn[dotnet_hash(k)] = self._eval_num(v, ctx, 0.0)
+        tpl_dyn = dict(sub_dyn)
+        sub_strs = dict(ctx.custom_strings)
+        for k, v in (task.get("DynamicStrings") or {}).items():
+            if isinstance(v, Mapping) and v.get("Custom"):
+                sub_strs[str(k)] = ctx.custom_strings.get(str(v.get("Key") or ""), "")
+            else:
+                sub_strs[str(k)] = _str_val(v)
+        sub_seqs = dict(ctx.template_param_sequences)
+        param_seqs = task.get("TemplateParamSequences")
+        if isinstance(param_seqs, Mapping):
+            sub_seqs.update(param_seqs)
+        param_tgts = self._resolve_targets(task.get("ParamTarget"), ctx) if "ParamTarget" in task else []
+        return ctx.clone(
+            local_dynamics=sub_dyn,
+            template_dynamics=tpl_dyn,
+            custom_strings=sub_strs,
+            param_entity_id=param_tgts[0] if param_tgts else ctx.param_entity_id,
+            template_param_targets=tuple(param_tgts) if param_tgts else ctx.template_param_targets,
+            template_param_sequences=sub_seqs,
+        )
 
     def _op_include_task_list_template(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -300,31 +371,14 @@ class TaskExecutor(
             if self.strict:
                 raise KeyError(f"找不到 TaskListTemplate: {tpl_name}")
             return
-        sub_dyn = dict(ctx.local_dynamics)
-        for k, v in (task.get("DynamicValues") or {}).items():
-            sub_dyn[dotnet_hash(k)] = self._eval_num(v, ctx, 0.0)
-        param_tgts = self._resolve_targets(task.get("ParamTarget"), ctx) if "ParamTarget" in task else []
-        sub_ctx = ctx.clone(
-            local_dynamics=sub_dyn,
-            param_entity_id=param_tgts[0] if param_tgts else ctx.param_entity_id,
-            template_param_targets=tuple(param_tgts) if param_tgts else ctx.template_param_targets,
-        )
-        self.execute_tasks(tpl_tasks, sub_ctx)
+        self.execute_tasks(tpl_tasks, self._build_template_sub_ctx(task, ctx))
 
     def _op_trigger_parallel_task_list_template(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
         tpl_entries = list(task.get("Templates") or [])
         if not tpl_entries and (task.get("Name") or task.get("TemplateName")):
             tpl_entries = [{"Name": task.get("Name") or task.get("TemplateName")}]
-        sub_dyn = dict(ctx.local_dynamics)
-        for k, v in (task.get("DynamicValues") or {}).items():
-            sub_dyn[dotnet_hash(k)] = self._eval_num(v, ctx, 0.0)
-        param_tgts = self._resolve_targets(task.get("ParamTarget"), ctx) if "ParamTarget" in task else []
-        sub_ctx = ctx.clone(
-            local_dynamics=sub_dyn,
-            param_entity_id=param_tgts[0] if param_tgts else ctx.param_entity_id,
-            template_param_targets=tuple(param_tgts) if param_tgts else ctx.template_param_targets,
-        )
+        sub_ctx = self._build_template_sub_ctx(task, ctx)
         for entry in tpl_entries:
             tname = _str_val(entry.get("Name") if isinstance(entry, Mapping) else entry)
             if not tname:
@@ -335,6 +389,13 @@ class TaskExecutor(
                     raise KeyError(f"找不到 Parallel TaskListTemplate: {tname}")
                 continue
             self.execute_tasks(tpl_tasks, sub_ctx)
+
+    def _op_task_template_fetch_param_sequence(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        pname = str(task.get("ParamName") or "")
+        entry = ctx.template_param_sequences.get(pname) if pname else None
+        seq_tasks = entry.get("TaskList") if isinstance(entry, Mapping) else (entry if isinstance(entry, list) else ())
+        if seq_tasks:
+            self.execute_tasks(seq_tasks, ctx)
 
     def _op_include_global_task_list_template(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -456,17 +517,25 @@ class TaskExecutor(
                         b_prov = getattr(sim, "blast_target_provider", None)
                         cand_ents = [sim.get_entity(cid) for cid in out]
                         cand_ents = [e for e in cand_ents if e is not None and not getattr(e, "is_enemy", False)]
-                        if cand_ents and callable(t_prov):
-                            if not getattr(rt, "_current_enemy_skill_has_damage", True):
-                                return []
+                        if cand_ents:
                             picked_order: List[str] = []
-                            p0 = t_prov(caster_ent, cand_ents, 0)
-                            if p0 is not None and p0.name in out:
-                                picked_order.append(p0.name)
-                                if cap > 1 and callable(b_prov):
-                                    for ex in (b_prov(caster_ent, p0, cand_ents) or ()):
-                                        if ex is not None and ex.name in out and ex.name not in picked_order:
-                                            picked_order.append(ex.name)
+                            if getattr(sim, "current_turn_entity", None) is caster_ent and callable(t_prov):
+                                if not getattr(rt, "_current_enemy_skill_has_damage", True):
+                                    return []
+                                p0 = t_prov(caster_ent, cand_ents, 0)
+                                if p0 is not None and p0.name in out:
+                                    picked_order.append(p0.name)
+                                    if cap > 1 and callable(b_prov):
+                                        for ex in (b_prov(caster_ent, p0, cand_ents) or ()):
+                                            if ex is not None and ex.name in out and ex.name not in picked_order:
+                                                picked_order.append(ex.name)
+                            if not picked_order and len(cand_ents) > cap:
+                                a_prov = getattr(sim, "ally_retarget_provider", None)
+                                if callable(a_prov):
+                                    picked = a_prov(caster_ent, cand_ents)
+                                    pname = getattr(picked, "name", picked) if picked is not None else None
+                                    if isinstance(pname, str) and pname in out:
+                                        picked_order.append(pname)
                             if picked_order:
                                 out = picked_order + [cid for cid in out if cid not in picked_order]
                         elif not cand_ents:
@@ -478,6 +547,16 @@ class TaskExecutor(
                                 pname = getattr(picked, "name", picked) if picked is not None else None
                                 if isinstance(pname, str) and pname in out:
                                     out = [pname] + [cid for cid in out if cid != pname]
+                    elif caster_ent is not None and len(out) > cap:
+                        r_prov = getattr(sim, "enemy_retarget_provider", None)
+                        dark_cands = [sim.get_entity(cid) for cid in out]
+                        dark_cands = [e for e in dark_cands if e is not None and getattr(e, "is_enemy", False)]
+                        if len(dark_cands) > cap and callable(r_prov):
+                            pick_caster = sim.get_entity(ctx.modifier_owner_id) if ctx.modifier_owner_id else caster_ent
+                            picked = r_prov(pick_caster or caster_ent, dark_cands)
+                            pname = getattr(picked, "name", picked) if picked is not None else None
+                            if isinstance(pname, str) and pname in out:
+                                out = [pname] + [cid for cid in out if cid != pname]
                 out = out[:cap]
             return out
 
@@ -553,16 +632,60 @@ class TaskExecutor(
         tlist = task.get("TaskList") or []
         odds_list = task.get("OddsList") or []
         if tlist:
+            weights = [self._eval_num(o, ctx, 0.0) for o in odds_list[:len(tlist)]] if odds_list else []
             best_idx = 0
-            if odds_list:
-                weights = [self._eval_num(o, ctx, 0.0) for o in odds_list[:len(tlist)]]
-                if any(w > 0.0 for w in weights):
-                    best_idx = max(range(len(weights)), key=lambda i: weights[i])
+            prov = getattr(self.rt.sim, "random_config_provider", None)
+            picked = prov(ctx.caster_id, ctx.ability_name, tlist, weights) if callable(prov) else None
+            src = "default"
+            if picked is not None and 0 <= int(picked) < len(tlist):
+                best_idx = int(picked)
+                src = "oracle"
+            elif weights and any(w > 0.0 for w in weights):
+                best_idx = max(range(len(weights)), key=lambda i: weights[i])
+                src = "weight"
+            diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                diag_cb("RAND", f"{ctx.caster_id} pick={best_idx}/{len(tlist)} src={src}")
             chosen = tlist[best_idx]
             if isinstance(chosen, Mapping):
                 self.execute_task(chosen, ctx)
             elif isinstance(chosen, list):
                 self.execute_tasks(chosen, ctx)
+
+    def _op_remodifier(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        rt = self.rt
+        me = rt.modifier_engine
+        prev_limbo = getattr(rt, "_include_limbo", False)
+        if task.get("IncludeLimbo"):
+            rt._include_limbo = True
+        try:
+            targets = self._resolve_targets(task.get("TargetType"), ctx)
+        finally:
+            rt._include_limbo = prev_limbo
+        bf_filter = {str(f) for f in (task.get("BehaviorFlagFilter") or ()) if f}
+        pred_filter = task.get("PredicateFilter")
+        task_list = task.get("TaskList") or ()
+        for tid in targets:
+            for m in list(me.get_modifiers(tid)):
+                if m._destroyed:
+                    continue
+                if bf_filter and not (m.behavior_flags & bf_filter):
+                    continue
+                f_ctx = ctx.clone(
+                    modifier_owner_id=tid,
+                    modifier_instance=m,
+                    param_entity_id=tid,
+                    callback_modifier_name=m.name,
+                    callback_behavior_flags=tuple(m.behavior_flags),
+                    callback_status_type=me.get_modifier_status_type(m),
+                    callback_modifier_instance=m,
+                )
+                if pred_filter and not self.eval_predicate(pred_filter, f_ctx):
+                    continue
+                self.execute_tasks(task_list, f_ctx)
+
+    def _op_noop(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        return
 
     # ------------------------------------------------------------------
     # Task 静态分发表（105 个官方 Task $type）与执行入口
@@ -570,23 +693,29 @@ class TaskExecutor(
     _TASK_DISPATCH: Dict[str, Callable[..., None]] = {
         # 1. 控制流
         "RPG.GameCore.PredicateTaskList": _op_predicate_task_list,
+        "RPG.GameCore.SwitchCase": _op_switch_case,
         "RPG.GameCore.SwitchCaseByDynamicValue": _op_switch_case_by_dynamic_value,
         "RPG.GameCore.ConditionLoopExecuteTaskList": _op_condition_loop_execute_task_list,
+        "RPG.GameCore.ConditionLoopExecuteTaskListWithInterval": _op_condition_loop_execute_task_list,
         "RPG.GameCore.LoopExecuteTaskList": _op_loop_execute_task_list,
         "RPG.GameCore.LoopExecuteTaskListWithInterval": _op_loop_execute_task_list,
         "RPG.GameCore.IncludeTaskListTemplate": _op_include_task_list_template,
         "RPG.GameCore.TriggerParallelTaskListTemplate": _op_trigger_parallel_task_list_template,
         "RPG.GameCore.IncludeGlobalTaskListTemplate": _op_include_global_task_list_template,
+        "RPG.GameCore.TaskTemplateFetchParamSequence": _op_task_template_fetch_param_sequence,
         "RPG.GameCore.TriggerAbility": _op_trigger_ability,
         "RPG.GameCore.TriggerParallelAbility": _op_trigger_parallel_ability,
         "RPG.GameCore.Retarget": _op_retarget,
+        "GLOABNLLLEL": _op_retarget,
         "RPG.GameCore.RetargetList": _op_retarget_list,
         "RPG.GameCore.FireProjectile": _op_fire_projectile,
         "RPG.GameCore.NewFireProjectile": _op_fire_projectile,
         "RPG.GameCore.RandomConfig": _op_random_config,
+        "RPG.GameCore.Remodifier": _op_remodifier,
         # 2. DynamicValues 与实体参数（DynamicOpsMixin）
         "RPG.GameCore.DefineDynamicValue": DynamicOpsMixin._op_define_dynamic_value,
         "RPG.GameCore.SetDynamicValue": DynamicOpsMixin._op_set_dynamic_value,
+        "RPG.GameCore.SetDynamicValueInRange": DynamicOpsMixin._op_set_dynamic_value_in_range,
         "RPG.GameCore.SetDynamicValueByChangeValue": DynamicOpsMixin._op_set_dynamic_value_by_change_value,
         "RPG.GameCore.SetDynamicValueByAddValue": DynamicOpsMixin._op_set_dynamic_value_by_add_value,
         "RPG.GameCore.SetDynamicValueByProperty": DynamicOpsMixin._op_set_dynamic_value_by_property,
@@ -606,6 +735,9 @@ class TaskExecutor(
         "RPG.GameCore.SetDynamicEntityParam": DynamicOpsMixin._op_set_dynamic_entity_param,
         "IJJGPIPMNAE": DynamicOpsMixin._op_read_invasion_param,
         "RPG.GameCore.ReinitProperty": DynamicOpsMixin._op_reinit_property,
+        "NMBCOGABNMC": DynamicOpsMixin._op_calc_elation_echo_add_value,
+        "IDNEFFCGFFL": DynamicOpsMixin._op_read_modifier_config_value,
+        "DIHCJLDIMNA": DynamicOpsMixin._op_set_dynamic_value_by_elation_point,
         # 3. Modifier、护盾、驱散与属性修正（ModifierOpsMixin）
         "RPG.GameCore.SetModifierDynamicValue": ModifierOpsMixin._op_set_modifier_dynamic_value,
         "RPG.GameCore.SetModifierValue": ModifierOpsMixin._op_set_modifier_value,
@@ -624,25 +756,38 @@ class TaskExecutor(
         "RPG.GameCore.ModifyHealData": ModifierOpsMixin._op_modify_heal_data,
         "RPG.GameCore.ModifyDamageData": ModifierOpsMixin._op_modify_damage_data,
         "RPG.GameCore.ModifyTeamBoostPoint": ModifierOpsMixin._op_modify_team_boost_point,
+        "RPG.GameCore.ModifyTeamBoostPointMax": ModifierOpsMixin._op_modify_team_boost_point_max,
         "RPG.GameCore.ModifySpecialSP": ModifierOpsMixin._op_modify_special_sp,
+        "RPG.GameCore.ModifyProperty": ModifierOpsMixin._op_modify_property,
+        "RPG.GameCore.ModifySkillPropertyByName": ModifierOpsMixin._op_modify_skill_property_by_name,
+        "BDDPLIAEAIN": ModifierOpsMixin._op_modify_current_modifier_dynamic_value,
+        "EGAIKBNEPOG": ModifierOpsMixin._op_set_skill_tag,
+        "BCOAEFIKBAO": ModifierOpsMixin._op_init_team_block,
+        "PEMEHFIAHKI": ModifierOpsMixin._op_modify_team_block,
+        "GDBOEBBNHLP": ModifierOpsMixin._op_consume_elation_echo_point,
+        "DKHNKLPFEJN": ModifierOpsMixin._op_modify_elation_echo_add_data,
         "RPG.GameCore.ModifyActionDelay": ModifierOpsMixin._op_modify_action_delay,
         "RPG.GameCore.ResetActionDelay": ModifierOpsMixin._op_reset_action_delay,
         "RPG.GameCore.SetActionDelay": ModifierOpsMixin._op_set_action_delay,
         "RPG.GameCore.ModifyCurrentSkillDelayCost": ModifierOpsMixin._op_modify_current_skill_delay_cost,
         "JDOLDFECMPL": ModifierOpsMixin._op_modify_elation_points,
         "RPG.GameCore.SetTargetUniqueName": ModifierOpsMixin._op_set_target_unique_name,
+        "RPG.GameCore.ReleaseTargetUniqueName": ModifierOpsMixin._op_release_target_unique_name,
         "RPG.GameCore.SetEntityActionState": ModifierOpsMixin._op_set_entity_action_state,
         "RPG.GameCore.SetControlSkillMapping": ModifierOpsMixin._op_set_control_skill_mapping,
         "RPG.GameCore.AttackData": ModifierOpsMixin._op_attack_data,
+        "DANFCLODJNK": ModifierOpsMixin._op_remove_skill_tag,
         # 4. 战斗结算与回合插队/召唤（CombatOpsMixin / TurnOpsMixin）
         "RPG.GameCore.HealHP": CombatOpsMixin._execute_heal,
         "RPG.GameCore.DamageByAttackProperty": CombatOpsMixin._execute_damage,
         "RPG.GameCore.LoseHPByRatio": CombatOpsMixin._execute_lose_hp,
         "RPG.GameCore.LoseHP": CombatOpsMixin._execute_lose_hp,
+        "RPG.GameCore.ModifySP": CombatOpsMixin._execute_modify_sp,
         "RPG.GameCore.ModifySPNew": CombatOpsMixin._execute_modify_sp_new,
         "RPG.GameCore.TurnInsertAbility": TurnOpsMixin._execute_turn_insert,
         "RPG.GameCore.TurnInsertAbilityCondition": TurnOpsMixin._execute_turn_insert,
         "RPG.GameCore.TurnInsertAction": TurnOpsMixin._execute_turn_insert,
+        "RPG.GameCore.UseSkillOneMore": TurnOpsMixin._execute_use_skill_one_more,
         "RPG.GameCore.CreateServant": TurnOpsMixin._execute_create_servant,
         "RPG.GameCore.CreateBattleEvent": TurnOpsMixin._execute_create_battle_event,
         "RPG.GameCore.AttachAvatarChange": TurnOpsMixin._execute_attach_avatar_change,
@@ -678,6 +823,17 @@ class TaskExecutor(
         "RPG.GameCore.LevelChallengeTurnAcc": StageOpsMixin._op_level_challenge_turn_acc,
         "RPG.GameCore.EnableNegativeHP": StageOpsMixin._op_enable_negative_hp,
         "RPG.GameCore.AbortInsertAbility": StageOpsMixin._op_abort_insert_ability,
+        "RPG.GameCore.SetDynamicValueByBPChange": DynamicOpsMixin._op_set_dynamic_value_by_bp_change,
+        "RPG.GameCore.SetDynamicValueByCurrentBP": DynamicOpsMixin._op_set_dynamic_value_by_current_bp,
+        "RPG.GameCore.SetDynamicValueByMaxBP": DynamicOpsMixin._op_set_dynamic_value_by_max_bp,
+        "RPG.GameCore.SetDynamicValueByElationTimeSkillCount": DynamicOpsMixin._op_set_dynamic_value_by_elation_time_skill_count,
+        "RPG.GameCore.SetDynamicString": DynamicOpsMixin._op_set_dynamic_string,
+        "RPG.GameCore.SetDynamicValueBySkillProperty": DynamicOpsMixin._op_set_dynamic_value_by_skill_property,
+        "RPG.GameCore.GlobalModifyInsertAbilityPriority": _op_noop,
+        "ELLFLJKDCAE": TurnOpsMixin._execute_start_elation_time,
+        "LAJIKDENEOO": DynamicOpsMixin._op_modify_dynamic_value_clamped,
+        "RPG.GameCore.ModifyEntityBoostPoint": ModifierOpsMixin._op_modify_entity_boost_point,
+        "RPG.GameCore.TriggerSkipDeadHandler": _op_noop,
     }
 
     def execute_tasks(self, tasks: Sequence[Mapping[str, Any]], ctx: ExecutionContext) -> None:

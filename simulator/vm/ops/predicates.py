@@ -76,9 +76,20 @@ class PredicateOpsMixin:
             else:
                 key_str = _str_val(pred.get("DynamicKey"))
                 key_h = dotnet_hash(key_str)
-                scope_targets = self._resolve_targets(pred.get("TargetType"), ctx) if "TargetType" in pred else [ctx.caster_id]
-                tid = scope_targets[0] if scope_targets else ctx.caster_id
-                lhs = rt.get_dynamic_value(tid, key_h, ability_name=ctx.ability_name, local_ctx=ctx)
+                if (
+                    pred.get("ContextScope") == "ContextTaskTemplate"
+                    and ctx.template_dynamics is not None
+                    and key_h in ctx.template_dynamics
+                ):
+                    lhs = float(ctx.template_dynamics[key_h])
+                else:
+                    scope_targets = (
+                        self._resolve_targets(pred.get("TargetType"), ctx)
+                        if "TargetType" in pred
+                        else [ctx.caster_id]
+                    )
+                    tid = scope_targets[0] if scope_targets else ctx.caster_id
+                    lhs = rt.get_dynamic_value(tid, key_h, ability_name=ctx.ability_name, local_ctx=ctx)
             rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
@@ -354,11 +365,111 @@ class PredicateOpsMixin:
             return False
 
         if t == "RPG.GameCore.ByCheckModifierCallBackName":
-            return ctx.callback_modifier_name == _str_val(pred.get("ModifierName"))
+            mname_spec = pred.get("ModifierName")
+            if isinstance(mname_spec, Mapping) and mname_spec.get("Custom"):
+                want_name = (
+                    ctx.custom_strings.get(str(mname_spec.get("Key", "")))
+                    or _str_val(pred.get("ReferenceModifierName"))
+                    or "MBattleEvent_Elation_ElationEchoPointBuff"
+                )
+            else:
+                want_name = _str_val(mname_spec)
+            return ctx.callback_modifier_name == want_name
+
+        if t == "RPG.GameCore.ByCheckModifierCallBackModifierValue":
+            mod = ctx.callback_modifier_instance or ctx.modifier_instance
+            if mod is None:
+                return False
+            vtype = str(pred.get("ValueType", "Layer"))
+            lhs = float(mod.life_time or 0.0) if vtype == "LifeTime" else float(mod.layer)
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
+
+        if t == "RPG.GameCore.ByCompareModifierCallBackDynamicValue":
+            m_cb = ctx.callback_modifier_instance or ctx.modifier_instance
+            if m_cb is None:
+                return False
+            key_h = dotnet_hash(_str_val(pred.get("DynamicKey")))
+            lhs = float(m_cb.dynamic_values.get(key_h, 0.0))
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
         if t == "RPG.GameCore.ByCheckModifierCallBackBehaviorFlag":
-            want = str(pred.get("BehaviorFlag", ""))
+            want = str(pred.get("BehaviorFlag") or pred.get("Flag") or "")
             return want in ctx.callback_behavior_flags
+
+        if t == "RPG.GameCore.ByCompareDamageCustomName":
+            want = _str_val(pred.get("CustomName"))
+            got = str((ctx.damage_data or {}).get("CustomName", ""))
+            return got == want
+
+        if t == "RPG.GameCore.ByCompareSpecialSPRatio":
+            targets = (
+                self._resolve_targets(pred.get("TargetType"), ctx)
+                if "TargetType" in pred
+                else [ctx.modifier_owner_id or ctx.caster_id]
+            )
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            cmp_type = str(pred.get("CompareType", "Equal"))
+            for tid in targets:
+                ent = sim.get_entity(tid)
+                if ent is None:
+                    continue
+                max_ep = float(sim.port.max_energy(tid) or getattr(ent, "max_energy", 0.0) or 0.0)
+                if max_ep <= 0.0:
+                    continue
+                lhs = float(getattr(ent, "energy", 0.0)) / max_ep
+                if _compare_values(lhs, rhs, cmp_type):
+                    return True
+            return False
+
+        if t == "RPG.GameCore.ByHasSkillTag":
+            targets = self._resolve_targets(pred.get("TargetType") or {"Alias": "Caster"}, ctx)
+            tag_obj = pred.get("Tag") or {}
+            target_tag = (int(tag_obj.get("EnumIndex", 0) or 0), int(tag_obj.get("Value", 0) or 0))
+            for tid in targets:
+                dyn_tags = rt.entity_skill_tags.get(tid, {})
+                if any(target_tag in tset for tset in dyn_tags.values()):
+                    return True
+                rem_map = rt.entity_removed_skill_tags.get(tid, {})
+                spec = rt.entity_specs.get(tid)
+                if spec is not None:
+                    for sk in spec.config.get("SkillList", ()):
+                        if not isinstance(sk, Mapping):
+                            continue
+                        sk_name = str(sk.get("Name") or sk.get("Skill") or sk.get("SkillTriggerKey") or "")
+                        if target_tag in rem_map.get(sk_name, ()):
+                            continue
+                        for tg in sk.get("Tags", ()):
+                            if isinstance(tg, Mapping) and (
+                                int(tg.get("EnumIndex", 0) or 0),
+                                int(tg.get("Value", 0) or 0),
+                            ) == target_tag:
+                                return True
+                        if target_tag == (8, 1) and str(sk.get("SkillType", "")) == "Elation":
+                            return True
+            return False
+
+        if t == "RPG.GameCore.ByIsMazeSkillAffectCurrentWave":
+            if int(getattr(sim, "current_wave", 1) or 1) != 1:
+                return False
+            entry_elem = getattr(sim, "_entry_element", None)
+            if not entry_elem:
+                return True
+            caster_ent = sim.get_entity(ctx.caster_id)
+            if caster_ent is None:
+                return False
+            c_elem = normalize_element(str(getattr(caster_ent, "element", "")))
+            if c_elem != normalize_element(str(entry_elem)):
+                return False
+            matching = [
+                e.name for e in sim.entities
+                if not getattr(e, "is_enemy", False)
+                and not getattr(e, "is_memosprite", False)
+                and not getattr(e, "is_countdown", False)
+                and normalize_element(str(getattr(e, "element", ""))) == c_elem
+            ]
+            return bool(matching and matching[0] == caster_ent.name)
 
         if t == "RPG.GameCore.ByContainsParamFlag":
             return str(pred.get("Flag", "")) in ctx.param_flags
@@ -425,7 +536,7 @@ class PredicateOpsMixin:
             director = getattr(sim, "_stage_director", None)
             runner = getattr(director, "runner", None) if director is not None else None
             cur_st = str(getattr(getattr(runner, "built_stage", None), "stage_type", "")) if runner is not None else ""
-            want_st = str(pred.get("StageType", ""))
+            want_st = str(pred.get("StageType") or pred.get("CurrentStageType") or "")
             return bool(cur_st and want_st and cur_st == want_st)
 
         if t == "RPG.GameCore.ByCompareMonsterID":
@@ -662,9 +773,20 @@ class PredicateOpsMixin:
             return False
 
         if t == "RPG.GameCore.ByCurrentSkillName":
-            want = _str_val(pred.get("SkillName"))
+            wants: List[str] = []
+            if "SkillName" in pred:
+                w = _str_val(pred.get("SkillName"))
+                if w:
+                    wants.append(w)
+            for item in pred.get("SkillNameList") or ():
+                w = _str_val(item)
+                if w:
+                    wants.append(w)
             cur_sk = str(getattr(rt, "_current_skill_name", "") or "")
-            return bool(want and (want == cur_sk or want in str(ctx.ability_name or "")))
+            if cur_sk:
+                return cur_sk in wants
+            ab_name = str(ctx.ability_name or "")
+            return any(w in ab_name for w in wants)
 
         if t == "RPG.GameCore.ByInTimelinePerform":
             return False
@@ -799,6 +921,33 @@ class PredicateOpsMixin:
                     if atk_t == want_atk and str(row.get("SkillEffect") or "") in damaging_effects:
                         return True
             return False
+
+        if t == "RPG.GameCore.ByCompareParamString":
+            want = _str_val(pred.get("CompareValue"))
+            return bool(want and want in ctx.param_strings)
+
+        if t == "RPG.GameCore.ByIsAutoBattle":
+            return False
+
+        if t == "RPG.GameCore.ByIsInElationTime":
+            return bool(getattr(rt, "in_elation_time", False))
+
+        if t == "RPG.GameCore.ByHasPausedElationTime":
+            return bool(getattr(rt, "has_paused_elation_time", False))
+
+        if t == "RPG.GameCore.ByIsCurrentModifierAlive":
+            return bool(ctx.modifier_instance is not None and not getattr(ctx.modifier_instance, "_destroyed", False))
+
+        if t == "LKAKGGLAHGA":
+            return False
+
+        if t == "MDCEMPKNOKN":
+            lhs = rt.get_elation_points_for_query(
+                ctx.modifier_owner_id or ctx.caster_id,
+                pred.get("PICEOEEKCIN"),
+            )
+            rhs = self._eval_num(pred.get("DPICNGBHFAC"), ctx, 0.0)
+            return _compare_values(lhs, rhs, str(pred.get("EHCHAPPGJDJ") or "Equal"))
 
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None

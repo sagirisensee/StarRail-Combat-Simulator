@@ -46,6 +46,7 @@ class StatType(Enum):
     BREAK_EFFECT = "break_effect"# 击破特攻
     BREAK_EFFICIENCY = "break_eff"# 击破效率
     ELATION = "elation"          # 欢愉伤害/度
+    ELATION_EXTRA = "elation_extra"  # 增笑 (ElationDamageExtraAddedRatio)
     DEF_BASE = "def_base"
     DEF = "def"
     DEF_PERCENT = "def_pct"      # 防御力百分比
@@ -562,7 +563,7 @@ class StatusManager:
             StatType.CRIT_RATE, StatType.CRIT_DMG, StatType.DMG_BOOST,
             StatType.RES_PEN, StatType.VULNERABILITY, StatType.BREAK_EFFECT,
             StatType.DEF_SHRED, StatType.OUTGOING_HEALING, StatType.EFFECT_RES,
-            StatType.EHR, StatType.ERR
+            StatType.EHR, StatType.ERR, StatType.ELATION, StatType.ELATION_EXTRA
         ):
             return base_val + flat_sum + pct_sum
 

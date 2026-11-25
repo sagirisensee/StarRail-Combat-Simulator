@@ -102,6 +102,7 @@ def extract_log_metadata(
                     )
                     player_tracker.on_player_use_skill(sctx.cur_av, uid, cname, sk_type, sk_id)
             elif ev == "OnDamage":
+                roster_tracker.on_damage_for_init_hp(data)
                 player_tracker.on_damage(data, sctx.cur_av)
             elif ev == "OnStatChange":
                 ent = data.get("entity") or {}
@@ -138,11 +139,15 @@ def extract_log_metadata(
                 elif team_tag == "Player" and uid:
                     roster_tracker.on_player_stat_change(uid, ptype, val, char_db)
                     player_tracker.on_player_stat_change_ult(uid, ptype, val, char_db)
+                    player_tracker.on_player_special_sp_change(uid, ptype, val, sctx.cur_av)
                     if ptype == "MaxHP":
                         if uid not in sctx.last_player_hp:
                             sctx.last_player_hp[uid] = val
                     elif ptype == "CurrentSP":
-                        if val < -1.0:
+                        prof = char_db.get(uid)
+                        max_sp = float(getattr(prof, "max_sp", 0) or 0) if prof is not None else 0.0
+                        min_ult_spend = (max_sp * 0.8) if max_sp > 0.0 else 50.0
+                        if val < -max(1.0, min_ult_spend):
                             enemy_tracker.pause_if_active(sctx.cur_av)
                         cname = _resolve_uid_name(uid, char_db)
                         prev_sp = sctx.last_player_sp.get(uid)
@@ -171,6 +176,7 @@ def extract_log_metadata(
                             sctx.last_player_hp[uid] = val
 
     player_tracker.flush_pending_player_atk()
+    player_tracker.flush_bp_draw_carry()
     _flush_turn()
     player_tracker.flush_pending_q_break()
 
@@ -201,6 +207,9 @@ def extract_log_metadata(
         roster_tracker.first_skill_stance_obs,
         roster_tracker.init_enemy_first_stance,
         player_tracker.skill_atk_dmgs,
+        team_uids=team_uids,
+        init_enemy_first_hp=roster_tracker.init_enemy_first_hp,
+        init_enemy_first_dmg=roster_tracker.init_enemy_first_dmg,
     )
 
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = {
@@ -225,10 +234,12 @@ def extract_log_metadata(
         enemy_uid_map=enemy_uid_map,
         ally_ult_targets=player_tracker.ally_ult_targets,
         enemy_retarget_picks=player_tracker.enemy_retarget_picks,
+        random_config_draws=player_tracker.random_config_draws,
         player_enemy_targets=player_enemy_targets,
         servant_targets=servant_targets,
         aha_turns=aha_tracker.aha_turns,
         windwalk_enemy_uids=enemy_tracker.windwalk_enemy_uids,
+        windwalk_events=enemy_tracker.windwalk_events,
         slow_hits=enemy_tracker.slow_hits,
         quantum_entangle_resists=quantum_entangle_resists,
         enemy_hp_at_turn_end=enemy_hp_at_turn_end,

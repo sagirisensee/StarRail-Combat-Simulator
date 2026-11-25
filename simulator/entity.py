@@ -40,6 +40,7 @@ class Entity:
     base_break_effect: float = 0.0
     base_err: float = 1.0
     base_dmg_boost: float = 0.0
+    base_elation: float = 0.0
     element: str = ""
     path: str = ""
     level: int = 80

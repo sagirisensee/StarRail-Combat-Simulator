@@ -13,6 +13,7 @@ from ...events import DamageAppliedEvent, HPLostEvent
 from ...status import StatType
 from ..expr import dotnet_hash
 from ..target_alias import ExecutionContext
+from .predicates import _str_val
 
 
 _ELEM_ZH_TO_EN: Dict[str, str] = {
@@ -46,6 +47,10 @@ class _DamageSpec:
     is_dot_dmg: bool
     is_additional_dmg: bool
     is_nested_sub: bool
+    custom_name: str = ""
+    is_elation_dmg: bool = False
+    prop_source_id: str = ""
+    equal_split: bool = False
 
 
 @dataclass
@@ -159,6 +164,44 @@ class CombatOpsMixin:
                     param_entity_id=tid,
                 )
         return raw_loss, mrs
+
+    def _execute_modify_sp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        rt = self.rt
+        sim = rt.sim
+        me = rt.modifier_engine
+        targets = (
+            self._resolve_targets(task.get("TargetType"), ctx)
+            if "TargetType" in task
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        mfunc = str(task.get("ModifyFunction") or "Add")
+        val = self._eval_num(task.get("ModifyValue") if "ModifyValue" in task else task.get("Value"), ctx, 0.0)
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            ent = sim.get_entity(tid)
+            if ent is None:
+                continue
+            ep_tid = tid
+            if getattr(ent, "is_memosprite", False) and getattr(ent, "max_energy", 0.0) <= 0.0 and getattr(ent, "master_name", None):
+                ep_tid = ent.master_name
+                ent = sim.get_entity(ep_tid)
+                if ent is None:
+                    continue
+            max_ep = float(sim.port.max_energy(ep_tid) or getattr(ent, "max_energy", 0.0) or 0.0)
+            if mfunc == "Set":
+                ent.energy = max(0.0, min(max_ep, val)) if max_ep > 0.0 else max(0.0, val)
+            elif mfunc in ("Sub", "Minus"):
+                ent.energy = max(0.0, float(ent.energy) - val)
+            else:
+                if val > 0.0:
+                    sim.port.gain_energy(ep_tid, val, cause=ctx.ability_name or "ModifySP")
+                elif val < 0.0:
+                    ent.energy = max(0.0, float(ent.energy) + val)
+            if me._apc_defer_depth > 0:
+                me._dirty_apc_entities.add(ep_tid)
+            else:
+                me.check_property_changes(ep_tid)
 
     def _execute_modify_sp_new(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -412,6 +455,12 @@ class CombatOpsMixin:
             ov_targets = self._resolve_targets(override_atk_spec, ctx)
             if ov_targets:
                 eff_attacker_id = ov_targets[0]
+        prop_source_id = eff_attacker_id
+        override_prop_spec = task.get("OverrideDamagePropertySource")
+        if isinstance(override_prop_spec, Mapping):
+            prop_targets = self._resolve_targets(override_prop_spec, ctx)
+            if prop_targets:
+                prop_source_id = prop_targets[0]
 
         dt_obj = atk_prop.get("DamageType", {})
         if isinstance(dt_obj, Mapping) and dt_obj.get("SourceType") == "ReadTargetType":
@@ -429,10 +478,15 @@ class CombatOpsMixin:
 
         formula_type = str(atk_prop.get("FormulaType", ""))
         final_formula = str(atk_prop.get("FinalFormulaType", ""))
-        pct = self._eval_num(atk_prop.get("DamagePercentage"), ctx, 0.0)
+        custom_name = _str_val(atk_prop.get("CustomName"))
+        atk_type = str(atk_prop.get("AttackType", ctx.current_attack_type or "Normal"))
+        is_elation_dmg = (formula_type == "ByElationDamage") or (atk_type == "ElationDamage")
+        if formula_type == "ByElationDamage" and "ElationDamagePercentage" in atk_prop:
+            pct = self._eval_num(atk_prop.get("ElationDamagePercentage"), ctx, 0.0)
+        else:
+            pct = self._eval_num(atk_prop.get("DamagePercentage"), ctx, 0.0)
         flat = self._eval_num(atk_prop.get("DamageValue"), ctx, 0.0)
         stance = self._eval_num(atk_prop.get("StanceValue"), ctx, 0.0)
-        atk_type = str(atk_prop.get("AttackType", ctx.current_attack_type or "Normal"))
         if stance <= 0.0 and atk_prop.get("StanceValue"):
             stance = self._resolve_fallback_stance(task, ctx, atk_type)
 
@@ -463,8 +517,9 @@ class CombatOpsMixin:
             "ElementDamage": DamageType.ADDITIONAL,
             "TrueDamage": DamageType.TRUE,
             "DOT": DamageType.DOT,
+            "ElationDamage": DamageType.ELATION,
         }
-        damage_type = dtype_map.get(atk_type, DamageType.BASIC)
+        damage_type = DamageType.ELATION if is_elation_dmg else dtype_map.get(atk_type, DamageType.BASIC)
         is_true_dmg = damage_type == DamageType.TRUE
         is_dot_dmg = damage_type == DamageType.DOT
         is_additional_dmg = damage_type == DamageType.ADDITIONAL
@@ -488,6 +543,10 @@ class CombatOpsMixin:
             is_dot_dmg=is_dot_dmg,
             is_additional_dmg=is_additional_dmg,
             is_nested_sub=is_nested_sub,
+            custom_name=custom_name,
+            is_elation_dmg=is_elation_dmg,
+            prop_source_id=prop_source_id,
+            equal_split=bool(task.get("EqualSplitInTargets", False)),
         )
 
     def _prepare_attack_hooks(self, spec: _DamageSpec, ctx: ExecutionContext) -> _PreparedAttackData:
@@ -529,7 +588,7 @@ class CombatOpsMixin:
                     current_attack_type=spec.atk_type,
                 )
 
-        dmg_data: Dict[str, Any] = {"Element": spec.element}
+        dmg_data: Dict[str, Any] = {"Element": spec.element, "CustomName": spec.custom_name}
         if not spec.is_true_dmg:
             me.dispatch_event(
                 "OnBeforeHitAll",
@@ -551,6 +610,8 @@ class CombatOpsMixin:
 
         # 必须在 OnBeforeAttack / OnBeforeHitAll 之后再求值 HitSplitRatio，以免读到旧动态值
         hit_split = self._eval_num(spec.atk_prop.get("HitSplitRatio"), ctx, 1.0)
+        if spec.equal_split and len(spec.real_targets) > 1:
+            hit_split /= float(len(spec.real_targets))
         (
             extra_dmg_boost,
             extra_def_ignore,
@@ -841,6 +902,7 @@ class CombatOpsMixin:
             any_died_mid_aoe = False
             pending_limbo: List[str] = []
             pending_dying: List[str] = []
+            prop_src_id = spec.prop_source_id or spec.eff_attacker_id
             for idx, tid in enumerate(real_targets):
                 if idx > 0 and any_died_mid_aoe and not spec.is_true_dmg and spec.atk_type in ("Servant", "Pursued", "Ultra"):
                     any_died_mid_aoe = False
@@ -885,7 +947,7 @@ class CombatOpsMixin:
                 tgt_extra_vuln = 0.0
                 tgt_extra_def_ignore = 0.0
                 tgt_extra_res_pen = 0.0
-                tgt_hit_data: Dict[str, Any] = {"Element": spec.element}
+                tgt_hit_data: Dict[str, Any] = {"Element": spec.element, "CustomName": spec.custom_name}
                 if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and not spec.is_true_dmg:
                     me.dispatch_event(
                         "OnBeforeBeingHitAll",
@@ -998,6 +1060,31 @@ class CombatOpsMixin:
                 prev_active_atk = getattr(rt, "_active_damage_attacker_id", None)
                 rt._active_damage_attacker_id = spec.eff_attacker_id
                 try:
+                    elation_level_base = 0.0
+                    elation_point_num = 0.0
+                    extra_elation = 0.0
+                    extra_elation_extra = 0.0
+                    if spec.is_elation_dmg:
+                        atk_ent = sim.get_entity(prop_src_id)
+                        atk_lvl = int(getattr(atk_ent, "level", 80) or 80) if atk_ent is not None else 80
+                        elation_level_base = rt.loader.get_elation_basic_level_damage(atk_lvl)
+                        if "AttackData_ElationPointNum" in hit_dmg_data:
+                            base_elation_pt = float(hit_dmg_data["AttackData_ElationPointNum"])
+                        elif getattr(rt, "in_elation_time", False):
+                            ov_pt = float(getattr(rt, "elation_time_override_points", 0.0) or 0.0)
+                            base_elation_pt = ov_pt if ov_pt > 0.0 else float(getattr(rt, "elation_points", 0.0) or 0.0)
+                        else:
+                            echo_pt = float(me.get_entity_property(spec.eff_attacker_id, "ElationEchoPoint") or 0.0)
+                            if echo_pt <= 0.0 and prop_src_id != spec.eff_attacker_id:
+                                echo_pt = float(me.get_entity_property(prop_src_id, "ElationEchoPoint") or 0.0)
+                            base_elation_pt = echo_pt if echo_pt > 0.0 else float(getattr(rt, "elation_points", 0.0) or 0.0)
+                        elation_point_num = base_elation_pt + float(
+                            hit_dmg_data.get("AttackData_ElationPointNumDelta", 0.0) or 0.0
+                        )
+                        extra_elation = float(hit_dmg_data.get("Attacker_ElationDamageAddedRatio", 0.0) or 0.0)
+                        extra_elation_extra = float(
+                            hit_dmg_data.get("Attacker_ElationDamageExtraAddedRatio", 0.0) or 0.0
+                        )
                     sim.port.attack(
                         spec.eff_attacker_id,
                         tid,
@@ -1019,6 +1106,12 @@ class CombatOpsMixin:
                             if ctx.modifier_instance is not None
                             else None
                         ),
+                        property_source_id=(prop_src_id if prop_src_id != spec.eff_attacker_id else None),
+                        is_elation_dmg=spec.is_elation_dmg,
+                        elation_level_base=elation_level_base,
+                        elation_point_num=elation_point_num,
+                        extra_elation=extra_elation,
+                        extra_elation_extra=extra_elation_extra,
                     )
                     if not spec.is_true_dmg and not spec.is_dot_dmg and was_alive and tgt_ent is not None and not getattr(tgt_ent, "is_enemy", False):
                         caster_ent = sim.get_entity(spec.eff_attacker_id)
@@ -1087,6 +1180,18 @@ class CombatOpsMixin:
                             rt._pending_dead_enemies = pending_dead
                         if dead_id_cand not in pending_dead:
                             pending_dead.append(dead_id_cand)
+                elif tgt_ent is not None and getattr(tgt_ent, "is_memosprite", False):
+                    if was_strictly_alive and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0:
+                        if me.has_behavior_flag(tid, "Deathrattle"):
+                            setattr(tgt_ent, "_in_deathrattle_limbo", True)
+                        if tid not in pending_dying:
+                            pending_dying.append(tid)
+                        pending_dead = getattr(rt, "_pending_dead_enemies", None)
+                        if pending_dead is None:
+                            pending_dead = []
+                            rt._pending_dead_enemies = pending_dead
+                        if tid not in pending_dead:
+                            pending_dead.append(tid)
             sim.resolver.resolve_all()
             if pending_dying:
                 if spec.eff_attacker_id and spec.eff_attacker_id != "__LEVEL__":
@@ -1292,6 +1397,15 @@ class CombatOpsMixin:
                     eff_floor = 0.0
                 else:
                     eff_floor = 1.0
+                if consume_shield and raw_loss > 0.0:
+                    raw_loss = me.intercept_team_block_damage(tid, raw_loss)
+                    if raw_loss > 0.0 and hasattr(ent, "shield") and ent.shield > 0.0:
+                        absorbed = min(float(ent.shield), raw_loss)
+                        ent.shield -= absorbed
+                        raw_loss -= absorbed
+                        for m_shd in me.get_modifiers(tid):
+                            if m_shd.shield_value > 0.0:
+                                m_shd.shield_value = max(0.0, m_shd.shield_value - absorbed)
 
             actual_loss = max(0.0, min(ent.current_hp - eff_floor, raw_loss))
             if actual_loss > 0:

@@ -43,6 +43,11 @@ class ExecutionContext:
     param_flags: Tuple[str, ...] = ()
     current_skill_type: str = ""
     current_attack_type: str = ""
+    template_dynamics: Optional[Dict[int, float]] = None
+    callback_modifier_instance: Optional[Any] = None
+    custom_strings: Dict[str, str] = field(default_factory=dict)
+    template_param_sequences: Mapping[str, Any] = field(default_factory=dict)
+    param_strings: Tuple[str, ...] = ()
 
     def clone(self, **overrides: Any) -> "ExecutionContext":
         data = {
@@ -68,6 +73,11 @@ class ExecutionContext:
             "param_flags": self.param_flags,
             "current_skill_type": self.current_skill_type,
             "current_attack_type": self.current_attack_type,
+            "template_dynamics": self.template_dynamics,
+            "callback_modifier_instance": self.callback_modifier_instance,
+            "custom_strings": dict(self.custom_strings),
+            "template_param_sequences": self.template_param_sequences,
+            "param_strings": self.param_strings,
         }
         data.update(overrides)
         return ExecutionContext(**data)
@@ -273,7 +283,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = [ctx.param_entity_id] if ctx.param_entity_id else list(ctx.ability_target_ids)
     elif base == "ParamEntity2":
         cur = [ctx.param_entity2_id] if ctx.param_entity2_id else []
-    elif base == "AbilityTargetEntity":
+    elif base in ("AbilityTargetEntity", "InherentTargetEntity"):
         cur = list(ctx.ability_target_ids) if ctx.ability_target_ids else ([ctx.caster_id] if ctx.caster_id else [])
     elif base == "AbilityTargetGroup":
         cur = list(ctx.ability_target_ids)
@@ -343,7 +353,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = [t.name] if t is not None else []
     elif base == "CurrentAimAtTarget":
         cur = list(ctx.ability_target_ids[:1])
-    elif base == "AllLightTeam":
+    elif base in ("AllLightTeam", "AllLightMember"):
         cur = _alive_allies(include_unselectable=False, include_countdown=False)
     elif base == "AllLightTeamIgnoreServant":
         cur = _alive_avatars(include_unselectable=False)
@@ -397,7 +407,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = _dedup_preserve(([oid] if oid else []) + _adjoin_of(oid, "both"))
     elif base in ("ParamEntityAdjoinEntity", "ProjectileHitEntityAdjoinEntity"):
         cur = _adjoin_of(ctx.param_entity_id, "both")
-    elif base == "GridFight_AllBackEnd":
+    elif base in ("GridFight_AllBackEnd", "GridFight_AllBackEndActived", "GridFight_AllBackEndActivedRoleOnly"):
         cur = []
     elif base == "AllTeamMember":
         if _caster_is_enemy():
@@ -549,6 +559,45 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                     if summoner and sim.get_entity(summoner) is not None:
                         nxt.append(summoner)
             cur = _dedup_preserve(nxt)
+        elif mod == "GetSkillAllTarget":
+            raw_tgts = ctx.skill_target_ids or ctx.param_skill_targets or ctx.ability_target_ids
+            cur = _dedup_preserve(list(raw_tgts))
+        elif mod == "SortByHP":
+            cur = sorted(
+                cur,
+                key=lambda eid: float(getattr(sim.get_entity(eid), "current_hp", 0.0) or 0.0),
+            )
+        elif mod == "SortByHPRatio":
+            def _hp_ratio(eid: str) -> float:
+                ent = sim.get_entity(eid)
+                if ent is None:
+                    return 0.0
+                mhp = float(getattr(ent, "max_hp", 0.0) or 0.0)
+                chp = float(getattr(ent, "current_hp", 0.0) or 0.0)
+                return (chp / mhp) if mhp > 0.0 else 0.0
+            cur = sorted(cur, key=_hp_ratio)
+        elif mod == "Reverse":
+            cur = list(reversed(cur))
+        elif mod == "SelectFirst":
+            cur = cur[:1] if cur else []
+        elif mod == "SelectLast":
+            cur = cur[-1:] if cur else []
+        elif mod == "GetAllTeamMember":
+            nxt = []
+            for eid in cur:
+                if eid == "__LEVEL__":
+                    continue
+                ent = sim.get_entity(eid)
+                if ent is None:
+                    continue
+                if getattr(ent, "is_enemy", False):
+                    nxt.extend(_alive_enemies(include_unselectable=True, include_countdown=True))
+                else:
+                    nxt.extend(_alive_allies(include_unselectable=True, include_countdown=True))
+            cur = _dedup_preserve(nxt)
+        elif (m_sel := re.fullmatch(r"Select(\d+)", mod)):
+            idx = int(m_sel.group(1)) - 1
+            cur = [cur[idx]] if 0 <= idx < len(cur) else []
         else:
             raise ValueError(f"未支持的 TargetAlias 后缀修饰符: .{mod} (完整表达式: {token})")
 
@@ -615,6 +664,30 @@ def resolve_target_type(target_spec: Any, ctx: ExecutionContext) -> List[str]:
             if r:
                 return r
         return []
+    if t == "RPG.GameCore.TargetFetchElationTimeAllTargets":
+        return list(getattr(ctx.runtime, "elation_time_units", ()))
+    if t == "RPG.GameCore.TargetFetchCurrentInsertTurnSource":
+        return [ctx.caster_id] if ctx.caster_id else []
+    if t == "RPG.GameCore.TargetQuery":
+        sim = ctx.runtime.sim
+        team_mask = str(target_spec.get("TeamTypeMask") or "")
+        alive_mask = str(target_spec.get("AliveStateMask") or "")
+        want_enemy = ("TeamDark" in team_mask) if team_mask else None
+        out: List[str] = []
+        for e in sim.entities:
+            if getattr(e, "is_countdown", False) or getattr(e, "is_battle_event", False):
+                continue
+            if want_enemy is not None and bool(getattr(e, "is_enemy", False)) != want_enemy:
+                continue
+            if "Bit_Dying" in alive_mask or alive_mask == "Dead":
+                if getattr(e, "current_hp", 0.0) <= 0.0 and (
+                    getattr(e, "_in_deathrattle_limbo", False) or getattr(e, "_vm_limbo_pending", False)
+                ):
+                    out.append(e.name)
+            elif getattr(e, "current_hp", 0.0) > 0.0 or getattr(e, "is_infinite_hp", False):
+                if not getattr(e, "is_unselectable", False):
+                    out.append(e.name)
+        return out
     # 默认回退：若含 Alias 字段
     if "Alias" in target_spec:
         return resolve_target_alias(str(target_spec["Alias"]), ctx)

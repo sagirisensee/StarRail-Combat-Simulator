@@ -1,16 +1,18 @@
 # AGENTS.md — StarRail-Combat-Simulator 开发与实机日志对账规范
 
-## 1. 对账效率与执行铁律（四大防踩坑红线 ⚡）
+## 1. 对账效率与执行铁律（五大防踩坑红线 ⚡）
 
-复盘表明，对账耗时 80% 均浪费在手写探索脚本、多线并行上下文污染、凭感觉盲猜与无截断全量模拟上。所有开发者与 Agent 必须严格恪守以下四条铁律：
+复盘表明，对账耗时 80% 均浪费在手写探索脚本、多线并行上下文污染、凭感觉盲猜与无截断全量模拟上。所有开发者与 Agent 必须严格恪守以下五条铁律：
 
 1. **严禁编写 ad-hoc 探索脚本**：**严禁**在终端中编写 `python -c "import json..."` 遍历 JSON、`glob.glob` 搜索代码或手工解析官方配置表。反查官方配置/Hash 必须统一使用 `scripts/inspect_ability.py`，日志诊察必须统一使用 `scripts/diff_log_turn.py`。
 2. **单关绝对聚焦（严禁多线开工）**：一次**只能聚焦推进 1 个关卡 / 1 份实机日志**。在前一个关卡实现全量 `< 0.0001%` 归零前，**严禁**在同一次会话中交叉对账其他关卡或切换日志，防止上下文剧烈抖动与自我干扰。
-3. **强制 `--av-budget` 截断验证**：调试具体动作时，**必须**携带 `--av-budget <av + 1.0>` 截断模拟（执行仅需 0.5 秒）；仅在当前分歧点完全修复、确认前后多动是否过线或全量交付时，方可放开 budget 跑全场。
+3. **强制 `--av-budget` 截断验证（调试期禁跑全量 `pytest`）**：调试期**只用 `--av-budget <av + 1.0>` 秒跑验证**（单次执行仅需 0.5 秒），**严禁每小批都跑 ~90s 的全量 `pytest`**；仅在当前分歧点完全修复确认前后多动是否过线、或整场推进彻底收口准备交付时，方可放开 `--av-budget` 跑全场与运行 `pytest` 回归。
 4. **5分钟定性与“事不过二”收束（防盲猜内卷与爆 Quota）**：
    - **5分钟快速定性**：遇到分歧点，前 5 分钟内必须通过 `diff_log_turn.py --av <av> --av-budget <av+1> --timeline --summary` 输出最早分歧动作的 SIM 全乘区与 GT 伤害，计算精确比值 $R = \text{GT} / \text{SIM}$。
    - **数学证伪（严禁盲改试错）**：提出任何假设（自爆易伤、减伤层数、倍率反了）前，必须先算该假设的理论影响是否与比值 $R$ 吻合。数学上无法解释 $R$ 的假设直接在纸面淘汰，严禁盲改代码验证。
    - **事不过二强制收束**：同一分歧点尝试修复 2 次仍未归零，严禁无休止内卷或跨关卡跳跃，必须主动停下，保存代码并向用户汇报当前定位、比值 $R$、各乘区分解与两次尝试结论。
+5. **遇盲区必沉淀增强官方诊断工具（严禁一次性口头猜）**：
+   - 每次排障发现现有 `diff_log_turn.py` / `inspect_ability.py` 看不到关键运行时状态（如敌方多动子技能名、二动间隙大招插队拦截条件、终结技补能台账、未知伤害减免/护盾乘区等），**不要仅靠静态脑补猜测**，必须顺手将对应运行时观测字段永久补齐进 `scripts/diff_log_turn.py`（如 `--summary` 摘要或 `--timeline` 事件行），让下次同类问题一眼直接定位。
 
 ---
 
@@ -23,7 +25,7 @@
    python scripts/diff_log_turn.py <battle_log.jsonl> [--extra-maze-buffs <id1,id2>]
    ```
 2. **定位到具体 AV 后，强制加 `--av-budget` 截断并聚焦时间线**：
-   单动分歧优先传 `--av <av> --av-budget <av+1> --timeline --summary`（输出 GT `[SKILL]` 行、SIM 全乘区 `base / dmg% / def / res / vuln / crit`，减伤/护盾附带 `red=` / `bar=`，并附带 `reconcile_log` 逐动汇总）：
+   单动分歧优先传 `--av <av> --av-budget <av+1> --timeline --summary`（输出 GT `[SKILL]` 行、SIM 全乘区 `base / dmg% / def / res / vuln / crit`，减伤/护盾附带 `red=` / `bar=`，并附带敌方子动作 `[ESKILL]`、间隙插队检查 `[SUB_END]`、终结技补能 `[ULT_EN]` 及 `reconcile_log` 逐动汇总含 `ult_e`）：
    ```powershell
    python scripts/diff_log_turn.py <battle_log.jsonl> [--extra-maze-buffs ...] --av <av> --av-budget <av+1> --timeline --summary
    ```
@@ -131,7 +133,7 @@ $$\text{Damage} = \text{Base} \times (1 + \text{DmgBoost}) \times \text{DefMult}
    - `enemy_hit_mismatches == []`。
 2. **落地正式对齐测试**：
    在 `simulator/vm/test_vm_<stage_id>_alignment.py` 中新增用例，必须包含 `self.assertEqual(rep.enemy_hit_mismatches, [])` 与误差断言。
-3. **回归验证（防修新坏旧）**：
+3. **回归验证（仅在整场对账彻底收口后统一执行，调试中间批次严禁运行）**：
    - 快速回归核心用例：
      ```powershell
      python -m pytest -v

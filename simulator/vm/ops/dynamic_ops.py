@@ -35,6 +35,10 @@ class DynamicOpsMixin:
     ) -> None:
         mod_target = None
         scope = task.get("ContextScope", "")
+        if scope == "ContextTaskTemplate":
+            store = ctx.template_dynamics if ctx.template_dynamics is not None else ctx.local_dynamics
+            store[key_h] = float(value)
+            return
         target_id = self._dyn_scope_entity(task, ctx)
         if ctx.modifier_instance is not None:
             if scope in ("Modifier", "ContextModifier"):
@@ -73,6 +77,18 @@ class DynamicOpsMixin:
     def _op_set_dynamic_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
         val = self._eval_num(task.get("Value"), ctx, 0.0)
+        self._write_dyn(task, ctx, key_h, val)
+
+    def _op_set_dynamic_value_in_range(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+        lo = self._eval_num(task.get("Min"), ctx, 0.0)
+        hi = self._eval_num(task.get("Max"), ctx, lo)
+        if lo > hi:
+            lo, hi = hi, lo
+        if "Value" in task:
+            val = max(lo, min(hi, self._eval_num(task.get("Value"), ctx, lo)))
+        else:
+            val = 0.5 * (lo + hi)
         self._write_dyn(task, ctx, key_h, val)
 
     def _op_set_dynamic_value_by_change_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -132,7 +148,15 @@ class DynamicOpsMixin:
                     val = mods[0].dynamic_values[fk]
             if val is None:
                 val = rt.get_dynamic_value(from_t[0], fk, ability_name=ctx.ability_name, local_ctx=ctx)
-            mod_target = ctx.modifier_instance if ("ToTargetType" not in task and ctx.modifier_instance is not None) else None
+            mod_target = None
+            if ctx.modifier_instance is not None:
+                scope = task.get("ContextScope", "")
+                if scope in ("Modifier", "ContextModifier"):
+                    mod_target = ctx.modifier_instance
+                elif "ToTargetType" not in task and scope not in ("ContextCaster", "SummonerEntity", "TargetEntity"):
+                    mod_floats = ctx.modifier_instance.config.get("DynamicValues", {}).get("Floats", {})
+                    if str(tk) in mod_floats or tk in ctx.modifier_instance.dynamic_values:
+                        mod_target = ctx.modifier_instance
             rt.set_dynamic_value(to_t[0], tk, val, modifier=mod_target)
 
     def _op_set_dynamic_value_by_modifier_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -299,28 +323,29 @@ class DynamicOpsMixin:
 
     def _op_set_dynamic_value_by_count_of_base_type(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
-        targets = self._resolve_targets(task.get("TargetType") or task.get("ReadTargetType"), ctx)
-        want = {str(b) for b in (task.get("BaseTypeList") or ())}
+        target_spec = task.get("TargetType") or task.get("ReadTargetType") or {"Alias": "AllLightTeamIgnoreServant"}
+        targets = self._resolve_targets(target_spec, ctx)
+        want_low = {str(b).strip().lower() for b in (task.get("BaseTypeList") or ())}
         path_aliases = {
-            "Warrior": "Destruction", "Destruction": "Destruction", "毁灭": "Destruction",
-            "Rogue": "Hunt", "Hunt": "Hunt", "巡猎": "Hunt",
-            "Mage": "Erudition", "Erudition": "Erudition", "智识": "Erudition",
-            "Shaman": "Harmony", "Harmony": "Harmony", "同谐": "Harmony",
-            "Warlock": "Nihility", "Nihility": "Nihility", "虚无": "Nihility",
-            "Knight": "Preservation", "Preservation": "Preservation", "存护": "Preservation",
-            "Priest": "Abundance", "Abundance": "Abundance", "丰饶": "Abundance",
-            "Memory": "Remembrance", "Remembrance": "Remembrance", "记忆": "Remembrance",
-            "Elation": "Elation", "欢愉": "Elation",
+            "warrior": "destruction", "destruction": "destruction", "毁灭": "destruction",
+            "rogue": "hunt", "hunt": "hunt", "巡猎": "hunt",
+            "mage": "erudition", "erudition": "erudition", "智识": "erudition",
+            "shaman": "harmony", "harmony": "harmony", "同谐": "harmony",
+            "warlock": "nihility", "nihility": "nihility", "虚无": "nihility",
+            "knight": "preservation", "preservation": "preservation", "存护": "preservation",
+            "priest": "abundance", "abundance": "abundance", "丰饶": "abundance",
+            "memory": "remembrance", "remembrance": "remembrance", "记忆": "remembrance",
+            "elation": "elation", "欢愉": "elation",
         }
-        want_norm = {path_aliases.get(b, b) for b in want}
+        want_norm = {path_aliases.get(b, b) for b in want_low}
         cnt = 0
         for tid in targets:
             ent = sim.get_entity(tid)
             if ent is None:
                 continue
-            raw_path = str(getattr(ent, "path", "") or "")
-            norm_path = path_aliases.get(raw_path, raw_path)
-            if raw_path in want or norm_path in want_norm:
+            raw_low = str(getattr(ent, "path", "") or "").strip().lower()
+            norm_path = path_aliases.get(raw_low, raw_low)
+            if raw_low in want_low or norm_path in want_norm:
                 cnt += 1
         key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
         self._write_dyn(task, ctx, key_h, float(cnt))
@@ -380,3 +405,167 @@ class DynamicOpsMixin:
                 ent.max_hp = val
                 if ent.current_hp > ent.max_hp:
                     ent.current_hp = ent.max_hp
+            elif ent is not None and prop == "ElationEchoPoint" and "MaxValue" in task:
+                setattr(ent, "_elation_echo_point_max", max(0.0, self._eval_num(task.get("MaxValue"), ctx, 0.0)))
+
+    def _op_calc_elation_echo_add_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = self._resolve_targets(task.get("HILNFHCPEAD"), ctx)
+        tid = targets[0] if targets else (ctx.param_entity_id or ctx.modifier_owner_id or ctx.caster_id)
+        base_val = max(0.0, self._eval_num(task.get("IHOPFAFJPHF"), ctx, 0.0))
+        prev_pending = getattr(self.rt, "_pending_elation_echo_add", None)
+        pending: Dict[str, Any] = {"base": base_val, "mult": 1.0, "bonus": 0.0, "flag": False}
+        self.rt._pending_elation_echo_add = pending
+        try:
+            if tid:
+                self.rt.modifier_engine.dispatch_event(
+                    "OnBeforeElationEchoPointBuffAdd",
+                    owner_id=tid,
+                    param_entity_id=tid,
+                    change_value=base_val,
+                )
+        finally:
+            self.rt._pending_elation_echo_add = prev_pending
+        final_val = max(0.0, float(pending["base"]) * float(pending["mult"]) + float(pending["bonus"]))
+        if tid:
+            ent = self.rt.sim.get_entity(tid)
+            if ent is not None:
+                max_cap = getattr(ent, "_elation_echo_point_max", None)
+                if max_cap is not None:
+                    cur_echo = self.rt.modifier_engine.get_entity_property(tid, "ElationEchoPoint")
+                    final_val = max(0.0, min(final_val, float(max_cap) - cur_echo))
+        key_h = dotnet_hash(_str_val(task.get("FHLJGDGMMHK") or "_FinalAddValue"))
+        store = ctx.template_dynamics if ctx.template_dynamics is not None else ctx.local_dynamics
+        store[key_h] = float(final_val)
+
+    def _op_read_modifier_config_value(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        me = self.rt.modifier_engine
+        mname = _str_val(task.get("IFNAGLOMHBK"))
+        cfg = me._lookup_modifier_config(mname, ctx.ability_name) if mname else {}
+        vtype = str(task.get("ACBKMOPHPLE") or "LifeTime")
+        val = 0.0
+        if vtype == "LifeTime":
+            if "LifeTime" in cfg:
+                val = self._eval_num(cfg["LifeTime"], ctx, 0.0)
+        elif vtype == "Layer":
+            val = float(self._eval_num(cfg.get("Count"), ctx, 1.0))
+        key_h = dotnet_hash(_str_val(task.get("FHLJGDGMMHK")))
+        scope = str(task.get("AMEKHLANFKP") or "ContextTaskTemplate")
+        self._write_dyn({"ContextScope": scope}, ctx, key_h, val)
+
+    def _op_set_dynamic_value_by_elation_point(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key_h = dotnet_hash(_str_val(task.get("FHLJGDGMMHK")))
+        val = self.rt.get_elation_points_for_query(
+            ctx.modifier_owner_id or ctx.caster_id,
+            task.get("PICEOEEKCIN"),
+        )
+        write_spec: Dict[str, Any] = {}
+        if "AMEKHLANFKP" in task:
+            write_spec["ContextScope"] = task.get("AMEKHLANFKP", "")
+        if "HILNFHCPEAD" in task:
+            write_spec["TargetType"] = task.get("HILNFHCPEAD")
+        self._write_dyn(write_spec, ctx, key_h, val)
+
+    def _op_set_dynamic_value_by_bp_change(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+        raw = float(getattr(ctx, "change_value", 0.0) or 0.0)
+        val = abs(raw) if str(task.get("ValueType") or "") == "AbsDelta" else raw
+        self._write_dyn(task, ctx, key_h, val)
+
+    def _op_set_dynamic_value_by_current_bp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+        self._write_dyn(task, ctx, key_h, float(self.rt.sim.sp.current_sp))
+
+    def _op_set_dynamic_value_by_max_bp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+        self._write_dyn(task, ctx, key_h, float(self.rt.sim.sp.max_sp))
+
+    def _op_set_dynamic_value_by_skill_property(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        read_targets = (
+            self._resolve_targets(task["ReadTargetType"], ctx)
+            if "ReadTargetType" in task
+            else [ctx.caster_id]
+        )
+        read_tid = read_targets[0] if read_targets else ctx.caster_id
+        sk_key = _str_val(task.get("SkillTriggerKey") or task.get("SkillName"))
+        prop_type = str(task.get("PropertyType") or "")
+        val = 0.0
+        spec = self.rt.entity_specs.get(read_tid)
+        if spec is not None:
+            loader = self.rt.loader
+            if spec.is_servant:
+                loader._ensure_servants()
+                loader._ensure_servant_skills()
+                sv = loader._servants.get(spec.unit_id, {})
+                skill_ids = sv.get("SkillIDList", ())
+                skill_map = loader._servant_skills
+            else:
+                loader._ensure_avatars()
+                loader._ensure_avatar_skills()
+                av = loader._avatars.get(spec.unit_id, {})
+                skill_ids = av.get("SkillList", ())
+                skill_map = loader._avatar_skills
+            for sid in skill_ids:
+                row = skill_map.get((int(sid), 1)) or skill_map.get((int(sid), 0))
+                if row is not None and row.get("SkillTriggerKey") == sk_key:
+                    raw = row.get(prop_type)
+                    if isinstance(raw, Mapping):
+                        val = float(raw.get("Value", 0.0))
+                    elif raw is not None:
+                        val = float(raw)
+                    if prop_type in ("BPNeed", "BPAdd", "SPBase") and val < 0.0:
+                        val = 0.0
+                    break
+            for ov in self.rt.skill_property_overrides.get(read_tid, ()):
+                if ov.get("PropertyType") == prop_type and (
+                    not ov.get("SkillName") or ov.get("SkillName") == sk_key
+                ):
+                    op = str(ov.get("OperatorType", "Set"))
+                    ov_val = float(ov.get("Value", 0.0))
+                    if op == "Mul":
+                        val *= ov_val
+                    elif op == "Add":
+                        val += ov_val
+                    else:
+                        val = ov_val
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+        self._write_dyn(task, ctx, key_h, val)
+
+    def _op_modify_dynamic_value_clamped(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        targets = (
+            self._resolve_targets(task["HILNFHCPEAD"], ctx)
+            if "HILNFHCPEAD" in task
+            else [ctx.caster_id]
+        )
+        key_h = dotnet_hash(_str_val(task.get("FHLJGDGMMHK")))
+        delta = self._eval_num(task.get("AJHHCOHFIFA"), ctx, 0.0)
+        for tid in targets:
+            if not tid:
+                continue
+            cur = float(self.rt.entity_dynamics.get(tid, {}).get(key_h, 0.0))
+            new_val = max(0.0, cur + delta)
+            if abs(new_val - cur) <= 1e-12:
+                continue
+            self.rt.set_dynamic_value(tid, key_h, new_val, ability_name=ctx.ability_name)
+
+    def _op_set_dynamic_string(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key = str(task.get("DynamicKey") or task.get("Key") or "")
+        if not key:
+            return
+        v_spec = task.get("Value")
+        if isinstance(v_spec, Mapping) and v_spec.get("Custom"):
+            val = ctx.custom_strings.get(str(v_spec.get("Key") or ""), "")
+        else:
+            val = _str_val(v_spec)
+        ctx.custom_strings[key] = val
+        if ctx.modifier_instance is not None:
+            ctx.modifier_instance.custom_strings[key] = val
+        scope = str(task.get("ContextScope") or "")
+        if scope in ("ContextCaster", "TargetEntity"):
+            tid = self._dyn_scope_entity(task, ctx)
+            if tid:
+                self.rt.entity_dynamic_strings.setdefault(tid, {})[key] = val
+
+    def _op_set_dynamic_value_by_elation_time_skill_count(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey") or task.get("Key")))
+        cnt = float(len(getattr(self.rt, "elation_time_units", ())))
+        self._write_dyn(task, ctx, key_h, cnt)

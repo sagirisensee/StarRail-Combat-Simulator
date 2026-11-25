@@ -452,7 +452,19 @@ def run_trajectory_replay(
             if t_idx not in fired_master and abs(timeline[t_idx].av - u_item.av) <= 0.5:
                 return True
         for sq in spirit_queues.values():
-            if sq and sq[0].order < u_idx and abs(sq[0].av - u_item.av) <= 0.5 and _spirit_due(sq[0]):
+            if not sq:
+                continue
+            sp_head = sq[0]
+            if sp_head.order < u_idx and abs(sp_head.av - u_item.av) <= 0.5 and _spirit_due(sp_head):
+                return True
+            if (
+                u_owner == "环境/插队"
+                and u_item.av > 1e-4
+                and getattr(timeline[sp_head.order], "turn_seq", -1) == u_turn_seq
+                and abs(sp_head.av - u_item.av) <= 0.5
+                and (cur_turn is None or getattr(cur_turn, "name", "") != sp_head.actor)
+                and _spirit_due(sp_head)
+            ):
                 return True
         return False
 
@@ -473,6 +485,9 @@ def run_trajectory_replay(
             if deficit > 1e-4:
                 ent.energy = float(ent.max_energy)
                 result.ult_energy_granted += deficit
+                diag_cb = getattr(sim, "timeline_diag_cb", None)
+                if callable(diag_cb):
+                    diag_cb("ULT_EN", f"{item.actor} +{deficit:.2f} (need={item.av:.2f}, now={now_av:.2f})")
             ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
             if director is not None:
                 director.after_step()
@@ -550,6 +565,84 @@ def run_trajectory_replay(
     for idx, i in enumerate(timeline):
         if i.kind in ("basic", "skill"):
             actor_queues[i.actor].append((idx, i))
+
+    def _pop_actor_decision(actor_name: str, *, require_due: bool = False) -> Tuple[Optional[ActionKind], Optional[Tuple[str, ...]]]:
+        q = actor_queues.get(actor_name)
+        if not q:
+            return None, None
+        now_av = float(getattr(sim, "current_av", 0.0))
+        if require_due and abs(float(q[0][1].av) - now_av) > 0.25:
+            return None, None
+        _idx, head = q.popleft()
+        fired_master.add(_idx)
+        if head.kind == "skill":
+            sp = getattr(sim, "sp", None)
+            vm_rt = getattr(sim, "vm_runtime", None)
+            extra_bp = int(vm_rt.entity_boost_points.get(head.actor, 0.0)) if vm_rt is not None else 0
+            if sp is not None and (int(sp.current_sp) + extra_bp) < 1:
+                deficit = 1 - (int(sp.current_sp) + extra_bp)
+                if deficit > 0:
+                    sp.generate(deficit, head.actor, "轨迹回放强制补足", float(getattr(sim, "current_av", 0.0)))
+                    result.sp_granted += deficit
+                    diag_cb = getattr(sim, "timeline_diag_cb", None)
+                    if callable(diag_cb):
+                        diag_cb("SP", f"FORCED {head.actor} +{deficit} team_sp={sp.current_sp} extra_bp={extra_bp}")
+        dec_kind = ActionKind.SKILL if head.kind == "skill" else ActionKind.BASIC
+        dec_tgts: Optional[Tuple[str, ...]] = None
+        uid_override_map = getattr(sim, "enemy_uid_map", None)
+        h_uids = getattr(head, "target_uids", None)
+        if uid_override_map and h_uids:
+            mapped_list = []
+            for u in h_uids:
+                if u not in uid_override_map:
+                    continue
+                ename = uid_override_map[u]
+                ent = sim.get_entity(ename)
+                mapped_list.append(ent.name if ent is not None else ename)
+            if mapped_list:
+                dec_tgts = tuple(mapped_list)
+        if dec_tgts is None:
+            raw_tids = getattr(head, "target_ids", None)
+            if raw_tids:
+                mapped_raw = [
+                    ent.name
+                    for tid in raw_tids
+                    if (ent := sim.get_entity(tid)) is not None
+                ]
+                if len(mapped_raw) == len(raw_tids):
+                    dec_tgts = tuple(mapped_raw)
+        replay.turn_matched += 1
+        return dec_kind, dec_tgts
+
+    def _on_auto_chained_skill(actor_name: str, sid: int) -> None:
+        q = actor_queues.get(actor_name)
+        if not q:
+            return
+        now_av = float(getattr(sim, "current_av", 0.0))
+        if (
+            abs(float(q[0][1].av) - now_av) <= 0.25
+            and (int(q[0][1].skill_id) == int(sid) or int(sid) == 0)
+        ):
+            _idx, _ = q.popleft()
+            fired_master.add(_idx)
+            replay.turn_matched += 1
+
+    sim.insert_action_decision_provider = lambda actor_name: _pop_actor_decision(actor_name, require_due=True)
+    sim.on_auto_chained_skill = _on_auto_chained_skill
+    if director is not None and hasattr(director, "drain_opening_actions"):
+        before_master_len = len(master_fired)
+        director.drain_opening_actions()
+        for m_actor, m_sid, m_av in master_fired[before_master_len:]:
+            q = actor_queues.get(m_actor)
+            if (
+                q
+                and q[0][1].turn_owner == "环境/插队"
+                and abs(float(q[0][1].av) - float(m_av)) <= 0.05
+                and (int(q[0][1].skill_id) == int(m_sid) or int(m_sid) == 0)
+            ):
+                _idx, _ = q.popleft()
+                fired_master.add(_idx)
+                replay.turn_matched += 1
     steps = 0
     delays = 0
     idle_steps = 0
@@ -663,8 +756,20 @@ def run_trajectory_replay(
             if not ult_queue:
                 return
             u_item = ult_queue[0][1]
+            cur_t = getattr(sim, "current_turn_entity", None)
+            now_sub_av = float(getattr(sim, "current_av", 0.0))
+            u_ent_d = sim.get_entity(u_item.actor)
+            diag_cb = getattr(sim, "timeline_diag_cb", None)
+            if callable(diag_cb):
+                e_cur = float(getattr(u_ent_d, "energy", 0.0)) if u_ent_d is not None else -1.0
+                e_max = float(getattr(u_ent_d, "max_energy", 0.0)) if u_ent_d is not None else -1.0
+                diag_cb(
+                    "SUB_END",
+                    f"turn={getattr(cur_t, 'name', None)} head={u_item.actor}@{u_item.av:.4f} "
+                    f"now={now_sub_av:.4f} betw={getattr(u_item, 'between_enemy_sub_actions', False)} "
+                    f"ow={getattr(u_item, 'turn_owner', '')} E={e_cur:.2f}/{e_max:.2f}",
+                )
             if not getattr(u_item, "between_enemy_sub_actions", False):
-                cur_t = getattr(sim, "current_turn_entity", None)
                 u_ow = _resolve_turn_owner(getattr(u_item, "turn_owner", ""))
                 if not (
                     cur_t is not None
@@ -677,10 +782,9 @@ def run_trajectory_replay(
                     )
                 ):
                     return
-            if u_item.av > float(getattr(sim, "current_av", 0.0)) + 1e-4:
+            if u_item.av > now_sub_av + 1e-4:
                 return
-            u_ent = sim.get_entity(u_item.actor)
-            if u_ent is not None and float(u_ent.energy) >= float(u_ent.max_energy) - 1e-6:
+            if u_ent_d is not None and float(u_ent_d.energy) >= float(u_ent_d.max_energy) - 1e-6:
                 _fire_due_ults(allow_cur_enemy=True)
 
         sim.on_enemy_sub_action_end = _on_sub_action_end
@@ -690,7 +794,20 @@ def run_trajectory_replay(
                 actor_ent is not None
                 and not getattr(actor_ent, "is_enemy", False)
                 and ult_queue
-                and getattr(ult_queue[0][1], "turn_owner", "") == actor_ent.name
+                and (
+                    getattr(ult_queue[0][1], "turn_owner", "") == actor_ent.name
+                    or (
+                        getattr(actor_ent, "is_memosprite", False)
+                        and getattr(ult_queue[0][1], "turn_owner", "") == "环境/插队"
+                        and any(
+                            sq
+                            and sq[0].actor == actor_ent.name
+                            and getattr(timeline[sq[0].order], "turn_seq", -1)
+                            == getattr(ult_queue[0][1], "turn_seq", -2)
+                            for sq in spirit_queues.values()
+                        )
+                    )
+                )
             )
         ):
             _fire_due_ults()
@@ -707,41 +824,7 @@ def run_trajectory_replay(
         override = None
         target_ids = None
         if actor_ent.name in _sim_player_actors(sim):
-            q = actor_queues.get(actor_ent.name)
-            if q:
-                _idx, head = q.popleft()
-                fired_master.add(_idx)
-                if head.kind == "skill":
-                    sp = getattr(sim, "sp", None)
-                    if sp is not None and not sp.can_consume(1):
-                        deficit = 1 - int(sp.current_sp)
-                        if deficit > 0:
-                            sp.generate(deficit, head.actor, "轨迹回放强制补足", float(getattr(sim, "current_av", 0.0)))
-                            result.sp_granted += deficit
-                override = ActionKind.SKILL if head.kind == "skill" else ActionKind.BASIC
-                uid_override_map = getattr(sim, "enemy_uid_map", None)
-                h_uids = getattr(head, "target_uids", None)
-                if uid_override_map and h_uids:
-                    mapped_list = []
-                    for u in h_uids:
-                        if u not in uid_override_map:
-                            continue
-                        ename = uid_override_map[u]
-                        ent = sim.get_entity(ename)
-                        mapped_list.append(ent.name if ent is not None else ename)
-                    if mapped_list:
-                        target_ids = tuple(mapped_list)
-                if target_ids is None:
-                    raw_tids = getattr(head, "target_ids", None)
-                    if raw_tids:
-                        mapped_raw = [
-                            ent.name
-                            for tid in raw_tids
-                            if (ent := sim.get_entity(tid)) is not None
-                        ]
-                        if len(mapped_raw) == len(raw_tids):
-                            target_ids = tuple(mapped_raw)
-                replay.turn_matched += 1
+            override, target_ids = _pop_actor_decision(actor_ent.name, require_due=False)
         sim.step(action_override=override, target_ids=target_ids)
         if director is not None:
             director.after_step()

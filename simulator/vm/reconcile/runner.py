@@ -65,6 +65,7 @@ def build_stage_for_id(
         extra_maze_buff_ids=extra_maze_buff_ids,
         entry_element=entry_element,
         entry_toughness=entry_toughness,
+        defer_opening_drain=True,
     )
     return sim, director, f"data_driven({stage_id})"
 
@@ -77,7 +78,7 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
 
     records: List[Tuple[float, int, int, str, float, float, float]] = []
     state = {"act_idx": -1, "hit_idx": 0}
-    pending: List[Tuple[int, int, float]] = []
+    pending: List[Tuple[int, int, float, float]] = []
 
     def _on_ev(e: BattleEvent) -> None:
         if isinstance(e, ActionExecuteEvent):
@@ -95,7 +96,7 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
         elif isinstance(e, DamageAppliedEvent):
             if not pending:
                 return
-            act_i, hit_i, eff_cr = pending.pop(0)
+            act_i, hit_i, eff_cr, eff_cm = pending.pop(0)
             bd = getattr(e, "breakdown", None)
             if bd is not None:
                 dtype = getattr(e.damage_type, "value", str(e.damage_type)) if e.damage_type is not None else ""
@@ -103,6 +104,7 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
                 atk_ent = sim.get_entity(atk_name) if atk_name else None
                 if atk_ent is not None and getattr(atk_ent, "is_memosprite", False) and getattr(atk_ent, "master_name", None):
                     atk_name = str(atk_ent.master_name)
+                cm = float(getattr(bd, "crit_mult", 1.0)) if e.is_crit else eff_cm
                 records.append(
                     (
                         round(float(getattr(sim, "current_av", 0.0)), 2),
@@ -112,7 +114,7 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
                         dtype,
                         bool(e.is_crit),
                         eff_cr,
-                        float(getattr(bd, "crit_mult", 1.0)),
+                        cm,
                         float(e.damage),
                     )
                 )
@@ -126,29 +128,35 @@ def _attach_crit_hit_recorder(sim: Any) -> List[Tuple[float, int, int, str, floa
         if not (getattr(req.attacker, "is_enemy", False) or getattr(req.attacker, "is_countdown", False)):
             h_i = state["hit_idx"]
             state["hit_idx"] += 1
+            stat_src = getattr(req, "property_source", None) or req.attacker
+            src_name = getattr(stat_src, "name", "") or req.attacker.name
             try:
-                eff_cr = float(sim.port.stat(req.attacker.name, StatType.CRIT_RATE)) + float(
+                eff_cr = float(sim.port.stat(src_name, StatType.CRIT_RATE)) + float(
                     getattr(req, "extra_crit_rate", 0.0) or 0.0
                 )
             except Exception:
                 eff_cr = 0.5
-            pending.append((state["act_idx"], h_i, eff_cr))
+            try:
+                fixed_cd = getattr(req, "fixed_crit_dmg", None)
+                base_cd = (
+                    float(fixed_cd)
+                    if fixed_cd is not None
+                    else float(sim.port.stat(src_name, StatType.CRIT_DMG))
+                )
+                eff_cm = 1.0 + base_cd + float(getattr(req, "extra_crit_dmg", 0.0) or 0.0)
+            except Exception:
+                eff_cm = 1.0
+            pending.append((state["act_idx"], h_i, eff_cr, eff_cm))
         return res
 
     sim.crit_oracle = _wrapped_oracle
     return records
 
 
-def _detect_non_crits_from_trace(
+def _group_gt_and_sim_hits(
     g: Any,
     crit_records: Sequence[Tuple[float, int, int, str, str, bool, float, float, float]],
-) -> Set[Tuple[int, int]]:
-    """将 SIM 暴击命中与 GT 同 AV 同攻击者同类型伤害逐段比对，精确识别实机未暴击的 (act_idx, hit_idx)。
-
-    严格防呆：
-    - 仅检查有效暴击率 < 99.9% 的角色命中；
-    - 仅当 sim_dmg / gt_dmg 与该次命中的 1 + CritDMG (crit_mult) 偏差 < 6% 时才判定为未暴击。
-    """
+) -> List[Tuple[Tuple[float, str, str], List[Tuple[int, int, bool, float, float, float]], List[float], bool]]:
     gt_hits: Dict[Tuple[float, str, str], List[float]] = {}
     for t in g.turns:
         av = round(t.av, 2)
@@ -162,12 +170,29 @@ def _detect_non_crits_from_trace(
     for av, act_i, hit_i, atk_name, dtype, is_crit, eff_cr, crit_mult, dmg in crit_records:
         sim_grouped.setdefault((av, atk_name, dtype), []).append((act_i, hit_i, is_crit, eff_cr, crit_mult, dmg))
 
-    detected: Set[Tuple[int, int]] = set()
+    groups = []
     for key, s_list in sim_grouped.items():
         g_list = gt_hits.get(key)
-        if not g_list:
-            continue
-        same_len = len(g_list) == len(s_list)
+        if g_list:
+            groups.append((key, s_list, g_list, len(g_list) == len(s_list)))
+    return groups
+
+
+def _detect_non_crits_from_trace(
+    g: Any,
+    crit_records: Sequence[Tuple[float, int, int, str, str, bool, float, float, float]],
+    *,
+    details_out: Optional[List[str]] = None,
+    round_idx: int = 0,
+) -> Set[Tuple[int, int]]:
+    """将 SIM 暴击命中与 GT 同 AV 同攻击者同类型伤害逐段比对，精确识别实机未暴击的 (act_idx, hit_idx)。
+
+    严格防呆：
+    - 仅检查有效暴击率 < 99.9% 的角色命中；
+    - 仅当 sim_dmg / gt_dmg 与该次命中的 1 + CritDMG (crit_mult) 偏差 < 6% 时才判定为未暴击。
+    """
+    detected: Set[Tuple[int, int]] = set()
+    for key, s_list, g_list, same_len in _group_gt_and_sim_hits(g, crit_records):
         for (act_i, hit_i, is_crit, eff_cr, crit_mult, s_dmg), g_dmg in zip(s_list, g_list):
             if g_dmg <= 0.0:
                 if not same_len:
@@ -179,12 +204,48 @@ def _detect_non_crits_from_trace(
                 ratio = s_dmg / g_dmg
                 if abs(ratio - crit_mult) / crit_mult < 0.06:
                     detected.add((act_i, hit_i))
+                    if details_out is not None:
+                        details_out.append(
+                            f"r{round_idx} av={key[0]:.2f} ({act_i},{hit_i}) {key[1]}:{key[2]} "
+                            f"sim={s_dmg:.2f} gt={g_dmg:.2f} ratio={ratio:.4f} crit={crit_mult:.4f} eff_cr={eff_cr:.4f}"
+                        )
                     if not same_len:
                         break
                     continue
             if not same_len:
                 break
     return detected
+
+
+def _prune_stale_non_crits(
+    g: Any,
+    crit_records: Sequence[Tuple[float, int, int, str, str, bool, float, float, float]],
+    non_crits: Set[Tuple[int, int]],
+    *,
+    details_out: Optional[List[str]] = None,
+    round_idx: int = 0,
+) -> Set[Tuple[int, int]]:
+    """剔除前期击杀/数量漂移导致的过期误判 (act_idx, hit_idx)。"""
+    stale: Set[Tuple[int, int]] = set()
+    for key, s_list, g_list, same_len in _group_gt_and_sim_hits(g, crit_records):
+        for (act_i, hit_i, is_crit, eff_cr, crit_mult, s_dmg), g_dmg in zip(s_list, g_list):
+            if g_dmg <= 0.0:
+                if not same_len:
+                    break
+                continue
+            if (act_i, hit_i) in non_crits and not is_crit:
+                if abs(s_dmg - g_dmg) / g_dmg >= 1e-4:
+                    inv_ratio = (g_dmg / s_dmg) if s_dmg > 0.0 else 0.0
+                    if eff_cr >= 0.999 or (crit_mult > 1.05 and abs(inv_ratio - crit_mult) / crit_mult < 0.06):
+                        stale.add((act_i, hit_i))
+                        if details_out is not None:
+                            details_out.append(
+                                f"r{round_idx} PRUNE av={key[0]:.2f} ({act_i},{hit_i}) {key[1]}:{key[2]} "
+                                f"sim={s_dmg:.2f} gt={g_dmg:.2f} gt/sim={inv_ratio:.4f} crit={crit_mult:.4f} eff_cr={eff_cr:.4f}"
+                            )
+            if not same_len and abs(s_dmg - g_dmg) / g_dmg >= 1e-4:
+                break
+    return stale
 
 
 def _run_single_pass(
@@ -463,6 +524,7 @@ def _run_single_pass(
         inferred_memosprite_hits=inferred_hits,
         unresolved_ambiguous_slots=len(ambiguous_slots),
         enemy_hit_mismatches=enemy_hit_mismatches,
+        ult_energy_granted=float(getattr(traj.replay, "ult_energy_granted", 0.0) or 0.0),
     )
     return report, ambiguous_slots, crit_records
 
@@ -490,7 +552,7 @@ def reconcile_log(
     char_db = db if db is not None else CharacterDB().load(DEFAULT_CHAR_DB_PATH)
     vm_loader = loader if loader is not None else GameDataLoader()
 
-    if meta is None:
+    if meta is None or (team_override and list(team_override) != list(meta.team_names)):
         meta = extract_log_metadata(log_path, db=char_db, team_override=team_override)
     g = golden if golden is not None else parse_golden_jsonl(log_path)
     tl = list(timeline) if timeline is not None else extract_timeline(log_path)
@@ -526,12 +588,25 @@ def reconcile_log(
         on_sim_ready=on_sim_ready,
     )
 
-    # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，无新检出立即 break）
-    for _nc_round in range(6):
-        newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits
-        if not newly_detected:
+    non_crit_details: List[str] = []
+    seen_nc_states: Set[frozenset] = {frozenset(non_crits)}
+    # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，并自动剔除因早期偏差导致的过期误判）
+    for _nc_round in range(8):
+        newly_detected = _detect_non_crits_from_trace(
+            g, crit_records, details_out=non_crit_details, round_idx=_nc_round
+        ) - non_crits
+        stale_nc = (
+            _prune_stale_non_crits(
+                g, crit_records, non_crits, details_out=non_crit_details, round_idx=_nc_round
+            )
+            if plugin_fn is None and non_crits
+            else set()
+        )
+        next_nc = (set(non_crits) - stale_nc) | newly_detected
+        if next_nc == non_crits or frozenset(next_nc) in seen_nc_states:
             break
-        non_crits = set(non_crits) | newly_detected
+        non_crits = next_nc
+        seen_nc_states.add(frozenset(non_crits))
         sim_enemy_hp.clear()
         report, ambiguous_slots, crit_records = _run_single_pass(
             log_path,
@@ -730,4 +805,5 @@ def reconcile_log(
                 )
 
     report.non_crits = set(non_crits)
+    report.non_crit_details = list(non_crit_details)
     return report

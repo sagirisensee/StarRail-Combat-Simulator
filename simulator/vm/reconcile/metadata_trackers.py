@@ -12,6 +12,7 @@ from simulator.vm.reconcile.models import (
     AhaTurnRecord,
     EnemyHitRecord,
     _get_avatar_damage_types,
+    _get_avatar_skill_trigger_keys,
     _resolve_uid_name,
 )
 
@@ -53,6 +54,9 @@ class RosterAndSpawnTracker:
         self.first_skill_stance_obs: Dict[int, float] = {}
         self.init_enemy_first_stance: Dict[int, Tuple[int, int, float, int]] = {}
         self.init_stance_seen_euids: Set[int] = set()
+        self.init_enemy_first_hp: Dict[int, float] = {}
+        self.init_enemy_first_dmg: Dict[int, float] = {}
+        self._pending_first_hp_euid: Optional[int] = None
 
     def _record_seen_uid(self, uid: int) -> None:
         if uid and uid not in self.seen_uid_set:
@@ -118,21 +122,41 @@ class RosterAndSpawnTracker:
             self.first_skill_stance_obs[uid] = val
         if (
             ptype == "CurrentStance"
-            and cur_player_sk_info is not None
             and not self.spawn_events_raw
             and uid not in self.init_stance_seen_euids
         ):
             self.init_stance_seen_euids.add(uid)
-            self.init_enemy_first_stance[uid] = (
-                cur_player_sk_info[0],
-                cur_player_sk_info[1],
-                val,
-                cur_player_sk_info[2],
-            )
+            if cur_player_sk_info is not None:
+                self.init_enemy_first_stance[uid] = (
+                    cur_player_sk_info[0],
+                    cur_player_sk_info[1],
+                    val,
+                    cur_player_sk_info[2],
+                )
+        if (
+            ptype == "CurrentHP"
+            and not self.spawn_events_raw
+            and not self.saw_first_init_enemy
+            and uid not in self.init_enemy_first_hp
+            and val > 0.0
+        ):
+            self.init_enemy_first_hp[uid] = val
+            self._pending_first_hp_euid = uid
         if ptype == "MaxHP" and uid in self.gluttony_locked_euids:
             self.gluttony_revived_euids.add(uid)
         elif ptype == "CurrentHP" and abs(val - 1.0) < 0.01:
             self.gluttony_locked_euids.add(uid)
+
+    def on_damage_for_init_hp(self, data: Mapping[str, Any]) -> None:
+        if self._pending_first_hp_euid is None:
+            return
+        atk = data.get("attacker") or {}
+        if atk.get("team") != "Player":
+            return
+        euid = self._pending_first_hp_euid
+        self._pending_first_hp_euid = None
+        if euid not in self.init_enemy_first_dmg:
+            self.init_enemy_first_dmg[euid] = float(data.get("damage") or 0.0)
 
     def on_player_stat_change(self, uid: int, ptype: Any, val: float, char_db: CharacterDB) -> None:
         if uid == 1512 and ptype == "ActionDelay" and self.robin_s_init_ad <= 0.0 and val > 0.0:
@@ -155,6 +179,7 @@ class EnemyTurnTracker:
         self.cur_enemy_uid: Optional[int] = None
         self.prev_enemy_turn: Optional[Tuple[float, int]] = None
         self.windwalk_enemy_uids: Set[int] = set()
+        self.windwalk_events: List[Tuple[float, int]] = []
         self.cur_hit_order: List[str] = []
         self.cur_hit_set: Set[str] = set()
         self.cur_hit_counts: Dict[str, int] = {}
@@ -341,6 +366,7 @@ class EnemyTurnTracker:
                     and self.prev_enemy_turn[1] == euid
                 ):
                     self.windwalk_enemy_uids.add(euid)
+                    self.windwalk_events.append((round(cur_av, 2), euid))
                 self.prev_enemy_turn = (cur_av, euid)
             else:
                 self.prev_enemy_turn = None
@@ -544,6 +570,11 @@ class PlayerTargetTracker:
         self.pending_ally_ult_sp_fallback: Optional[str] = None
         self.ally_ult_targets: Dict[str, List[str]] = {}
         self.enemy_retarget_picks: List[Tuple[float, int, int]] = []
+        self.random_config_draws: List[Tuple[float, int, int]] = []
+        self._last_special_sp: Optional[float] = None
+        self._bp_draw_caster_uid: int = 0
+        self._bp_draw_av: float = 0.0
+        self._bp_draw_cap_carry: int = 0
         self.pending_tie_highest_hp_euid: Optional[int] = None
 
         self.pending_player_atk: Optional[Tuple[float, str]] = None
@@ -559,6 +590,8 @@ class PlayerTargetTracker:
         self.pending_player_is_servant: bool = False
         self.pending_player_skill_id: int = 0
         self.pending_player_skill_type: str = ""
+        self.pending_player_primary_euids: List[int] = []
+        self.pending_player_elation_hits: List[Tuple[int, int]] = []
         self.pending_player_atk_records: List[PlayerAttackRecord] = []
 
         self.cur_player_sk_info: Optional[Tuple[int, int, int]] = None
@@ -580,6 +613,23 @@ class PlayerTargetTracker:
         if self.cur_player_sk_info is not None and self.pending_player_hit_dmgs:
             self.skill_atk_dmgs.setdefault(self.cur_player_sk_info[2], {}).update(self.pending_player_hit_dmgs)
         if self.pending_player_atk is not None:
+            if self.pending_player_elation_hits:
+                av_key = self.pending_player_atk[0]
+                pri = self.pending_player_primary_euids
+                hits = self.pending_player_elation_hits
+                i = 0
+                while i < len(hits):
+                    if (
+                        len(pri) >= 2
+                        and i + len(pri) <= len(hits)
+                        and [e for _, e in hits[i:i + len(pri)]] == pri
+                        and len({a for a, _ in hits[i:i + len(pri)]}) == 1
+                    ):
+                        i += len(pri)
+                    else:
+                        a_uid, e_uid = hits[i]
+                        self.enemy_retarget_picks.append((av_key, a_uid, e_uid))
+                        i += 1
             self.pending_player_atk_records.append(
                 PlayerAttackRecord(
                     atk_key=self.pending_player_atk,
@@ -606,6 +656,8 @@ class PlayerTargetTracker:
         self.pending_player_is_servant = False
         self.pending_player_skill_id = 0
         self.pending_player_skill_type = ""
+        self.pending_player_primary_euids = []
+        self.pending_player_elation_hits = []
 
     def flush_pending_q_break(self) -> None:
         if self.pending_q_break is not None:
@@ -614,7 +666,41 @@ class PlayerTargetTracker:
                 self.quantum_entangle_resists_raw.add((q_av, q_euid))
             self.pending_q_break = None
 
+    def flush_bp_draw_carry(self) -> None:
+        if self._bp_draw_caster_uid and self._bp_draw_cap_carry in (1, 2):
+            self.random_config_draws.append(
+                (self._bp_draw_av, self._bp_draw_caster_uid, 0 if self._bp_draw_cap_carry >= 2 else 1)
+            )
+        self._bp_draw_cap_carry = 0
+
+    def on_player_special_sp_change(self, uid: int, ptype: Any, val: float, cur_av: float) -> None:
+        if ptype == "CurrentSpecialSP":
+            delta = round(val - self._last_special_sp) if self._last_special_sp is not None else 0
+            self._last_special_sp = val
+            if self._bp_draw_caster_uid and delta > 0:
+                if val < 59.999:
+                    if delta in (1, 2):
+                        self.random_config_draws.append(
+                            (round(cur_av, 2), self._bp_draw_caster_uid, 0 if delta >= 2 else 1)
+                        )
+                else:
+                    self._bp_draw_cap_carry += delta
+                    self._bp_draw_av = round(cur_av, 2)
+        elif ptype == "CurExtraSpecialSP":
+            extra = round(val)
+            if self._bp_draw_caster_uid and extra > 0:
+                tot = self._bp_draw_cap_carry + extra
+                self._bp_draw_cap_carry = 0
+                if tot in (1, 2):
+                    self.random_config_draws.append(
+                        (round(cur_av, 2), self._bp_draw_caster_uid, 0 if tot >= 2 else 1)
+                    )
+        elif ptype == "CurrentSP" and uid == self._bp_draw_caster_uid and val <= 1e-6:
+            self.flush_bp_draw_carry()
+
     def on_turn_begin_after_owner(self) -> None:
+        self.flush_bp_draw_carry()
+        self._bp_draw_caster_uid = 0
         if self.pending_ally_ult_caster is not None and self.pending_ally_ult_sp_fallback is not None:
             self.ally_ult_targets.setdefault(self.pending_ally_ult_caster, []).append(
                 self.pending_ally_ult_sp_fallback
@@ -622,7 +708,18 @@ class PlayerTargetTracker:
         self._clear_pending_ally_ult()
 
     def on_player_use_skill(self, cur_av: float, uid: int, cname: str, sk_type: str, sk_id: int) -> None:
+        self.flush_bp_draw_carry()
+        if sk_type == "BPSkill":
+            self._bp_draw_caster_uid = uid
+            self._bp_draw_av = round(cur_av, 2)
+        else:
+            self._bp_draw_caster_uid = 0
         if sk_id > 0 and uid > 0 and sk_type in ("Normal", "BPSkill", "Ultra", "Servant"):
+            sk_key = _get_avatar_skill_trigger_keys().get(sk_id, "")
+            if sk_key in ("Skill12", "Skill13", "Skill14"):
+                self.random_config_draws.append(
+                    (round(cur_av, 2), uid, {"Skill12": 0, "Skill13": 1, "Skill14": 2}[sk_key])
+                )
             self.cur_player_atk_seq += 1
             self.cur_player_sk_info = (sk_id, uid, self.cur_player_atk_seq)
         if sk_type == "Ultra":
@@ -641,14 +738,27 @@ class PlayerTargetTracker:
         dtype = str(data.get("type") or "")
         if dtype in ("Ultimate", "Ultra") and self.pending_ally_ult_caster is not None:
             self._clear_pending_ally_ult()
+        atk_ent = data.get("attacker") or {}
         if self.pending_player_atk is not None:
             if dtype in ("Basic", "Normal", "Skill", "BPSkill", "Ultimate", "Ultra"):
                 self.pending_player_primary_dmg_hits += 1
+        if dtype in ("Basic", "Normal", "Skill", "BPSkill", "Ultimate", "Ultra"):
+            self.flush_bp_draw_carry()
+            self._bp_draw_caster_uid = 0
+        if self.pending_player_atk is not None:
             confirmed_euid = (
                 self.pending_hit_direct_euid
                 if self.pending_hit_direct_euid is not None
                 else (self.pending_hit_hp_euids[0] if len(self.pending_hit_hp_euids) == 1 else None)
             )
+            if confirmed_euid is not None:
+                if (
+                    dtype in ("Basic", "Normal", "Skill", "BPSkill", "Ultimate", "Ultra")
+                    and confirmed_euid not in self.pending_player_primary_euids
+                ):
+                    self.pending_player_primary_euids.append(confirmed_euid)
+                if dtype == "Elation" and atk_ent.get("team") == "Player":
+                    self.pending_player_elation_hits.append((int(atk_ent.get("uid") or 0), confirmed_euid))
             if confirmed_euid is not None and dtype not in ("Break", "Additional", "True"):
                 self.pending_player_dmg_confirmed_euids.append(confirmed_euid)
                 if (
@@ -665,7 +775,6 @@ class PlayerTargetTracker:
                 self.pending_hit_direct_euid = None
                 self.pending_hit_sp_euid = None
                 self.last_player_hit_euid = None
-        atk_ent = data.get("attacker") or {}
         if dtype in ("Additional", "True"):
             self.flush_pending_q_break()
         elif dtype == "Break" and atk_ent.get("team") == "Player":

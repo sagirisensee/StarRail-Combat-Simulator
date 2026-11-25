@@ -998,6 +998,22 @@ class DataDrivenStageDirector:
                     # 用于重置各角色每回合限制标记（如知更鸟 MAvatar_RobinS_00_Passive_HyperCharge_TurnFlag）。
                     rt.modifier_engine.dispatch_event("OnListenTurnBegin", param_entity_id="__LEVEL__")
 
+    def drain_opening_actions(self) -> None:
+        """排空开战进场（OnEnterBattle）入队的插队/自动技，并同步新召唤实体。"""
+        sched = getattr(self.sim, "scheduler", None)
+        if sched is None or not sched.has_pending():
+            return
+        prev_auto_ult = getattr(self.sim, "auto_ult", False)
+        self.sim.auto_ult = False
+        prev_d = getattr(sched, "_action_frame_depth", 0)
+        sched._action_frame_depth = 0
+        try:
+            sched.drain()
+        finally:
+            sched._action_frame_depth = prev_d
+            self.sim.auto_ult = prev_auto_ult
+        self.sync_spawned_entities()
+
 
 def build_data_driven_stage(
     stage_id: int,
@@ -1008,6 +1024,7 @@ def build_data_driven_stage(
     extra_maze_buff_ids: Sequence[int] = (),
     entry_element: Optional[str] = None,
     entry_toughness: float = 10.0,
+    defer_opening_drain: bool = False,
 ) -> Tuple[TurnSimulator, DataDrivenStageDirector]:
     """Build a ``(TurnSimulator, DataDrivenStageDirector)`` purely from official stage tables."""
     for member in team:
@@ -1036,12 +1053,44 @@ def build_data_driven_stage(
         if technique_users is not None
         else None
     )
-    def _apply_pre_tech_maze_buffs(sim_inst: TurnSimulator) -> None:
+    def _apply_pre_tech_stage_setup(sim_inst: TurnSimulator) -> None:
+        from simulator.vm.runtime import ensure_vm_runtime
+        from simulator.vm.target_alias import ExecutionContext
+
+        sim_inst._entry_element = entry_elem
+        allies_pre = [
+            e for e in sim_inst.entities
+            if not getattr(e, "is_enemy", False) and not getattr(e, "is_countdown", False)
+        ]
+        has_vm_ally = any(hasattr(getattr(e, "kit", None), "_ensure_registered") for e in allies_pre)
+        if not has_vm_ally and not extra_maze_buff_ids:
+            return
+        rt = ensure_vm_runtime(sim_inst, loader=runner.factory.game_loader)
+        rt.loader.ensure_ability_index()
+        if (
+            has_vm_ally
+            and allies_pre
+            and rt.loader.get_global_modifier("StageAbility_MazeCommon_EnterBattle_MarkTeamLeader") is not None
+        ):
+            rt.modifier_engine.add_modifier(
+                owner_id=allies_pre[0].name,
+                caster_id="__LEVEL__",
+                mod_name="StageAbility_MazeCommon_EnterBattle_MarkTeamLeader",
+                ability_name="StageAbility_MazeCommon_EnterBattle_CheckTeamLeader",
+            )
+        has_elation_ally = any(
+            str(getattr(e, "path", "") or "").upper() in ("ELATION", "欢愉")
+            for e in allies_pre
+        )
+        if (
+            getattr(runner.built_stage, "stage_type", "") != "FateRin"
+            and has_elation_ally
+            and rt.loader.get_ability("StageAbility_Elation") is not None
+        ):
+            rt.trigger_ability(caster_id="__LEVEL__", ability_name="StageAbility_Elation", target_ids=("__LEVEL__",))
+
         if not extra_maze_buff_ids:
             return
-        from simulator.vm.runtime import ensure_vm_runtime
-
-        rt = ensure_vm_runtime(sim_inst, loader=runner.factory.game_loader)
         stage_loader = getattr(runner.factory, "stage_loader", None)
         if stage_loader is None or not hasattr(stage_loader, "resolve_maze_buff_abilities"):
             return
@@ -1049,8 +1098,6 @@ def build_data_driven_stage(
         if not affixes:
             return
         maze_buff_param_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
-        rt.loader.ensure_ability_index()
-        from simulator.vm.target_alias import ExecutionContext
 
         for ab_name, params in affixes:
             ab = rt.loader.get_ability(ab_name)
@@ -1091,7 +1138,8 @@ def build_data_driven_stage(
         use_techniques=bool(norm_tech_users),
         technique_users=norm_tech_users,
         auto_ult=auto_ult,
-        pre_technique_hook=_apply_pre_tech_maze_buffs if extra_maze_buff_ids else None,
+        pre_technique_hook=_apply_pre_tech_stage_setup,
+        defer_opening_drain=defer_opening_drain,
     )
     director = DataDrivenStageDirector(sim, runner, ai_loader)
     if entry_elem and entry_toughness > 0.0:
@@ -1117,15 +1165,8 @@ def build_data_driven_stage(
             ]
             if w0_all_enemies:
                 rt_post.modifier_engine.dispatch_event("OnEnterBattle", owner_ids=w0_all_enemies)
-                sched = getattr(sim, "scheduler", None)
-                if sched is not None and sched.has_pending():
-                    prev_d = getattr(sched, "_action_frame_depth", 0)
-                    sched._action_frame_depth = 0
-                    try:
-                        sched.drain()
-                    finally:
-                        sched._action_frame_depth = prev_d
-                    director.sync_spawned_entities()
+                if not defer_opening_drain:
+                    director.drain_opening_actions()
     finally:
         sim.auto_ult = prev_auto_ult
     return sim, director

@@ -153,6 +153,12 @@ class CombatPort(Protocol):
         extra_crit_dmg: float = 0.0,
         vm_hit_hooks_applied: bool = False,
         source_entity: Optional[Any] = None,
+        is_elation_dmg: bool = False,
+        elation_level_base: float = 0.0,
+        elation_point_num: float = 0.0,
+        extra_elation: float = 0.0,
+        extra_elation_extra: float = 0.0,
+        property_source_id: Optional[str] = None,
     ) -> None: ...
     def schedule_follow_up(
         self,
@@ -529,6 +535,10 @@ class SimulatorCombatPort:
             base_val = getattr(ent, "base_outgoing_healing", 0.0)
         elif stat == StatType.DMG_BOOST:
             base_val = getattr(ent, "base_dmg_boost", 0.0)
+        elif stat == StatType.ELATION:
+            base_val = getattr(ent, "base_elation", 0.0)
+        elif stat == StatType.ELATION_EXTRA:
+            base_val = 0.0
         return self.sim.status_mgr.calculate_stat(
             ent.name,
             base_val,
@@ -918,10 +928,17 @@ class SimulatorCombatPort:
         extra_crit_dmg: float = 0.0,
         vm_hit_hooks_applied: bool = False,
         source_entity: Optional[Any] = None,
+        is_elation_dmg: bool = False,
+        elation_level_base: float = 0.0,
+        elation_point_num: float = 0.0,
+        extra_elation: float = 0.0,
+        extra_elation_extra: float = 0.0,
+        property_source_id: Optional[str] = None,
     ) -> None:
         resolved_damage_type = damage_type or DamageType.from_tag(damage_tag)
         tgt = self._get_entity(target_id)
         src = self._get_entity(source_id) or source_entity
+        prop_src = self._get_entity(property_source_id) if property_source_id else None
         if not tgt or not src:
             return
         eff_multiplier = atk_multiplier
@@ -950,6 +967,12 @@ class SimulatorCombatPort:
             is_true_damage=(resolved_damage_type == DamageType.TRUE),
             damage_type=resolved_damage_type,
             vm_hit_hooks_applied=vm_hit_hooks_applied,
+            is_elation_dmg=is_elation_dmg,
+            elation_level_base=elation_level_base,
+            elation_point_num=elation_point_num,
+            extra_elation=extra_elation,
+            extra_elation_extra=extra_elation_extra,
+            property_source=prop_src,
         )
         if resolved_damage_type == DamageType.FOLLOW_UP:
             scheduler = getattr(self.sim, "scheduler", None)

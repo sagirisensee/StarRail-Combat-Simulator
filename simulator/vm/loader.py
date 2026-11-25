@@ -195,6 +195,31 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SetEntityForceVisible",
     "RPG.GameCore.ShowBattleScreenEffect",
     "RPG.GameCore.StartAim",
+    "RPG.GameCore.SetTargetAssetPreloadState",
+    "RPG.GameCore.SetComponentAssetLoadState",
+    "RPG.GameCore.SetTargetCustomAssetPreloadState",
+    "RPG.GameCore.AddGlobalDynamicOffsetIgnoreEntity",
+    "RPG.GameCore.CharacterDisableLookAt",
+    "RPG.GameCore.ClearEntityDamageText",
+    "RPG.GameCore.ClearTargetTimeSlow",
+    "RPG.GameCore.DisableCharacterVO",
+    "RPG.GameCore.EnableSpecificModifierSpecialMark",
+    "RPG.GameCore.FrameCaptureIfNeed",
+    "RPG.GameCore.HideFieldEffect",
+    "RPG.GameCore.ReleaseEnvProfile",
+    "RPG.GameCore.RemoveGlobalTimeSlow",
+    "RPG.GameCore.SetBattleUIPanelState",
+    "RPG.GameCore.SetEffectAnimatorState",
+    "RPG.GameCore.SetEffectProgress",
+    "CNLIMBPHJNP",  # 欢愉/花火UI计数提示同步（非战斗数值）
+    "RPG.GameCore.SetSkillButtonAdditionalStatus",
+    "RPG.GameCore.SetViewModeEnabled",
+    "RPG.GameCore.ShowAvatarHUDSpecialEffect",
+    "RPG.GameCore.ShowBattleAvatarPanel",
+    "RPG.GameCore.ShowExpandElationItem",
+    "RPG.GameCore.ShowFrameCaptureUI",
+    "RPG.GameCore.TransitEnvProfile",
+    "RPG.GameCore.LockBattleOperation",
 }
 
 # 经实证确认的纯表现/客户端无逻辑副作用节点，加载期裁剪以压缩 AST 体积
@@ -348,6 +373,7 @@ class CompiledCharacterSpec:
     eidolon: int = 0
     unlocked_ranks: Set[int] = field(default_factory=set)
     servant_id: Optional[int] = None
+    extra_passive_abilities: Tuple[str, ...] = ()
 
 
 class GameDataLoader:
@@ -394,6 +420,8 @@ class GameDataLoader:
         self._monster_skills: Optional[Dict[int, Dict[str, Any]]] = None
         self._status_type_by_mod: Optional[Dict[str, str]] = None
         self._can_dispel_by_mod: Optional[Dict[str, bool]] = None
+        self._elation_level_dmg: Optional[Dict[int, float]] = None
+        self._elation_skill_priority: Optional[Dict[int, int]] = None
 
     def _read_json(self, rel_or_abs: str) -> Any:
         path = rel_or_abs if os.path.isabs(rel_or_abs) else os.path.join(self.data_root, rel_or_abs)
@@ -477,6 +505,39 @@ class GameDataLoader:
         if self._monsters is None:
             self._monsters = {int(r["MonsterID"]): r for r in self._read_excel("MonsterConfig.json")}
             self._monster_skills = {int(r["SkillID"]): r for r in self._read_excel("MonsterSkillConfig.json")}
+
+    def get_elation_basic_level_damage(self, level: int) -> float:
+        """查询指定角色等级对应的官方 ElationBasicLevelDamage 基准值。"""
+        if self._elation_level_dmg is None:
+            table: Dict[int, float] = {}
+            try:
+                for row in self._read_excel("ElationBasicLevelDamage.json"):
+                    lv = int(row.get("Level", 0) or 0)
+                    val_obj = row.get("ElationBasicLevelDamage")
+                    val = float(val_obj.get("Value", 0.0) if isinstance(val_obj, Mapping) else (val_obj or 0.0))
+                    if lv > 0:
+                        table[lv] = val
+            except OSError:
+                pass
+            self._elation_level_dmg = table
+        lv_i = max(1, int(level or 80))
+        if lv_i in self._elation_level_dmg:
+            return self._elation_level_dmg[lv_i]
+        return self._elation_level_dmg.get(80, 7535.107)
+
+    def get_elation_skill_priority(self, skill_id: int) -> int:
+        """查询官方 ElationSkill.json 中的欢愉技出手顺位 PriorityValue（越小越先出手）。"""
+        if self._elation_skill_priority is None:
+            table: Dict[int, int] = {}
+            try:
+                for row in self._read_excel("ElationSkill.json"):
+                    sid = int(row.get("ElationSkillID", 0) or 0)
+                    if sid > 0:
+                        table[sid] = int(row.get("PriorityValue", 500) or 500)
+            except OSError:
+                pass
+            self._elation_skill_priority = table
+        return self._elation_skill_priority.get(int(skill_id), 500)
 
     # --- ConfigAbility 索引 ---
     def _ingest_ability_file(self, path: str) -> None:
@@ -951,10 +1012,39 @@ class GameDataLoader:
 
         # 收集该角色关联的所有 Ability（包含 SkillAbilityList 与 AbilityList）
         ability_names: List[str] = list(cfg.get("AbilityList", []))
+        base_ability_set = set(ability_names)
         for item in cfg.get("SkillAbilityList", []):
             for ab_name in item.get("AbilityList", []):
                 if ab_name not in ability_names:
                     ability_names.append(ab_name)
+
+        # 收集 AvatarSkillTreeConfig.AbilityName 与已解锁 AvatarRankConfig.RankAbility
+        self._ensure_avatar_trees()
+        self._ensure_ranks()
+        extra_passives: List[str] = []
+        extra_seen: Set[str] = set()
+        tree_map = self._avatar_trees.get(int(avatar_id), {})
+        for rows in tree_map.values():
+            for row in rows:
+                ab_n = str(row.get("AbilityName") or "").strip()
+                if ab_n and ab_n not in base_ability_set and ab_n not in extra_seen:
+                    extra_seen.add(ab_n)
+                    extra_passives.append(ab_n)
+                    if ab_n not in ability_names:
+                        ability_names.append(ab_n)
+        for rid in av.get("RankIDList", []):
+            r = self._ranks.get(int(rid))
+            if not r or int(r.get("Rank", 99)) > int(eidolon):
+                continue
+            raw_rank_abs = r.get("RankAbility")
+            rank_ab_list = raw_rank_abs if isinstance(raw_rank_abs, list) else ([raw_rank_abs] if raw_rank_abs else [])
+            for ab_n in rank_ab_list:
+                ab_s = str(ab_n or "").strip()
+                if ab_s and ab_s not in base_ability_set and ab_s not in extra_seen:
+                    extra_seen.add(ab_s)
+                    extra_passives.append(ab_s)
+                    if ab_s not in ability_names:
+                        ability_names.append(ab_s)
 
         abilities: Dict[str, Dict[str, Any]] = {}
         for ab_name in ability_names:
@@ -975,6 +1065,7 @@ class GameDataLoader:
             eidolon=eidolon,
             unlocked_ranks=set(range(1, eidolon + 1)),
             servant_id=servant_id if servant_id in self._servants else None,
+            extra_passive_abilities=tuple(extra_passives),
         )
 
     def load_servant(

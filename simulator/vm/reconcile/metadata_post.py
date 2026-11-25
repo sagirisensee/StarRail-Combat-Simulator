@@ -338,6 +338,51 @@ def resolve_team_roster(
     return team_uids, team_names
 
 
+def _has_prebattle_non_stance_damage_maze(ldr: Any, uid: int) -> bool:
+    """检查指定角色的 SkillMaze 是否含 ByIsMazeSkillAffectCurrentWave 且无削韧直接造成 DamageByAttackProperty。"""
+    ldr._ensure_avatars()
+    av = ldr._avatars.get(int(uid))
+    if not av or not av.get("JsonPath"):
+        return False
+    cfg = ldr._read_json(av["JsonPath"])
+    maze_abs: List[str] = []
+    for item in cfg.get("SkillAbilityList") or ():
+        if isinstance(item, Mapping) and item.get("Skill") == "SkillMaze":
+            maze_abs.extend(str(a) for a in (item.get("AbilityList") or ()) if a)
+    if not maze_abs:
+        return False
+    ldr.ensure_ability_index()
+    has_wave_pred = False
+    has_non_stance_dmg = False
+
+    def _walk(node: Any) -> None:
+        nonlocal has_wave_pred, has_non_stance_dmg
+        if isinstance(node, Mapping):
+            nt = node.get("$type")
+            if nt == "RPG.GameCore.ByIsMazeSkillAffectCurrentWave":
+                has_wave_pred = True
+            elif nt == "RPG.GameCore.DamageByAttackProperty":
+                ap = node.get("AttackProperty") or {}
+                sv = ap.get("StanceValue") if isinstance(ap, Mapping) else None
+                if sv is None or (
+                    isinstance(sv, Mapping)
+                    and not sv.get("IsDynamic")
+                    and float((sv.get("FixedValue") or {}).get("Value", 0.0) or 0.0) == 0.0
+                ):
+                    has_non_stance_dmg = True
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    for ab_name in maze_abs:
+        ab = ldr.get_ability(ab_name)
+        if ab:
+            _walk(ab)
+    return has_wave_pred and has_non_stance_dmg
+
+
 def infer_entry_technique_stance(
     stage_spec: Optional[Any],
     enemy_uid_map: Mapping[int, str],
@@ -346,6 +391,10 @@ def infer_entry_technique_stance(
     first_skill_stance_obs: Mapping[int, float],
     init_enemy_first_stance: Mapping[int, Tuple[int, int, float, int]],
     skill_atk_dmgs: Mapping[int, Mapping[int, float]],
+    *,
+    team_uids: Sequence[int] = (),
+    init_enemy_first_hp: Mapping[int, float] = (),
+    init_enemy_first_dmg: Mapping[int, float] = (),
 ) -> Tuple[Optional[str], float]:
     """根据开局首轮削韧差值自动反推入战秘技属性与削韧量。"""
     entry_element: Optional[str] = None
@@ -417,5 +466,31 @@ def infer_entry_technique_stance(
                     break
             if entry_element is not None:
                 break
+
+    if entry_element is None and init_enemy_first_hp and team_uids:
+        init_euid_set = set(initial_enemy_uids)
+        has_prebattle_hp_drop = False
+        for euid, first_hp in init_enemy_first_hp.items():
+            if init_euid_set and euid not in init_euid_set:
+                continue
+            base_nm = base_enemy_name(euid, enemy_uid_map)
+            total_before_first = float(first_hp) + float(init_enemy_first_dmg.get(euid, 0.0))
+            for m_spec in w0_by_name.get(base_nm, ()):
+                if float(getattr(m_spec, "hp", 0.0) or 0.0) > 0.0 and total_before_first < float(m_spec.hp) - 10.0:
+                    has_prebattle_hp_drop = True
+                    break
+            if has_prebattle_hp_drop:
+                break
+        if has_prebattle_hp_drop:
+            from simulator.vm.loader import GameDataLoader
+
+            ldr = GameDataLoader()
+            for uid in team_uids:
+                if _has_prebattle_non_stance_damage_maze(ldr, int(uid)):
+                    elem = av_elems.get(int(uid))
+                    if elem:
+                        entry_element = elem
+                        entry_toughness = 0.0
+                        break
 
     return entry_element, entry_toughness

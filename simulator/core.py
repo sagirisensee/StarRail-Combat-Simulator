@@ -23,7 +23,7 @@ from .effects import (
 )
 from .sp import SkillPointManager
 from .status import StatusManager, StatType
-from .actions import ActionKind, ActionContext, ActionScheduleCategory
+from .actions import ActionKind, ActionContext, ActionScheduleCategory, TargetMode
 from .scheduler import ActionScheduler
 
 
@@ -66,6 +66,7 @@ class TurnSimulator:
         auto_ult: bool = True,
         stage_mechanics: Optional[List[str]] = None,
         pre_technique_hook: Optional[Any] = None,
+        defer_opening_drain: bool = False,
     ):
         self.entities: List[Entity] = []
         self.current_av: float = 0.0
@@ -128,60 +129,63 @@ class TurnSimulator:
                     if sp_cap:
                         self.port.set_sp_cap(sp_cap)
 
-            if pre_technique_hook is not None:
-                pre_technique_hook(self)
+            from contextlib import nullcontext
 
-            # 1. 战前秘技 (Techniques 在入场前按 priority 排序生效)
-            self._in_technique_phase = True
-            try:
-                if use_techniques:
-                    target_users = list(technique_users or [e.name for e in self.entities if not e.is_enemy])
-                    def _tech_order(uid):
-                        ent = self._get_entity(uid)
-                        if ent and getattr(ent, "kit", None):
-                            try:
-                                d = ent.kit.definition(ActionKind.TECHNIQUE)
-                                if d:
-                                    return getattr(d, "priority", 1)
-                            except Exception:
-                                pass
-                        return 1
-                    target_users = sorted(target_users, key=_tech_order)
-                    for user_id in target_users:
-                        self.use_technique(user_id)
-                elif technique_users:
-                    for user_id in technique_users:
-                        self.use_technique(user_id)
-            finally:
-                self._in_technique_phase = False
+            with (self.scheduler.action_frame() if defer_opening_drain else nullcontext()):
+                if pre_technique_hook is not None:
+                    pre_technique_hook(self)
 
-            # 2. 关卡环境机制插件初始化 (Stage Mechanics Plugins)
-            for plugin in self.stage_plugins:
-                plugin.on_battle_start(self)
+                # 1. 战前秘技 (Techniques 在入场前按 priority 排序生效)
+                self._in_technique_phase = True
+                try:
+                    if use_techniques:
+                        target_users = list(technique_users or [e.name for e in self.entities if not e.is_enemy])
+                        def _tech_order(uid):
+                            ent = self._get_entity(uid)
+                            if ent and getattr(ent, "kit", None):
+                                try:
+                                    d = ent.kit.definition(ActionKind.TECHNIQUE)
+                                    if d:
+                                        return getattr(d, "priority", 1)
+                                except Exception:
+                                    pass
+                            return 1
+                        target_users = sorted(target_users, key=_tech_order)
+                        for user_id in target_users:
+                            self.use_technique(user_id)
+                    elif technique_users:
+                        for user_id in technique_users:
+                            self.use_technique(user_id)
+                finally:
+                    self._in_technique_phase = False
 
-            # 3. 战斗开始被动与光环 (on_battle_start)
-            for e in list(self.entities):
-                if getattr(e, "kit", None) is not None:
-                    e.kit.on_battle_start()
-                if getattr(e, "light_cone", None) is not None:
-                    e.light_cone.on_battle_start()
-                for rh in getattr(e, "relic_handlers", []):
-                    rh.port = self.port
-                    rh.on_battle_start()
+                # 2. 关卡环境机制插件初始化 (Stage Mechanics Plugins)
+                for plugin in self.stage_plugins:
+                    plugin.on_battle_start(self)
 
-            if getattr(self, "vm_runtime", None) is not None:
-                self.vm_runtime.enter_battle()
+                # 3. 战斗开始被动与光环 (on_battle_start)
+                for e in list(self.entities):
+                    if getattr(e, "kit", None) is not None:
+                        e.kit.on_battle_start()
+                    if getattr(e, "light_cone", None) is not None:
+                        e.light_cone.on_battle_start()
+                    for rh in getattr(e, "relic_handlers", []):
+                        rh.port = self.port
+                        rh.on_battle_start()
 
-            self.resolver.resolve_all()
+                if getattr(self, "vm_runtime", None) is not None:
+                    self.vm_runtime.enter_battle()
 
-            # 4. 战斗开局根据全队秘技与进场光环对满血角色生命值进行上限初始化对齐 (满血进场)
-            for e in list(self.entities):
-                if not e.is_enemy:
-                    base_m = getattr(e, "base_max_hp", getattr(e, "max_hp", 0.0))
-                    if base_m > 0 and e.current_hp >= base_m:
-                        max_hp_val = self.port.max_hp(e.name)
-                        if max_hp_val and max_hp_val > 0 and max_hp_val != float("inf"):
-                            e.current_hp = max_hp_val
+                self.resolver.resolve_all()
+
+                # 4. 战斗开局根据全队秘技与进场光环对满血角色生命值进行上限初始化对齐 (满血进场)
+                for e in list(self.entities):
+                    if not e.is_enemy:
+                        base_m = getattr(e, "base_max_hp", getattr(e, "max_hp", 0.0))
+                        if base_m > 0 and e.current_hp >= base_m:
+                            max_hp_val = self.port.max_hp(e.name)
+                            if max_hp_val and max_hp_val > 0 and max_hp_val != float("inf"):
+                                e.current_hp = max_hp_val
 
         self.battle_started = True
 
@@ -203,6 +207,13 @@ class TurnSimulator:
 
     def _get_entity(self, name_or_id: str) -> Optional[Entity]:
         return self.get_entity(name_or_id)
+
+    def can_consume_sp(self, actor_name: str, cost: int) -> bool:
+        if cost <= 0:
+            return True
+        vm_rt = getattr(self, "vm_runtime", None)
+        extra = int(vm_rt.entity_boost_points.get(actor_name, 0.0)) if vm_rt is not None else 0
+        return (self.sp.current_sp + extra) >= cost
 
     def use_technique(self, actor_id: str) -> None:
         """在开战前执行指定角色的秘技。"""
@@ -531,6 +542,7 @@ class TurnSimulator:
         )
         owner_turn_actor = self._current_turn_entity.name if self._current_turn_entity is not None else None
         owner_turn_id = self._turn_id if self._current_turn_entity is not None else None
+        prev_hold = self.scheduler.continuous_action_hold
 
         with self.scheduler.action_frame():
             self._action_seq += 1
@@ -547,7 +559,7 @@ class TurnSimulator:
                     req_kind = ActionKind.SKILL if intent == "E" else ActionKind.BASIC
                 defn = active_entity.kit.definition(req_kind)
 
-                if defn.cost.sp > 0 and not self.sp.can_consume(defn.cost.sp):
+                if defn.cost.sp > 0 and not self.can_consume_sp(active_entity.name, defn.cost.sp):
                     actual_kind = ActionKind.BASIC
                     defn = active_entity.kit.definition(actual_kind)
                     actual_action = f"{defn.name} (SP不足降级)"
@@ -660,6 +672,111 @@ class TurnSimulator:
                     action_id=self._action_seq
                 ))
 
+            vm_rt = getattr(self, "vm_runtime", None)
+            one_more_steps = 0
+            while (
+                vm_rt is not None
+                and is_char_kit
+                and vm_rt._pending_use_skill_one_more.get(active_entity.name)
+            ):
+                if active_entity.current_hp <= 0.0 and not getattr(active_entity, "is_infinite_hp", False):
+                    vm_rt._pending_use_skill_one_more[active_entity.name].clear()
+                    break
+                one_more_steps += 1
+                if one_more_steps > 16:
+                    vm_rt._pending_use_skill_one_more[active_entity.name].clear()
+                    break
+                ctrl_type = vm_rt._pending_use_skill_one_more[active_entity.name].pop(0)
+                ctrl_map = {
+                    "ControlSkill01": ActionKind.BASIC,
+                    "ControlSkill02": ActionKind.SKILL,
+                    "ControlSkill03": ActionKind.ULTIMATE,
+                }
+                one_more_kind = ctrl_map.get(ctrl_type, ActionKind.BASIC)
+                with self.scheduler.action_frame():
+                    self._action_seq += 1
+                    self._av_batch_seq += 1
+                    sub_defn = active_entity.kit.definition(one_more_kind)
+                    sub_sid = resolve_skill_config_id(active_entity, sub_defn, one_more_kind)
+                    if sub_defn.cost.sp != 0:
+                        self.resolver.enqueue(ModifySPEffect(active_entity.name, -sub_defn.cost.sp, f"施放{sub_defn.name}"))
+                    sub_tgts = (
+                        tuple(
+                            e.name for e in self.entities
+                            if getattr(e, "is_enemy", False)
+                            and not getattr(e, "is_countdown", False)
+                            and not getattr(e, "is_unselectable", False)
+                            and float(getattr(e, "current_hp", 0.0)) > 0.0
+                        )
+                        if sub_defn.target_mode == TargetMode.ALL_ENEMIES
+                        else tuple(
+                            t for t in (target_ids or ())
+                            if (te := self.get_entity(t)) is not None and float(getattr(te, "current_hp", 0.0)) > 0.0
+                        )
+                    )
+                    if should_publish:
+                        self.event_bus.publish(ActionExecuteEvent(
+                            av=round(self.current_av, 2),
+                            cycle=self.current_cycle,
+                            actor_id=active_entity.name,
+                            actor_name=active_entity.name,
+                            action_type=sub_defn.name,
+                            description=f"施放【{sub_defn.name}】",
+                            action_kind=one_more_kind,
+                            skill_config_id=sub_sid,
+                            action_id=self._action_seq,
+                        ))
+                    on_chain = getattr(self, "on_auto_chained_skill", None)
+                    if callable(on_chain):
+                        on_chain(active_entity.name, sub_sid)
+                    sub_ctx = ActionContext(
+                        action_id=self._action_seq,
+                        actor_id=active_entity.name,
+                        kind=one_more_kind,
+                        target_ids=sub_tgts,
+                        is_natural_turn_action=is_natural_turn_action,
+                        schedule_category=schedule_category,
+                        owner_turn_id=owner_turn_id,
+                        owner_turn_actor_id=owner_turn_actor,
+                    )
+                    if getattr(active_entity, "light_cone", None) is not None:
+                        active_entity.light_cone.on_action_before(sub_ctx)
+                    for rh in getattr(active_entity, "relic_handlers", []):
+                        rh.on_action_before(sub_ctx)
+                    active_entity.kit.execute(sub_ctx)
+                    if getattr(active_entity, "light_cone", None) is not None:
+                        active_entity.light_cone.on_action_after(sub_ctx)
+                    for rh in getattr(active_entity, "relic_handlers", []):
+                        rh.on_action_after(sub_ctx)
+                    self.resolver.resolve_all()
+                    if not vm_rt._pending_use_skill_one_more.get(active_entity.name):
+                        self.scheduler.continuous_action_hold = False
+                    if should_publish:
+                        self.event_bus.publish(PrimaryDamageCompleteEvent(
+                            av=round(self.current_av, 2),
+                            cycle=self.current_cycle,
+                            actor_id=active_entity.name,
+                            actor_name=active_entity.name,
+                            action_type=sub_defn.name,
+                            action_kind=one_more_kind,
+                            skill_config_id=sub_sid,
+                            action_id=self._action_seq,
+                        ))
+                        self.event_bus.publish(ActionEndEvent(
+                            av=round(self.current_av, 2),
+                            cycle=self.current_cycle,
+                            actor_id=active_entity.name,
+                            actor_name=active_entity.name,
+                            action_type=sub_defn.name,
+                            action_kind=one_more_kind,
+                            skill_config_id=sub_sid,
+                            action_id=self._action_seq,
+                        ))
+            if one_more_steps > 0 and not (vm_rt and vm_rt._pending_use_skill_one_more.get(active_entity.name)):
+                self.scheduler.continuous_action_hold = False
+            elif not is_natural_turn_action and prev_hold:
+                self.scheduler.continuous_action_hold = prev_hold
+
     def execute_extra_turn(
         self,
         actor_id: str,
@@ -720,12 +837,19 @@ class TurnSimulator:
             actor_name=active_entity.name,
             turn_id=self._turn_id
         ))
-        _pending_dist = getattr(self, "_pending_turn_reset_distance", None)
-        reset_dist = 10000.0 if _pending_dist is None else _pending_dist
-        self._pending_turn_reset_distance = None
-        active_entity.reset_distance(reset_dist)
-        if active_entity.distance_remaining <= 0.0:
-            self.notify_entity_ready(active_entity.name)
+        _vm_rt_end = getattr(self, "vm_runtime", None)
+        if not (
+            _vm_rt_end is not None
+            and _vm_rt_end.modifier_engine.has_behavior_flag(active_entity.name, "MuteResetActionDelay")
+        ):
+            _pending_dist = getattr(self, "_pending_turn_reset_distance", None)
+            reset_dist = 10000.0 if _pending_dist is None else _pending_dist
+            self._pending_turn_reset_distance = None
+            active_entity.reset_distance(reset_dist)
+            if active_entity.distance_remaining <= 0.0:
+                self.notify_entity_ready(active_entity.name)
+        else:
+            self._pending_turn_reset_distance = None
         self._current_turn_entity = None
         self._turn_primary_action_done = False
         self._turn_owner_sp_consumed = 0

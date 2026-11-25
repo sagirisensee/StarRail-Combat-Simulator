@@ -8,12 +8,21 @@
 5. 全量属性持久化导出为 JSON 报表。
 """
 import json
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Sequence, Tuple, Union, Any
 
 from .models import (
-    CharacterProfile, CharacterPanel, Element, Path
+    CharacterProfile, CharacterPanel, Element, Path, StatBreakdown
 )
-from .tables import AVATAR_STATS, DEFAULT_5STAR_STATS, DEFAULT_4STAR_STATS, RELIC_SETS
+from .tables import (
+    AVATAR_STATS,
+    DEFAULT_5STAR_STATS,
+    DEFAULT_4STAR_STATS,
+    RELIC_MAIN_VALUES,
+    RELIC_SETS,
+    RELIC_SUB_RULES,
+    get_avatar_base_stats,
+    get_lightcone_stats,
+)
 from .calculator import StatCalculator
 
 # 延迟导入模拟器核心 Entity，避免循环引用
@@ -124,6 +133,158 @@ class CharacterDB:
             self._profiles_by_id[aid] = profile
             self._profiles_by_name[name] = profile
 
+    @staticmethod
+    def _reconstruct_exact_stats(
+        avatar_id: int,
+        level: int,
+        element: Element,
+        path: Path,
+        equipped_lc: Optional[Any],
+        relics_list: Sequence[Any],
+    ) -> Tuple[Dict[str, float], Dict[str, StatBreakdown]]:
+        """由官方 ExcelOutput 与导出遗器档位词条精算精确小数面板（消除 0.1% 展示舍入与整数截断误差）。"""
+        c_stats = get_avatar_base_stats(avatar_id, level=level, promotion=6) or {}
+        trace_bonuses: Dict[str, float] = dict(c_stats.get("traces", {}))
+        char_hp = float(c_stats.get("base_hp", 0.0))
+        char_atk = float(c_stats.get("base_atk", 0.0))
+        char_def = float(c_stats.get("base_def", 0.0))
+
+        lc_hp, lc_atk, lc_def = 0.0, 0.0, 0.0
+        lc_passive_stats: Dict[str, float] = {}
+        if equipped_lc is not None and int(getattr(equipped_lc, "item_id", 0)) > 0:
+            lc_cfg = get_lightcone_stats(
+                int(equipped_lc.item_id),
+                level=int(getattr(equipped_lc, "level", 80)),
+                promotion=6,
+                rank=int(getattr(equipped_lc, "superimposition", 1)),
+            )
+            if lc_cfg:
+                lc_hp = float(lc_cfg.get("base_hp", 0.0))
+                lc_atk = float(lc_cfg.get("base_atk", 0.0))
+                lc_def = float(lc_cfg.get("base_def", 0.0))
+                lc_path_raw = lc_cfg.get("path")
+                if not lc_path_raw or Path.from_str(str(lc_path_raw)) == path:
+                    lc_passive_stats = dict(lc_cfg.get("passive_stats", {}))
+
+        set_counts: Dict[int, int] = {}
+        relic_pct_bonuses: Dict[str, float] = {}
+        relic_flat_bonuses: Dict[str, float] = {}
+
+        sub_rule_by_key: Dict[str, Dict[str, Any]] = {}
+        sub_rule_by_name: Dict[Tuple[str, bool], Dict[str, Any]] = {}
+        for rule in RELIC_SUB_RULES.values():
+            sub_rule_by_key[str(rule["key"])] = rule
+            norm_n = str(rule["name"]).replace("%", "").strip()
+            sub_rule_by_name[(norm_n, bool(rule["is_pct"]))] = rule
+
+        for r in relics_list:
+            sid = int(getattr(r, "relic_set_id", 0) or 0)
+            if sid > 0:
+                set_counts[sid] = set_counts.get(sid, 0) + 1
+
+            main_name = str(getattr(r, "main_affix_name", "") or "")
+            if main_name:
+                is_pct_main = "%" in main_name
+                cn_prefix = main_name.split("+")[0].strip().replace("属性", "")
+                for m_rule in RELIC_MAIN_VALUES.get(int(getattr(r, "slot", 1)), {}).values():
+                    rule_prefix = str(m_rule["name"]).replace("属性", "").replace("%", "").strip()
+                    if bool(m_rule["is_pct"]) == is_pct_main and rule_prefix == cn_prefix:
+                        m_key = str(m_rule["key"])
+                        if is_pct_main:
+                            relic_pct_bonuses[m_key] = relic_pct_bonuses.get(m_key, 0.0) + float(m_rule["val"])
+                        elif m_key != "unknown":
+                            relic_flat_bonuses[m_key] = relic_flat_bonuses.get(m_key, 0.0) + float(m_rule["val"])
+                        break
+
+            for sub in getattr(r, "sub_affixes", ()) or ():
+                s_key = str(sub.get("key", "") or "")
+                s_name = str(sub.get("name", "") or "").replace("%", "").strip()
+                s_is_pct = bool(sub.get("is_pct", False))
+                rule = sub_rule_by_key.get(s_key) or sub_rule_by_name.get((s_name, s_is_pct))
+                target_key = str(rule["key"]) if rule is not None else s_key
+                target_pct = bool(rule["is_pct"]) if rule is not None else s_is_pct
+                raw_val = float(sub.get("value", 0.0) or 0.0)
+                eff_val = raw_val
+                if rule is not None and all(k in sub for k in ("low_rolls", "mid_rolls", "high_rolls")):
+                    low = int(sub["low_rolls"])
+                    mid = int(sub["mid_rolls"])
+                    high = int(sub["high_rolls"])
+                    cnt = low + mid + high
+                    stp = mid + 2 * high
+                    exact_val = cnt * float(rule["base"]) + stp * float(rule["step_val"])
+                    tol = 0.001 if target_pct else 0.5
+                    if cnt > 0 and abs(exact_val - raw_val) < tol:
+                        eff_val = exact_val
+                if target_key and target_key != "unknown":
+                    if target_pct:
+                        relic_pct_bonuses[target_key] = relic_pct_bonuses.get(target_key, 0.0) + eff_val
+                    else:
+                        relic_flat_bonuses[target_key] = relic_flat_bonuses.get(target_key, 0.0) + eff_val
+
+        set_bonuses: Dict[str, float] = {}
+        for sid, cnt in set_counts.items():
+            set_rule = RELIC_SETS.get(sid, {})
+            if cnt >= 2:
+                for k, v in set_rule.get("2pc", {}).items():
+                    set_bonuses[k] = set_bonuses.get(k, 0.0) + float(v)
+            if cnt >= 4:
+                for k, v in set_rule.get("4pc", {}).items():
+                    set_bonuses[k] = set_bonuses.get(k, 0.0) + float(v)
+
+        def _sum_sec(stat_key: str, base_val: float = 0.0) -> float:
+            return (
+                base_val
+                + float(trace_bonuses.get(stat_key, 0.0))
+                + float(lc_passive_stats.get(stat_key, 0.0))
+                + float(relic_pct_bonuses.get(stat_key, 0.0))
+                + float(set_bonuses.get(stat_key, 0.0))
+            )
+
+        def _build_primary(white: float, pct_key: str, flat_key: str) -> StatBreakdown:
+            pct = _sum_sec(pct_key, 0.0)
+            flat = float(relic_flat_bonuses.get(flat_key, 0.0))
+            return StatBreakdown(
+                base_white=white,
+                flat_bonus=flat,
+                percent_bonus=pct,
+                final_value=white * (1.0 + pct) + flat,
+            )
+
+        elem_norm = {"thunder": "lightning"}.get(element.value.lower(), element.value.lower())
+        elem_key = f"{elem_norm}_dmg"
+        sec_stats = {
+            "crit_rate": _sum_sec("crit_rate", 0.05),
+            "crit_dmg": _sum_sec("crit_dmg", 0.50),
+            "break_effect": _sum_sec("break_effect", 0.0),
+            "err": _sum_sec("err", 1.0),
+            "ehr": _sum_sec("ehr", 0.0),
+            "res": _sum_sec("res", 0.0),
+            "dmg_boost": _sum_sec("dmg_boost", 0.0) + _sum_sec(elem_key, 0.0),
+            "elation": _sum_sec("elation_dmg", 0.0),
+        }
+        primary_bds = {
+            "hp": _build_primary(char_hp + lc_hp, "hp_pct", "flat_hp"),
+            "atk": _build_primary(char_atk + lc_atk, "atk_pct", "flat_atk"),
+            "def": _build_primary(char_def + lc_def, "def_pct", "flat_def"),
+        }
+        return sec_stats, primary_bds
+
+    @classmethod
+    def _reconstruct_secondary_stats(
+        cls,
+        avatar_id: int,
+        level: int,
+        element: Element,
+        path: Path,
+        equipped_lc: Optional[Any],
+        relics_list: Sequence[Any],
+    ) -> Dict[str, float]:
+        """兼容入口：返回精算二级面板字典。"""
+        sec_stats, _ = cls._reconstruct_exact_stats(
+            avatar_id, level, element, path, equipped_lc, relics_list
+        )
+        return sec_stats
+
     def _compile_from_export(self):
         """从高精导出的结构化 JSON 报表直接编译角色档案。"""
         from .models import StatBreakdown, EquippedRelic, EquippedLightCone
@@ -209,15 +370,53 @@ class CharacterDB:
                     final_value=float(bd.get("final_value", 0.0))
                 )
 
-            hp_exact = float(b.get("hp", {}).get("final_value", s.get("生命值 (HP)", 0)))
-            atk_exact = float(b.get("atk", {}).get("final_value", s.get("攻击力 (ATK)", 0)))
-            def_exact = float(b.get("def", {}).get("final_value", s.get("防御力 (DEF)", 0)))
+            reconstructed_sec: Optional[Dict[str, float]] = None
+            reconstructed_pri: Optional[Dict[str, StatBreakdown]] = None
+
+            def _ensure_reconstructed() -> None:
+                nonlocal reconstructed_sec, reconstructed_pri
+                if reconstructed_sec is None or reconstructed_pri is None:
+                    reconstructed_sec, reconstructed_pri = self._reconstruct_exact_stats(
+                        aid, level, element, path, equipped_lc, relics_list
+                    )
+
+            for pri_k in ("hp", "atk", "def"):
+                if pri_k not in b:
+                    continue
+                exp_bw = float(b[pri_k].get("base_white", 0.0))
+                exp_fv = float(b[pri_k].get("final_value", 0.0))
+                if abs(exp_bw - round(exp_bw)) < 1e-6:
+                    _ensure_reconstructed()
+                    assert reconstructed_pri is not None
+                    exact_bd = reconstructed_pri.get(pri_k)
+                    if (
+                        exact_bd is not None
+                        and abs(exact_bd.base_white - exp_bw) > 1e-4
+                    ):
+                        if abs(exact_bd.final_value - exp_fv) < 1.5:
+                            breakdowns[pri_k] = exact_bd
+                        elif abs(exact_bd.final_value - exp_fv) < 5.0:
+                            breakdowns[pri_k] = StatBreakdown(
+                                base_white=exact_bd.base_white,
+                                flat_bonus=exp_fv - exact_bd.base_white * (1.0 + exact_bd.percent_bonus),
+                                percent_bonus=exact_bd.percent_bonus,
+                                final_value=exp_fv,
+                            )
+
+            hp_exact = float(breakdowns["hp"].final_value) if "hp" in breakdowns else float(s.get("生命值 (HP)", 0))
+            atk_exact = float(breakdowns["atk"].final_value) if "atk" in breakdowns else float(s.get("攻击力 (ATK)", 0))
+            def_exact = float(breakdowns["def"].final_value) if "def" in breakdowns else float(s.get("防御力 (DEF)", 0))
             spd_exact = float(s.get("速度实战精算", b.get("spd", {}).get("final_value", s.get("速度 (SPD)", 100))))
 
             def exact_stat(bd_key: str, summary_key: str, default_str: str) -> float:
                 if bd_key in b and "final_value" in b[bd_key]:
                     return float(b[bd_key]["final_value"])
-                return parse_pct(s.get(summary_key, default_str))
+                summary_val = parse_pct(s.get(summary_key, default_str))
+                _ensure_reconstructed()
+                assert reconstructed_sec is not None
+                if bd_key in reconstructed_sec and abs(reconstructed_sec[bd_key] - summary_val) < 0.0015:
+                    return reconstructed_sec[bd_key]
+                return summary_val
 
             panel = CharacterPanel(
                 hp=hp_exact,
@@ -344,6 +543,7 @@ class CharacterDB:
             base_effect_hit_rate=getattr(panel, "ehr", 0.0),
             base_err=getattr(panel, "err", 1.0),
             base_dmg_boost=getattr(panel, "dmg_boost", 0.0),
+            base_elation=getattr(panel, "elation", 0.0),
             element=profile.element.name if hasattr(profile.element, "name") else str(profile.element),
             path=profile.path.name if hasattr(profile.path, "name") else str(profile.path),
             level=getattr(profile, "level", 80),

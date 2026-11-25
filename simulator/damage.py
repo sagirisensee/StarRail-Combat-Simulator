@@ -12,6 +12,7 @@
    - 减伤/韧性乘区 (Broken/Damage Reduction): 韧性未击破固定 0.9 (自带10%减伤)，击破后为 1.0
 3. 返回不可变 `DamageBreakdown` 结构体，供审计与日志输出。
 """
+import math
 from dataclasses import dataclass
 from typing import Optional, Any
 from .actions import DamageType
@@ -85,6 +86,12 @@ class DamageRequest:
     is_true_damage: bool = False        # 真实伤害: 仅取基础区数值, 跳过双暴/增伤/防御/抗性/易伤/减伤全部乘区
     damage_type: Any = None             # DamageType 枚举 (供屏障转化等按类别结算的规则读取)
     vm_hit_hooks_applied: bool = False  # VM TaskExecutor 已执行 OnBeforeHitAll 时为 True，避免外部计算二次叠乘
+    is_elation_dmg: bool = False        # 欢愉伤害 (ByElationDamage / ElationDamage): 使用等级基准 + 欢愉度 * 笑点 * 增笑
+    elation_level_base: float = 0.0     # ElationBasicLevelDamage[level]
+    elation_point_num: float = 0.0      # 计入本段伤害的笑点数 P
+    extra_elation: float = 0.0          # Attacker_ElationDamageAddedRatio
+    extra_elation_extra: float = 0.0    # Attacker_ElationDamageExtraAddedRatio (增笑)
+    property_source: Optional[Any] = None  # OverrideDamagePropertySource: 决定攻击端面板/双暴/穿透/欢愉度等属性来源
 
 
 class DamageCalculator:
@@ -92,20 +99,22 @@ class DamageCalculator:
 
     @staticmethod
     def calculate(req: DamageRequest) -> DamageBreakdown:
-        atk_stat = req.attacker.base_atk
-        base_dmg_boost = float(getattr(req.attacker, "base_dmg_boost", 0.0) or 0.0)
-        if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-            mgr = req.attacker.simulator.status_mgr
-            white_atk = getattr(req.attacker, "base_white_atk", 0.0) or req.attacker.base_atk
-            atk_stat = mgr.calculate_stat(req.attacker.name, req.attacker.base_atk, StatType.ATK_BASE, white_base=white_atk)
-            dmg_boost = mgr.calculate_stat(req.attacker.name, base_dmg_boost, StatType.DMG_BOOST) + getattr(req, "extra_dmg_boost", 0.0)
-            res_pen = mgr.calculate_stat(req.attacker.name, 0.0, StatType.RES_PEN) + getattr(req, "extra_res_pen", 0.0)
+        stat_src = req.property_source or req.attacker
+        atk_stat = stat_src.base_atk
+        base_dmg_boost = float(getattr(stat_src, "base_dmg_boost", 0.0) or 0.0)
+        sim_ctx = getattr(req.attacker, "simulator", None) or getattr(stat_src, "simulator", None)
+        if sim_ctx:
+            mgr = sim_ctx.status_mgr
+            white_atk = getattr(stat_src, "base_white_atk", 0.0) or stat_src.base_atk
+            atk_stat = mgr.calculate_stat(stat_src.name, stat_src.base_atk, StatType.ATK_BASE, white_base=white_atk)
+            dmg_boost = mgr.calculate_stat(stat_src.name, base_dmg_boost, StatType.DMG_BOOST) + getattr(req, "extra_dmg_boost", 0.0)
+            res_pen = mgr.calculate_stat(stat_src.name, 0.0, StatType.RES_PEN) + getattr(req, "extra_res_pen", 0.0)
             # 防御乘区同时汇总：目标身上的减防 Debuff + 攻击者身上的无视防御 Buff (如专武冥花、缇宝E4、花火E2)
             if getattr(req.target, "is_enemy", False):
                 target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED)
             else:
                 target_def_shred = mgr.calculate_stat(req.target.name, 0.0, StatType.DEF_SHRED, category="debuff")
-            attacker_def_ignore = mgr.calculate_stat(req.attacker.name, 0.0, StatType.DEF_SHRED, category="buff") + getattr(req, "extra_def_ignore", 0.0)
+            attacker_def_ignore = mgr.calculate_stat(stat_src.name, 0.0, StatType.DEF_SHRED, category="buff") + getattr(req, "extra_def_ignore", 0.0)
             def_shred = target_def_shred + attacker_def_ignore
             vuln = mgr.calculate_stat(req.target.name, 0.0, StatType.VULNERABILITY) + getattr(req, "extra_vuln", 0.0)
         else:
@@ -116,18 +125,21 @@ class DamageCalculator:
             attacker_def_ignore = def_shred
             vuln = getattr(req, "extra_vuln", 0.0)
 
-        # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放)
+        is_elation_dmg = bool(getattr(req, "is_elation_dmg", False))
+        # 1. 基础伤害区 (支持攻/生命/防多维度属性缩放与欢愉等级基准)
         scaling = getattr(req, "scaling_stat", "atk")
-        if scaling == "hp":
-            if hasattr(req.attacker, "simulator") and req.attacker.simulator and hasattr(req.attacker.simulator, "port"):
-                base_stat = float(req.attacker.simulator.port.max_hp(req.attacker.name) or getattr(req.attacker, "max_hp", 0.0))
+        if is_elation_dmg:
+            base_stat = float(getattr(req, "elation_level_base", 0.0) or 0.0)
+        elif scaling == "hp":
+            if sim_ctx and hasattr(sim_ctx, "port"):
+                base_stat = float(sim_ctx.port.max_hp(stat_src.name) or getattr(stat_src, "max_hp", 0.0))
             else:
-                base_stat = getattr(req.attacker, "max_hp", 0.0)
+                base_stat = getattr(stat_src, "max_hp", 0.0)
         elif scaling == "def":
-            def_val = getattr(req.attacker, "base_def", 0.0)
-            if hasattr(req.attacker, "simulator") and req.attacker.simulator:
-                white_def = getattr(req.attacker, "base_white_def", 0.0) or def_val
-                def_val = req.attacker.simulator.status_mgr.calculate_stat(req.attacker.name, def_val, StatType.DEF_PERCENT, white_base=white_def)
+            def_val = getattr(stat_src, "base_def", 0.0)
+            if sim_ctx:
+                white_def = getattr(stat_src, "base_white_def", 0.0) or def_val
+                def_val = sim_ctx.status_mgr.calculate_stat(stat_src.name, def_val, StatType.DEF_PERCENT, white_base=white_def)
             base_stat = def_val
         else:
             base_stat = atk_stat
@@ -156,17 +168,16 @@ class DamageCalculator:
             )
 
         # 2. 双暴区
-        crit_rate = getattr(req.attacker, "crit_rate", 0.05)
-        crit_dmg = (req.fixed_crit_dmg if req.fixed_crit_dmg is not None else getattr(req.attacker, "crit_dmg", 0.50)) + getattr(req, "extra_crit_dmg", 0.0)
+        crit_rate = getattr(stat_src, "crit_rate", 0.05)
+        crit_dmg = (req.fixed_crit_dmg if req.fixed_crit_dmg is not None else getattr(stat_src, "crit_dmg", 0.50)) + getattr(req, "extra_crit_dmg", 0.0)
 
         if req.force_crit is not None:
             is_crit = req.force_crit
-        elif getattr(req.attacker, "is_enemy", False):
+        elif getattr(stat_src, "is_enemy", False):
             # 敌方怪物攻击默认不可暴击 (星铁全系列普通怪物/首领均无暴击能力)
             is_crit = False
         else:
-            sim = getattr(req.attacker, "simulator", None)
-            oracle = getattr(sim, "crit_oracle", None)
+            oracle = getattr(sim_ctx, "crit_oracle", None)
             if callable(oracle) and not req.is_true_damage:
                 is_crit = bool(oracle(req))
             else:
@@ -176,15 +187,33 @@ class DamageCalculator:
 
         crit_mult = (1.0 + crit_dmg) if is_crit else 1.0
 
-        # 3. 增伤区
-        dmg_boost_mult = 1.0 + dmg_boost
+        # 3. 增伤区 (欢愉伤害不吃常规属性/全伤增伤, 改吃 (1+欢愉度)*(1+5P/(P+240))*(1+增笑))
+        if is_elation_dmg:
+            base_elation = float(getattr(stat_src, "base_elation", 0.0) or 0.0)
+            if sim_ctx:
+                mgr_el = sim_ctx.status_mgr
+                elation_val = mgr_el.calculate_stat(stat_src.name, base_elation, StatType.ELATION) + float(
+                    getattr(req, "extra_elation", 0.0) or 0.0
+                )
+                elation_extra_val = mgr_el.calculate_stat(stat_src.name, 0.0, StatType.ELATION_EXTRA) + float(
+                    getattr(req, "extra_elation_extra", 0.0) or 0.0
+                )
+            else:
+                elation_val = base_elation + float(getattr(req, "extra_elation", 0.0) or 0.0)
+                elation_extra_val = float(getattr(req, "extra_elation_extra", 0.0) or 0.0)
+            p = max(0.0, float(math.floor(float(getattr(req, "elation_point_num", 0.0) or 0.0) + 1e-9)))
+            punchline_mult = 1.0 + (5.0 * p) / (p + 240.0)
+            dmg_boost_mult = (1.0 + elation_val) * punchline_mult * (1.0 + elation_extra_val)
+            dmg_boost = dmg_boost_mult - 1.0
+        else:
+            dmg_boost_mult = 1.0 + dmg_boost
 
         # 4. 防御区
         # 目标防御力:
         # - 若目标为我方角色 (is_enemy=False 且具备 defense/base_def 属性), 承伤严格基于角色实际防御力属性;
         # - 若目标为敌方怪物, 按星铁底层公式基准防御: Lv * 10 + 200
         is_target_enemy = getattr(req.target, "is_enemy", False)
-        attacker_lvl = getattr(req.attacker, "level", None) or req.attacker_level
+        attacker_lvl = getattr(stat_src, "level", None) or req.attacker_level
         target_lvl = getattr(req.target, "level", None) or req.target_level
 
         if not is_target_enemy and hasattr(req.target, "defense"):

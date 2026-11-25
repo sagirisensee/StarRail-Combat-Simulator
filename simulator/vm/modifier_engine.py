@@ -47,6 +47,11 @@ PROPERTY_TO_STAT: Dict[str, Tuple[StatType, ModifierOp, bool]] = {
     "SPRatioBase": (StatType.ERR, ModifierOp.ADD, False),
     "AggroAddedRatio": (StatType.AGGRO, ModifierOp.PERCENT, False),
     "FatigueRatio": (StatType.FATIGUE, ModifierOp.ADD, False),
+    "ElationDamageAddedRatio": (StatType.ELATION, ModifierOp.ADD, False),
+    "ElationDamageAddedRatioBase": (StatType.ELATION, ModifierOp.ADD, False),
+    "ElationDamageAddedRatioConvert": (StatType.ELATION, ModifierOp.ADD, True),
+    "ElationDamageExtraAddedRatio": (StatType.ELATION_EXTRA, ModifierOp.ADD, False),
+    "AttackConvert": (StatType.ATK_BASE, ModifierOp.ADD, True),
 }
 
 CONVERT_PROPERTY_PAIR: Dict[str, str] = {
@@ -54,6 +59,8 @@ CONVERT_PROPERTY_PAIR: Dict[str, str] = {
     "CriticalDamageConvert": "CriticalDamageBase",
     "HPConvert": "MaxHP",
     "HealRatioConvert": "HealRatioBase",
+    "ElationDamageAddedRatioConvert": "ElationDamageAddedRatioBase",
+    "AttackConvert": "Attack",
 }
 
 ELEMENT_RESISTANCE_DELTA_PROPS: Dict[str, str] = {
@@ -97,6 +104,7 @@ class VMModifierInstance:
     shield_max: float = 0.0
     stacked_weaknesses: Dict[str, List[Tuple[str, Tuple[str, ...]]]] = field(default_factory=dict)
     weak_resistance_deltas: Dict[str, List[Tuple[str, str, float]]] = field(default_factory=dict)
+    custom_strings: Dict[str, str] = field(default_factory=dict)
 
     @property
     def status_key(self) -> str:
@@ -297,12 +305,27 @@ class ModifierEngine:
         ctx: Optional[ExecutionContext] = None,
         halo_parent_uid: Optional[int] = None,
         resolved_dynamics: Optional[Dict[int, float]] = None,
+        reference_mod_name: str = "",
+        dynamic_strings: Optional[Mapping[str, Any]] = None,
     ) -> Optional[VMModifierInstance]:
         """按官方 Stacking 语义挂载/刷新/叠加 Modifier，并触发 OnCreate / OnStack / SubModifierList / OnModifierAdd。"""
         if owner_id != "__LEVEL__" and self.rt.sim.get_entity(owner_id) is None:
             return None
 
-        cfg = self._lookup_modifier_config(mod_name, ability_name)
+        eff_mod_name = mod_name or reference_mod_name
+        if not eff_mod_name:
+            return None
+        cfg = self._lookup_modifier_config(eff_mod_name, ability_name)
+        if not cfg and reference_mod_name and reference_mod_name != eff_mod_name:
+            cfg = self._lookup_modifier_config(reference_mod_name, ability_name)
+        mod_name = eff_mod_name
+        add_cfg_check = cfg.get("AdditionConfig")
+        if isinstance(add_cfg_check, dict):
+            dep_add = add_cfg_check.get("DependencyOnAdd")
+            if isinstance(dep_add, dict):
+                dep_name = str(dep_add.get("DependentModifier") or "")
+                if dep_name and not self.has_modifier(owner_id, dep_name):
+                    return None
         stacking = str(cfg.get("Stacking", "Unique"))
 
         # 确定 MaxLayer / LifeTime
@@ -347,7 +370,7 @@ class ModifierEngine:
         if eff_life is not None and eff_life < 0:
             eff_life = None
 
-        # 解析传入 DynamicValues
+        # 解析传入 DynamicValues 与 DynamicStrings
         parsed_dyn: Dict[int, float] = dict(resolved_dynamics) if resolved_dynamics else {}
         if dynamic_values and not resolved_dynamics:
             eval_caster = ctx.caster_id if ctx is not None else caster_id
@@ -358,6 +381,32 @@ class ModifierEngine:
                     0.0,
                 )
                 parsed_dyn[dotnet_hash(k)] = val
+
+        parsed_strs: Dict[str, str] = {}
+        cfg_strs = cfg.get("DynamicStrings")
+        if isinstance(cfg_strs, Mapping):
+            for k, v in cfg_strs.items():
+                if isinstance(v, Mapping):
+                    parsed_strs[str(k)] = str(v.get("Value") or v.get("RawString") or "")
+                elif v is not None:
+                    parsed_strs[str(k)] = str(v)
+        if isinstance(dynamic_strings, Mapping):
+            for k, v in dynamic_strings.items():
+                if isinstance(v, Mapping) and v.get("Custom"):
+                    ck = str(v.get("Key") or "")
+                    cval = ctx.custom_strings.get(ck) if ctx is not None else None
+                    if cval is None:
+                        cval = getattr(self.rt, "entity_dynamic_strings", {}).get(caster_id, {}).get(ck, "")
+                    parsed_strs[str(k)] = str(cval)
+                elif isinstance(v, Mapping):
+                    raw_v = v.get("Value") if "Value" in v else v.get("RawString", "")
+                    raw_s = str(raw_v or "")
+                    if ctx is not None and raw_s in ctx.custom_strings:
+                        parsed_strs[str(k)] = ctx.custom_strings[raw_s]
+                    else:
+                        parsed_strs[str(k)] = raw_s
+                elif v is not None:
+                    parsed_strs[str(k)] = str(v)
 
         # 检查 Stacking 碰撞
         existing_list = self.get_modifiers(owner_id, mod_name)
@@ -423,6 +472,8 @@ class ModifierEngine:
             if eff_life is not None:
                 mod.life_time = eff_life
             mod.dynamic_values.update(parsed_dyn)
+            if parsed_strs:
+                mod.custom_strings.update(parsed_strs)
             if ability_name:
                 mod.ability_name = ability_name
             if "HPAddedRatio" in mod.properties or "HPDelta" in mod.properties:
@@ -456,6 +507,7 @@ class ModifierEngine:
                 behavior_flags=set(cfg.get("BehaviorFlagList", [])),
                 halo_parent_uid=halo_parent_uid,
                 _spawn_order=order,
+                custom_strings=parsed_strs,
             )
             self.by_owner.setdefault(owner_id, []).append(mod)
             self.by_uid[uid] = mod
@@ -484,6 +536,7 @@ class ModifierEngine:
             ability_name=mod.ability_name,
             modifier_owner_id=owner_id,
             modifier_instance=mod,
+            custom_strings=dict(mod.custom_strings),
         )
         if is_new:
             self.dispatch_modifier_callbacks(mod, "OnCreate", mod_ctx)
@@ -513,6 +566,7 @@ class ModifierEngine:
                     callback_modifier_name=mod_name,
                     callback_behavior_flags=tuple(mod.behavior_flags),
                     callback_status_type=mod_status_type,
+                    callback_modifier_instance=mod,
                 )
                 self.dispatch_event(
                     "OnListenModifierAdd",
@@ -521,6 +575,7 @@ class ModifierEngine:
                     callback_modifier_name=mod_name,
                     callback_behavior_flags=tuple(mod.behavior_flags),
                     callback_status_type=mod_status_type,
+                    callback_modifier_instance=mod,
                 )
             self.dispatch_event(
                 "OnModifierOnStack",
@@ -530,6 +585,7 @@ class ModifierEngine:
                 callback_modifier_name=mod_name,
                 callback_behavior_flags=tuple(mod.behavior_flags),
                 callback_status_type=mod_status_type,
+                callback_modifier_instance=mod,
                 exclude_modifier_uid=mod.uid,
             )
             self.dispatch_event(
@@ -539,6 +595,7 @@ class ModifierEngine:
                 callback_modifier_name=mod_name,
                 callback_behavior_flags=tuple(mod.behavior_flags),
                 callback_status_type=mod_status_type,
+                callback_modifier_instance=mod,
                 exclude_modifier_uid=mod.uid,
             )
             self._dirty_apc_entities.add(owner_id)
@@ -578,6 +635,10 @@ class ModifierEngine:
             sub_name = sub.get("Name")
             if not sub_name:
                 continue
+            sub_pred = sub.get("Predicate")
+            if isinstance(sub_pred, dict) and not self.rt.executor.eval_predicate(sub_pred, mod_ctx):
+                continue
+            ref_name = str(sub.get("ReferenceModifierName") or "")
             targets = resolve_target_type(sub.get("TargetType"), mod_ctx)
             is_halo = bool(sub.get("IsHaloStatus", False))
             existing_links = {(t, n, u) for (t, n, u) in mod.sub_modifier_links}
@@ -591,6 +652,7 @@ class ModifierEngine:
                     life_time=None,
                     ctx=mod_ctx,
                     halo_parent_uid=mod.uid,
+                    reference_mod_name=ref_name,
                 )
                 if child is not None:
                     child.is_halo = is_halo
@@ -617,6 +679,7 @@ class ModifierEngine:
                 ability_name=mod.ability_name,
                 modifier_owner_id=mod.owner_id,
                 modifier_instance=mod,
+                custom_strings=dict(mod.custom_strings),
             )
             for sub in add_cfg.get("SubModifierList", []):
                 if not isinstance(sub, dict) or not sub.get("IsHaloStatus"):
@@ -624,6 +687,10 @@ class ModifierEngine:
                 sub_name = sub.get("Name")
                 if not sub_name:
                     continue
+                sub_pred = sub.get("Predicate")
+                if isinstance(sub_pred, dict) and not self.rt.executor.eval_predicate(sub_pred, mod_ctx):
+                    continue
+                ref_name = str(sub.get("ReferenceModifierName") or "")
                 targets = resolve_target_type(sub.get("TargetType"), mod_ctx)
                 if new_entity_id in targets and not self.has_modifier(new_entity_id, sub_name, mod.caster_id):
                     child = self.add_modifier(
@@ -634,6 +701,7 @@ class ModifierEngine:
                         dynamic_values=sub.get("DynamicValues"),
                         ctx=mod_ctx,
                         halo_parent_uid=mod.uid,
+                        reference_mod_name=ref_name,
                     )
                     if child is not None:
                         child.is_halo = True
@@ -716,6 +784,7 @@ class ModifierEngine:
             ability_name=mod.ability_name,
             modifier_owner_id=mod.owner_id,
             modifier_instance=mod,
+            custom_strings=dict(mod.custom_strings),
         )
         self.dispatch_modifier_callbacks(mod, "OnDestroy", mod_ctx)
 
@@ -724,6 +793,16 @@ class ModifierEngine:
             child = self.by_uid.get(child_uid)
             if child is not None and not child._destroyed:
                 self.destroy_modifier(child, reason=reason)
+
+        # 级联拆除 AdditionConfig.DependencyOnRemove 依赖该 Modifier 的同实体状态
+        if not self.has_modifier(mod.owner_id, mod.name):
+            for dep_mod in list(self.get_modifiers(mod.owner_id)):
+                if dep_mod._destroyed:
+                    continue
+                d_add = dep_mod.config.get("AdditionConfig")
+                d_rem = d_add.get("DependencyOnRemove") if isinstance(d_add, dict) else None
+                if isinstance(d_rem, dict) and str(d_rem.get("DependentModifier") or "") == mod.name:
+                    self.destroy_modifier(dep_mod, reason=reason)
 
         # 从索引和 StatusManager 摘除
         self.by_uid.pop(mod.uid, None)
@@ -753,6 +832,7 @@ class ModifierEngine:
             callback_modifier_name=mod.name,
             callback_behavior_flags=tuple(mod.behavior_flags),
             callback_status_type=mod_status_type,
+            callback_modifier_instance=mod,
         )
         self.dispatch_event(
             "OnListenModifierRemove",
@@ -761,6 +841,7 @@ class ModifierEngine:
             callback_modifier_name=mod.name,
             callback_behavior_flags=tuple(mod.behavior_flags),
             callback_status_type=mod_status_type,
+            callback_modifier_instance=mod,
         )
         if mod.owner_id != "__LEVEL__":
             self.check_property_changes(mod.owner_id)
@@ -782,7 +863,7 @@ class ModifierEngine:
         if self.has_behavior_flag(owner_id, "KeepAllModifierOnDeathRattle"):
             return
         for m in list(self.get_modifiers(owner_id)):
-            if "KeepOnDeathrattle" not in m.behavior_flags:
+            if "KeepOnDeathrattle" not in m.behavior_flags and "Deathrattle" not in m.behavior_flags:
                 self.destroy_modifier(m)
 
     def stack_property(
@@ -927,6 +1008,11 @@ class ModifierEngine:
             "CriticalDamageBase": float(ent.crit_dmg),
             "BreakDamageAddedRatioBase": float(port.stat(entity_id, StatType.BREAK_EFFECT)),
             "AllDamageTypeAddedRatio": float(port.stat(entity_id, StatType.DMG_BOOST)),
+            "ElationDamageAddedRatio": float(port.stat(entity_id, StatType.ELATION)),
+            "ElationDamageAddedRatioBase": float(
+                port.stat(entity_id, StatType.ELATION, exclude_tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,))
+            ),
+            "ElationDamageExtraAddedRatio": float(port.stat(entity_id, StatType.ELATION_EXTRA)),
         }
 
     def get_entity_property(
@@ -988,12 +1074,43 @@ class ModifierEngine:
         if prop_name == "HPRatio":
             m = float(ent.max_hp) if used_override else float(port.max_hp(entity_id))
             return float(ent.current_hp / m) if m > 0 else 1.0
-        if prop_name == "CriticalChanceBase":
+        if prop_name in ("CriticalChanceBase", "CriticalChance"):
             return float(ent.crit_rate)
-        if prop_name == "CriticalDamageBase":
+        if prop_name in ("CriticalDamageBase", "CriticalDamage"):
             return float(ent.crit_dmg)
         if prop_name == "CriticalDamageConvert":
             return sum(m.convert_properties.get("CriticalDamageBase", 0.0) for m in self.get_modifiers(entity_id))
+        if prop_name == "AttackConvert":
+            return sum(m.convert_properties.get("Attack", 0.0) for m in self.get_modifiers(entity_id))
+        if prop_name in ("SpeedAddedRatio", "SpeedDelta"):
+            return sum(float(m.properties.get(prop_name, 0.0)) for m in self.get_modifiers(entity_id))
+        if prop_name == "ElationDamageAddedRatio":
+            return float(port.stat(entity_id, StatType.ELATION))
+        if prop_name == "ElationDamageAddedRatioBase":
+            return float(
+                port.stat(entity_id, StatType.ELATION, exclude_tags=(StatusTag.EXCLUDE_FROM_STAT_TRANSFERS,))
+            )
+        if prop_name == "ElationDamageAddedRatioConvert":
+            return sum(
+                m.convert_properties.get("ElationDamageAddedRatioBase", 0.0)
+                for m in self.get_modifiers(entity_id)
+            )
+        if prop_name == "ElationDamageExtraAddedRatio":
+            return float(port.stat(entity_id, StatType.ELATION_EXTRA))
+        if prop_name == "ElationEchoPoint":
+            return sum(float(m.properties.get("ElationEchoPoint", 0.0)) for m in self.get_modifiers(entity_id))
+        if prop_name == "AdditionalBP":
+            return float(self.rt.entity_boost_points.get(entity_id, 0.0))
+        if prop_name in ("CurrentSpecialSP", "CurrentSP"):
+            return float(getattr(ent, "energy", 0.0))
+        if prop_name in ("MaxSpecialSP", "MaxSP"):
+            return float(getattr(ent, "max_energy", 0.0))
+        if prop_name == "CurExtraSpecialSP":
+            return float(getattr(ent, "extra_special_sp", 0.0))
+        if prop_name == "MaxExtraSpecialSP":
+            return sum(float(m.properties.get("MaxExtraSpecialSP", 0.0)) for m in self.get_modifiers(entity_id))
+        if prop_name == "Level":
+            return float(getattr(ent, "level", 80) or 80)
         if prop_name == "HealRatioBase":
             return float(port.stat(entity_id, StatType.OUTGOING_HEALING))
         if prop_name == "HealRatioConvert":
@@ -1025,13 +1142,6 @@ class ModifierEngine:
             apcs = mod.config.get("OnAbilityPropertyChange")
             if not isinstance(apcs, list):
                 continue
-            mod_ctx = ExecutionContext(
-                runtime=self.rt,
-                caster_id=mod.caster_id,
-                ability_name=mod.ability_name,
-                modifier_owner_id=mod.owner_id,
-                modifier_instance=mod,
-            )
             for idx_apc, apc in enumerate(apcs):
                 prop_name = apc.get("Property", "")
                 if not prop_name:
@@ -1043,6 +1153,15 @@ class ModifierEngine:
                 prev_val = self._last_apc_val.get(apc_key)
                 changed = prev_val is None or abs(cur_val - prev_val) > 1e-6
                 self._last_apc_val[apc_key] = cur_val
+                mod_ctx = ExecutionContext(
+                    runtime=self.rt,
+                    caster_id=mod.caster_id,
+                    ability_name=mod.ability_name,
+                    modifier_owner_id=mod.owner_id,
+                    modifier_instance=mod,
+                    change_value=float(cur_val - prev_val) if prev_val is not None else 0.0,
+                    custom_strings=dict(mod.custom_strings),
+                )
 
                 self._checking_apc.add(apc_key)
                 try:
@@ -1089,10 +1208,19 @@ class ModifierEngine:
                 if now_in:
                     self.rt.execute_tasks(rng.get("OnEnterRange", []), mod_ctx)
 
-    def check_dynamic_value_changes(self, owner_id: str, key_hash: int, old_val: float, new_val: float) -> None:
-        """触发订阅了 OnDynamicValueChange 的监听（如晴歌 HyperValue 同步）。"""
-        for mod in list(self.by_uid.values()):
-            if mod._destroyed:
+    def check_dynamic_value_changes(
+        self,
+        owner_id: str,
+        key_hash: int,
+        old_val: float,
+        new_val: float,
+        *,
+        modifier: Optional[VMModifierInstance] = None,
+    ) -> None:
+        """触发订阅了 OnDynamicValueChange 的监听（如晴歌 HyperValue 同步、Modifier 局部动态值监听）。"""
+        mods_to_scan = [modifier] if modifier is not None else list(self.by_uid.values())
+        for mod in mods_to_scan:
+            if mod is None or mod._destroyed:
                 continue
             dvcs = mod.config.get("OnDynamicValueChange")
             if not isinstance(dvcs, list):
@@ -1103,17 +1231,20 @@ class ModifierEngine:
                 ability_name=mod.ability_name,
                 modifier_owner_id=mod.owner_id,
                 modifier_instance=mod,
+                change_value=float(new_val - old_val),
+                custom_strings=dict(mod.custom_strings),
             )
             for idx_dvc, dvc in enumerate(dvcs):
                 k = dvc.get("Key", {})
                 target_h = int(k.get("Hash", 0)) if isinstance(k, dict) else 0
                 if target_h != key_hash:
                     continue
-                scope = dvc.get("ContextScope", "")
-                if scope == "ContextCaster" and mod.caster_id != owner_id:
-                    continue
-                if scope != "ContextCaster" and mod.owner_id != owner_id:
-                    continue
+                if modifier is None:
+                    scope = dvc.get("ContextScope", "")
+                    if scope == "ContextCaster" and mod.caster_id != owner_id:
+                        continue
+                    if scope != "ContextCaster" and mod.owner_id != owner_id:
+                        continue
                 for idx_rng, rng in enumerate(dvc.get("Ranges", [])):
                     lo = eval_dynamic_float(rng.get("Min"), lambda h: self._resolve_mod_hash(mod, h), -1e18)
                     hi = eval_dynamic_float(rng.get("Max"), lambda h: self._resolve_mod_hash(mod, h), 1e18)
@@ -1143,6 +1274,7 @@ class ModifierEngine:
                 modifier_owner_id=mod.owner_id,
                 modifier_instance=mod,
                 change_value=delta,
+                custom_strings=dict(mod.custom_strings),
             )
             for idx_rng, rng in enumerate(epcs):
                 if not isinstance(rng, dict):
@@ -1164,7 +1296,7 @@ class ModifierEngine:
         """按官方 LifeStepMoment 衰减 Modifier 剩余回合数（如 ModifierPhase1End / TurnEnd）。"""
         skip_set = getattr(self, "_skip_turn_end_uids", None) if moment == "TurnEnd" else None
         for mod in list(self.by_uid.values()):
-            if mod._destroyed or mod.life_time is None:
+            if mod._destroyed or mod.life_time is None or mod.life_time < 0.0:
                 continue
             # ModifierPhase1End 与 TurnEnd 都在 Caster 或 Owner 对应时机扣减
             # 注：风堇雨过天晴 LifeStepMoment=ModifierPhase1End 挂在风堇自身 (Caster==Owner==风堇)
@@ -1215,6 +1347,7 @@ class ModifierEngine:
                 modifier_instance=mod,
                 param_entity_id=param_entity_id,
                 param_entity2_id=param_entity2_id,
+                custom_strings=dict(mod.custom_strings),
             )
             self.rt.execute_tasks(tasks, ctx)
 
@@ -1235,11 +1368,13 @@ class ModifierEngine:
         callback_modifier_name: str = "",
         callback_behavior_flags: Tuple[str, ...] = (),
         callback_status_type: str = "",
+        callback_modifier_instance: Optional[VMModifierInstance] = None,
         exclude_modifier_uid: Optional[int] = None,
         change_value: float = 0.0,
         current_skill_type: str = "",
         current_attack_type: str = "",
         param_flags: Tuple[str, ...] = (),
+        param_strings: Tuple[str, ...] = (),
     ) -> None:
         """收集所有订阅该事件的 Modifier 回调，严格按 Priority 升序 (-92 -> -80 -> 0 -> +N) 执行。"""
         entries: List[Tuple[int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
@@ -1279,9 +1414,55 @@ class ModifierEngine:
                 callback_modifier_name=callback_modifier_name,
                 callback_behavior_flags=callback_behavior_flags,
                 callback_status_type=callback_status_type,
+                callback_modifier_instance=callback_modifier_instance,
                 change_value=change_value,
                 current_skill_type=current_skill_type,
                 current_attack_type=current_attack_type,
                 param_flags=param_flags,
+                param_strings=param_strings,
+                custom_strings=dict(mod.custom_strings),
             )
             self.rt.execute_tasks(tasks, ctx)
+
+    def intercept_team_block_damage(self, target_id: str, raw_dmg: float) -> float:
+        """拦截 TeamBlock 类型 Modifier 对我方受击伤害的抵消（消耗 MDF_TeamBlockValue 并触发回调）。"""
+        if raw_dmg <= 0.0:
+            return raw_dmg
+        for m in list(self.by_uid.values()):
+            if m._destroyed or "TeamBlock" not in m.behavior_flags:
+                continue
+            cur = float(getattr(m, "team_block_cur", 0.0))
+            if cur <= 0.0:
+                continue
+            pred = getattr(m, "team_block_predicate", None)
+            if pred is not None:
+                p_ctx = ExecutionContext(
+                    runtime=self.rt,
+                    caster_id=m.caster_id,
+                    ability_name=m.ability_name,
+                    modifier_owner_id=m.owner_id,
+                    modifier_instance=m,
+                    param_entity_id=target_id,
+                )
+                if not self.rt.executor.eval_predicate(pred, p_ctx):
+                    continue
+            rate = max(0.0, min(1.0, float(getattr(m, "team_block_rate", 1.0))))
+            absorbed = min(cur, raw_dmg * rate)
+            if absorbed > 0.0:
+                new_val = max(0.0, cur - absorbed)
+                setattr(m, "team_block_cur", new_val)
+                raw_dmg -= absorbed
+                self.rt.set_dynamic_value(m.owner_id, dotnet_hash("MDF_TeamBlockValue"), new_val, modifier=m)
+                cb_ctx = ExecutionContext(
+                    runtime=self.rt,
+                    caster_id=m.caster_id,
+                    ability_name=m.ability_name,
+                    modifier_owner_id=m.owner_id,
+                    modifier_instance=m,
+                    param_entity_id=target_id,
+                    change_value=-absorbed,
+                )
+                self.dispatch_modifier_callbacks(m, "OnModifierTeamBlockChange", cb_ctx)
+                if raw_dmg <= 0.0:
+                    break
+        return max(0.0, raw_dmg)

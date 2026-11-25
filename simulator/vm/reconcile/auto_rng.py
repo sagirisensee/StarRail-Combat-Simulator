@@ -37,9 +37,27 @@ def attach_auto_rng_plugin(
 
     # 2. 自动风行再动判定（流星铁鹰）
     windwalk_names: Set[str] = {meta.enemy_uid_map[u] for u in meta.windwalk_enemy_uids if u in meta.enemy_uid_map}
+    pending_windwalks: List[Tuple[float, str]] = [
+        (ww_av, meta.enemy_uid_map[u])
+        for ww_av, u in meta.windwalk_events
+        if u in meta.enemy_uid_map
+    ]
 
     def _enemy_windwalk_provider(eagle_name: str, generation: int, idx: int) -> bool:
-        return eagle_name in windwalk_names
+        if not meta.windwalk_events:
+            return eagle_name in windwalk_names
+        cur_av = float(getattr(sim, "current_av", 0.0) or 0.0)
+        ent = sim.get_entity(eagle_name) if hasattr(sim, "get_entity") else None
+        next_av = cur_av + float(ent.remaining_av) if ent is not None else cur_av
+        for i, (ww_av, ww_name) in enumerate(pending_windwalks):
+            if ww_name != eagle_name:
+                continue
+            if ww_av < cur_av - 0.15:
+                continue
+            if abs(next_av - ww_av) <= 5.0 or abs(cur_av - ww_av) <= 0.15:
+                pending_windwalks.pop(i)
+                return True
+        return False
 
     sim.enemy_windwalk_provider = _enemy_windwalk_provider
 
@@ -373,7 +391,46 @@ def attach_auto_rng_plugin(
 
         seq_idx = eff_hit_idx - 1 if (active_rec.first_memo_owner and eff_hit_idx > 0) else eff_hit_idx
         if 0 <= seq_idx < len(hit_seq):
-            return _find_ally(living, hit_seq[seq_idx])
+            cand_name = hit_seq[seq_idx]
+            if (
+                hit_idx == 0
+                and bool(getattr(sim, "_current_enemy_skill_is_blast", False))
+                and not active_rec.first_memo_owner
+            ):
+                # 扩散技能（如翼蛇形 Skill02 先飞相邻再打主目标）可能先记录相邻角色掉血；用原队伍站位邻接反推唯一主目标
+                slot_avatars = [
+                    e.name
+                    for e in getattr(sim, "entities", ())
+                    if not getattr(e, "is_enemy", False)
+                    and not getattr(e, "is_countdown", False)
+                    and not _is_memosprite(e)
+                ]
+                living_av_names = [e.name for e in living if not _is_memosprite(e)]
+                hit_av_set = {nm for nm in hit_seq if nm in slot_avatars}
+                # 离场(Departed)角色仍在站位中，可能记录受击信号；已阵亡且不在 hit_seq 中的角色不参与扩散命中集
+                active_slots = set(living_av_names) | hit_av_set
+                # 若存在未记录 CurrentHP 掉落但已产生受击回能的目标（如忆灵/未扣血角色），hit_av_set 不完整，不可用于邻接反推
+                sp_outside_hits = set(active_rec.sp_gain_counts) - hit_av_set
+                if (
+                    not sp_outside_hits
+                    and len(hit_av_set) >= 2
+                    and cand_name in hit_av_set
+                    and len(slot_avatars) >= 3
+                ):
+                    def _blast_cover(nm: str) -> Set[str]:
+                        idx_p = slot_avatars.index(nm)
+                        cov = {slot_avatars[idx_p]}
+                        if idx_p - 1 >= 0 and slot_avatars[idx_p - 1] in active_slots:
+                            cov.add(slot_avatars[idx_p - 1])
+                        if idx_p + 1 < len(slot_avatars) and slot_avatars[idx_p + 1] in active_slots:
+                            cov.add(slot_avatars[idx_p + 1])
+                        return cov
+
+                    if _blast_cover(cand_name) != hit_av_set:
+                        valid = [nm for nm in hit_av_set if _blast_cover(nm) == hit_av_set]
+                        if len(valid) == 1:
+                            cand_name = valid[0]
+            return _find_ally(living, cand_name)
 
         if hit_idx == 0 and not active_rec.had_hp_drop and active_rec.sp_gain_counts:
             memo_owner = next(iter(active_rec.sp_gain_counts.keys()))
@@ -415,11 +472,7 @@ def attach_auto_rng_plugin(
         rec = active_rec_by_av.get(cursor_key) or active_rec_by_av.get(av_key) or pool[min(max(0, cursor_by_av.get(cursor_key, 1) - 1), len(pool) - 1)]
         rec, _ = _resolve_sub_rec(rec, sub_hit_offset_by_key.get(cursor_key, 0))
 
-        extra_chars = (
-            list(rec.hit_allies)
-            if rec.first_memo_owner
-            else (rec.hit_allies[1:] if len(rec.hit_allies) > 1 else [])
-        )
+        extra_chars = list(rec.hit_allies)
         known_blasts: List[Any] = []
         for nm in extra_chars:
             ent = _find_ally(living, nm)
@@ -515,16 +568,23 @@ def attach_auto_rng_plugin(
         nm: u for u, nm in meta.enemy_uid_map.items()
     }
 
+    used_retarget_indices: Set[int] = set()
+
     def _enemy_retarget_provider(caster: Any, candidates: List[Any]) -> Optional[Any]:
         av = float(getattr(sim, "current_av", 0.0))
         cname = getattr(caster, "name", "")
-        for p_av, c_uid, v_uid in meta.enemy_retarget_picks:
-            expected_cname = meta.enemy_uid_map.get(c_uid) or team_uid_map.get(c_uid, "")
-            if abs(av - p_av) < 0.05 and expected_cname == cname:
-                vname = meta.enemy_uid_map.get(v_uid, "")
-                for ent in candidates:
-                    if getattr(ent, "name", "") == vname:
-                        return ent
+        cand_by_name = {getattr(ent, "name", ""): ent for ent in candidates}
+        for pass_used in (False, True):
+            for idx, (p_av, c_uid, v_uid) in enumerate(meta.enemy_retarget_picks):
+                if (idx in used_retarget_indices) != pass_used:
+                    continue
+                expected_cname = meta.enemy_uid_map.get(c_uid) or team_uid_map.get(c_uid, "")
+                if abs(av - p_av) < 0.05 and expected_cname == cname:
+                    vname = meta.enemy_uid_map.get(v_uid, "")
+                    if vname in cand_by_name:
+                        if not pass_used:
+                            used_retarget_indices.add(idx)
+                        return cand_by_name[vname]
         if len(candidates) > 1:
             av_key = round(av, 2)
             c_uid = enemy_name_to_uid.get(cname, 0)
@@ -542,6 +602,26 @@ def attach_auto_rng_plugin(
                 (getattr(candidates[0], "name", ""),),
             )
         return None
+
+    def _ally_retarget_provider(caster: Any, candidates: List[Any]) -> Optional[Any]:
+        if len(candidates) > 1:
+            av_key = round(float(getattr(sim, "current_av", 0.0)), 2)
+            cname = getattr(caster, "name", "")
+            c_uid = enemy_name_to_uid.get(cname, 0)
+            ov_key = (av_key, c_uid, "ally_retarget")
+            if ov_key in overrides and overrides[ov_key]:
+                chosen_name = overrides[ov_key][0]
+                for ent in candidates:
+                    if getattr(ent, "name", "") == chosen_name:
+                        return ent
+            _record_ambig(
+                av_key,
+                c_uid,
+                "ally_retarget",
+                [(getattr(c, "name", ""),) for c in candidates],
+                (getattr(candidates[0], "name", ""),),
+            )
+        return candidates[0] if candidates else None
 
     used_spawn_indices: Set[int] = set()
 
@@ -565,6 +645,25 @@ def attach_auto_rng_plugin(
     sim.target_provider = _target_provider
     sim.blast_target_provider = _blast_provider
     sim.enemy_retarget_provider = _enemy_retarget_provider
+    sim.ally_retarget_provider = _ally_retarget_provider
     sim.summon_id_provider = _summon_id_provider
+    if meta.random_config_draws:
+        used_draw_indices: Set[int] = set()
+
+        def _random_config_provider(caster_id: str, ability_name: str, tlist: Sequence[Any], weights: Sequence[float]) -> Optional[int]:
+            cur_av = float(getattr(sim, "current_av", 0.0) or 0.0)
+            caster_ent = sim.get_entity(caster_id) if hasattr(sim, "get_entity") else None
+            caster_uid = int(getattr(caster_ent, "avatar_id", 0) or 0) if caster_ent is not None else 0
+            if not caster_uid:
+                return None
+            for idx, (d_av, d_uid, d_branch) in enumerate(meta.random_config_draws):
+                if idx in used_draw_indices:
+                    continue
+                if d_uid == caster_uid and abs(cur_av - d_av) <= 0.25 and 0 <= d_branch < len(tlist):
+                    used_draw_indices.add(idx)
+                    return d_branch
+            return None
+
+        sim.random_config_provider = _random_config_provider
     if meta.gluttony_enemy_names:
         sim.gluttony_target_provider = lambda name: name in meta.gluttony_enemy_names

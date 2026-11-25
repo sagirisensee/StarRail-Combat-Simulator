@@ -428,9 +428,20 @@ class DataDrivenEnemyKit(EnemyKit):
                 picked = self._select_targets(sim, getattr(sk, "target_selector", "single"))
                 target_provider = getattr(sim, "target_provider", None)
                 if callable(target_provider):
-                    chosen = target_provider(attacker, living_allies, 0)
+                    prev_is_blast = getattr(sim, "_current_enemy_skill_is_blast", False)
+                    sim._current_enemy_skill_is_blast = bool(getattr(sk, "is_blast", False))
+                    try:
+                        chosen = target_provider(attacker, living_allies, 0)
+                    finally:
+                        sim._current_enemy_skill_is_blast = prev_is_blast
                     if chosen is not None:
                         picked = [chosen]
+                diag_cb_t = getattr(sim, "timeline_diag_cb", None)
+                if callable(diag_cb_t):
+                    diag_cb_t(
+                        "ETARG",
+                        f"{self.owner_id} sk={sk.skill_trigger_key} picked={[p.name for p in picked]}",
+                    )
                 if picked:
                     target_ids = (picked[0].name,)
 
@@ -836,6 +847,13 @@ class DataDrivenEnemyKit(EnemyKit):
                 if sk.is_passive or attacker is None:
                     continue
                 sim._pending_turn_reset_distance = STANDARD_ACTION_DISTANCE * float(getattr(sk, "delay_ratio", 1.0) or 1.0)
+                diag_cb = getattr(sim, "timeline_diag_cb", None)
+                if callable(diag_cb):
+                    diag_cb(
+                        "ESKILL",
+                        f"{self.owner_id} idx={action_idx} key={sk.skill_trigger_key} "
+                        f"can_om={can_one_more} rt_om={has_runtime_one_more}",
+                    )
                 resolved: Tuple[str, ...] = ()
                 if entry_ab and rt is not None:
                     resolved = self._execute_vm_skill(entry_ab, sim, sk, attacker)
@@ -857,14 +875,24 @@ class DataDrivenEnemyKit(EnemyKit):
                 if resolved and sk.skill_trigger_key in ("Skill01", "Skill03"):
                     self._marked_target = resolved[0]
 
+                has_om_after = rt is not None and rt.modifier_engine.has_modifier(self.owner_id, "OneMore")
+                has_next_sub_action = bool(
+                    attacker is not None
+                    and attacker.current_hp > 0.0
+                    and (
+                        (action_idx == 1 and (can_one_more or has_om_after))
+                        or (action_idx >= 2 and has_om_after)
+                    )
+                )
+
                 sched_pre = getattr(sim, "scheduler", None)
-                if (action_idx == 1 and can_one_more) or (sched_pre is not None and sched_pre.has_pending()):
+                if has_next_sub_action or (sched_pre is not None and sched_pre.has_pending()):
                     rt_sub = getattr(sim, "vm_runtime", None)
                     if rt_sub is not None:
                         rt_sub.modifier_engine.dispatch_event("OnListenBeforeTurnPhase1End", param_entity_id=self.owner_id)
 
                 sub_cb = getattr(sim, "on_enemy_sub_action_end", None)
-                if callable(sub_cb) and action_idx == 1 and can_one_more and attacker is not None and attacker.current_hp > 0.0:
+                if callable(sub_cb) and has_next_sub_action:
                     sched = getattr(sim, "scheduler", None)
                     prev_depth = getattr(sched, "_action_frame_depth", 0) if sched is not None else 0
                     if sched is not None and prev_depth > 0:

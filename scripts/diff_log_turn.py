@@ -28,6 +28,7 @@ from simulator.events import (
     BattleEvent,
     DamageAppliedEvent,
     EnemyDefeatedEvent,
+    HealAppliedEvent,
     TurnBeginEvent,
 )
 from simulator.vm.loader import GameDataLoader
@@ -53,7 +54,9 @@ def _print_summary(
     print(f"=== {log_path} | stage={meta.stage_id} | team={meta.team_names} | extra_buffs={extra_buffs} ===")
     print(
         f"  turn={r.turn_matched}/{r.turn_total}  ult={r.ult_matched}/{r.ult_total}  "
-        f"sp={r.sp_granted}  mem={r.memoria_granted}  pres={r.presence_grants}  forced={r.forced_or_failed}"
+        f"sp={r.sp_granted}  ult_e={r.ult_energy_granted:.2f}  "
+        f"mem={r.memoria_granted}  pres={r.presence_grants}  forced={r.forced_or_failed}  "
+        f"nc={sorted(r.non_crits)}"
     )
     print(f"  total_err={r.total_err * 100:.6f}%  max_turn_err={r.max_turn_err * 100:.6f}%")
     if r.enemy_hit_mismatches:
@@ -62,6 +65,10 @@ def _print_summary(
             print(f"    av={m.av:.2f} {m.enemy_name} log={m.log_hits} sim={m.sim_hits} skill={m.skill_key}")
     else:
         print("  enemy_hit_mismatches: []")
+    if getattr(r, "non_crit_details", None):
+        print(f"  non_crit_details ({len(r.non_crit_details)}):")
+        for det in r.non_crit_details:
+            print(f"    {det}")
     for td in r.turn_diffs:
         mark = "OK " if td.err <= threshold else "ERR"
         print(f"  [{mark}] av={td.av:6.2f}  gt={td.gt_total:13.2f}  sim={td.sim_total:13.2f}  err={td.err * 100:9.6f}%  atk={td.attackers}")
@@ -168,6 +175,8 @@ def _attach_sim_timeline_recorder(
             lines_out.append(f"  [ACT  ] av={av_val:6.2f} {ev.actor_name} kind={kind} name={ev.action_type}")
         elif isinstance(ev, EnemyDefeatedEvent):
             lines_out.append(f"  [DEAD ] av={av_val:6.2f} {ev.target_name} (by {ev.attacker_name})")
+        elif isinstance(ev, HealAppliedEvent):
+            lines_out.append(f"  [HEAL ] av={av_val:6.2f} {ev.source_name} -> {ev.target_name} amt={ev.amount:.2f}")
         elif isinstance(ev, DamageAppliedEvent):
             dtype = getattr(ev.damage_type, "value", str(ev.damage_type))
             atk_ent = sim.get_entity(ev.attacker_name)
@@ -178,6 +187,7 @@ def _attach_sim_timeline_recorder(
             if bd is not None:
                 red = float(getattr(bd, "reduction_mult", 1.0) or 1.0)
                 bar = float(getattr(bd, "barrier_mult", 1.0) or 1.0)
+                fat = float(getattr(bd, "fatigue_mult", 1.0) or 1.0)
                 bd_str = (
                     f" base={getattr(bd, 'base_dmg', 0.0):.1f}"
                     f" dmg%={getattr(bd, 'dmg_boost_mult', 1.0):.4f}"
@@ -190,11 +200,19 @@ def _attach_sim_timeline_recorder(
                     bd_str += f" red={red:.4f}"
                 if abs(bar - 1.0) > 1e-6:
                     bd_str += f" bar={bar:.4f}"
+                if abs(fat - 1.0) > 1e-6:
+                    bd_str += f" fat={fat:.4f}"
             lines_out.append(
                 f"  [DMG  ] av={av_val:6.2f} {ev.attacker_name} -> {ev.target_name} "
                 f"{dtype:<10s} dmg={ev.damage:12.2f} crit={ev.is_crit}{bd_str}"
             )
 
+    def _on_diag(tag: str, msg: str) -> None:
+        av_val = float(getattr(sim, "current_av", 0.0) or 0.0)
+        if abs(av_val - target_av) <= window:
+            lines_out.append(f"  [{tag:<6s}] av={av_val:6.2f} {msg}")
+
+    sim.timeline_diag_cb = _on_diag
     sim.event_bus.subscribe(BattleEvent, _on_ev)
 
 
@@ -205,10 +223,38 @@ def _print_sim_timeline_block(log_path: str, target_av: float, window: float, li
     print(f"  => SIM window player non-DoT total = {tot_dmg:,.2f}")
 
 
+def _parse_loadouts(raw: Optional[str]) -> Optional[Dict[int, Tuple[Any, ...]]]:
+    if not raw:
+        return None
+    out: Dict[int, Tuple[Any, ...]] = {}
+    for item in raw.split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split(":")
+        uid = int(parts[0])
+        eid = int(parts[1])
+        lc_id = int(parts[2])
+        lc_s = int(parts[3])
+        relics = []
+        if len(parts) > 4 and parts[4]:
+            for rp in parts[4].split("+"):
+                rid, cnt = rp.split("x")
+                relics.append((int(rid), int(cnt)))
+        out[uid] = (uid, eid, lc_id, lc_s, relics)
+    return out or None
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="GT vs SIM 快速诊断工具")
     parser.add_argument("logs", nargs="+", help="一个或多个 battle_logs/*.jsonl")
     parser.add_argument("--extra-maze-buffs", default="", help="逗号分隔的额外 MazeBuff ID（如 3031359）")
+    parser.add_argument("--team", default="", help="逗号分隔的队伍档案名覆盖（按 1..4 号位）")
+    parser.add_argument(
+        "--loadouts",
+        default="",
+        help="覆盖配装（格式 uid:eid:lc_id:lc_s:set1xN1+set2xN2，多角色分号分隔）",
+    )
     parser.add_argument("--av", type=float, default=None, help="聚焦检查指定 AV 窗口")
     parser.add_argument("--av-window", type=float, default=0.20, help="AV 窗口半径（默认 0.20）")
     parser.add_argument("--av-budget", type=float, default=None, help="截断模拟最大 AV")
@@ -219,6 +265,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     extra_buffs = _parse_extra_buffs(args.extra_maze_buffs)
+    team_override = [x.strip() for x in args.team.split(",") if x.strip()] or None
+    loadouts_override = _parse_loadouts(args.loadouts)
     eff_budget = args.av_budget
     if eff_budget is None and args.av is not None and not args.full:
         eff_budget = args.av + max(args.av_window, 0.2) + 0.3
@@ -227,13 +275,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     vm_loader = GameDataLoader()
 
     for lp in args.logs:
-        meta = extract_log_metadata(lp, db=char_db)
+        meta = extract_log_metadata(lp, db=char_db, team_override=team_override)
         show_timeline = bool(args.timeline and args.av is not None)
         sim_lines: List[str] = []
         tot_dmg = [0.0]
         on_sim_ready = None
         if show_timeline:
             _print_gt_timeline(lp, args.av, args.av_window)
+            for rec in meta.enemy_hits:
+                if abs(rec.av - args.av) <= args.av_window:
+                    subs = (
+                        f" subs={[list(sr.hit_allies) for sr in rec.sub_records]}"
+                        if rec.sub_records
+                        else ""
+                    )
+                    print(
+                        f"  [EHIT ] av={rec.av:6.2f} euid={rec.enemy_uid}({meta.enemy_uid_map.get(rec.enemy_uid, '?')}) "
+                        f"hits={list(rec.hit_allies)} sp={dict(rec.sp_gain_counts)} memo={rec.first_memo_owner}{subs}"
+                    )
 
             def _on_sim_ready(sim: Any) -> None:
                 sim_lines.clear()
@@ -248,6 +307,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             db=char_db,
             loader=vm_loader,
             meta=meta,
+            team_override=team_override,
+            loadouts=loadouts_override,
             extra_maze_buff_ids=extra_buffs,
             av_budget=eff_budget,
             threshold=args.threshold,
