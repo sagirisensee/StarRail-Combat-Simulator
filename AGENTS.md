@@ -149,7 +149,7 @@ $$\text{ElationDmg} = \text{ElationBase}(Lv) \times \text{Pct} \times (1 + \text
      ```powershell
      python -m simulator.vm.audit_vm_coverage
      ```
-4. **干净提交**：确认 `git status` 无遗留临时文件后提交。
+4. **干净提交并推送远端**：确认 `git status` 无遗留临时文件后提交；用户说“落盘”、“收尾”或要求提交进度时，默认在 `git commit` 后直接执行 `git push` 推送当前分支到远端（如 `origin/dev`），除非用户明确要求仅本地提交（方便跨设备无缝接续开发）。
 
 ---
 
