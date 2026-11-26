@@ -264,18 +264,33 @@ def resolve_player_and_servant_targets(
                 servant_euid = _servant_primary_euid(p_dmg_confirmed if p_dmg_confirmed else p_hit_euids)
                 if servant_euid is not None:
                     servant_targets_raw.setdefault(p_atk, []).append(servant_euid)
-        elif (
-            rec.primary_dmg_hits == 1
-            or (
-                (p_atk[1].startswith("UID_") or p_atk[1].startswith("BattleEvent_"))
-                and rec.primary_dmg_hits == 0
-                and len(set(p_hit_euids)) == 1
-            )
-        ) and (p_dmg_confirmed or p_hit_euids):
+        elif p_dmg_confirmed or p_hit_euids:
             av_eff = avatar_skill_effects.get(rec.skill_id, "")
-            if av_eff in ("SingleAttack", "") and rec.skill_type not in ("Ultra", "ElationDamage"):
-                pri_euid = p_dmg_confirmed[0] if p_dmg_confirmed else p_hit_euids[0]
-                player_enemy_targets_raw.setdefault(p_atk, []).append(pri_euid)
+            if rec.skill_type not in ("Ultra", "ElationDamage"):
+                if av_eff in ("SingleAttack", "") and (
+                    rec.primary_dmg_hits == 1
+                    or (
+                        (p_atk[1].startswith("UID_") or p_atk[1].startswith("BattleEvent_"))
+                        and rec.primary_dmg_hits == 0
+                        and len(set(p_hit_euids)) == 1
+                    )
+                ):
+                    pri_euid = p_dmg_confirmed[0] if p_dmg_confirmed else p_hit_euids[0]
+                    player_enemy_targets_raw.setdefault(p_atk, []).append(pri_euid)
+                elif av_eff == "Blast":
+                    inferred_pri: Optional[int] = None
+                    if len(p_sp_euids) == 1:
+                        inferred_pri = p_sp_euids[0]
+                    elif len(p_dmg_confirmed) == 1:
+                        inferred_pri = p_dmg_confirmed[0]
+                    elif len(p_hit_dmgs) >= 2:
+                        sorted_dmgs = sorted(p_hit_dmgs.items(), key=lambda kv: kv[1], reverse=True)
+                        if sorted_dmgs[1][1] > 0.0 and sorted_dmgs[0][1] > sorted_dmgs[1][1] * 1.4:
+                            inferred_pri = sorted_dmgs[0][0]
+                    elif len(set(p_hit_euids)) == 1:
+                        inferred_pri = p_hit_euids[0]
+                    if inferred_pri is not None:
+                        player_enemy_targets_raw.setdefault(p_atk, []).append(inferred_pri)
 
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = {}
     for k_pt, euids in player_enemy_targets_raw.items():

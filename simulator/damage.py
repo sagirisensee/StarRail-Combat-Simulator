@@ -98,6 +98,7 @@ class DamageRequest:
     extra_elation_extra: float = 0.0    # Attacker_ElationDamageExtraAddedRatio (增笑)
     ignore_dmg_boost: bool = False      # 击破持续伤害/纠缠跳过攻击者增伤区 (ByBreakDamage / ByPureDamage)
     property_source: Optional[Any] = None  # OverrideDamagePropertySource: 决定攻击端面板/双暴/穿透/欢愉度等属性来源
+    element: str = ""                   # 本次攻击伤害元素属性（用于隔离非本属性异色持续伤害的球/行迹属伤加成）
 
 
 class DamageCalculator:
@@ -108,6 +109,15 @@ class DamageCalculator:
         stat_src = req.property_source or req.attacker
         atk_stat = stat_src.base_atk
         base_dmg_boost = float(getattr(stat_src, "base_dmg_boost", 0.0) or 0.0)
+        elem_dmg_boost = float(getattr(stat_src, "base_elem_dmg_boost", 0.0) or 0.0)
+        if elem_dmg_boost != 0.0:
+            _elem_alias = {"thunder": "lightning", "electric": "lightning"}
+            req_elem = str(getattr(req, "element", "") or "").strip().lower()
+            src_elem = str(getattr(stat_src, "element", "") or "").strip().lower()
+            req_norm = _elem_alias.get(req_elem, req_elem)
+            src_norm = _elem_alias.get(src_elem, src_elem)
+            if not req_norm or not src_norm or req_norm == src_norm:
+                base_dmg_boost += elem_dmg_boost
         sim_ctx = getattr(req.attacker, "simulator", None) or getattr(stat_src, "simulator", None)
         if sim_ctx:
             mgr = sim_ctx.status_mgr

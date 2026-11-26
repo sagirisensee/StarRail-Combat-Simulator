@@ -334,6 +334,8 @@ class StageFactory:
     ) -> None:
         self.stage_loader = stage_loader or StageDataLoader(tbgd_root=tbgd_root)
         self.game_loader = game_loader or GameDataLoader(data_root=str(self.stage_loader.tbgd_root))
+        self._stage_cache: Dict[int, BuiltStageSpec] = {}
+        self._ai_loader: Any = None
 
     def build_battle_event(self, be_spec: CompiledBattleEventSpec) -> CompiledBattleEventAbility:
         """Resolve official ``ConfigAbility`` ASTs for a ``CompiledBattleEventSpec``."""
@@ -378,6 +380,9 @@ class StageFactory:
 
     def build_stage(self, stage_id: int) -> BuiltStageSpec:
         """Build a complete ``BuiltStageSpec`` for ``stage_id``."""
+        cached = self._stage_cache.get(stage_id)
+        if cached is not None:
+            return cached
         compiled_stage = self.stage_loader.load_stage(stage_id)
         built_waves: List[BuiltWaveSpec] = []
 
@@ -397,7 +402,7 @@ class StageFactory:
             )
 
         built_bes = tuple(self.build_battle_event(be) for be in compiled_stage.battle_events)
-        return BuiltStageSpec(
+        spec = BuiltStageSpec(
             stage_id=compiled_stage.stage_id,
             stage_name=compiled_stage.stage_name,
             stage_type=compiled_stage.stage_type,
@@ -409,3 +414,5 @@ class StageFactory:
             battle_events=built_bes,
             source_spec=compiled_stage,
         )
+        self._stage_cache[stage_id] = spec
+        return spec

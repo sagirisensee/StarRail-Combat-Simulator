@@ -250,6 +250,7 @@ class LogMetadata:
     enemy_uid_map: Dict[int, str] = field(default_factory=dict)
     ally_ult_targets: Dict[str, List[str]] = field(default_factory=dict)
     enemy_retarget_picks: List[Tuple[float, int, int]] = field(default_factory=list)
+    ally_retarget_picks: List[Tuple[float, int, int]] = field(default_factory=list)
     random_config_draws: List[Tuple[float, int, int]] = field(default_factory=list)
     player_enemy_targets: Dict[Tuple[float, str], List[str]] = field(default_factory=dict)
     servant_targets: Dict[Tuple[float, str], List[Optional[str]]] = field(default_factory=dict)
@@ -301,12 +302,14 @@ class ReconcileReport:
     total_err: float
     max_turn_err: float
     turn_diffs: List[TurnDiffEntry]
+    dot_diffs: List[TurnDiffEntry] = field(default_factory=list)
     inferred_memosprite_hits: List[InferredMemospriteHit] = field(default_factory=list)
     unresolved_ambiguous_slots: int = 0
     non_crits: Set[Tuple[int, int]] = field(default_factory=set)
     enemy_hit_mismatches: List[EnemyHitMismatch] = field(default_factory=list)
     ult_energy_granted: float = 0.0
     non_crit_details: List[str] = field(default_factory=list)
+    dot_rng_details: List[str] = field(default_factory=list)
 
 
 def _extract_tag(log_path: str) -> str:

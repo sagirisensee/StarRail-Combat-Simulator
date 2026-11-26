@@ -17,7 +17,9 @@ from simulator.vm.wave_modes import AnomalyWaveMode, MoCWaveMode
 from simulator.status import StatType
 from simulator.vm.enemy_kit import DataDrivenEnemyKit
 from simulator.vm.stage_ai import CompiledMonsterAISpec, StageAILoader
+from simulator.vm.stage_factory import StageFactory
 from simulator.vm.stage_runner import StageRunner
+from simulator.vm.target_alias import ExecutionContext
 
 
 class DataDrivenStageDirector:
@@ -885,12 +887,24 @@ class DataDrivenStageDirector:
                 owner_id=monster_name,
                 param_entity_id=monster_name,
             )
-            if rt.modifier_engine.has_behavior_flag(monster_name, "CustomEvent_MonsterChangePhaseTrigger"):
-                rt.modifier_engine.dispatch_event(
-                    "OnCustomEvent",
-                    owner_id=monster_name,
+            change_phase_mods = [
+                m
+                for m in rt.modifier_engine.get_modifiers(monster_name)
+                if not m._destroyed and "CustomEvent_MonsterChangePhaseTrigger" in m.behavior_flags
+            ]
+            for mod in change_phase_mods:
+                if mod._destroyed:
+                    continue
+                cb_ctx = ExecutionContext(
+                    runtime=rt,
+                    caster_id=mod.caster_id,
+                    ability_name=mod.ability_name,
+                    modifier_owner_id=mod.owner_id,
+                    modifier_instance=mod,
                     param_entity_id=monster_name,
+                    custom_strings=dict(mod.custom_strings),
                 )
+                rt.modifier_engine.dispatch_modifier_callbacks(mod, "OnCustomEvent", cb_ctx)
         return new_phase
 
     def after_step(self) -> None:
@@ -944,13 +958,13 @@ class DataDrivenStageDirector:
 
         # 4. Wave clearance & transition
         living_formation_enemies = [
-            e for e in self.runner.living_enemies() if not getattr(e, "_not_in_formation", False)
+            e for e in self.runner.living_enemies() if not getattr(e, "_is_stage_controller", False)
         ]
         if not living_formation_enemies:
             # 清理非参战控制器实体（如 8003060 虚构集合体）
             rt_clr = getattr(self.sim, "vm_runtime", None)
             for mrs in list(self.runner.state.enemies):
-                if getattr(mrs.entity, "_not_in_formation", False):
+                if getattr(mrs.entity, "_is_stage_controller", False):
                     mrs.entity.current_hp = 0.0
                     if rt_clr is not None:
                         rt_clr.modifier_engine.destroy_all_for_entity(mrs.entity.name)
@@ -1027,6 +1041,7 @@ def build_data_driven_stage(
     entry_toughness: float = 10.0,
     defer_opening_drain: bool = False,
     initial_energies: Optional[Mapping[Union[int, str], float]] = None,
+    stage_factory: Optional[StageFactory] = None,
 ) -> Tuple[TurnSimulator, DataDrivenStageDirector]:
     """Build a ``(TurnSimulator, DataDrivenStageDirector)`` purely from official stage tables."""
     for member in team:
@@ -1046,8 +1061,11 @@ def build_data_driven_stage(
         elif getattr(member, "energy", 0.0) == 0.0:
             member.energy = member.max_energy * 0.5
 
-    runner = StageRunner(stage_id)
-    ai_loader = StageAILoader(stage_loader=runner.factory.stage_loader)
+    runner = StageRunner(stage_id, factory=stage_factory)
+    ai_loader = getattr(runner.factory, "_ai_loader", None)
+    if ai_loader is None:
+        ai_loader = StageAILoader(stage_loader=runner.factory.stage_loader)
+        runner.factory._ai_loader = ai_loader
     wave0_enemies = runner.start_stage()
 
     entry_elem: Optional[str] = None

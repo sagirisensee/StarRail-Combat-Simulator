@@ -127,7 +127,7 @@ class VMModifierInstance:
             if not isinstance(entry, Mapping):
                 continue
             dk = entry.get("DynamicKey")
-            if not isinstance(dk, Mapping):
+            if not isinstance(dk, dict) and not isinstance(dk, Mapping):
                 continue
             h = int(dk["Hash"]) if "Hash" in dk else (dotnet_hash(str(dk["Value"])) if "Value" in dk else None)
             if h == hash_val:
@@ -151,6 +151,10 @@ class ModifierEngine:
         # owner_id -> list[VMModifierInstance]
         self.by_owner: Dict[str, List[VMModifierInstance]] = {}
         self.by_uid: Dict[int, VMModifierInstance] = {}
+        self._by_event: Dict[str, Dict[int, VMModifierInstance]] = {}
+        self._dvc_mods: Dict[int, VMModifierInstance] = {}
+        self._cfg_cb_cache: Dict[int, Tuple[Dict[str, Any], Dict[str, Tuple[Tuple[int, int, List[Dict[str, Any]]], ...]]]] = {}
+        self._mod_cfg_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
         # 追踪实体上一次属性采样值（用于 OnAbilityPropertyChange）
         self._last_props: Dict[Tuple[str, str], float] = {}
         self._last_apc_val: Dict[Tuple[int, int], float] = {}
@@ -159,6 +163,30 @@ class ModifierEngine:
         self._dirty_apc_entities: Set[str] = set()
         self._deferred_prev_props_by_uid: Dict[int, Dict[str, float]] = {}
         self._active_listener_events: Set[Tuple[int, str]] = set()
+
+    def _get_cfg_callbacks(
+        self, cfg: Dict[str, Any]
+    ) -> Dict[str, Tuple[Tuple[int, int, List[Dict[str, Any]]], ...]]:
+        """缓存 Modifier 配置按事件名索引的 `(cb_idx, prio, CallbackConfig)` 元组。"""
+        cid = id(cfg)
+        entry = self._cfg_cb_cache.get(cid)
+        if entry is not None and entry[0] is cfg:
+            return entry[1]
+        cb_list = cfg.get("_CallbackList")
+        if not cb_list:
+            res: Dict[str, Tuple[Tuple[int, int, List[Dict[str, Any]]], ...]] = {}
+            self._cfg_cb_cache[cid] = (cfg, res)
+            return res
+        grouped: Dict[str, List[Tuple[int, int, List[Dict[str, Any]]]]] = {}
+        for cb_idx, cb in enumerate(cb_list):
+            ev = cb.get("Event")
+            if not ev:
+                continue
+            prio = int(cb.get("Priority", 0))
+            grouped.setdefault(ev, []).append((cb_idx, prio, cb.get("CallbackConfig", [])))
+        res = {ev: tuple(items) for ev, items in grouped.items()}
+        self._cfg_cb_cache[cid] = (cfg, res)
+        return res
 
     def all_modifiers(self) -> List[VMModifierInstance]:
         return list(self.by_uid.values())
@@ -213,6 +241,12 @@ class ModifierEngine:
         for m in self.get_modifiers(owner_id):
             if flag in m.behavior_flags:
                 return True
+        lc = getattr(self.rt, "lifecycle", None)
+        if lc is not None and getattr(lc, "active_listen_die_entity", None) == owner_id:
+            sim = getattr(self.rt, "sim", None)
+            ent = sim.get_entity(owner_id) if sim is not None else None
+            if ent is not None and flag in getattr(ent, "_pre_deathrattle_behavior_flags", ()):
+                return True
         return False
 
     def is_skill_type_disabled(self, owner_id: str, skill_type: str) -> bool:
@@ -232,11 +266,14 @@ class ModifierEngine:
         category: Optional[str] = None,
     ):
         """产出实体当前生效的 VM Modifier 属性项 `(StatType, ModifierOp, float)`，消除双账本镜像。"""
+        mods = self.by_owner.get(entity_name)
+        if not mods:
+            return
         exclude_transfers = StatusTag.EXCLUDE_FROM_STAT_TRANSFERS in exclude_tags
         sim = getattr(self.rt, "sim", None)
         ent = sim.get_entity(entity_name) if sim is not None else None
         is_enemy_ent = bool(getattr(ent, "is_enemy", False)) if ent is not None else False
-        for mod in self.by_owner.get(entity_name, ()):
+        for mod in mods:
             if mod._stats_detached:
                 continue
             props = self._deferred_prev_props_by_uid.get(mod.uid)
@@ -453,20 +490,33 @@ class ModifierEngine:
         ent.damage_res = res
 
     def _lookup_modifier_config(self, mod_name: str, ability_name: str = "") -> Dict[str, Any]:
+        cache_key = (mod_name, ability_name)
+        cached = self._mod_cfg_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        res: Optional[Dict[str, Any]] = None
         # 1. 先查来源 Ability 的本地 Modifiers
         if ability_name:
             ab = self.rt.loader.get_ability(ability_name)
             if ab and mod_name in ab.get("Modifiers", {}):
-                return ab["Modifiers"][mod_name]
+                res = ab["Modifiers"][mod_name]
         # 2. 查该实体的全部已加载 Abilities
-        for spec in self.rt.entity_specs.values():
-            for ab in spec.abilities.values():
-                if mod_name in ab.get("Modifiers", {}):
-                    return ab["Modifiers"][mod_name]
+        if res is None:
+            for spec in self.rt.entity_specs.values():
+                for ab in spec.abilities.values():
+                    if mod_name in ab.get("Modifiers", {}):
+                        res = ab["Modifiers"][mod_name]
+                        break
+                if res is not None:
+                    break
         # 3. 查 GlobalModifiers
-        gm = self.rt.loader.get_global_modifier(mod_name)
-        if gm is not None:
-            return gm
+        if res is None:
+            gm = self.rt.loader.get_global_modifier(mod_name)
+            if gm is not None:
+                res = gm
+        if res is not None:
+            self._mod_cfg_cache[cache_key] = res
+            return res
         return {}
 
     def _resolve_mod_hash(self, mod: VMModifierInstance, hash_val: int) -> float:
@@ -570,21 +620,21 @@ class ModifierEngine:
 
         parsed_strs: Dict[str, str] = {}
         cfg_strs = cfg.get("DynamicStrings")
-        if isinstance(cfg_strs, Mapping):
+        if isinstance(cfg_strs, dict) or isinstance(cfg_strs, Mapping):
             for k, v in cfg_strs.items():
-                if isinstance(v, Mapping):
+                if isinstance(v, dict) or isinstance(v, Mapping):
                     parsed_strs[str(k)] = str(v.get("Value") or v.get("RawString") or "")
                 elif v is not None:
                     parsed_strs[str(k)] = str(v)
-        if isinstance(dynamic_strings, Mapping):
+        if isinstance(dynamic_strings, dict) or isinstance(dynamic_strings, Mapping):
             for k, v in dynamic_strings.items():
-                if isinstance(v, Mapping) and v.get("Custom"):
+                if (isinstance(v, dict) or isinstance(v, Mapping)) and v.get("Custom"):
                     ck = str(v.get("Key") or "")
                     cval = ctx.custom_strings.get(ck) if ctx is not None else None
                     if cval is None:
                         cval = getattr(self.rt, "entity_dynamic_strings", {}).get(caster_id, {}).get(ck, "")
                     parsed_strs[str(k)] = str(cval)
-                elif isinstance(v, Mapping):
+                elif isinstance(v, dict) or isinstance(v, Mapping):
                     raw_v = v.get("Value") if "Value" in v else v.get("RawString", "")
                     raw_s = str(raw_v or "")
                     if ctx is not None and raw_s in ctx.custom_strings:
@@ -698,6 +748,10 @@ class ModifierEngine:
             )
             self.by_owner.setdefault(owner_id, []).append(mod)
             self.by_uid[uid] = mod
+            for ev_name in self._get_cfg_callbacks(cfg):
+                self._by_event.setdefault(ev_name, {})[uid] = mod
+            if cfg.get("OnDynamicValueChange"):
+                self._dvc_mods[uid] = mod
 
         had_defer_entry = mod.uid in self._deferred_prev_props_by_uid
         prev_defer_entry = self._deferred_prev_props_by_uid.get(mod.uid)
@@ -709,6 +763,14 @@ class ModifierEngine:
                 owner_ent = self.rt.sim.get_entity(owner_id)
                 if owner_ent is not None:
                     owner_ent.toughness_locked = True
+            if "MuteSpeed" in mod.behavior_flags and owner_id not in ("__LEVEL__", "__LIGHT_TEAM__"):
+                sim_ms = getattr(self.rt, "sim", None)
+                ready_q = getattr(sim_ms, "_ready_queue", None)
+                if isinstance(ready_q, list) and owner_id in ready_q:
+                    ready_q.remove(owner_id)
+                nat_due = getattr(sim_ms, "_natural_due_names", None)
+                if isinstance(nat_due, set):
+                    nat_due.discard(owner_id)
 
             if mod.life_time is not None and mod.life_step_moment == "TurnEnd":
                 sim = getattr(self.rt, "sim", None)
@@ -983,7 +1045,12 @@ class ModifierEngine:
                 and getattr(m, "_attached_unselectable", False)
                 for m in self.get_modifiers(mod.owner_id)
             )
-            if not has_other_unsel and not getattr(owner_ent, "_static_unselectable", False):
+            if (
+                not has_other_unsel
+                and not getattr(owner_ent, "_static_unselectable", False)
+                and not getattr(owner_ent, "_not_in_formation", False)
+                and not getattr(owner_ent, "_is_stage_controller", False)
+            ):
                 owner_ent.is_unselectable = False
         if owner_ent is not None and getattr(mod, "_enabled_negative_hp", False):
             has_other_neg = any(
@@ -994,6 +1061,16 @@ class ModifierEngine:
             )
             if not has_other_neg:
                 setattr(owner_ent, "_negative_hp_enabled", False)
+        if owner_ent is not None and getattr(mod, "_applied_lock_action_delay", False):
+            has_other_ad_lock = any(
+                not m._destroyed
+                and m.uid != mod.uid
+                and getattr(m, "_applied_lock_action_delay", False)
+                for m in self.get_modifiers(mod.owner_id)
+            )
+            if not has_other_ad_lock:
+                owner_ent._action_delay_locked = False
+                owner_ent._action_delay_lock_whitelist = set()
 
         # 触发 OnDestroy
         mod_ctx = ExecutionContext(
@@ -1031,6 +1108,11 @@ class ModifierEngine:
         )
         mod._stats_detached = True
         self.by_uid.pop(mod.uid, None)
+        self._dvc_mods.pop(mod.uid, None)
+        for ev_name in self._get_cfg_callbacks(mod.config):
+            bucket = self._by_event.get(ev_name)
+            if bucket is not None:
+                bucket.pop(mod.uid, None)
         if mod.owner_id in self.by_owner:
             self.by_owner[mod.owner_id] = [m for m in self.by_owner[mod.owner_id] if m.uid != mod.uid]
         if owner_alive:
@@ -1447,7 +1529,12 @@ class ModifierEngine:
         modifier: Optional[VMModifierInstance] = None,
     ) -> None:
         """触发订阅了 OnDynamicValueChange 的监听（如晴歌 HyperValue 同步、Modifier 局部动态值监听）。"""
-        mods_to_scan = [modifier] if modifier is not None else list(self.by_uid.values())
+        if modifier is None:
+            if not self._dvc_mods:
+                return
+            mods_to_scan = list(self._dvc_mods.values())
+        else:
+            mods_to_scan = [modifier]
         for mod in mods_to_scan:
             if mod is None or mod._destroyed:
                 continue
@@ -1543,9 +1630,8 @@ class ModifierEngine:
                     self.destroy_modifier(mod, reason="EXPIRED")
 
     def dispatch_modifier_callbacks(self, mod: VMModifierInstance, event_name: str, ctx: ExecutionContext) -> None:
-        for cb in mod.config.get("_CallbackList", []):
-            if cb.get("Event") == event_name:
-                self.rt.execute_tasks(cb.get("CallbackConfig", []), ctx)
+        for _cb_idx, _prio, cb_cfg in self._get_cfg_callbacks(mod.config).get(event_name, ()):
+            self.rt.execute_tasks(cb_cfg, ctx)
 
     def dispatch_event_to_modifiers(
         self,
@@ -1612,20 +1698,21 @@ class ModifierEngine:
         owner_set = set(owner_ids) if (owner_ids is not None and not event_name.startswith("OnListen")) else None
 
         def _collect_entries(already_done: Optional[Set[Tuple[int, int]]] = None) -> List[Tuple[int, int, int, VMModifierInstance, List[Dict[str, Any]]]]:
+            bucket = self._by_event.get(event_name)
+            if not bucket:
+                return []
             collected: List[Tuple[int, int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
-            for mod in list(self.by_uid.values()):
+            for mod in list(bucket.values()):
                 if mod._destroyed or mod.uid == exclude_modifier_uid:
                     continue
                 if is_owner_scoped and mod.owner_id != owner_id:
                     continue
                 if owner_set is not None and mod.owner_id not in owner_set:
                     continue
-                for cb_idx, cb in enumerate(mod.config.get("_CallbackList", [])):
-                    if cb.get("Event") == event_name:
-                        if already_done is not None and (mod.uid, cb_idx) in already_done:
-                            continue
-                        prio = int(cb.get("Priority", 0))
-                        collected.append((prio, mod._spawn_order, cb_idx, mod, cb.get("CallbackConfig", [])))
+                for cb_idx, prio, cb_cfg in self._get_cfg_callbacks(mod.config).get(event_name, ()):
+                    if already_done is not None and (mod.uid, cb_idx) in already_done:
+                        continue
+                    collected.append((prio, mod._spawn_order, cb_idx, mod, cb_cfg))
             collected.sort(key=lambda item: (item[0], item[1], item[2]))
             return collected
 
@@ -1684,11 +1771,19 @@ class ModifierEngine:
                 if is_mod_lifecycle_listen:
                     self._active_listener_events.add(guard_key)
                     try:
-                        self.rt.execute_tasks(tasks, ctx)
+                        if event_name == "OnPhase1":
+                            with self.rt.lifecycle.attack_scope():
+                                self.rt.execute_tasks(tasks, ctx)
+                        else:
+                            self.rt.execute_tasks(tasks, ctx)
                     finally:
                         self._active_listener_events.discard(guard_key)
                 else:
-                    self.rt.execute_tasks(tasks, ctx)
+                    if event_name == "OnPhase1":
+                        with self.rt.lifecycle.attack_scope():
+                            self.rt.execute_tasks(tasks, ctx)
+                    else:
+                        self.rt.execute_tasks(tasks, ctx)
 
         prev_phase_limbo = getattr(self.rt, "_include_phase_limbo", False)
         if event_name == "OnLimboWaitHeal":

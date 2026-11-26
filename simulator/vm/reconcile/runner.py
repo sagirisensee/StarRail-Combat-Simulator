@@ -18,6 +18,14 @@ from simulator.golden import (
 from simulator.vm.factory import build_vm_team
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.reconcile.auto_rng import attach_auto_rng_plugin
+from simulator.vm.reconcile.dot_rng import (
+    RngSlotKey,
+    RngTraceEntry,
+    SimDotHit,
+    attach_dot_rng_hooks,
+    extract_gt_dot_hits,
+    resolve_dot_rng,
+)
 from simulator.vm.reconcile.metadata import extract_log_metadata
 from simulator.vm.reconcile.models import (
     DEFAULT_CHAR_DB_PATH,
@@ -28,6 +36,7 @@ from simulator.vm.reconcile.models import (
     ReconcileReport,
     TurnDiffEntry,
 )
+from simulator.vm.stage_factory import StageFactory
 from simulator.vm.stage_sim_adapter import build_data_driven_stage
 
 
@@ -57,6 +66,7 @@ def build_stage_for_id(
     entry_element: Optional[str] = None,
     entry_toughness: float = 10.0,
     initial_energies: Optional[Mapping[Union[int, str], float]] = None,
+    stage_factory: Optional[StageFactory] = None,
 ) -> Tuple[Any, Any, str]:
     """统一走纯数据驱动 DataDrivenStageDirector 底座（零手写关卡硬编码）。"""
     sim, director = build_data_driven_stage(
@@ -68,6 +78,7 @@ def build_stage_for_id(
         entry_toughness=entry_toughness,
         defer_opening_drain=True,
         initial_energies=initial_energies,
+        stage_factory=stage_factory,
     )
     return sim, director, f"data_driven({stage_id})"
 
@@ -271,6 +282,11 @@ def _run_single_pass(
     on_sim_ready: Optional[Callable[[Any], None]] = None,
     initial_energies: Optional[Mapping[Union[int, str], float]] = None,
     technique_users: Optional[Sequence[str]] = None,
+    randcfg_overrides: Optional[Mapping[RngSlotKey, int]] = None,
+    chance_overrides: Optional[Mapping[RngSlotKey, bool]] = None,
+    rng_trace_out: Optional[List[RngTraceEntry]] = None,
+    sim_dot_hits_out: Optional[List[SimDotHit]] = None,
+    stage_factory: Optional[StageFactory] = None,
 ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
     team = build_vm_team(
         meta.team_names,
@@ -298,6 +314,7 @@ def _run_single_pass(
         entry_element=meta.entry_element,
         entry_toughness=meta.entry_toughness,
         initial_energies=initial_energies,
+        stage_factory=stage_factory,
     )
 
     ambiguous_slots: List[AmbiguousMemospriteSlot] = []
@@ -394,6 +411,20 @@ def _run_single_pass(
         )
         plugin_mode = ""
 
+    if plugin_fn is None and (
+        randcfg_overrides is not None
+        or chance_overrides is not None
+        or rng_trace_out is not None
+        or sim_dot_hits_out is not None
+    ):
+        attach_dot_rng_hooks(
+            sim,
+            randcfg_overrides=randcfg_overrides,
+            chance_overrides=chance_overrides,
+            rng_trace_out=rng_trace_out,
+            sim_dot_hits_out=sim_dot_hits_out,
+        )
+
     if on_sim_ready is not None:
         on_sim_ready(sim)
 
@@ -415,50 +446,71 @@ def _run_single_pass(
     gt_by_av: Dict[float, float] = {}
     gt_atks: Dict[float, Set[str]] = {}
     gt_cat: Dict[float, Dict[str, float]] = {}
+    gt_dot_by_av: Dict[float, float] = {}
+    gt_dot_atks: Dict[float, Set[str]] = {}
+    gt_dot_cat: Dict[float, Dict[str, float]] = {}
     for t in g.turns:
         av = round(t.av, 2)
         for d in t.damages:
+            cat = f"{d.attacker}:{d.damage_type}"
             if d.damage_type == "DoT":
+                gt_dot_by_av[av] = gt_dot_by_av.get(av, 0.0) + d.damage
+                gt_dot_atks.setdefault(av, set()).add(d.attacker)
+                gt_dot_cat.setdefault(av, {})[cat] = gt_dot_cat.setdefault(av, {}).get(cat, 0.0) + d.damage
                 continue
             gt_by_av[av] = gt_by_av.get(av, 0.0) + d.damage
             gt_atks.setdefault(av, set()).add(d.attacker)
-            cat = f"{d.attacker}:{d.damage_type}"
             gt_cat.setdefault(av, {})[cat] = gt_cat.setdefault(av, {}).get(cat, 0.0) + d.damage
 
     sim_by_av: Dict[float, float] = {}
     sim_cat: Dict[float, Dict[str, float]] = {}
+    sim_dot_by_av: Dict[float, float] = {}
+    sim_dot_cat: Dict[float, Dict[str, float]] = {}
     for t in traj.replay.sequence.turns:
         av = round(t.av, 2)
         for d in t.damages:
+            cat = f"{d.attacker}:{d.damage_type}"
             if d.damage_type == "DoT":
+                sim_dot_by_av[av] = sim_dot_by_av.get(av, 0.0) + d.damage
+                sim_dot_cat.setdefault(av, {})[cat] = sim_dot_cat.setdefault(av, {}).get(cat, 0.0) + d.damage
                 continue
             sim_by_av[av] = sim_by_av.get(av, 0.0) + d.damage
-            cat = f"{d.attacker}:{d.damage_type}"
             sim_cat.setdefault(av, {})[cat] = sim_cat.setdefault(av, {}).get(cat, 0.0) + d.damage
 
-    all_avs = sorted(set(gt_by_av.keys()) | set(sim_by_av.keys()))
-    turn_diffs: List[TurnDiffEntry] = []
-    max_turn_err = 0.0
-    for av in all_avs:
-        gd = gt_by_av.get(av, 0.0)
-        sd = sim_by_av.get(av, 0.0)
-        if gd > 0.0:
-            err = abs(sd - gd) / gd
-        else:
-            err = 1.0 if sd > 0.0 else 0.0
-        max_turn_err = max(max_turn_err, err)
-        cats = sorted(set(gt_cat.get(av, {}).keys()) | set(sim_cat.get(av, {}).keys()))
-        breakdown = {c: (gt_cat.get(av, {}).get(c, 0.0), sim_cat.get(av, {}).get(c, 0.0)) for c in cats}
-        turn_diffs.append(
-            TurnDiffEntry(
-                av=av,
-                gt_total=gd,
-                sim_total=sd,
-                err=err,
-                attackers=sorted(gt_atks.get(av, set())),
-                breakdown=breakdown,
+    def _build_diff_entries(
+        g_tot_map: Dict[float, float],
+        g_atk_map: Dict[float, Set[str]],
+        g_cat_map: Dict[float, Dict[str, float]],
+        s_tot_map: Dict[float, float],
+        s_cat_map: Dict[float, Dict[str, float]],
+    ) -> Tuple[List[TurnDiffEntry], float]:
+        avs = sorted(set(g_tot_map.keys()) | set(s_tot_map.keys()))
+        entries: List[TurnDiffEntry] = []
+        max_e = 0.0
+        for av_k in avs:
+            gd = g_tot_map.get(av_k, 0.0)
+            sd = s_tot_map.get(av_k, 0.0)
+            if gd > 0.0:
+                err = abs(sd - gd) / gd
+            else:
+                err = 1.0 if sd > 0.0 else 0.0
+            max_e = max(max_e, err)
+            cats = sorted(set(g_cat_map.get(av_k, {}).keys()) | set(s_cat_map.get(av_k, {}).keys()))
+            breakdown = {c: (g_cat_map.get(av_k, {}).get(c, 0.0), s_cat_map.get(av_k, {}).get(c, 0.0)) for c in cats}
+            entries.append(
+                TurnDiffEntry(
+                    av=av_k,
+                    gt_total=gd,
+                    sim_total=sd,
+                    err=err,
+                    attackers=sorted(g_atk_map.get(av_k, set())),
+                    breakdown=breakdown,
+                )
             )
-        )
+        return entries, max_e
+
+    turn_diffs, max_turn_err = _build_diff_entries(gt_by_av, gt_atks, gt_cat, sim_by_av, sim_cat)
+    dot_diffs, _ = _build_diff_entries(gt_dot_by_av, gt_dot_atks, gt_dot_cat, sim_dot_by_av, sim_dot_cat)
 
     gold_tot = float(rep["golden_total_damage"])
     sim_tot = float(rep["sim_total_damage"])
@@ -542,6 +594,7 @@ def _run_single_pass(
         total_err=tot_err,
         max_turn_err=max_turn_err,
         turn_diffs=turn_diffs,
+        dot_diffs=dot_diffs,
         inferred_memosprite_hits=inferred_hits,
         unresolved_ambiguous_slots=len(ambiguous_slots),
         enemy_hit_mismatches=enemy_hit_mismatches,
@@ -570,10 +623,12 @@ def reconcile_log(
     on_sim_ready: Optional[Callable[[Any], None]] = None,
     initial_energies: Optional[Mapping[Union[int, str], float]] = None,
     technique_users: Optional[Sequence[str]] = None,
+    resolve_dots: bool = True,
 ) -> ReconcileReport:
     """对任意官方战斗日志执行端到端 VM 对账并返回逐动诊断报告。"""
     char_db = db if db is not None else CharacterDB().load(DEFAULT_CHAR_DB_PATH)
     vm_loader = loader if loader is not None else GameDataLoader()
+    stage_factory = StageFactory(game_loader=vm_loader)
 
     if meta is None or (team_override and list(team_override) != list(meta.team_names)):
         meta = extract_log_metadata(log_path, db=char_db, team_override=team_override)
@@ -589,51 +644,26 @@ def reconcile_log(
 
     overrides: Dict[Tuple[float, int, str], Tuple[str, ...]] = {}
     aha_dmg_overrides: Dict[Tuple[int, str], float] = {}
+    randcfg_overrides: Dict[RngSlotKey, int] = {}
+    chance_overrides: Dict[RngSlotKey, bool] = {}
     has_shielded_aha = any(a.shielded_enemy_uids for a in meta.aha_turns)
     sim_enemy_hp: Dict[Tuple[float, str], float] = {}
-    report, ambiguous_slots, crit_records = _run_single_pass(
-        log_path,
-        meta,
-        g,
-        tl,
-        char_db=char_db,
-        vm_loader=vm_loader,
-        force_data_driven=force_data_driven,
-        plugin_fn=plugin_fn,
-        non_crits=non_crits,
-        av_budget=av_budget,
-        loadouts=loadouts,
-        memosprite_overrides=overrides,
-        aha_dmg_overrides=aha_dmg_overrides,
-        sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
-        record_crits=True,
-        extra_maze_buff_ids=extra_maze_buff_ids,
-        on_sim_ready=on_sim_ready,
-        initial_energies=initial_energies,
-        technique_users=technique_users,
-    )
+    rng_trace: List[RngTraceEntry] = []
+    sim_dot_hits: List[SimDotHit] = []
 
-    non_crit_details: List[str] = []
-    seen_nc_states: Set[frozenset] = {frozenset(non_crits)}
-    # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，并自动剔除因早期偏差导致的过期误判）
-    for _nc_round in range(8):
-        newly_detected = _detect_non_crits_from_trace(
-            g, crit_records, details_out=non_crit_details, round_idx=_nc_round
-        ) - non_crits
-        stale_nc = (
-            _prune_stale_non_crits(
-                g, crit_records, non_crits, details_out=non_crit_details, round_idx=_nc_round
-            )
-            if plugin_fn is None and non_crits
-            else set()
-        )
-        next_nc = (set(non_crits) - stale_nc) | newly_detected
-        if next_nc == non_crits or frozenset(next_nc) in seen_nc_states:
-            break
-        non_crits = next_nc
-        seen_nc_states.add(frozenset(non_crits))
-        sim_enemy_hp.clear()
-        report, ambiguous_slots, crit_records = _run_single_pass(
+    def _exec_pass(
+        *,
+        ov: Optional[Dict[Tuple[float, int, str], Tuple[str, ...]]] = None,
+        rc_ov: Optional[Dict[RngSlotKey, int]] = None,
+        ch_ov: Optional[Dict[RngSlotKey, bool]] = None,
+        budget: Optional[float] = av_budget,
+        rec_crits: bool = True,
+        track_hp: bool = False,
+        ready_cb: Optional[Callable[[Any], None]] = on_sim_ready,
+    ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
+        rng_trace.clear()
+        sim_dot_hits.clear()
+        return _run_single_pass(
             log_path,
             meta,
             g,
@@ -643,17 +673,56 @@ def reconcile_log(
             force_data_driven=force_data_driven,
             plugin_fn=plugin_fn,
             non_crits=non_crits,
-            av_budget=av_budget,
+            av_budget=budget,
             loadouts=loadouts,
-            memosprite_overrides=overrides,
+            memosprite_overrides=overrides if ov is None else ov,
             aha_dmg_overrides=aha_dmg_overrides,
-            sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha) else None,
-            record_crits=True,
+            sim_enemy_hp_out=sim_enemy_hp if (plugin_fn is None and has_shielded_aha and track_hp) else None,
+            record_crits=rec_crits,
             extra_maze_buff_ids=extra_maze_buff_ids,
-            on_sim_ready=on_sim_ready,
+            on_sim_ready=ready_cb,
             initial_energies=initial_energies,
             technique_users=technique_users,
+            randcfg_overrides=randcfg_overrides if rc_ov is None else rc_ov,
+            chance_overrides=chance_overrides if ch_ov is None else ch_ov,
+            rng_trace_out=rng_trace if plugin_fn is None else None,
+            sim_dot_hits_out=sim_dot_hits if plugin_fn is None else None,
+            stage_factory=stage_factory,
         )
+
+    report, ambiguous_slots, crit_records = _exec_pass(track_hp=True)
+
+    non_crit_details: List[str] = []
+    seen_nc_states: Set[frozenset] = {frozenset(non_crits)}
+
+    def _converge_non_crits(start_round: int, max_rounds: int, track_hp: bool) -> bool:
+        nonlocal non_crits, report, ambiguous_slots, crit_records
+        any_changed = False
+        for idx in range(max_rounds):
+            r_idx = start_round + idx
+            newly_detected = _detect_non_crits_from_trace(
+                g, crit_records, details_out=non_crit_details, round_idx=r_idx
+            ) - non_crits
+            stale_nc = (
+                _prune_stale_non_crits(
+                    g, crit_records, non_crits, details_out=non_crit_details, round_idx=r_idx
+                )
+                if plugin_fn is None and non_crits
+                else set()
+            )
+            next_nc = (set(non_crits) - stale_nc) | newly_detected
+            if next_nc == non_crits or frozenset(next_nc) in seen_nc_states:
+                break
+            non_crits = next_nc
+            seen_nc_states.add(frozenset(non_crits))
+            any_changed = True
+            if track_hp:
+                sim_enemy_hp.clear()
+            report, ambiguous_slots, crit_records = _exec_pass(track_hp=track_hp)
+        return any_changed
+
+    # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，并自动剔除因早期偏差导致的过期误判）
+    _converge_non_crits(0, 8, track_hp=True)
 
     # 被特殊护盾吸收的阿哈回合伤害：由首个破盾回合的 HP+盾 守恒反推精确吸收量
     if plugin_fn is None and has_shielded_aha and report.max_turn_err >= threshold:
@@ -684,26 +753,7 @@ def reconcile_log(
                             aha_dmg_overrides[(aha_i, ename)] = base_aha + delta_aha
                             calibrated = True
                 if calibrated:
-                    report, ambiguous_slots, crit_records = _run_single_pass(
-                        log_path,
-                        meta,
-                        g,
-                        tl,
-                        char_db=char_db,
-                        vm_loader=vm_loader,
-                        force_data_driven=force_data_driven,
-                        plugin_fn=None,
-                        non_crits=non_crits,
-                        av_budget=av_budget,
-                        loadouts=loadouts,
-                        memosprite_overrides=overrides,
-                        aha_dmg_overrides=aha_dmg_overrides,
-                        record_crits=True,
-                        extra_maze_buff_ids=extra_maze_buff_ids,
-                        on_sim_ready=on_sim_ready,
-                        initial_energies=initial_energies,
-                        technique_users=technique_users,
-                    )
+                    report, ambiguous_slots, crit_records = _exec_pass(track_hp=False)
 
     if plugin_fn is None and resolve_memosprites and ambiguous_slots:
         def _later_key(rep: ReconcileReport, focus_av: float) -> Tuple[float, float, float]:
@@ -758,25 +808,7 @@ def reconcile_log(
                         continue
                     trial_ov = dict(overrides)
                     trial_ov[slot.key] = cand
-                    trial_rep, trial_slots, _ = _run_single_pass(
-                        log_path,
-                        meta,
-                        g,
-                        tl,
-                        char_db=char_db,
-                        vm_loader=vm_loader,
-                        force_data_driven=force_data_driven,
-                        plugin_fn=None,
-                        non_crits=non_crits,
-                        av_budget=av_budget,
-                        loadouts=loadouts,
-                        memosprite_overrides=trial_ov,
-                        aha_dmg_overrides=aha_dmg_overrides,
-                        record_crits=False,
-                        extra_maze_buff_ids=extra_maze_buff_ids,
-                        initial_energies=initial_energies,
-                        technique_users=technique_users,
-                    )
+                    trial_rep, trial_slots, _ = _exec_pass(ov=trial_ov, rec_crits=False, ready_cb=None)
                     new_err = _eval_trial(trial_rep, best_report, best_err, first_bad.av)
                     if new_err is not None:
                         best_err = new_err
@@ -793,52 +825,68 @@ def reconcile_log(
                 break
 
         if overrides:
-            report, ambiguous_slots, crit_records = _run_single_pass(
-                log_path,
-                meta,
-                g,
-                tl,
-                char_db=char_db,
-                vm_loader=vm_loader,
-                force_data_driven=force_data_driven,
-                plugin_fn=None,
-                non_crits=non_crits,
-                av_budget=av_budget,
-                loadouts=loadouts,
-                memosprite_overrides=overrides,
-                aha_dmg_overrides=aha_dmg_overrides,
-                record_crits=True,
-                extra_maze_buff_ids=extra_maze_buff_ids,
-                on_sim_ready=on_sim_ready,
-                initial_energies=initial_energies,
-                technique_users=technique_users,
-            )
+            report, ambiguous_slots, crit_records = _exec_pass(track_hp=False)
             for _nc_round in range(2):
                 newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits
                 if not newly_detected:
                     break
                 non_crits = set(non_crits) | newly_detected
-                report, ambiguous_slots, crit_records = _run_single_pass(
-                    log_path,
-                    meta,
-                    g,
-                    tl,
-                    char_db=char_db,
-                    vm_loader=vm_loader,
-                    force_data_driven=force_data_driven,
-                    plugin_fn=None,
-                    non_crits=non_crits,
-                    av_budget=av_budget,
-                    loadouts=loadouts,
-                    memosprite_overrides=overrides,
-                    aha_dmg_overrides=aha_dmg_overrides,
-                    record_crits=True,
-                    extra_maze_buff_ids=extra_maze_buff_ids,
-                    on_sim_ready=on_sim_ready,
-                    initial_energies=initial_energies,
-                    technique_users=technique_users,
+                report, ambiguous_slots, crit_records = _exec_pass(track_hp=False)
+
+    # Layer-4 通用 DoT RNG 求解与 non_crits 联合收敛（最多 3 轮）
+    def _has_budget_dot_err(rep: ReconcileReport) -> bool:
+        return any(
+            d.err >= threshold and (av_budget is None or d.av <= float(av_budget) + 1e-6)
+            for d in rep.dot_diffs
+        )
+
+    dot_rng_details: List[str] = []
+    if resolve_dots and plugin_fn is None and _has_budget_dot_err(report):
+        gt_dot_hits = extract_gt_dot_hits(log_path, meta=meta, char_db=char_db)
+        if gt_dot_hits:
+            effective_final_av = float(av_budget) if av_budget is not None else 0.0
+
+            def _dot_probe(
+                rc_ov: Dict[RngSlotKey, int],
+                ch_ov: Dict[RngSlotKey, bool],
+                probe_budget: Optional[float],
+                rec_crits: bool,
+            ) -> Tuple[ReconcileReport, List[RngTraceEntry], List[SimDotHit]]:
+                p_rep, _, p_crits = _exec_pass(
+                    rc_ov=rc_ov,
+                    ch_ov=ch_ov,
+                    budget=probe_budget,
+                    rec_crits=rec_crits,
+                    track_hp=False,
+                    ready_cb=on_sim_ready if rec_crits else None,
                 )
+                if rec_crits:
+                    crit_records.clear()
+                    crit_records.extend(p_crits)
+                return p_rep, list(rng_trace), list(sim_dot_hits)
+
+            for _dot_outer in range(3):
+                if not _has_budget_dot_err(report):
+                    break
+                dot_changed, report, cur_trace, cur_dots, randcfg_overrides, chance_overrides = resolve_dot_rng(
+                    gt_hits=gt_dot_hits,
+                    initial_report=report,
+                    initial_trace=rng_trace,
+                    initial_sim_dots=sim_dot_hits,
+                    probe_runner=_dot_probe,
+                    randcfg_overrides=randcfg_overrides,
+                    chance_overrides=chance_overrides,
+                    final_av=effective_final_av,
+                    threshold=threshold,
+                    details_out=dot_rng_details,
+                )
+                rng_trace = list(cur_trace)
+                sim_dot_hits = list(cur_dots)
+                nc_changed = _converge_non_crits(100 + _dot_outer * 10, 4, track_hp=False)
+                if not dot_changed and not nc_changed:
+                    break
 
     report.non_crits = set(non_crits)
     report.non_crit_details = list(non_crit_details)
+    report.dot_rng_details = list(dot_rng_details)
     return report

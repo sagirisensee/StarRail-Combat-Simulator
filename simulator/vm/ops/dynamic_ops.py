@@ -118,15 +118,19 @@ class DynamicOpsMixin:
         is_snap = isinstance(read_spec, Mapping) and read_spec.get("Alias") == "SnapshotPropertyEntity"
         val: Optional[float] = None
         if is_snap and ctx.modifier_instance is not None:
-            snap_props = getattr(ctx.modifier_instance, "caster_snapshot_props", None)
-            if isinstance(snap_props, Mapping) and prop_name in snap_props:
-                val = float(snap_props[prop_name])
-            elif getattr(ctx.modifier_instance, "caster_snapshot_entity", None) is not None:
-                val = me.get_entity_property(
-                    ctx.modifier_instance.caster_id,
-                    prop_name,
-                    entity_override=ctx.modifier_instance.caster_snapshot_entity,
-                )
+            live_caster = self.rt.sim.get_entity(ctx.modifier_instance.caster_id)
+            if live_caster is not None and getattr(live_caster, "current_hp", 0.0) > 0.0:
+                val = me.get_entity_property(ctx.modifier_instance.caster_id, prop_name)
+            else:
+                snap_props = getattr(ctx.modifier_instance, "caster_snapshot_props", None)
+                if isinstance(snap_props, Mapping) and prop_name in snap_props:
+                    val = float(snap_props[prop_name])
+                elif getattr(ctx.modifier_instance, "caster_snapshot_entity", None) is not None:
+                    val = me.get_entity_property(
+                        ctx.modifier_instance.caster_id,
+                        prop_name,
+                        entity_override=ctx.modifier_instance.caster_snapshot_entity,
+                    )
         if val is None:
             read_targets = self._resolve_targets(read_spec, ctx)
             val = me.get_entity_property(read_targets[0], prop_name) if read_targets else 0.0

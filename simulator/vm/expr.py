@@ -117,7 +117,7 @@ class CompiledPostfixExpr:
         raw_b64 = data.get("OpCodes", "")
         ops = tuple(base64.b64decode(raw_b64)) if raw_b64 else ()
         fixed = tuple(
-            float(item.get("Value", 0.0)) if isinstance(item, Mapping) else float(item)
+            float(item.get("Value", 0.0)) if (isinstance(item, dict) or isinstance(item, Mapping)) else float(item)
             for item in data.get("FixedValues", ())
         )
         hashes = tuple(int(h) for h in data.get("DynamicHashes", ()))
@@ -280,13 +280,13 @@ def eval_dynamic_float(spec: Any, resolver: HashResolver, default: float = 0.0) 
         return default
     if isinstance(spec, (int, float)):
         return float(spec)
-    if not isinstance(spec, Mapping):
+    if not isinstance(spec, dict) and not isinstance(spec, Mapping):
         return default
     if "PostfixExpr" in spec and (spec.get("IsDynamic", True) or "FixedValue" not in spec):
         return eval_postfix_expr(spec["PostfixExpr"], resolver)
     if "FixedValue" in spec:
         fv = spec["FixedValue"]
-        if isinstance(fv, Mapping):
+        if isinstance(fv, dict) or isinstance(fv, Mapping):
             return float(fv.get("Value", default))
         return float(fv)
     if "Value" in spec:

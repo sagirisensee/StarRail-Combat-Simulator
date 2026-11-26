@@ -18,6 +18,7 @@ class StageOpsMixin:
 
     def _op_toggle_team_formation(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
+        me = self.rt.modifier_engine
         t = task.get("$type", "")
         tgt_spec = task.get("TargetType") or {
             "Alias": ("ModifierOwnerEntity" if ctx.modifier_owner_id else "Caster")
@@ -28,22 +29,49 @@ class StageOpsMixin:
             ent = sim.get_entity(tid)
             if ent is not None:
                 if remove_from_formation:
-                    if not getattr(ent, "_not_in_formation", False):
-                        setattr(ent, "_saved_formation_distance", float(getattr(ent, "distance_remaining", 10000.0)))
                     ent._not_in_formation = True
-                    ent.distance_remaining = 999999999990.0
-                    ready_q = getattr(sim, "_ready_queue", None)
-                    if isinstance(ready_q, list) and tid in ready_q:
-                        ready_q.remove(tid)
-                    nat_due = getattr(sim, "_natural_due_names", None)
-                    if isinstance(nat_due, set):
-                        nat_due.discard(tid)
+                    ent.is_unselectable = True
+                    setattr(ent, "_formation_index", None)
                 else:
                     ent._not_in_formation = False
-                    saved_dist = getattr(ent, "_saved_formation_distance", None)
-                    if saved_dist is not None:
-                        ent.distance_remaining = float(saved_dist)
-                        delattr(ent, "_saved_formation_distance")
+                    has_other_unsel = any(
+                        not m._destroyed and getattr(m, "_attached_unselectable", False)
+                        for m in me.get_modifiers(tid)
+                    )
+                    if (
+                        not has_other_unsel
+                        and not getattr(ent, "_static_unselectable", False)
+                        and not getattr(ent, "_is_stage_controller", False)
+                    ):
+                        ent.is_unselectable = False
+
+    def _op_set_character_formation(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        if (
+            task.get("Type") in ("Anchor", "Follow", "Fixed")
+            or task.get("IsActive") is False
+            or task.get("TeamFormationIndex") is None
+        ):
+            return
+        sim = self.rt.sim
+        me = self.rt.modifier_engine
+        fidx = int(round(self._eval_num(task.get("TeamFormationIndex"), ctx, 0.0)))
+        targets = self._resolve_targets(task.get("TargetType"), ctx)
+        for tid in targets:
+            ent = sim.get_entity(tid)
+            if ent is None:
+                continue
+            ent._not_in_formation = False
+            setattr(ent, "_formation_index", fidx)
+            has_other_unsel = any(
+                not m._destroyed and getattr(m, "_attached_unselectable", False)
+                for m in me.get_modifiers(tid)
+            )
+            if (
+                not has_other_unsel
+                and not getattr(ent, "_static_unselectable", False)
+                and not getattr(ent, "_is_stage_controller", False)
+            ):
+                ent.is_unselectable = False
 
     def _op_force_kill(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -81,6 +109,8 @@ class StageOpsMixin:
                         setattr(rt, "_pre_despawn_trigger_death_done", done_set)
                     done_set.add(tid)
             prev_hp = float(getattr(ent, "current_hp", 0.0))
+            deferred_killer = str(getattr(ent, "_deferred_listen_die_killer", "") or "")
+            setattr(ent, "_deferred_listen_die_killer", "")
             was_limbo, was_deferred_die = clear_deathrattle_limbo(ent)
             ent.current_hp = 0.0
             if not getattr(ent, "is_enemy", False) and prev_hp > 0.0:
@@ -95,22 +125,11 @@ class StageOpsMixin:
                         cause="ForceKill",
                     ),
                 )
-            me.destroy_all_for_entity(tid)
             if getattr(ent, "is_enemy", False):
                 eff_attacker = ctx.caster_id or ""
                 c_ent = sim.get_entity(eff_attacker) if eff_attacker and eff_attacker != "__LEVEL__" else None
                 if eff_attacker in ("", "__LEVEL__") or (c_ent is not None and getattr(c_ent, "monster_id", 0) == 8003060):
                     eff_attacker = getattr(rt, "_last_enemy_killer_id", "") or getattr(rt, "_current_attacker_id", "") or eff_attacker
-                director = getattr(sim, "_stage_director", None)
-                runner = getattr(director, "runner", None) if director is not None else None
-                is_inf_stage = bool(
-                    runner is not None
-                    and getattr(getattr(runner.built_stage, "source_spec", None), "stage_infinite_group_id", None) is not None
-                )
-                if runner is not None and not is_inf_stage:
-                    runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
-                sim.entities[:] = [e for e in sim.entities if e.name != tid]
-                rt.lifecycle.discard_pending_dead(tid)
                 if prev_hp > 0.0:
                     emit_sim_event(
                         sim,
@@ -122,9 +141,26 @@ class StageOpsMixin:
                         ),
                     )
                 elif not mute_death and (was_deferred_die or was_limbo):
-                    rt.lifecycle.defer_or_dispatch_listen_die(tid, defer_in_after_attack=False)
-            elif not mute_death and (prev_hp > 0.0 or getattr(ent, "is_memosprite", False)):
-                me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
+                    rt.lifecycle.defer_or_dispatch_listen_die(
+                        tid,
+                        killer_id=(deferred_killer or eff_attacker),
+                        defer_in_after_attack=False,
+                    )
+                me.destroy_all_for_entity(tid)
+                director = getattr(sim, "_stage_director", None)
+                runner = getattr(director, "runner", None) if director is not None else None
+                is_inf_stage = bool(
+                    runner is not None
+                    and getattr(getattr(runner.built_stage, "source_spec", None), "stage_infinite_group_id", None) is not None
+                )
+                if runner is not None and not is_inf_stage:
+                    runner.state.enemies[:] = [m for m in runner.state.enemies if m.entity.name != tid]
+                sim.entities[:] = [e for e in sim.entities if e.name != tid]
+                rt.lifecycle.discard_pending_dead(tid)
+            else:
+                me.destroy_all_for_entity(tid)
+                if not mute_death and (prev_hp > 0.0 or getattr(ent, "is_memosprite", False)):
+                    me.dispatch_event("OnListenCharacterDie", param_entity_id=tid)
             if getattr(ent, "is_memosprite", False) or getattr(ent, "is_countdown", False):
                 sim.port.despawn_spirit(tid, reason="ForceKill")
             be_list = rt.named_targets.get("BattleEventEntityList")
@@ -582,8 +618,25 @@ class StageOpsMixin:
             if ent is not None:
                 ent.current_hp = 0.0
                 me.destroy_all_for_entity(tid)
+                if hasattr(sim, "_ready_queue") and tid in sim._ready_queue:
+                    sim._ready_queue = [x for x in sim._ready_queue if x != tid]
                 if hasattr(sim, "remove_entity"):
                     sim.remove_entity(tid)
+                elif (
+                    (getattr(ent, "is_battle_event", False) or getattr(ent, "is_countdown", False))
+                    and getattr(sim, "_current_turn_entity", None) is not ent
+                    and ent in getattr(sim, "entities", ())
+                ):
+                    sim.entities.remove(ent)
+            for k, v in list(rt.named_targets.items()):
+                if tid in v:
+                    new_v = [x for x in v if x != tid]
+                    if new_v:
+                        rt.named_targets[k] = new_v
+                    else:
+                        rt.named_targets.pop(k, None)
+        if uniq:
+            rt.named_targets.pop(uniq, None)
 
     def _op_lock_target_hp(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim

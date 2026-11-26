@@ -257,6 +257,11 @@ class TurnOpsMixin:
                             )
                         )
                     finally:
+                        if _prio == "MonsterChangePhase":
+                            end_ent = sim.get_entity(a_id)
+                            if end_ent is not None:
+                                setattr(end_ent, "_vm_limbo_pending", False)
+                                setattr(end_ent, "_vm_phase_change_pending", False)
                         rt.lifecycle.complete_deathrattle_action(
                             a_id,
                             force_limbo_prio=_prio in ("MonsterDeathRattle", "MonsterForceKill"),
@@ -300,6 +305,13 @@ class TurnOpsMixin:
                     immediate_priority=imm_prio,
                     allow_limbo=allow_limbo,
                 )
+                if (
+                    prio == "MonsterChangePhase"
+                    and ent is not None
+                    and getattr(rt, "_include_phase_limbo", False)
+                ):
+                    setattr(ent, "_vm_limbo_pending", True)
+                    setattr(ent, "_vm_phase_change_pending", True)
             elif "SkillIndex" in task and not is_level_caster:
                 sk_idx = int(round(self._eval_num(task.get("SkillIndex"), ctx, 0.0)))
                 spec = rt.entity_specs.get(tid)
@@ -1099,17 +1111,21 @@ class TurnOpsMixin:
 
         have_action_delay = bool(char_cfg.get("HaveActionDelay", True)) if char_cfg else True
         max_sp_val = float(char_cfg.get("MaxSP", 0.0) or bec_override_max_sp or 0.0) if char_cfg else bec_override_max_sp
+        is_enemy_team = str(task.get("Team", bec_row.get("Team", ""))) == "TeamDark"
+        prop_from = self._resolve_targets(task.get("PropertyFromTarget"), ctx) if task.get("PropertyFromTarget") else []
+        eff_level = 0 if prop_from == ["__LEVEL__"] else 80
 
         be_ent = sim.get_entity(be_name)
         if be_ent is None:
             be_ent = Entity(
                 name=be_name,
+                level=eff_level,
                 base_speed=max(1.0, spd),
                 base_atk=100.0,
                 max_hp=1000.0,
                 current_hp=1000.0,
                 max_energy=max_sp_val,
-                is_enemy=False,
+                is_enemy=is_enemy_team,
                 is_memosprite=False,
                 is_countdown=True,
                 master_name=ctx.caster_id,
@@ -1117,15 +1133,20 @@ class TurnOpsMixin:
             )
             be_ent.have_action_delay = have_action_delay  # type: ignore[attr-defined]
             be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent._battle_event_sub_type = event_sub_type  # type: ignore[attr-defined]
             if not have_action_delay:
                 be_ent.distance_remaining = 1e12
             sim.add_entity(be_ent, trigger_battle_start=False)
         else:
+            if prop_from == ["__LEVEL__"]:
+                be_ent.level = 0
+            be_ent.is_enemy = is_enemy_team
             be_ent.base_speed = max(1.0, spd)
             be_ent.current_hp = 1000.0
             be_ent.max_energy = max_sp_val
             be_ent.have_action_delay = have_action_delay  # type: ignore[attr-defined]
             be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent._battle_event_sub_type = event_sub_type  # type: ignore[attr-defined]
             be_ent.distance_remaining = 10000.0 if have_action_delay else 1e12
             be_ent.master_name = ctx.caster_id
 
@@ -1300,12 +1321,14 @@ class TurnOpsMixin:
 
         elem = normalize_element(str(char_cfg.get("DamageType", ""))) or "Quantum"
         is_enemy_team = str(task.get("Team", bec_row.get("Team", ""))) == "TeamDark"
+        prop_from = self._resolve_targets(task.get("PropertyFromTarget"), ctx) if task.get("PropertyFromTarget") else []
+        eff_level = 0 if prop_from == ["__LEVEL__"] else stage_level
 
         be_ent = sim.get_entity(be_name)
         if be_ent is None:
             be_ent = Entity(
                 name=be_name,
-                level=stage_level,
+                level=eff_level,
                 base_speed=max(1.0, eff_spd),
                 base_atk=eff_atk,
                 base_crit_rate=0.0,
@@ -1320,10 +1343,12 @@ class TurnOpsMixin:
                 avatar_id=event_id,
             )
             be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent._battle_event_sub_type = event_sub_type  # type: ignore[attr-defined]
             be_ent.is_dummy = (event_sub_type == "DummyCharacter")  # type: ignore[attr-defined]
             sim.add_entity(be_ent, trigger_battle_start=False)
         else:
-            be_ent.level = stage_level
+            be_ent.level = eff_level
+            be_ent.is_enemy = is_enemy_team
             be_ent.base_speed = max(1.0, eff_spd)
             be_ent.base_atk = eff_atk
             be_ent.max_hp = eff_hp
@@ -1332,6 +1357,7 @@ class TurnOpsMixin:
             be_ent.distance_remaining = 10000.0
             be_ent.master_name = ctx.caster_id
             be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent._battle_event_sub_type = event_sub_type  # type: ignore[attr-defined]
             be_ent.is_dummy = (event_sub_type == "DummyCharacter")  # type: ignore[attr-defined]
 
         passive_entries: List[str] = []

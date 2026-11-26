@@ -212,11 +212,11 @@ class VMRuntime:
         self.lifecycle.pending_dead_enemies = value
 
     @property
-    def _pending_listen_die(self) -> List[str]:
+    def _pending_listen_die(self) -> List[Tuple[str, str]]:
         return self.lifecycle.pending_listen_die
 
     @_pending_listen_die.setter
-    def _pending_listen_die(self, value: List[str]) -> None:
+    def _pending_listen_die(self, value: List[Tuple[str, str]]) -> None:
         self.lifecycle.pending_listen_die = value
 
     @property
@@ -539,6 +539,7 @@ class VMRuntime:
                 base_break_effect=getattr(master, "base_break_effect", 0.0),
                 base_err=getattr(master, "base_err", 1.0),
                 base_dmg_boost=getattr(master, "base_dmg_boost", 0.0),
+                base_elem_dmg_boost=getattr(master, "base_elem_dmg_boost", 0.0),
                 base_elation=getattr(master, "base_elation", 0.0),
                 element=master.element,
                 path=master.path,
@@ -554,6 +555,7 @@ class VMRuntime:
             sv_entity.base_white_hp = sv_white_hp
             sv_entity.base_white_speed = sv_white_speed
             sv_entity.base_dmg_boost = getattr(master, "base_dmg_boost", 0.0)
+            sv_entity.base_elem_dmg_boost = getattr(master, "base_elem_dmg_boost", 0.0)
             sv_entity.base_elation = getattr(master, "base_elation", 0.0)
             sv_entity.current_hp = sv_max_hp
             sv_entity.master_name = master_id
@@ -642,6 +644,11 @@ class VMRuntime:
                     director.sync_spawned_entities()
         self.modifier_engine.tick_life_step("ModifierPhase1End", evt.actor_name)
         self.modifier_engine.dispatch_event("OnActionPhaseBegin", owner_id=evt.actor_name)
+        self.modifier_engine.dispatch_event(
+            "OnBeforeAction",
+            owner_id=evt.actor_name,
+            param_entity_id=evt.actor_name,
+        )
         if actor_ent is not None and not getattr(actor_ent, "is_enemy", False):
             sched = getattr(self.sim, "scheduler", None)
             if sched is not None and sched.has_pending():
@@ -659,7 +666,11 @@ class VMRuntime:
             self.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id=evt.actor_name)
             self.modifier_engine.tick_life_step("TurnEnd", evt.actor_name)
         ent = self.sim.get_entity(evt.actor_name)
-        if ent is not None and not getattr(ent, "is_countdown", False) and getattr(ent, "current_hp", 0.0) > 0.0:
+        if (
+            ent is not None
+            and (not getattr(ent, "is_countdown", False) or getattr(ent, "is_battle_event", False))
+            and getattr(ent, "current_hp", 0.0) > 0.0
+        ):
             self.modifier_engine.dispatch_event("OnPhase2", owner_id=evt.actor_name, param_entity_id=evt.actor_name)
             sched_p2 = getattr(self.sim, "scheduler", None)
             if sched_p2 is not None:
@@ -800,12 +811,12 @@ class VMRuntime:
                         if self.modifier_engine.has_modifier(e.name, "MMonster_W4_Griffin_00_Debuff_Avatar_Status"):
                             self.modifier_engine.dispatch_event("OnTriggerDeath", owner_id=e.name, param_entity_id=dead_id)
                             break
-        self.lifecycle.defer_or_dispatch_listen_die(dead_id, defer_in_after_attack=True)
+        self.lifecycle.defer_or_dispatch_listen_die(dead_id, killer_id=killer_id, defer_in_after_attack=True)
 
     def on_global_action_delay_changed(self, delta_av: float, delay_add: float) -> None:
         if delta_av <= 0.0 and delay_add <= 0.0:
             return
-        self.global_action_delay += float(delta_av)
+        self.global_action_delay += float(delay_add)
         self.modifier_engine.dispatch_event(
             "OnListenGlobalActionDelayChanged",
             change_value=float(delay_add),
@@ -861,26 +872,26 @@ class VMRuntime:
             if not entry_ab:
                 continue
             sk_name = str(ultra_sk.get("Name") or "Skill03")
-            eff_spec = tgt_spec if tgt_spec is not None else (ultra_sk.get("TargetInfo") or {"Alias": "AllEnemy"})
-            exec_ctx = ExecutionContext(
-                runtime=self,
-                caster_id=tid,
-                ability_name=entry_ab,
-                modifier_owner_id=tid,
-            )
-            eff_tgts = tuple(self.executor._resolve_targets(eff_spec, exec_ctx))
-            if not eff_tgts:
-                eff_tgts = tuple(
-                    e.name for e in sim.entities
-                    if getattr(e, "is_enemy", False)
-                    and not getattr(e, "is_countdown", False)
-                    and not getattr(e, "is_unselectable", False)
-                    and float(getattr(e, "current_hp", 0.0)) > 0.0
-                )
             setattr(ent, "_in_auto_ultra", True)
             try:
                 ent.energy = 0.0
                 me.dispatch_event("OnUltraSkillPrepare", owner_id=tid, param_entity_id=tid)
+                eff_spec = tgt_spec if tgt_spec is not None else (ultra_sk.get("TargetInfo") or {"Alias": "AllEnemy"})
+                exec_ctx = ExecutionContext(
+                    runtime=self,
+                    caster_id=tid,
+                    ability_name=entry_ab,
+                    modifier_owner_id=tid,
+                )
+                eff_tgts = tuple(self.executor._resolve_targets(eff_spec, exec_ctx))
+                if not eff_tgts:
+                    eff_tgts = tuple(
+                        e.name for e in sim.entities
+                        if getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    )
                 sim._action_seq += 1
                 sim._av_batch_seq += 1
                 sk_id = int(getattr(ent, "avatar_id", 0) or 0) * 100 + 1

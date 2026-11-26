@@ -236,13 +236,25 @@ class CombatOpsMixin:
             max_ep = float(sim.port.max_energy(ep_tid) or getattr(ent, "max_energy", 0.0) or 0.0)
 
             if "SetValue" in task:
+                old_e = float(ent.energy)
                 v = self._eval_num(task["SetValue"], ctx, ent.energy)
                 ent.energy = max(0.0, min(max_ep, v)) if max_ep > 0 else max(0.0, v)
+                if getattr(sim, "_timeline_diag_energy", False) and callable(getattr(sim, "timeline_diag_cb", None)):
+                    sim.timeline_diag_cb(
+                        "EN",
+                        f"{ent.name} {old_e:.2f} -> {ent.energy:.2f} (op=SetValue) cause={ctx.ability_name or 'ModifySPNew'}",
+                    )
                 continue
             if "SetMaxSPRatio" in task:
+                old_e = float(ent.energy)
                 r = self._eval_num(task["SetMaxSPRatio"], ctx, 0.0)
                 if max_ep > 0:
                     ent.energy = max(0.0, min(max_ep, max_ep * r))
+                if getattr(sim, "_timeline_diag_energy", False) and callable(getattr(sim, "timeline_diag_cb", None)):
+                    sim.timeline_diag_cb(
+                        "EN",
+                        f"{ent.name} {old_e:.2f} -> {ent.energy:.2f} (op=SetMaxSPRatio) cause={ctx.ability_name or 'ModifySPNew'}",
+                    )
                 continue
 
             total_gain = 0.0
@@ -264,7 +276,13 @@ class CombatOpsMixin:
             if total_gain > 0.0:
                 sim.port.gain_energy(ep_tid, total_gain, cause=ctx.ability_name or "ModifySPNew")
             elif total_gain < 0.0:
+                old_e = float(ent.energy)
                 ent.energy = max(0.0, ent.energy + total_gain)
+                if getattr(sim, "_timeline_diag_energy", False) and callable(getattr(sim, "timeline_diag_cb", None)):
+                    sim.timeline_diag_cb(
+                        "EN",
+                        f"{ent.name} {old_e:.2f} -> {ent.energy:.2f} (op=Sub) cause={ctx.ability_name or 'ModifySPNew'}",
+                    )
 
     def _execute_heal(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -1186,8 +1204,12 @@ class CombatOpsMixin:
                     extra_elation_extra = 0.0
                     if spec.is_elation_dmg:
                         atk_ent = sim.get_entity(prop_src_id)
-                        atk_lvl = int(getattr(atk_ent, "level", 80) or 80) if atk_ent is not None else 80
+                        raw_lvl = getattr(atk_ent, "level", 80) if atk_ent is not None else 80
+                        atk_lvl = int(raw_lvl) if raw_lvl is not None else 80
                         elation_level_base = rt.loader.get_elation_basic_level_damage(atk_lvl)
+                        if atk_lvl <= 0:
+                            hit_eff_pct = 0.0
+                            hit_eff_flat = 0.0
                         if "AttackData_ElationPointNum" in hit_dmg_data:
                             base_elation_pt = float(hit_dmg_data["AttackData_ElationPointNum"])
                         elif getattr(rt, "in_elation_time", False) and not spec.is_indirect:

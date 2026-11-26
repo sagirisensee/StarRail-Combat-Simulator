@@ -180,6 +180,15 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             matched.append((idx, e))
         if not spatial_order:
             matched.sort(key=lambda pair: (getattr(pair[1], "_spawn_seq", pair[0]), pair[0]))
+        elif any(getattr(e, "_formation_index", None) is not None for _, e in matched):
+            matched.sort(
+                key=lambda pair: (
+                    float(getattr(pair[1], "_formation_index"))
+                    if getattr(pair[1], "_formation_index", None) is not None
+                    else 2.0,
+                    pair[0],
+                )
+            )
         return [e.name for _, e in matched]
 
     def _servants_of(eid: str) -> List[str]:
@@ -217,7 +226,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         if anchor is None:
             return []
         pool = (
-            _alive_enemies(spatial_order=True)
+            _alive_enemies(include_countdown=False, spatial_order=True)
             if getattr(anchor, "is_enemy", False)
             else _alive_allies(include_countdown=False)
         )
@@ -304,7 +313,11 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             else:
                 blast_fn = getattr(sim, "blast_target_provider", None)
                 caster_ent = sim.get_entity(ctx.caster_id) if ctx.caster_id else None
-                pool = _alive_enemies(spatial_order=True) if primary.is_enemy else _alive_allies(include_countdown=False)
+                pool = (
+                    _alive_enemies(include_countdown=False, spatial_order=True)
+                    if primary.is_enemy
+                    else _alive_allies(include_countdown=False)
+                )
                 p_idx = pool.index(primary.name) if primary.name in pool else -1
                 if (
                     not primary.is_enemy
@@ -494,7 +507,7 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
     elif base in ("LightTeamCenter", "DarkTeamCenter", "AllTeamCenter", "LevelEntity"):
         cur = ["__LEVEL__"]
     elif base == "RobinS_Rank01_HighestHPEnemy":
-        enemies = [sim.get_entity(n) for n in _alive_enemies()]
+        enemies = [sim.get_entity(n) for n in _alive_enemies(include_countdown=False)]
         enemies = [e for e in enemies if e is not None]
         cur = [max(enemies, key=lambda e: e.current_hp).name] if enemies else []
     elif base == "BattleEventCaster":
@@ -658,8 +671,13 @@ def resolve_target_alias(alias: str, ctx: ExecutionContext) -> List[str]:
     """求值完整 TargetAlias 组合表达式（支持 `+` 与 `-`）。"""
     if not alias:
         return []
+    s = alias.strip()
+    if not s:
+        return []
+    if "+" not in s and "-" not in s:
+        return _dedup_preserve(_resolve_single_token(s, ctx))
     # 将 + / - 拆分为运算符和表达式项
-    tokens = re.split(r"(\s*[+-]\s*)", alias.strip())
+    tokens = re.split(r"(\s*[+-]\s*)", s)
     result: List[str] = []
     op = "+"
     for tok in tokens:
@@ -684,7 +702,7 @@ def resolve_target_type(target_spec: Any, ctx: ExecutionContext) -> List[str]:
         return [ctx.caster_id] if ctx.caster_id else []
     if isinstance(target_spec, str):
         return resolve_target_alias(target_spec, ctx)
-    if not isinstance(target_spec, Mapping):
+    if not isinstance(target_spec, dict) and not isinstance(target_spec, Mapping):
         return []
 
     t = target_spec.get("$type", "")
@@ -716,7 +734,7 @@ def resolve_target_type(target_spec: Any, ctx: ExecutionContext) -> List[str]:
         return []
     if t == "RPG.GameCore.TargetFetchUniqueNameEntity":
         un_obj = target_spec.get("UniqueName")
-        if isinstance(un_obj, Mapping):
+        if isinstance(un_obj, dict) or isinstance(un_obj, Mapping):
             uname = str(un_obj.get("RawString") or un_obj.get("Value") or "")
         else:
             uname = str(un_obj or "")

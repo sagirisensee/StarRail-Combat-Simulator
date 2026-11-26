@@ -102,7 +102,7 @@ def extract_log_metadata(
                 player_tracker.flush_pending_q_break()
                 sctx.cur_av = float(data.get("action_value", sctx.cur_av))
                 sctx.cur_turn_owner_team = enemy_tracker.on_turn_begin_owner(data.get("turn_owner"), sctx.cur_av)
-                player_tracker.on_turn_begin_after_owner()
+                player_tracker.on_turn_begin_after_owner(data.get("turn_owner"))
                 roster_tracker.on_turn_begin_after_flush(data.get("turn_owner"))
                 player_tracker.flush_pending_player_atk()
             elif ev == "OnUseSkill":
@@ -151,6 +151,7 @@ def extract_log_metadata(
                     elif ptype == "CurrentHP":
                         prev = sctx.last_enemy_hp.get(uid)
                         player_tracker.update_tie_highest_hp(uid, val, prev, sctx.last_enemy_hp)
+                        player_tracker.on_enemy_hp_neutral(val, prev, sctx.cur_av, _parse_log_time_ms(obj.get("time")))
                         if aha_tracker.is_active(sctx.cur_turn_owner_team) and prev is not None:
                             aha_tracker.on_enemy_hp_change(uid, val, prev)
                         elif player_tracker.try_record_enemy_hp_hit(uid, val, prev):
@@ -185,6 +186,7 @@ def extract_log_metadata(
                             enemy_tracker.pause_if_active(sctx.cur_av)
                         cname = _resolve_uid_name(uid, char_db)
                         prev_sp = sctx.last_player_sp.get(uid)
+                        player_tracker.on_player_sp_retarget_and_neutral(uid, val, prev_sp, sctx.cur_av)
                         is_enemy_hit_sp = enemy_tracker.on_player_sp_change(val, prev_sp, cname)
                         if not is_enemy_hit_sp and aha_tracker.is_active(sctx.cur_turn_owner_team):
                             aha_tracker.on_player_sp_change(uid, val, prev_sp, cname)
@@ -202,6 +204,7 @@ def extract_log_metadata(
                         sctx.last_player_spd[uid] = val
                     elif ptype == "CurrentHP":
                         prev = sctx.last_player_hp.get(uid)
+                        player_tracker.on_player_hp_neutral(uid, val, prev)
                         if enemy_tracker.cur_enemy_uid is not None:
                             enemy_tracker.on_player_hp_change(uid, val, prev, char_db)
                         elif aha_tracker.is_active(sctx.cur_turn_owner_team) and prev is not None:
@@ -278,6 +281,7 @@ def extract_log_metadata(
         enemy_uid_map=enemy_uid_map,
         ally_ult_targets=player_tracker.ally_ult_targets,
         enemy_retarget_picks=player_tracker.enemy_retarget_picks,
+        ally_retarget_picks=player_tracker.ally_retarget_picks,
         random_config_draws=player_tracker.random_config_draws,
         player_enemy_targets=player_enemy_targets,
         servant_targets=servant_targets,

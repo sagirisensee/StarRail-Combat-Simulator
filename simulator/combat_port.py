@@ -678,6 +678,15 @@ class SimulatorCombatPort:
             old_e = ent.energy
             ent.energy = min(ent.max_energy, ent.energy + amount)
             actual = ent.energy - old_e
+            if (
+                abs(amount) > 1e-9
+                and getattr(self.sim, "_timeline_diag_energy", False)
+                and callable(getattr(self.sim, "timeline_diag_cb", None))
+            ):
+                self.sim.timeline_diag_cb(
+                    "EN",
+                    f"{ent.name} {old_e:.2f} -> {ent.energy:.2f} (+{actual:.2f}, raw={amount:.2f}) cause={cause}",
+                )
             if hasattr(self.sim, "tracer") and self.sim.tracer and actual > 0:
                 src = source_plugin
                 if not cause:
@@ -976,6 +985,7 @@ class SimulatorCombatPort:
             extra_elation=extra_elation,
             extra_elation_extra=extra_elation_extra,
             property_source=prop_src,
+            element=element or "",
         )
         if resolved_damage_type == DamageType.FOLLOW_UP:
             scheduler = getattr(self.sim, "scheduler", None)

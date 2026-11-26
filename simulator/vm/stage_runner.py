@@ -166,11 +166,13 @@ class StageRunner:
                 char_cfg = loader._load_char_config(json_cfg)
                 dyn_floats = char_cfg.get("DynamicValues", {}).get("Floats", {})
                 mid = blueprint.monster_id
-                ms_list = [
-                    s for s in loader.monster_skills.values()
-                    if s.get("SkillID", 0) // 100 == mid // 100
-                ]
-                skills_by_key = {s.get("SkillTriggerKey"): s for s in ms_list}
+                cache = getattr(loader, "_skills_by_prefix_cache", None)
+                if cache is None:
+                    cache = {}
+                    for s in loader.monster_skills.values():
+                        cache.setdefault(s.get("SkillID", 0) // 100, {})[s.get("SkillTriggerKey")] = s
+                    loader._skills_by_prefix_cache = cache
+                skills_by_key = cache.get(mid // 100, {})
                 for h_str, rinfo in dyn_floats.items():
                     try:
                         h = int(h_str)
@@ -261,6 +263,7 @@ class StageRunner:
                 if is_controller:
                     ent = bp.to_entity(name=bp.name)
                     ent.is_unselectable = True
+                    setattr(ent, "_is_stage_controller", True)
                     setattr(ent, "_not_in_formation", True)
                     ent.distance_remaining = 1e12
                 else:
@@ -391,7 +394,7 @@ class StageRunner:
     def advance_wave_if_cleared(self, *, current_av: Optional[float] = None) -> Optional[List[Entity]]:
         """Advance to the next wave when all living enemies are defeated."""
         if any(
-            mrs.entity.current_hp > 0.0 and not getattr(mrs.entity, "_not_in_formation", False)
+            mrs.entity.current_hp > 0.0 and not getattr(mrs.entity, "_is_stage_controller", False)
             for mrs in self.state.enemies
         ):
             return None

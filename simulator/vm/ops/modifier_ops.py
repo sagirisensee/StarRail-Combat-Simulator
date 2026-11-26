@@ -371,6 +371,9 @@ class ModifierOpsMixin:
                         old_hp = float(ent.current_hp)
                         max_hp = sim.port.max_hp(tid) or getattr(ent, "max_hp", 0.0)
                         ent.current_hp = max(0.0, min(float(max_hp), float(max_hp) * float(ratio)))
+                        if ent.current_hp > 0.0:
+                            setattr(ent, "_vm_limbo_pending", False)
+                            setattr(ent, "_vm_phase_change_pending", False)
                         delta = float(ent.current_hp) - old_hp
                         if abs(delta) > 1e-6:
                             sync_hp_shared_subtargets(sim, ent)
@@ -461,9 +464,25 @@ class ModifierOpsMixin:
             else:
                 me.check_property_changes(ep_tid)
 
+    def _filter_action_delay_unlocked(self, targets: List[str], ctx: ExecutionContext) -> List[str]:
+        sim = self.rt.sim
+        unlocked: List[str] = []
+        for tid in targets:
+            ent = sim.get_entity(tid)
+            if (
+                ent is not None
+                and getattr(ent, "_action_delay_locked", False)
+                and ctx.caster_id not in getattr(ent, "_action_delay_lock_whitelist", ())
+            ):
+                continue
+            unlocked.append(tid)
+        return unlocked
+
     def _op_modify_action_delay(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
-        targets = self._resolve_targets(task.get("TargetType"), ctx)
+        targets = self._filter_action_delay_unlocked(self._resolve_targets(task.get("TargetType"), ctx), ctx)
+        if not targets:
+            return
         cur_turn = getattr(sim, "_current_turn_entity", None)
         def _requeue_ready_if_zero(tid: str) -> None:
             ent = sim.get_entity(tid)
@@ -529,7 +548,7 @@ class ModifierOpsMixin:
 
     def _op_reset_action_delay(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
-        targets = self._resolve_targets(task.get("TargetType"), ctx)
+        targets = self._filter_action_delay_unlocked(self._resolve_targets(task.get("TargetType"), ctx), ctx)
         skip_turn = bool(task.get("SkipTargetTurn", False))
         cur_turn = getattr(sim, "_current_turn_entity", None)
         for tid in targets:
@@ -540,13 +559,18 @@ class ModifierOpsMixin:
 
     def _op_set_action_delay(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
-        targets = self._resolve_targets(task.get("TargetType"), ctx)
+        targets = self._filter_action_delay_unlocked(self._resolve_targets(task.get("TargetType"), ctx), ctx)
+        if not targets:
+            return
         has_norm = task.get("NormalizedValue") is not None
         val_spec = task.get("NormalizedValue")
         if val_spec is None:
             val_spec = task.get("DelayValue") if "DelayValue" in task else task.get("Value")
         val = self._eval_num(val_spec, ctx, 1.0)
         cur_turn = getattr(sim, "_current_turn_entity", None)
+        multi_target = len(targets) > 1
+        multi_batch: List[str] = []
+        multi_prev_av: dict[str, float] = {}
         for tid in targets:
             if val <= 1e-6:
                 if cur_turn is not None and cur_turn.name == tid:
@@ -562,27 +586,42 @@ class ModifierOpsMixin:
                         nat = getattr(sim, "_natural_due_names", None)
                         if isinstance(nat, set):
                             nat.discard(tid)
-                        batch_ids = getattr(ctx, "_set_delay_zero_batch", None)
-                        if batch_ids is None:
-                            batch_ids = []
-                            setattr(ctx, "_set_delay_zero_batch", batch_ids)
-                        batch_prev_av = getattr(ctx, "_set_delay_zero_prev_av", None)
-                        if batch_prev_av is None:
-                            batch_prev_av = {}
-                            setattr(ctx, "_set_delay_zero_prev_av", batch_prev_av)
-                        batch_prev_av.setdefault(tid, prev_av)
-                        batch_ids.append(tid)
-                        batch_set = set(batch_ids)
-                        rest = [name for name in rq if name not in batch_set]
-                        batch_in_rq = [name for name in rq if name in batch_set] + [tid]
-                        batch_in_rq.sort(
-                            key=lambda name: (
-                                round(float(batch_prev_av.get(name, 0.0)), 4),
-                                -float(getattr(sim.get_entity(name), "speed", 0.0) or 0.0),
-                                int(getattr(sim.get_entity(name), "_spawn_seq", 0) or 0),
+                        if multi_target:
+                            multi_prev_av.setdefault(tid, prev_av)
+                            multi_batch.append(tid)
+                            batch_set = set(multi_batch)
+                            rest = [name for name in rq if name not in batch_set]
+                            batch_in_rq = [name for name in rq if name in batch_set] + [tid]
+                            batch_in_rq.sort(
+                                key=lambda name: (
+                                    round(float(multi_prev_av.get(name, 0.0)), 4),
+                                    -float(getattr(sim.get_entity(name), "speed", 0.0) or 0.0),
+                                    int(getattr(sim.get_entity(name), "_spawn_seq", 0) or 0),
+                                )
                             )
-                        )
-                        rq[:] = batch_in_rq + rest
+                            rq[:] = batch_in_rq + rest
+                        else:
+                            batch_ids = getattr(ctx, "_set_delay_zero_batch", None)
+                            if batch_ids is None:
+                                batch_ids = []
+                                setattr(ctx, "_set_delay_zero_batch", batch_ids)
+                            batch_prev_av = getattr(ctx, "_set_delay_zero_prev_av", None)
+                            if batch_prev_av is None:
+                                batch_prev_av = {}
+                                setattr(ctx, "_set_delay_zero_prev_av", batch_prev_av)
+                            batch_prev_av.setdefault(tid, prev_av)
+                            batch_ids.append(tid)
+                            batch_set = set(batch_ids)
+                            rest = [name for name in rq if name not in batch_set]
+                            batch_in_rq = [name for name in rq if name in batch_set] + [tid]
+                            batch_in_rq.sort(
+                                key=lambda name: (
+                                    round(float(batch_prev_av.get(name, 0.0)), 4),
+                                    -float(getattr(sim.get_entity(name), "speed", 0.0) or 0.0),
+                                    int(getattr(sim.get_entity(name), "_spawn_seq", 0) or 0),
+                                )
+                            )
+                            rq[:] = batch_in_rq + rest
                 else:
                     sim.port.set_distance(tid, 0.0)
             else:
@@ -1031,6 +1070,7 @@ class ModifierOpsMixin:
         3: "STAT_DOT_Electric",
         4: "STAT_DOT_Poison",
         5: "STAT_DOT_Bleed",
+        8: "CustomEvent_MonsterChangePhaseTrigger",
     }
 
     def _op_trigger_modifier_custom_event(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -1046,7 +1086,16 @@ class ModifierOpsMixin:
         dyn_val = self._eval_num(task.get("Value"), ctx, 1.0) if "Value" in task else None
         req_flag = self._DOT_CUSTOM_EVENT_FLAGS.get(ev_val) if enum_idx == 4 else None
 
+        sim = self.rt.sim
         for tid in targets:
+            tgt_ent = sim.get_entity(tid)
+            if (
+                tgt_ent is not None
+                and float(getattr(tgt_ent, "current_hp", 0.0)) <= 0.0
+                and not getattr(tgt_ent, "is_infinite_hp", False)
+                and not getattr(tgt_ent, "_in_deathrattle_limbo", False)
+            ):
+                continue
             mods = list(me.get_modifiers(tid))
             if enum_idx == 4:
                 mods.sort(
@@ -1061,8 +1110,9 @@ class ModifierOpsMixin:
                     if ev_val == 1:
                         if not any(f == "STAT_DOT" or f.startswith("STAT_DOT_") for f in mod.behavior_flags):
                             continue
-                    elif req_flag and req_flag not in mod.behavior_flags:
-                        continue
+                    else:
+                        if not req_flag or req_flag not in mod.behavior_flags:
+                            continue
                 has_cb = any(
                     isinstance(cb, Mapping) and cb.get("Event") == "OnCustomEvent"
                     for cb in mod.config.get("_CallbackList", ())
@@ -1129,3 +1179,34 @@ class ModifierOpsMixin:
                 ent.is_unselectable = True
                 if ctx.modifier_instance is None:
                     setattr(ent, "_static_unselectable", True)
+
+    def _op_lock_action_delay_change(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        sim = self.rt.sim
+        tgt_spec = task.get("LockTargetType") or task.get("TargetType")
+        targets = (
+            self._resolve_targets(tgt_spec, ctx)
+            if tgt_spec is not None
+            else ([ctx.modifier_owner_id] if ctx.modifier_owner_id else [])
+        )
+        is_lock = bool(task.get("IsLock", True))
+        wl_spec = task.get("WhitelistSourceEntity")
+        wl_ids = set(self._resolve_targets(wl_spec, ctx)) if wl_spec is not None else set()
+        for tid in targets:
+            ent = sim.get_entity(tid)
+            if ent is None:
+                continue
+            if is_lock:
+                ent._action_delay_locked = True
+                ent._action_delay_lock_whitelist = set(wl_ids)
+                if ctx.modifier_instance is not None:
+                    setattr(ctx.modifier_instance, "_applied_lock_action_delay", True)
+            else:
+                has_other_lock = any(
+                    not m._destroyed
+                    and (ctx.modifier_instance is None or m.uid != ctx.modifier_instance.uid)
+                    and getattr(m, "_applied_lock_action_delay", False)
+                    for m in self.rt.modifier_engine.get_modifiers(tid)
+                )
+                if not has_other_lock:
+                    ent._action_delay_locked = False
+                    ent._action_delay_lock_whitelist = set()

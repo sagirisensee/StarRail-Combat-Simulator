@@ -260,10 +260,11 @@ class ExecutionLifecycle:
         self.pending_limbo_after_dying: List[Tuple[str, Optional[str]]] = []
         self.pending_level_kills: List[Tuple[str, str]] = []
         self.pending_dead_enemies: List[str] = []
-        self.pending_listen_die: List[str] = []
+        self.pending_listen_die: List[Tuple[str, str]] = []
         self.active_deathrattle_entities: Set[str] = set()
         self.pending_deathrattle_together: int = 0
         self._damage_hit_recorders: List[Tuple[str, List[DamageHitSnapshot]]] = []
+        self.active_listen_die_entity: Optional[str] = None
 
     @property
     def in_attack_scope(self) -> bool:
@@ -323,6 +324,8 @@ class ExecutionLifecycle:
             reasons.append(f"pending_deathrattle_together={self.pending_deathrattle_together}")
         if self._damage_hit_recorders:
             reasons.append(f"damage_hit_recorders={len(self._damage_hit_recorders)}")
+        if self.active_listen_die_entity is not None:
+            reasons.append(f"active_listen_die_entity={self.active_listen_die_entity}")
         return reasons
 
     @property
@@ -438,6 +441,9 @@ class ExecutionLifecycle:
         me.dispatch_event("OnBeforeDying", owner_id=dead_tid, param_entity_id=killer_id)
         me.dispatch_event("OnBeingLimbo", owner_id=dead_tid, param_entity_id=killer_id)
         dead_ent = sim.get_entity(dead_tid)
+        if dead_ent is not None:
+            pre_flags = frozenset(f for m in me.get_modifiers(dead_tid) for f in m.behavior_flags)
+            setattr(dead_ent, "_pre_deathrattle_behavior_flags", pre_flags)
         if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
             me.strip_for_deathrattle(dead_tid)
         self.active_deathrattle_entities.add(dead_tid)
@@ -455,10 +461,29 @@ class ExecutionLifecycle:
             return True
         return False
 
+    def _dispatch_listen_die_once(self, dead_id: str, killer_id: str = "") -> None:
+        """按实体唯一一次派发 `OnListenCharacterDie`，附带击杀者 (`ParamEntity2`)。"""
+        ent = self.rt.sim.get_entity(dead_id) if dead_id else None
+        if ent is not None and getattr(ent, "_listen_die_dispatched", False):
+            return
+        if ent is not None:
+            setattr(ent, "_listen_die_dispatched", True)
+        prev_active = self.active_listen_die_entity
+        self.active_listen_die_entity = dead_id
+        try:
+            self.rt.modifier_engine.dispatch_event(
+                "OnListenCharacterDie",
+                param_entity_id=dead_id,
+                param_entity2_id=(killer_id or None),
+            )
+        finally:
+            self.active_listen_die_entity = prev_active
+
     def defer_or_dispatch_listen_die(
         self,
         dead_id: str,
         *,
+        killer_id: str = "",
         defer_in_after_attack: bool = True,
     ) -> None:
         """统一调度 `OnListenCharacterDie`：若处于受保护帧内则入队延后，否则检查亡语悬停态后派发。"""
@@ -468,15 +493,16 @@ class ExecutionLifecycle:
             should_defer = self.in_attack_scope and not self.in_after_attack and not self.flushing_listen_die
 
         if should_defer:
-            if dead_id and dead_id not in self.pending_listen_die:
-                self.pending_listen_die.append(dead_id)
+            if dead_id and not any(d == dead_id for d, _ in self.pending_listen_die):
+                self.pending_listen_die.append((dead_id, killer_id))
             return
 
         dead_ent = self.rt.sim.get_entity(dead_id) if dead_id else None
         if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
             setattr(dead_ent, "_deferred_listen_die", True)
+            setattr(dead_ent, "_deferred_listen_die_killer", killer_id)
         else:
-            self.rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+            self._dispatch_listen_die_once(dead_id, killer_id)
 
     def drain_dying_batch(self) -> None:
         """排空当前一批延后濒死实体 (`OnBeforeDying` / `OnBeingLimbo` / `OnDeathrattle`)。"""
@@ -501,12 +527,13 @@ class ExecutionLifecycle:
             while self.pending_listen_die:
                 listen_batch = list(self.pending_listen_die)
                 self.pending_listen_die.clear()
-                for dead_id in listen_batch:
+                for dead_id, killer_id in listen_batch:
                     dead_ent = self.rt.sim.get_entity(dead_id)
                     if dead_ent is not None and getattr(dead_ent, "_in_deathrattle_limbo", False):
                         setattr(dead_ent, "_deferred_listen_die", True)
+                        setattr(dead_ent, "_deferred_listen_die_killer", killer_id)
                         continue
-                    self.rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=dead_id)
+                    self._dispatch_listen_die_once(dead_id, killer_id)
         finally:
             self.flushing_listen_die = False
 
@@ -666,14 +693,17 @@ class ExecutionLifecycle:
         """退出亡语悬停态并收口实体/Modifier 销毁与延迟死亡监听。"""
         sim = self.rt.sim
         entity_id = str(getattr(ent, "name", "") or "")
+        killer_id = str(getattr(ent, "_deferred_listen_die_killer", "") or "")
+        setattr(ent, "_deferred_listen_die_killer", "")
         _, was_deferred_die = clear_deathrattle_limbo(ent)
         ent.current_hp = 0.0
         if getattr(ent, "is_memosprite", False) and hasattr(sim, "port"):
             sim.port.despawn_spirit(entity_id, reason="death")
-        self.rt.modifier_engine.destroy_all_for_entity(entity_id)
-        self.discard_pending_dead(entity_id)
         if was_deferred_die:
-            self.rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=entity_id)
+            self._dispatch_listen_die_once(entity_id, killer_id)
+        self.rt.modifier_engine.destroy_all_for_entity(entity_id)
+        setattr(ent, "_pre_deathrattle_behavior_flags", frozenset())
+        self.discard_pending_dead(entity_id)
 
     def finalize_inline_deathrattle(self, entity_id: str) -> None:
         """若实体无异步亡语插入动作且 HP<=0，则立即结束亡语悬停态并销毁 Modifier。"""
@@ -733,6 +763,8 @@ class ExecutionLifecycle:
         if dead_ent is not None and float(getattr(dead_ent, "current_hp", 0.0)) > 0.0:
             return
         me.destroy_all_for_entity(dead_tid)
+        if dead_ent is not None:
+            setattr(dead_ent, "_pre_deathrattle_behavior_flags", frozenset())
         shared_map = getattr(self.rt, "hp_shared_groups", None)
         if not shared_map:
             return
@@ -835,7 +867,13 @@ class ExecutionLifecycle:
             if spec.emit_ultra_prepare:
                 me.dispatch_event("OnListenUltraSkillPrepare", param_entity_id=spec.caster_id)
             if spec.emit_insert_start:
-                me.dispatch_event("OnListenInsertAbilityStart", param_entity_id=spec.caster_id)
+                insert_start_tgts = spec.skill_target_ids or spec.target_ids
+                me.dispatch_event(
+                    "OnListenInsertAbilityStart",
+                    param_entity_id=spec.caster_id,
+                    skill_target_ids=insert_start_tgts,
+                    param_skill_targets=insert_start_tgts,
+                )
             if spec.emit_before_skill:
                 if spec.before_skill_targets_as_attack:
                     me.dispatch_event(

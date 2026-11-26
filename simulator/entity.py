@@ -40,6 +40,7 @@ class Entity:
     base_break_effect: float = 0.0
     base_err: float = 1.0
     base_dmg_boost: float = 0.0
+    base_elem_dmg_boost: float = 0.0
     base_elation: float = 0.0
     element: str = ""
     path: str = ""
@@ -106,7 +107,10 @@ class Entity:
     @property
     def speed(self) -> float:
         """从状态管理器动态计算实时速度，无缝支持速度 Buff/Debuff。"""
-        if getattr(self, "_not_in_formation", False) or not getattr(self, "have_action_delay", True):
+        if getattr(self, "_is_stage_controller", False) or not getattr(self, "have_action_delay", True):
+            return 0.0
+        vm_rt = getattr(self.simulator, "vm_runtime", None) if self.simulator else None
+        if vm_rt is not None and vm_rt.modifier_engine.has_behavior_flag(self.name, "MuteSpeed"):
             return 0.0
         if self.simulator and hasattr(self.simulator, "status_mgr"):
             return max(

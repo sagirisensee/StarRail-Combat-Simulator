@@ -28,7 +28,7 @@ def _compare_values(lhs: float, rhs: float, cmp_type: str) -> bool:
 
 
 def _str_val(v: Any) -> str:
-    if isinstance(v, Mapping):
+    if isinstance(v, dict) or isinstance(v, Mapping):
         return str(v.get("Value", ""))
     return str(v or "")
 
@@ -458,6 +458,13 @@ class PredicateOpsMixin:
                             ) == target_tag:
                                 return True
                         if target_tag == (8, 1) and str(sk.get("SkillType", "")) == "Elation":
+                            ent = sim.get_entity(tid)
+                            if (
+                                ent is not None
+                                and getattr(ent, "is_battle_event", False)
+                                and str(getattr(ent, "_battle_event_sub_type", "")) == "Elation"
+                            ):
+                                continue
                             return True
             return False
 
@@ -1000,16 +1007,35 @@ class PredicateOpsMixin:
             chance = self._eval_num(pred.get("Chance"), ctx, 0.0)
             if chance <= 1e-9:
                 return False
+            if chance >= 1.0 - 1e-9:
+                return True
+            target_id = ctx.param_entity_id or ctx.modifier_owner_id or ""
+            res: Any = None
             prov = getattr(sim, "random_chance_provider", None)
             if callable(prov):
                 res = prov(ctx.caster_id, ctx.ability_name, chance)
-                if chance >= 1.0 - 1e-9:
-                    return True
-                if res is not None:
-                    return bool(res)
-            if chance >= 1.0 - 1e-9:
-                return True
-            return bool(chance >= 0.5)
+            outcome: Optional[bool] = True if res else None
+            if outcome is None:
+                t_prov = getattr(sim, "random_chance_target_provider", None)
+                if callable(t_prov):
+                    t_res = t_prov(ctx.caster_id, target_id, ctx.ability_name, chance)
+                    if t_res is not None:
+                        outcome = bool(t_res)
+            if outcome is None:
+                outcome = bool(res) if res is not None else bool(chance >= 0.5)
+            trace_rec = getattr(sim, "rng_trace_recorder", None)
+            if callable(trace_rec) and 0.0 < chance < 1.0:
+                trace_rec(
+                    "CHANCE",
+                    round(float(getattr(sim, "current_av", 0.0)), 2),
+                    ctx.caster_id,
+                    target_id,
+                    ctx.ability_name,
+                    [float(chance)],
+                    2,
+                    1 if outcome else 0,
+                )
+            return outcome
 
         director = getattr(sim, "_stage_director", None)
         runner = getattr(director, "runner", None) if director is not None else None

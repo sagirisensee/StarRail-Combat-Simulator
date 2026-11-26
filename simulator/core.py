@@ -198,7 +198,11 @@ class TurnSimulator:
 
     def get_entity(self, name_or_id: str) -> Optional[Entity]:
         for e in self.entities:
-            if e.name == name_or_id or str(getattr(e, "avatar_id", "")) == str(name_or_id):
+            if e.name == name_or_id:
+                return e
+        id_str = str(name_or_id)
+        for e in self.entities:
+            if str(getattr(e, "avatar_id", "")) == id_str:
                 return e
         if "_g1_" in name_or_id:
             alt = name_or_id.replace("_g1_", "_")
@@ -463,7 +467,7 @@ class TurnSimulator:
         if not self._ready_queue:
             turn_candidates = [
                 e for e in alive
-                if e.speed > 0.0 and not getattr(e, "_not_in_formation", False)
+                if e.speed > 0.0
             ]
             delta_av = min((e.remaining_av for e in turn_candidates), default=0.0)
             if delta_av > 0 and delta_av != float("inf"):
@@ -950,7 +954,7 @@ class TurnSimulator:
 
                 if active_entity.action_callback:
                     active_entity.action_callback(active_entity, self.resolver, actual_action)
-                elif active_entity.is_enemy:
+                elif active_entity.is_enemy and not getattr(active_entity, "is_countdown", False):
                     if getattr(active_entity, "kit", None) is not None and isinstance(active_entity.kit, EnemyKit):
                         self._run_enemy_turn_frame(active_entity)
                     else:

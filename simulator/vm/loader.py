@@ -198,7 +198,6 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.DisableHeadLookAtOverride",
     "RPG.GameCore.SetCharacterAlwaysIdleState",
     "RPG.GameCore.SetCharacterAtlasFaceEmotion",
-    "RPG.GameCore.SetCharacterFormation",
     "RPG.GameCore.SetEntityForceVisible",
     "RPG.GameCore.ShowBattleScreenEffect",
     "RPG.GameCore.StartAim",
@@ -453,6 +452,7 @@ class GameDataLoader:
         self._elation_level_dmg: Optional[Dict[int, float]] = None
         self._elation_skill_priority: Optional[Dict[int, int]] = None
         self._common_skill_pools: Optional[Dict[str, Dict[str, Any]]] = None
+        self._compiled_char_cache: Dict[Tuple[int, int, Tuple[Tuple[str, int], ...], bool], CompiledCharacterSpec] = {}
 
     def get_common_skill_pool(self, pool_name: str) -> Optional[Dict[str, Any]]:
         """按 UniqueName 查询官方 ConfigCommonSkillPool/*.json 中的通用技能池。"""
@@ -640,6 +640,8 @@ class GameDataLoader:
             except OSError:
                 pass
             self._elation_level_dmg = table
+        if level is not None and int(level) <= 0:
+            return 0.0
         lv_i = max(1, int(level or 80))
         if lv_i in self._elation_level_dmg:
             return self._elation_level_dmg[lv_i]
@@ -820,28 +822,28 @@ class GameDataLoader:
         self._ability_index_built = True
 
     def get_ability(self, name: str) -> Optional[Dict[str, Any]]:
-        if name not in self._ability_by_name:
+        if not self._ability_index_built:
             self.ensure_ability_index()
         return self._ability_by_name.get(name)
 
     def get_global_modifier(self, name: str) -> Optional[Dict[str, Any]]:
-        if name not in self._global_mod_by_name:
+        if not self._ability_index_built:
             self.ensure_ability_index()
         return self._global_mod_by_name.get(name)
 
     def get_global_template(self, name: str) -> Optional[List[Dict[str, Any]]]:
-        if name not in self._global_tpl_by_name:
+        if not self._ability_index_built:
             self.ensure_ability_index()
         return self._global_tpl_by_name.get(name)
 
     def get_global_target_alias(self, name: str) -> Optional[Dict[str, Any]]:
-        if name not in self._global_target_alias_by_name:
+        if not self._ability_index_built:
             self.ensure_ability_index()
         return self._global_target_alias_by_name.get(name)
 
     def get_inner_modifier(self, mod_name: str) -> Optional[Tuple[str, str, Dict[str, Any]]]:
         """按内嵌 Modifier 名称返回 (ability_name, rel_path, modifier_dict)。"""
-        if mod_name not in self._ability_mod_index:
+        if not self._ability_index_built:
             self.ensure_ability_index()
         entry = self._ability_mod_index.get(mod_name)
         if not entry:
@@ -1130,6 +1132,34 @@ class GameDataLoader:
         enhanced: bool = False,
     ) -> CompiledCharacterSpec:
         """编译指定角色的配置、技能 AST、Modifier 与全参数上下文。"""
+        def _clone_spec(spec: CompiledCharacterSpec) -> CompiledCharacterSpec:
+            return CompiledCharacterSpec(
+                unit_id=spec.unit_id,
+                is_servant=spec.is_servant,
+                config=spec.config,
+                abilities=spec.abilities,
+                global_modifiers=spec.global_modifiers,
+                global_templates=spec.global_templates,
+                dynamic_floats=dict(spec.dynamic_floats),
+                skill_levels=dict(spec.skill_levels),
+                eidolon=spec.eidolon,
+                unlocked_ranks=set(spec.unlocked_ranks),
+                servant_id=spec.servant_id,
+                extra_passive_abilities=spec.extra_passive_abilities,
+                uses_special_sp=spec.uses_special_sp,
+                enhanced=spec.enhanced,
+            )
+
+        cache_key = (
+            int(avatar_id),
+            int(eidolon),
+            tuple(sorted((str(k), int(v)) for k, v in (trained_levels or {}).items())),
+            bool(enhanced),
+        )
+        cached = self._compiled_char_cache.get(cache_key)
+        if cached is not None:
+            return _clone_spec(cached)
+
         self._ensure_avatars()
         self._ensure_servants()
         self.ensure_ability_index()
@@ -1185,7 +1215,7 @@ class GameDataLoader:
 
         servant_id = 10000 + int(avatar_id)
         uses_special_sp = _node_uses_special_sp(abilities)
-        return CompiledCharacterSpec(
+        spec = CompiledCharacterSpec(
             unit_id=int(avatar_id),
             is_servant=False,
             config=cfg,
@@ -1201,6 +1231,8 @@ class GameDataLoader:
             uses_special_sp=uses_special_sp,
             enhanced=bool(enhanced),
         )
+        self._compiled_char_cache[cache_key] = spec
+        return _clone_spec(spec)
 
     def load_servant(
         self,

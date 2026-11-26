@@ -8,6 +8,7 @@
 5. 全量属性持久化导出为 JSON 报表。
 """
 import json
+import math
 from typing import Dict, List, Optional, Sequence, Tuple, Union, Any
 
 from .models import (
@@ -211,10 +212,26 @@ class CharacterDB:
                     high = int(sub["high_rolls"])
                     cnt = low + mid + high
                     stp = mid + 2 * high
-                    exact_val = cnt * float(rule["base"]) + stp * float(rule["step_val"])
+                    base_val = float(rule["base"])
+                    step_val = float(rule["step_val"])
+                    exact_val = cnt * base_val + stp * step_val
                     tol = 0.001 if target_pct else 0.5
                     if cnt > 0 and abs(exact_val - raw_val) < tol:
                         eff_val = exact_val
+                    elif cnt > 0:
+                        matches = []
+                        for cand_stp in range(0, 2 * cnt + 1):
+                            cand = cnt * base_val + cand_stp * step_val
+                            if target_pct:
+                                trunc_cand = math.floor(cand * 1000.0 + 1e-9) / 1000.0
+                                if abs(trunc_cand - raw_val) < 1e-9:
+                                    matches.append(cand)
+                            else:
+                                trunc_cand = float(math.floor(cand + 1e-9))
+                                if abs(trunc_cand - raw_val) < 1e-9:
+                                    matches.append(cand)
+                        if matches:
+                            eff_val = min(matches, key=lambda c: abs(c - raw_val))
                 if target_key and target_key != "unknown":
                     if target_pct:
                         relic_pct_bonuses[target_key] = relic_pct_bonuses.get(target_key, 0.0) + eff_val
@@ -260,6 +277,7 @@ class CharacterDB:
             "ehr": _sum_sec("ehr", 0.0),
             "res": _sum_sec("res", 0.0),
             "dmg_boost": _sum_sec("dmg_boost", 0.0) + _sum_sec(elem_key, 0.0),
+            "elem_dmg_boost": _sum_sec(elem_key, 0.0),
             "elation": _sum_sec("elation_dmg", 0.0),
         }
         primary_bds = {
@@ -418,6 +436,13 @@ class CharacterDB:
                     return reconstructed_sec[bd_key]
                 return summary_val
 
+            dmg_boost_total = exact_stat("dmg_boost", "属性伤害加成 (DMG%)", "0.0%")
+            _ensure_reconstructed()
+            elem_dmg_exact = min(
+                dmg_boost_total,
+                float((reconstructed_sec or {}).get("elem_dmg_boost", 0.0)),
+            )
+
             panel = CharacterPanel(
                 hp=hp_exact,
                 atk=atk_exact,
@@ -429,7 +454,8 @@ class CharacterDB:
                 err=exact_stat("err", "能量恢复效率 (ERR)", "100.0%"),
                 ehr=exact_stat("ehr", "效果命中 (EHR)", "0.0%"),
                 res=exact_stat("res", "效果抵抗 (RES)", "0.0%"),
-                dmg_boost=exact_stat("dmg_boost", "属性伤害加成 (DMG%)", "0.0%"),
+                dmg_boost=dmg_boost_total,
+                elem_dmg_boost=elem_dmg_exact,
                 elation=exact_stat("elation", "欢愉度 (Elation)", "0.0%"),
                 breakdowns=breakdowns
             )
@@ -542,7 +568,12 @@ class CharacterDB:
             base_effect_res=getattr(panel, "res", 0.10),
             base_effect_hit_rate=getattr(panel, "ehr", 0.0),
             base_err=getattr(panel, "err", 1.0),
-            base_dmg_boost=getattr(panel, "dmg_boost", 0.0),
+            base_dmg_boost=max(
+                0.0,
+                float(getattr(panel, "dmg_boost", 0.0) or 0.0)
+                - float(getattr(panel, "elem_dmg_boost", 0.0) or 0.0),
+            ),
+            base_elem_dmg_boost=float(getattr(panel, "elem_dmg_boost", 0.0) or 0.0),
             base_elation=getattr(panel, "elation", 0.0),
             element=profile.element.name if hasattr(profile.element, "name") else str(profile.element),
             path=profile.path.name if hasattr(profile.path, "name") else str(profile.path),

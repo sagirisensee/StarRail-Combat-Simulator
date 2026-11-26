@@ -40,7 +40,6 @@ IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
     "RPG.GameCore.StackStatusResistance",
     "RPG.GameCore.SetResilience",
     "RPG.GameCore.CharacterChangePhase",
-    "RPG.GameCore.LockActionDelayChange",
     "RPG.GameCore.LockTargetActionDelay",
     "RPG.GameCore.SummonPartner",
     "RPG.GameCore.SetStanceCount",
@@ -218,7 +217,7 @@ class TaskExecutor(
             if g_spec is not None:
                 return self._resolve_targets(g_spec, ctx)
             return resolve_target_type(target_spec, ctx)
-        if not isinstance(target_spec, Mapping):
+        if not isinstance(target_spec, dict) and not isinstance(target_spec, Mapping):
             return []
 
         t = target_spec.get("$type", "")
@@ -239,7 +238,7 @@ class TaskExecutor(
                 me = self.rt.modifier_engine
                 sim = self.rt.sim
                 for step in steps[1:]:
-                    if not isinstance(step, Mapping):
+                    if not isinstance(step, dict) and not isinstance(step, Mapping):
                         continue
                     st = step.get("$type", "")
                     if st == "RPG.GameCore.TargetFilter":
@@ -353,7 +352,7 @@ class TaskExecutor(
         if callable(skip_cb) and taken and skipped:
             taken_list = list(taken)
             for sk in skipped:
-                if not (isinstance(sk, Mapping) and sk.get("$type") == "RPG.GameCore.RandomConfig"):
+                if not ((isinstance(sk, dict) or isinstance(sk, Mapping)) and sk.get("$type") == "RPG.GameCore.RandomConfig"):
                     continue
                 rc_tlist = sk.get("TaskList") or ()
                 matched_idx: Optional[int] = None
@@ -702,8 +701,28 @@ class TaskExecutor(
         rt = self.rt
         sim = rt.sim
 
+        def _targets_dying_state(tspec: Any) -> bool:
+            if not isinstance(tspec, Mapping):
+                return False
+            if tspec.get("$type") == "RPG.GameCore.TargetQuery" and any(
+                tok in str(tspec.get("AliveStateMask") or "")
+                for tok in ("Bit_Dying", "Bit_Deathrattle", "Dead")
+            ):
+                return True
+            return "DyingCharacter" in str(tspec.get("Alias") or "")
+
         def _match_retarget() -> List[str]:
             candidates = self._resolve_targets(task.get("TargetType"), ctx)
+            if not getattr(rt, "_include_limbo", False) and not _targets_dying_state(task.get("TargetType")):
+                candidates = [
+                    cid for cid in candidates
+                    if not (
+                        (c_ent := sim.get_entity(cid)) is not None
+                        and float(getattr(c_ent, "current_hp", 0.0)) <= 0.0
+                        and not getattr(c_ent, "is_infinite_hp", False)
+                        and getattr(c_ent, "_in_deathrattle_limbo", False)
+                    )
+                ]
             pred = task.get("Predicate")
             out: List[str] = []
             for cid in candidates:
@@ -765,6 +784,22 @@ class TaskExecutor(
                                 )
                             if isinstance(pname, str) and pname in out:
                                 out = [pname] + [cid for cid in out if cid != pname]
+                        else:
+                            light_cands = [sim.get_entity(cid) for cid in out]
+                            light_cands = [e for e in light_cands if e is not None and not getattr(e, "is_enemy", False)]
+                            a_prov = getattr(sim, "ally_retarget_provider", None)
+                            if len(light_cands) > cap and callable(a_prov):
+                                pick_caster = sim.get_entity(ctx.modifier_owner_id) if ctx.modifier_owner_id else caster_ent
+                                picked = a_prov(pick_caster or caster_ent, light_cands)
+                                pname = getattr(picked, "name", picked) if picked is not None else None
+                                diag_cb = getattr(sim, "timeline_diag_cb", None)
+                                if callable(diag_cb):
+                                    diag_cb(
+                                        "RETARG",
+                                        f"caster={getattr(pick_caster or caster_ent, 'name', '')} cands={[e.name for e in light_cands]} picked={pname} ab={ctx.ability_name}",
+                                    )
+                                if isinstance(pname, str) and pname in out:
+                                    out = [pname] + [cid for cid in out if cid != pname]
                 out = out[:cap]
             return out
 
@@ -864,9 +899,14 @@ class TaskExecutor(
         odds_list = task.get("OddsList") or []
         if tlist:
             weights = [self._eval_num(o, ctx, 0.0) for o in odds_list[:len(tlist)]] if odds_list else []
+            target_id = ctx.param_entity_id or ctx.modifier_owner_id or ""
             best_idx = 0
             prov = getattr(self.rt.sim, "random_config_provider", None)
             picked = prov(ctx.caster_id, ctx.ability_name, tlist, weights) if callable(prov) else None
+            if picked is None:
+                t_prov = getattr(self.rt.sim, "random_config_target_provider", None)
+                if callable(t_prov):
+                    picked = t_prov(ctx.caster_id, target_id, ctx.ability_name, len(tlist), weights)
             src = "default"
             if picked is not None and 0 <= int(picked) < len(tlist):
                 best_idx = int(picked)
@@ -874,6 +914,18 @@ class TaskExecutor(
             elif weights and any(w > 0.0 for w in weights):
                 best_idx = max(range(len(weights)), key=lambda i: weights[i])
                 src = "weight"
+            trace_rec = getattr(self.rt.sim, "rng_trace_recorder", None)
+            if callable(trace_rec):
+                trace_rec(
+                    "RANDCFG",
+                    round(float(getattr(self.rt.sim, "current_av", 0.0)), 2),
+                    ctx.caster_id,
+                    target_id,
+                    ctx.ability_name,
+                    list(weights),
+                    len(tlist),
+                    best_idx,
+                )
             diag_cb = getattr(self.rt.sim, "timeline_diag_cb", None)
             if callable(diag_cb):
                 diag_cb("RAND", f"{ctx.caster_id} pick={best_idx}/{len(tlist)} src={src}")
@@ -1011,6 +1063,7 @@ class TaskExecutor(
         "RPG.GameCore.ModifyActionDelay": ModifierOpsMixin._op_modify_action_delay,
         "RPG.GameCore.ResetActionDelay": ModifierOpsMixin._op_reset_action_delay,
         "RPG.GameCore.SetActionDelay": ModifierOpsMixin._op_set_action_delay,
+        "RPG.GameCore.LockActionDelayChange": ModifierOpsMixin._op_lock_action_delay_change,
         "RPG.GameCore.ModifyCurrentSkillDelayCost": ModifierOpsMixin._op_modify_current_skill_delay_cost,
         "JDOLDFECMPL": ModifierOpsMixin._op_modify_elation_points,
         "RPG.GameCore.SetTargetUniqueName": ModifierOpsMixin._op_set_target_unique_name,
@@ -1044,6 +1097,7 @@ class TaskExecutor(
         # 5. 关卡与怪物机制（StageOpsMixin）
         "RPG.GameCore.RemoveEntityFromTeamFormation": StageOpsMixin._op_toggle_team_formation,
         "RPG.GameCore.AddEntityToTeamFormation": StageOpsMixin._op_toggle_team_formation,
+        "RPG.GameCore.SetCharacterFormation": StageOpsMixin._op_set_character_formation,
         "RPG.GameCore.ForceKill": StageOpsMixin._op_force_kill,
         "RPG.GameCore.DamagePerformFinish": StageOpsMixin._op_damage_perform_finish,
         "RPG.GameCore.SummonMonster": StageOpsMixin._op_summon_monster,
@@ -1088,7 +1142,7 @@ class TaskExecutor(
 
     def execute_tasks(self, tasks: Sequence[Mapping[str, Any]], ctx: ExecutionContext) -> None:
         for task in tasks:
-            if isinstance(task, Mapping):
+            if isinstance(task, dict) or isinstance(task, Mapping):
                 self.execute_task(task, ctx)
 
     def execute_task(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:

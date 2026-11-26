@@ -50,6 +50,7 @@ def _print_summary(
     r: ReconcileReport,
     *,
     threshold: float,
+    show_dots: bool = False,
 ) -> None:
     print(f"=== {log_path} | stage={meta.stage_id} | team={meta.team_names} | extra_buffs={extra_buffs} ===")
     print(
@@ -59,6 +60,14 @@ def _print_summary(
         f"nc={sorted(r.non_crits)}"
     )
     print(f"  total_err={r.total_err * 100:.6f}%  max_turn_err={r.max_turn_err * 100:.6f}%")
+    dot_diffs = getattr(r, "dot_diffs", ()) or ()
+    gt_dot_total = sum(dd.gt_total for dd in dot_diffs)
+    sim_dot_total = sum(dd.sim_total for dd in dot_diffs)
+    print(
+        f"  gt_total={r.golden_total_damage:13.2f}  sim_total={r.sim_total_damage:13.2f}  "
+        f"gt_dot_total={gt_dot_total:13.2f}  sim_dot_total={sim_dot_total:13.2f}  "
+        f"dot_diff={sim_dot_total - gt_dot_total:+13.2f}"
+    )
     if r.enemy_hit_mismatches:
         print(f"  enemy_hit_mismatches ({len(r.enemy_hit_mismatches)}):")
         for m in r.enemy_hit_mismatches:
@@ -76,9 +85,28 @@ def _print_summary(
             for k, (gv, sv) in td.breakdown.items():
                 ratio_s = f"{sv / gv:.6f}x" if gv > 0 else ("inf" if sv > 0 else "1.0x")
                 print(f"        {k:<22s} gt={gv:13.2f}  sim={sv:13.2f}  sim/gt={ratio_s}")
+    if show_dots:
+        dot_rng_details = getattr(r, "dot_rng_details", ()) or ()
+        if dot_rng_details:
+            print(f"  dot_rng_details ({len(dot_rng_details)}):")
+            for det in dot_rng_details:
+                print(f"    {det}")
+        print("  --- DoT summary by AV ---")
+        for dd in dot_diffs:
+            mark = "OK " if dd.err <= threshold else "ERR"
+            print(
+                f"  [{mark}] av={dd.av:6.2f}  gt={dd.gt_total:13.2f}  sim={dd.sim_total:13.2f}  "
+                f"err={dd.err * 100:9.6f}%  atk={dd.attackers}"
+            )
+            if dd.err > threshold:
+                for k, (gv, sv) in dd.breakdown.items():
+                    ratio_s = f"{sv / gv:.6f}x" if gv > 0 else ("inf" if sv > 0 else "1.0x")
+                    print(
+                        f"        {k:<22s} gt={gv:13.2f}  sim={sv:13.2f}  sim/gt={ratio_s}  diff={sv - gv:+13.2f}"
+                    )
 
 
-def _print_gt_timeline(log_path: str, target_av: float, window: float) -> None:
+def _print_gt_timeline(log_path: str, target_av: float, window: float, *, show_energy: bool = False) -> None:
     print(f"\n--- GT TIMELINE ({log_path}, av={target_av:.2f} +- {window:.2f}) ---")
     uid_names: Dict[int, str] = {}
     cur_av = 0.0
@@ -140,6 +168,8 @@ def _print_gt_timeline(log_path: str, target_av: float, window: float) -> None:
                 print(f"  L{idx:4d} [DEAD ] av={cur_av:6.2f} uid={uid} ({uid_names.get(uid, '')})")
             elif ent.get("team") == "Enemy" and ptype == "ActionDelay" and abs(pval) < 1e-6:
                 print(f"  L{idx:4d} [AA=0 ] av={cur_av:6.2f} uid={uid} ({uid_names.get(uid, '')})")
+            elif show_energy and ent.get("team") == "Player" and ptype == "CurrentSP":
+                print(f"  L{idx:4d} [EN   ] av={cur_av:6.2f} uid={uid} ({uid_names.get(uid, '')}) sp={pval:.4f}")
     print(f"  => GT window player non-DoT total = {tot_dmg:,.2f}")
 
 
@@ -151,7 +181,9 @@ def _attach_sim_timeline_recorder(
     tot_dmg_out: List[float],
     *,
     dump_mods: bool = False,
+    show_energy: bool = False,
 ) -> None:
+    sim._timeline_diag_energy = bool(show_energy)
     seen_enemies = {e.name for e in sim.entities if getattr(e, "is_enemy", False)}
     dumped_mods = [False]
 
@@ -330,8 +362,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--av-budget", type=float, default=None, help="截断模拟最大 AV")
     parser.add_argument("--full", action="store_true", help="即使传了 --av 也跑完整场而不早停")
     parser.add_argument("--timeline", action="store_true", help="输出 GT 与 SIM 并排事件时间线（需配合 --av）")
+    parser.add_argument("--energy", action="store_true", help="在 --timeline 中输出我方能量变动 [EN   ]")
     parser.add_argument("--dump-mods", action="store_true", help="在 --av 窗口首次动作时输出所有实体的激活 Modifier 与属性增量")
     parser.add_argument("--summary", action="store_true", help="同时打印 reconcile_log 摘要")
+    parser.add_argument("--dot-summary", action="store_true", help="按 AV 打印 DoT 分项对比摘要")
+    parser.add_argument("--no-dot-rng", action="store_true", help="禁用 Layer-4 DoT RNG 自动求解（用于诊断基线偏差）")
     parser.add_argument("--threshold", type=float, default=1e-6, help="判定误差阈值（默认 1e-6 = 0.0001%%）")
     args = parser.parse_args(argv)
 
@@ -353,7 +388,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         tot_dmg = [0.0]
         on_sim_ready = None
         if show_timeline:
-            _print_gt_timeline(lp, args.av, args.av_window)
+            _print_gt_timeline(lp, args.av, args.av_window, show_energy=bool(args.energy))
             for rec in meta.enemy_hits:
                 if abs(rec.av - args.av) <= args.av_window:
                     subs = (
@@ -377,7 +412,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 sim_lines.clear()
                 tot_dmg[0] = 0.0
                 _attach_sim_timeline_recorder(
-                    sim, args.av, args.av_window, sim_lines, tot_dmg, dump_mods=bool(args.dump_mods)
+                    sim,
+                    args.av,
+                    args.av_window,
+                    sim_lines,
+                    tot_dmg,
+                    dump_mods=bool(args.dump_mods),
+                    show_energy=bool(args.energy),
                 )
 
             on_sim_ready = _on_sim_ready
@@ -397,11 +438,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             on_sim_ready=on_sim_ready,
             initial_energies=init_ep_override,
             technique_users=tech_users_override,
+            resolve_dots=not bool(args.no_dot_rng),
         )
         if show_timeline:
             _print_sim_timeline_block(lp, args.av, args.av_window, sim_lines, tot_dmg[0])
-        if not show_timeline or args.summary:
-            _print_summary(lp, meta, extra_buffs, r, threshold=args.threshold)
+        if not show_timeline or args.summary or args.dot_summary:
+            _print_summary(lp, meta, extra_buffs, r, threshold=args.threshold, show_dots=bool(args.dot_summary))
     return 0
 
 

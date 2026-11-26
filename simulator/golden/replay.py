@@ -216,6 +216,9 @@ def run_replay(
     return result
 
 
+_LOG_PLAN_CACHE: Dict[Tuple[str, float, int], Tuple[List[Dict[str, Any]], bool]] = {}
+
+
 def run_trajectory_replay(
     sim: Any,
     director: Any,
@@ -226,7 +229,22 @@ def run_trajectory_replay(
     """轨迹回放 v2: 全施放轨迹按官方 AV 钉死, 缺口补足逐项记账。"""
     result = TrajectoryResult(replay=None)
     if log_path is not None:
-        target_plan = extract_enemy_target_plan(log_path)
+        lp_str = str(log_path)
+        cache_key: Optional[Tuple[str, float, int]] = None
+        if os.path.exists(lp_str):
+            st = os.stat(lp_str)
+            cache_key = (os.path.abspath(lp_str), st.st_mtime, st.st_size)
+        cached_plan = _LOG_PLAN_CACHE.get(cache_key) if cache_key is not None else None
+        if cached_plan is not None:
+            target_plan, has_break_in_log = cached_plan
+        else:
+            target_plan = extract_enemy_target_plan(log_path)
+            has_break_in_log = False
+            if os.path.exists(lp_str):
+                with open(lp_str, "r", encoding="utf-8") as _bf:
+                    has_break_in_log = '"type": "Break"' in _bf.read()
+            if cache_key is not None:
+                _LOG_PLAN_CACHE[cache_key] = (target_plan, has_break_in_log)
 
         def _attacker_matches_uid(attacker: Any, uid: Any) -> bool:
             name = getattr(attacker, "name", "") or ""
@@ -288,11 +306,6 @@ def run_trajectory_replay(
             return candidates[0] if candidates and sub_idx == 0 else None
 
         sim.target_provider = _trace_target_provider
-
-        has_break_in_log = False
-        if log_path and os.path.exists(str(log_path)):
-            with open(str(log_path), "r", encoding="utf-8") as _bf:
-                has_break_in_log = '"type": "Break"' in _bf.read()
         sim.record_break_damage = has_break_in_log
 
     turn_items = [i for i in timeline if i.kind in ("basic", "skill")]

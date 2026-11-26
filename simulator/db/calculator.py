@@ -273,14 +273,16 @@ class StatCalculator:
         char_elem = c_stats.get("element", "Physical").lower()
         elem_key = f"{char_elem}_dmg"
         char_elem_trace = trace_bonuses.get(elem_key, 0.0)
-        char_elem_relic = relic_pct_bonuses.get("dmg_boost", 0.0) + relic_pct_bonuses.get(elem_key, 0.0)
-        char_elem_set = set_bonuses.get("dmg_boost", 0.0) + set_bonuses.get(elem_key, 0.0)
+        elem_dmg_boost = (
+            char_elem_trace
+            + relic_pct_bonuses.get(elem_key, 0.0)
+            + set_bonuses.get(elem_key, 0.0)
+        )
         dmg_boost = (
-            0.0
-            + char_elem_trace
+            elem_dmg_boost
             + lc_passive_stats.get("dmg_boost", 0.0)
-            + char_elem_relic
-            + char_elem_set
+            + relic_pct_bonuses.get("dmg_boost", 0.0)
+            + set_bonuses.get("dmg_boost", 0.0)
         )
 
         # 构造可追溯的 StatBreakdown 字典
@@ -305,6 +307,7 @@ class StatCalculator:
             ehr=ehr,
             res=res,
             dmg_boost=dmg_boost,
+            elem_dmg_boost=elem_dmg_boost,
             breakdowns=breakdowns
         )
 

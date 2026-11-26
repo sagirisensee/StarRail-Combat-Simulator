@@ -37,8 +37,11 @@ class Element(str, Enum):
 
     @classmethod
     def from_str(cls, val: str) -> "Element":
+        s = str(val).strip().lower()
+        if s == "lightning":
+            return cls.THUNDER
         for member in cls:
-            if member.value.lower() == str(val).lower():
+            if member.value.lower() == s:
                 return member
         return cls.PHYSICAL
 
@@ -102,6 +105,7 @@ class CharacterPanel:
     ehr: float
     res: float
     dmg_boost: float
+    elem_dmg_boost: float = 0.0
     elation: float = 0.0                 # 欢愉度 (星神阿哈欢愉体系特有属性)
     # 乘区与来源追溯
     breakdowns: Dict[str, StatBreakdown] = field(default_factory=dict)

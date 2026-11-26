@@ -178,7 +178,7 @@ def _init_official_tables() -> None:
             _AVATAR_PROMO[(aid, promo)] = row
 
     for row in _load_excel("AvatarSkillTreeConfig.json"):
-        if int(row.get("PointType") or 0) != 1:
+        if int(row.get("PointType") or 0) != 1 or int(row.get("EnhancedID") or 0) != 0:
             continue
         aid = int(row.get("AvatarID") or 0)
         if not aid:

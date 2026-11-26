@@ -600,6 +600,11 @@ class PlayerTargetTracker:
         self.pending_ally_ult_sp_fallback: Optional[str] = None
         self.ally_ult_targets: Dict[str, List[str]] = {}
         self.enemy_retarget_picks: List[Tuple[float, int, int]] = []
+        self.ally_retarget_picks: List[Tuple[float, int, int]] = []
+        self._turn_start_ally_sp_owner: int = 0
+        self._in_neutral_turn: bool = False
+        self._neutral_last_player_hp_uid: int = 0
+        self._neutral_last_enemy_burst_ts_ms: Optional[float] = None
         self.random_config_draws: List[Tuple[float, int, int]] = []
         self.random_chance_triggers: List[Tuple[float, int]] = []
         self._seen_turn_begin: bool = False
@@ -872,7 +877,7 @@ class PlayerTargetTracker:
         elif ptype == "CurrentSP" and uid == self._bp_draw_caster_uid and val <= 1e-6:
             self.flush_bp_draw_carry()
 
-    def on_turn_begin_after_owner(self) -> None:
+    def on_turn_begin_after_owner(self, turn_owner: Optional[Mapping[str, Any]] = None) -> None:
         self.flush_bp_draw_carry()
         self.flush_active_elation_insert()
         self._commit_wave_entry_inserts()
@@ -880,15 +885,77 @@ class PlayerTargetTracker:
         self._seen_turn_begin = True
         self._cur_use_skill_uid = 0
         self._pending_hit_had_stance = False
+        if (
+            isinstance(turn_owner, Mapping)
+            and turn_owner.get("team") == "Player"
+            and int(turn_owner.get("uid") or 0) > 0
+        ):
+            self._turn_start_ally_sp_owner = int(turn_owner.get("uid") or 0)
+            self._in_neutral_turn = False
+        else:
+            self._turn_start_ally_sp_owner = 0
+            self._in_neutral_turn = turn_owner is None
+        self._neutral_last_player_hp_uid = 0
+        self._neutral_last_enemy_burst_ts_ms = None
         if self.pending_ally_ult_caster is not None and self.pending_ally_ult_sp_fallback is not None:
             self.ally_ult_targets.setdefault(self.pending_ally_ult_caster, []).append(
                 self.pending_ally_ult_sp_fallback
             )
         self._clear_pending_ally_ult()
 
+    def on_player_sp_retarget_and_neutral(
+        self,
+        uid: int,
+        val: float,
+        prev_sp: Optional[float],
+        cur_av: float,
+    ) -> None:
+        if val < -1.0:
+            self._turn_start_ally_sp_owner = 0
+        elif (
+            self._turn_start_ally_sp_owner > 0
+            and uid != self._turn_start_ally_sp_owner
+            and val > 0.0
+            and (prev_sp is None or val > prev_sp + 4.0)
+        ):
+            self.ally_retarget_picks.append((round(cur_av, 2), self._turn_start_ally_sp_owner, uid))
+            self._turn_start_ally_sp_owner = 0
+        if (
+            self._in_neutral_turn
+            and uid == self._neutral_last_player_hp_uid
+            and prev_sp is not None
+            and 0.0 < (val - prev_sp) <= 5.0
+        ):
+            av_k = round(cur_av, 2)
+            self.random_config_draws.append((av_k, 70001, 0))
+            self.ally_retarget_picks.append((av_k, 70001, uid))
+            self._neutral_last_player_hp_uid = 0
+
+    def on_player_hp_neutral(self, uid: int, val: float, prev: Optional[float]) -> None:
+        if self._in_neutral_turn and prev is not None and abs(val - prev) <= 1e-3:
+            self._neutral_last_player_hp_uid = uid
+            self._neutral_last_enemy_burst_ts_ms = None
+
+    def on_enemy_hp_neutral(
+        self,
+        val: float,
+        prev: Optional[float],
+        cur_av: float,
+        t_ms: Optional[float],
+    ) -> None:
+        if self._in_neutral_turn and prev is not None and abs(val - prev) <= 1e-3:
+            if (
+                self._neutral_last_enemy_burst_ts_ms is None
+                or (t_ms is not None and (t_ms - self._neutral_last_enemy_burst_ts_ms) >= 15.0)
+            ):
+                self.random_config_draws.append((round(cur_av, 2), 70001, 1))
+            self._neutral_last_enemy_burst_ts_ms = t_ms
+
     def on_player_use_skill(self, cur_av: float, uid: int, cname: str, sk_type: str, sk_id: int) -> None:
         self.flush_bp_draw_carry()
         self.flush_active_elation_insert()
+        self._turn_start_ally_sp_owner = 0
+        self._in_neutral_turn = False
         self._cur_use_skill_uid = uid
         self._pending_hit_had_stance = False
         if sk_type == "BPSkill":

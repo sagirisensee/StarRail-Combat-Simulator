@@ -237,6 +237,9 @@ class DataDrivenEnemyKit(EnemyKit):
             if main_ent_sh is not None and main_ent_sh is not mrs.entity and main_ent_sh.current_hp > 0.0:
                 return raw_damage
 
+        if getattr(mrs.entity, "_vm_phase_change_pending", False):
+            return 0.0
+
         cur_hp = float(mrs.entity.current_hp)
         max_hp = float(mrs.entity.max_hp)
         if mrs.lock_hp_ratio is not None and mrs.lock_hp_ratio > 0.0:

@@ -179,7 +179,7 @@ class TestKernelLifecycle(unittest.TestCase):
         rt.modifier_engine.dispatch_event = _spy  # type: ignore[method-assign]
         rt.lifecycle.attack_targets_by_key[(2, "测试角色")] = ["目标A"]
         rt.lifecycle.pending_dying_enemies.append(("目标A", "测试角色"))
-        rt.lifecycle.pending_listen_die.append("目标A")
+        rt.lifecycle.pending_listen_die.append(("目标A", "测试角色"))
         rt.lifecycle.schedule_after_attack(
             2,
             "测试角色",

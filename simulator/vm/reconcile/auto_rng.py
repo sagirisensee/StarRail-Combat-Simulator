@@ -616,9 +616,22 @@ def attach_auto_rng_plugin(
             )
         return None
 
+    used_ally_retarget_indices: Set[int] = set()
+
     def _ally_retarget_provider(caster: Any, candidates: List[Any]) -> Optional[Any]:
         if len(candidates) > 1:
-            av_key = round(float(getattr(sim, "current_av", 0.0)), 2)
+            cur_av = float(getattr(sim, "current_av", 0.0) or 0.0)
+            av_key = round(cur_av, 2)
+            caster_uid = int(getattr(caster, "avatar_id", 0) or 0)
+            if caster_uid and meta.ally_retarget_picks:
+                for idx, (p_av, p_cuid, p_auid) in enumerate(meta.ally_retarget_picks):
+                    if idx in used_ally_retarget_indices:
+                        continue
+                    if p_cuid == caster_uid and abs(cur_av - p_av) <= 0.25:
+                        for ent in candidates:
+                            if int(getattr(ent, "avatar_id", 0) or 0) == p_auid:
+                                used_ally_retarget_indices.add(idx)
+                                return ent
             cname = getattr(caster, "name", "")
             c_uid = enemy_name_to_uid.get(cname, 0)
             ov_key = (av_key, c_uid, "ally_retarget")
