@@ -78,6 +78,11 @@ class VMRuntime:
         self.elation_time_units: List[str] = []
         self.has_paused_elation_time: bool = False
         self.entity_dynamic_strings: Dict[str, Dict[str, str]] = {}
+        self.common_skills: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self.auto_use_bound_ultra_skills: Dict[str, Set[str]] = {}
+        self.auto_use_entity_ultra_skills: Dict[str, Any] = {}
+        self.global_action_delay: float = 0.0
+        self._skill_targets_by_action_id: Dict[int, Tuple[str, ...]] = {}
         if getattr(sim, "vm_runtime", None) is None:
             sim.vm_runtime = self
 
@@ -654,7 +659,7 @@ class VMRuntime:
             self.modifier_engine.dispatch_event("OnListenTurnEnd", param_entity_id=evt.actor_name)
             self.modifier_engine.tick_life_step("TurnEnd", evt.actor_name)
         ent = self.sim.get_entity(evt.actor_name)
-        if ent is not None and (getattr(ent, "is_enemy", False) or getattr(ent, "is_battle_event", False)) and getattr(ent, "current_hp", 0.0) > 0.0:
+        if ent is not None and not getattr(ent, "is_countdown", False) and getattr(ent, "current_hp", 0.0) > 0.0:
             self.modifier_engine.dispatch_event("OnPhase2", owner_id=evt.actor_name, param_entity_id=evt.actor_name)
             sched_p2 = getattr(self.sim, "scheduler", None)
             if sched_p2 is not None:
@@ -708,12 +713,17 @@ class VMRuntime:
     def on_action_end(self, evt: ActionEndEvent) -> None:
         self.end_being_attacked()
         sk_type = self._normalize_skill_type(evt)
+        sk_tgts = self._skill_targets_by_action_id.pop(int(getattr(evt, "action_id", 0) or 0), ())
+        if not sk_tgts:
+            sk_tgts = tuple(getattr(evt, "target_ids", ()) or ())
         in_hold = bool(getattr(getattr(self.sim, "scheduler", None), "continuous_action_hold", False))
         if evt.actor_name in self.entity_specs:
             self.modifier_engine.dispatch_event(
                 "OnAfterSkillUse",
                 owner_id=evt.actor_name,
                 current_skill_type=sk_type,
+                skill_target_ids=sk_tgts,
+                param_skill_targets=sk_tgts,
             )
             if not in_hold:
                 self.modifier_engine.dispatch_event("OnActionEnd", owner_id=evt.actor_name)
@@ -721,6 +731,8 @@ class VMRuntime:
             "OnListenAfterSkillUse",
             param_entity_id=evt.actor_name,
             current_skill_type=sk_type,
+            skill_target_ids=sk_tgts,
+            param_skill_targets=sk_tgts,
         )
         if not in_hold:
             self.modifier_engine.dispatch_event("OnListenActionEnd", param_entity_id=evt.actor_name)
@@ -790,6 +802,127 @@ class VMRuntime:
                             break
         self.lifecycle.defer_or_dispatch_listen_die(dead_id, defer_in_after_attack=True)
 
+    def on_global_action_delay_changed(self, delta_av: float, delay_add: float) -> None:
+        if delta_av <= 0.0 and delay_add <= 0.0:
+            return
+        self.global_action_delay += float(delta_av)
+        self.modifier_engine.dispatch_event(
+            "OnListenGlobalActionDelayChanged",
+            change_value=float(delay_add),
+            change_value2=float(self.global_action_delay),
+        )
+        diag_cb = getattr(self.sim, "timeline_diag_cb", None)
+        if callable(diag_cb) and self.auto_use_entity_ultra_skills:
+            ep_str = ", ".join(
+                f"{tid}={float(getattr(self.sim.get_entity(tid), 'energy', 0.0)):.4f}/{float(getattr(self.sim.get_entity(tid), 'max_energy', 0.0)):.1f}"
+                for tid in self.auto_use_entity_ultra_skills
+                if self.sim.get_entity(tid) is not None
+            )
+            diag_cb("BE_EP", f"delay_add={delay_add:.4f} global={self.global_action_delay:.4f} {ep_str}")
+
+    def trigger_auto_use_ultra_skills(self) -> None:
+        if not self.auto_use_entity_ultra_skills:
+            return
+        from ..actions import ActionKind
+        from ..events import ActionExecuteEvent
+        from ..lifecycle import AbilityFrameSpec, emit_sim_event
+        from .target_alias import ExecutionContext
+
+        sim = self.sim
+        me = self.modifier_engine
+        diag_cb = getattr(sim, "timeline_diag_cb", None)
+        for tid, tgt_spec in list(self.auto_use_entity_ultra_skills.items()):
+            ent = sim.get_entity(tid)
+            if ent is None or getattr(ent, "_in_auto_ultra", False):
+                continue
+            if not getattr(ent, "is_countdown", False) and float(getattr(ent, "current_hp", 0.0)) <= 0.0:
+                continue
+            max_ep = float(getattr(ent, "max_energy", 0.0) or 0.0)
+            cur_ep = float(getattr(ent, "energy", 0.0) or 0.0)
+            if callable(diag_cb):
+                dis = me.is_skill_type_disabled(tid, "Ultra")
+                ctrl = me.has_behavior_flag(tid, "STAT_CTRL")
+                diag_cb("AUTO_U", f"{tid} ep={cur_ep:.4f}/{max_ep:.1f} dis_ultra={dis} ctrl={ctrl}")
+            if max_ep <= 0.0 or cur_ep < max_ep - 1e-6:
+                continue
+            if me.is_skill_type_disabled(tid, "Ultra") or me.has_behavior_flag(tid, "STAT_CTRL"):
+                continue
+            spec = self.entity_specs.get(tid)
+            if spec is None:
+                continue
+            ultra_sk = None
+            for sk in spec.config.get("SkillList") or ():
+                if isinstance(sk, Mapping) and str(sk.get("SkillType") or "") == "Ultra":
+                    ultra_sk = sk
+                    break
+            if ultra_sk is None:
+                continue
+            entry_ab = str(ultra_sk.get("EntryAbility") or "")
+            if not entry_ab:
+                continue
+            sk_name = str(ultra_sk.get("Name") or "Skill03")
+            eff_spec = tgt_spec if tgt_spec is not None else (ultra_sk.get("TargetInfo") or {"Alias": "AllEnemy"})
+            exec_ctx = ExecutionContext(
+                runtime=self,
+                caster_id=tid,
+                ability_name=entry_ab,
+                modifier_owner_id=tid,
+            )
+            eff_tgts = tuple(self.executor._resolve_targets(eff_spec, exec_ctx))
+            if not eff_tgts:
+                eff_tgts = tuple(
+                    e.name for e in sim.entities
+                    if getattr(e, "is_enemy", False)
+                    and not getattr(e, "is_countdown", False)
+                    and not getattr(e, "is_unselectable", False)
+                    and float(getattr(e, "current_hp", 0.0)) > 0.0
+                )
+            setattr(ent, "_in_auto_ultra", True)
+            try:
+                ent.energy = 0.0
+                me.dispatch_event("OnUltraSkillPrepare", owner_id=tid, param_entity_id=tid)
+                sim._action_seq += 1
+                sim._av_batch_seq += 1
+                sk_id = int(getattr(ent, "avatar_id", 0) or 0) * 100 + 1
+                emit_sim_event(
+                    sim,
+                    ActionExecuteEvent(
+                        av=round(sim.current_av, 2),
+                        cycle=sim.current_cycle,
+                        actor_id=tid,
+                        actor_name=tid,
+                        action_type=sk_name,
+                        description=f"自动施放战意/支援超必杀【{sk_name}】",
+                        action_kind=ActionKind.ULTIMATE,
+                        skill_config_id=sk_id,
+                        action_id=sim._action_seq,
+                    ),
+                )
+                self.lifecycle.run_ability_frame(
+                    AbilityFrameSpec(
+                        caster_id=tid,
+                        ability_name=entry_ab,
+                        target_ids=eff_tgts,
+                        skill_target_ids=eff_tgts,
+                        skill_type="Ultra",
+                        attack_type="Ultra",
+                        skill_name=sk_name,
+                        sp_base=0.0,
+                        energy_cause="",
+                        emit_before_skill=True,
+                        emit_listen_before_skill=True,
+                        pass_skill_targets_to_before_hooks=True,
+                        emit_after_skill=True,
+                        emit_action_end_hooks=True,
+                        emit_settle_callback=True,
+                    )
+                )
+                director = getattr(sim, "_stage_director", None)
+                if director is not None and hasattr(director, "sync_spawned_entities"):
+                    director.sync_spawned_entities()
+            finally:
+                setattr(ent, "_in_auto_ultra", False)
+
 
 def ensure_vm_runtime(sim: Any, *, loader: Optional[GameDataLoader] = None, strict: bool = True) -> VMRuntime:
     rt = getattr(sim, "vm_runtime", None)
@@ -813,16 +946,23 @@ class ConfigAbilityKitAdapter(KitHandler):
         runtime: Optional[VMRuntime] = None,
         loader: Optional[GameDataLoader] = None,
         is_servant: bool = False,
+        enhanced: bool = False,
     ) -> None:
         super().__init__(owner_id, port, eidolon=eidolon, skill_levels=skill_levels)
         self.unit_id = int(avatar_or_servant_id)
         self.is_servant = is_servant
+        self.enhanced = bool(enhanced)
         self._runtime = runtime
         self._loader = loader or (runtime.loader if runtime else GameDataLoader())
         if is_servant:
             self.spec = self._loader.load_servant(self.unit_id, eidolon=eidolon, trained_levels=skill_levels)
         else:
-            self.spec = self._loader.load_character(self.unit_id, eidolon=eidolon, trained_levels=skill_levels)
+            self.spec = self._loader.load_character(
+                self.unit_id,
+                eidolon=eidolon,
+                trained_levels=skill_levels,
+                enhanced=self.enhanced,
+            )
         self._skill_abilities: Dict[str, List[str]] = {
             item.get("Skill", ""): list(item.get("AbilityList", []))
             for item in self.spec.config.get("SkillAbilityList", [])
@@ -916,9 +1056,8 @@ class ConfigAbilityKitAdapter(KitHandler):
                 if row and row.get("SkillTriggerKey") == sk_key:
                     return row
             return None
-        self._loader._ensure_avatars()
         self._loader._ensure_avatar_skills()
-        av = self._loader._avatars.get(self.unit_id, {})
+        av = self._loader.get_avatar_config(self.unit_id, enhanced=self.enhanced)
         for sid in av.get("SkillList", []):
             row = self._loader._avatar_skills.get((int(sid), 1))
             if row and row.get("SkillTriggerKey") == sk_key:

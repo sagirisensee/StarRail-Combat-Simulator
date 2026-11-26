@@ -106,6 +106,8 @@ class Entity:
     @property
     def speed(self) -> float:
         """从状态管理器动态计算实时速度，无缝支持速度 Buff/Debuff。"""
+        if getattr(self, "_not_in_formation", False) or not getattr(self, "have_action_delay", True):
+            return 0.0
         if self.simulator and hasattr(self.simulator, "status_mgr"):
             return max(
                 1.0,
@@ -156,7 +158,10 @@ class Entity:
     @property
     def remaining_av(self) -> float:
         """到达终点所需的剩余行动值 (Action Value)。"""
-        return self.distance_remaining / self.speed
+        spd = self.speed
+        if spd <= 0.0:
+            return float("inf")
+        return self.distance_remaining / spd
 
     def advance_action(self, percent: float) -> None:
         distance_cut = 10000.0 * percent

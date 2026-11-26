@@ -177,6 +177,10 @@ class DynamicOpsMixin:
                 val = float(mod.layer)
             elif vtype == "LifeTime":
                 val = float(mod.life_time or 0.0)
+            elif vtype == "CurrentShield":
+                val = float(getattr(mod, "shield_value", 0.0) or 0.0)
+            elif vtype == "MaxShield":
+                val = float(getattr(mod, "shield_max", 0.0) or 0.0)
         mult = self._eval_num(task.get("Multiplier"), ctx, 1.0)
         key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
         self._write_dyn(task, ctx, key_h, val * mult)
@@ -229,6 +233,8 @@ class DynamicOpsMixin:
         vtype = str(task.get("VariateType", "ParamValue"))
         if vtype == "ParamValue":
             val = float(ctx.change_value)
+        elif vtype == "ParamValue2":
+            val = float(getattr(ctx, "change_value2", 0.0))
         elif vtype == "MaxMonsterPhase":
             owner_tid = ctx.modifier_owner_id or ctx.caster_id
             director = getattr(sim, "_stage_director", None)
@@ -309,6 +315,11 @@ class DynamicOpsMixin:
         key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
         read_targets = self._resolve_targets(task.get("ReadTargetType") or task.get("TargetType"), ctx)
         want_st = str(task.get("StatusType") or "Debuff")
+        caster_filter = (
+            set(self._resolve_targets(task["CasterFilter"], ctx))
+            if "CasterFilter" in task
+            else None
+        )
         cnt = 0.0
         if read_targets:
             tid = read_targets[0]
@@ -316,7 +327,27 @@ class DynamicOpsMixin:
                 sum(
                     1
                     for m in me.get_modifiers(tid)
-                    if not m._destroyed and me.get_modifier_status_type(m) == want_st
+                    if not m._destroyed
+                    and me.get_modifier_status_type(m) == want_st
+                    and (caster_filter is None or m.caster_id in caster_filter)
+                )
+            )
+        self._write_dyn(task, ctx, key_h, cnt)
+
+    def _op_set_dynamic_value_by_behavior_flag_count(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """统计目标身上含指定 BehaviorFlag 的未销毁 Modifier 数量写入动态变量。"""
+        me = self.rt.modifier_engine
+        key_h = dotnet_hash(_str_val(task.get("DynamicKey")))
+        read_targets = self._resolve_targets(task.get("ReadTargetType") or task.get("TargetType"), ctx)
+        flag = str(task.get("BehaviorFlag") or task.get("Flag") or "")
+        cnt = 0.0
+        if read_targets and flag:
+            tid = read_targets[0]
+            cnt = float(
+                sum(
+                    1
+                    for m in me.get_modifiers(tid)
+                    if not m._destroyed and flag in m.behavior_flags
                 )
             )
         self._write_dyn(task, ctx, key_h, cnt)
@@ -499,9 +530,8 @@ class DynamicOpsMixin:
                 skill_ids = sv.get("SkillIDList", ())
                 skill_map = loader._servant_skills
             else:
-                loader._ensure_avatars()
                 loader._ensure_avatar_skills()
-                av = loader._avatars.get(spec.unit_id, {})
+                av = loader.get_avatar_config(spec.unit_id, enhanced=getattr(spec, "enhanced", False))
                 skill_ids = av.get("SkillList", ())
                 skill_map = loader._avatar_skills
             for sid in skill_ids:

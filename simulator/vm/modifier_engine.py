@@ -38,6 +38,10 @@ PROPERTY_TO_STAT: Dict[str, Tuple[StatType, ModifierOp, bool]] = {
     "HealRatioBase": (StatType.OUTGOING_HEALING, ModifierOp.ADD, False),
     "HealRatioConvert": (StatType.OUTGOING_HEALING, ModifierOp.ADD, True),
     "StatusResistanceBase": (StatType.EFFECT_RES, ModifierOp.ADD, False),
+    "StatusResistance": (StatType.EFFECT_RES, ModifierOp.ADD, False),
+    "StatusProbabilityBase": (StatType.EHR, ModifierOp.ADD, False),
+    "StatusProbability": (StatType.EHR, ModifierOp.ADD, False),
+    "StatusProbabilityConvert": (StatType.EHR, ModifierOp.ADD, True),
     "AttackAddedRatio": (StatType.ATK_PERCENT, ModifierOp.PERCENT, False),
     "AttackDelta": (StatType.ATK_BASE, ModifierOp.ADD, False),
     "DefenceAddedRatio": (StatType.DEF_PERCENT, ModifierOp.PERCENT, False),
@@ -61,6 +65,7 @@ CONVERT_PROPERTY_PAIR: Dict[str, str] = {
     "HealRatioConvert": "HealRatioBase",
     "ElationDamageAddedRatioConvert": "ElationDamageAddedRatioBase",
     "AttackConvert": "Attack",
+    "StatusProbabilityConvert": "StatusProbabilityBase",
 }
 
 ELEMENT_RESISTANCE_DELTA_PROPS: Dict[str, str] = {
@@ -94,6 +99,8 @@ class VMModifierInstance:
     life_step_moment: str = ""
     stacking: str = "ReplaceByCaster"
     behavior_flags: Set[str] = field(default_factory=set)
+    _disabled_skill_types: Set[str] = field(default_factory=set)
+    _attached_unselectable: bool = False
     sub_modifier_links: List[Tuple[str, str, int]] = field(default_factory=list)  # (target_id, mod_name, uid)
     is_halo: bool = False
     halo_parent_uid: Optional[int] = None
@@ -151,6 +158,7 @@ class ModifierEngine:
         self._apc_defer_depth: int = 0
         self._dirty_apc_entities: Set[str] = set()
         self._deferred_prev_props_by_uid: Dict[int, Dict[str, float]] = {}
+        self._active_listener_events: Set[Tuple[int, str]] = set()
 
     def all_modifiers(self) -> List[VMModifierInstance]:
         return list(self.by_uid.values())
@@ -207,6 +215,15 @@ class ModifierEngine:
                 return True
         return False
 
+    def is_skill_type_disabled(self, owner_id: str, skill_type: str) -> bool:
+        for m in self.get_modifiers(owner_id):
+            if skill_type in m._disabled_skill_types:
+                return True
+        direct_disables = getattr(self.rt, "_direct_skill_type_disables", None)
+        if isinstance(direct_disables, dict) and skill_type in direct_disables.get(owner_id, ()):
+            return True
+        return False
+
     def iter_stat_modifiers(
         self,
         entity_name: str,
@@ -216,6 +233,9 @@ class ModifierEngine:
     ):
         """产出实体当前生效的 VM Modifier 属性项 `(StatType, ModifierOp, float)`，消除双账本镜像。"""
         exclude_transfers = StatusTag.EXCLUDE_FROM_STAT_TRANSFERS in exclude_tags
+        sim = getattr(self.rt, "sim", None)
+        ent = sim.get_entity(entity_name) if sim is not None else None
+        is_enemy_ent = bool(getattr(ent, "is_enemy", False)) if ent is not None else False
         for mod in self.by_owner.get(entity_name, ()):
             if mod._stats_detached:
                 continue
@@ -227,9 +247,19 @@ class ModifierEngine:
             mapped: List[Tuple[StatType, ModifierOp, float]] = []
             has_convert = False
             has_vuln = False
+            has_def_debuff = False
             for prop_name, val in props.items():
                 fval = float(val)
                 if abs(fval) < 1e-12:
+                    continue
+                if is_enemy_ent and prop_name == "DefenceAddedRatio":
+                    # 敌方防御乘区基于等级公式 + DEF_SHRED，官方 DefenceAddedRatio=-0.25 等价于 DEF_SHRED=+0.25
+                    # 敌方自身的 DefenceAddedRatio 永不作为攻击端无视防御 Buff (category="buff") 使用
+                    if category == "buff":
+                        continue
+                    if fval < 0.0:
+                        has_def_debuff = True
+                    mapped.append((StatType.DEF_SHRED, ModifierOp.ADD, -fval))
                     continue
                 mapping = PROPERTY_TO_STAT.get(prop_name)
                 if mapping is None:
@@ -245,7 +275,12 @@ class ModifierEngine:
             if has_convert and exclude_transfers:
                 continue
             if category is not None:
-                mod_cat = "debuff" if ("STAT_DEBUFF" in mod.behavior_flags or has_vuln) else "buff"
+                st_type = self.get_modifier_status_type(mod)
+                mod_cat = (
+                    "debuff"
+                    if (st_type == "Debuff" or "STAT_DEBUFF" in mod.behavior_flags or has_vuln or has_def_debuff)
+                    else "buff"
+                )
                 if mod_cat != category:
                     continue
             for item in mapped:
@@ -324,7 +359,7 @@ class ModifierEngine:
 
     def sync_entity_shield(self, entity_id: str) -> None:
         """将实体挂载的所有活性护盾 Modifier 最大有效盾量同步到 Entity.shield。"""
-        if not entity_id or entity_id == "__LEVEL__":
+        if not entity_id or entity_id in ("__LEVEL__", "__LIGHT_TEAM__"):
             return
         ent = self.rt.sim.get_entity(entity_id)
         if ent is not None:
@@ -460,7 +495,7 @@ class ModifierEngine:
         dynamic_strings: Optional[Mapping[str, Any]] = None,
     ) -> Optional[VMModifierInstance]:
         """按官方 Stacking 语义挂载/刷新/叠加 Modifier，并触发 OnCreate / OnStack / SubModifierList / OnModifierAdd。"""
-        if owner_id != "__LEVEL__" and self.rt.sim.get_entity(owner_id) is None:
+        if owner_id not in ("__LEVEL__", "__LIGHT_TEAM__") and self.rt.sim.get_entity(owner_id) is None:
             return None
 
         eff_mod_name = mod_name or reference_mod_name
@@ -567,7 +602,7 @@ class ModifierEngine:
                 if m.caster_id == caster_id:
                     target_existing = m
                     break
-        elif stacking == "Unique":
+        elif stacking in ("Unique", "EntityUnique"):
             if existing_list:
                 add_cfg = cfg.get("AdditionConfig")
                 if isinstance(add_cfg, dict) and add_cfg.get("SubModifierList") and "Stacking" not in cfg:
@@ -941,6 +976,15 @@ class ModifierEngine:
                     runner.get_enemy_state(mod.owner_id).lock_hp_ratio = None
                 except KeyError:
                     pass
+        if owner_ent is not None and getattr(mod, "_attached_unselectable", False):
+            has_other_unsel = any(
+                not m._destroyed
+                and m.uid != mod.uid
+                and getattr(m, "_attached_unselectable", False)
+                for m in self.get_modifiers(mod.owner_id)
+            )
+            if not has_other_unsel and not getattr(owner_ent, "_static_unselectable", False):
+                owner_ent.is_unselectable = False
         if owner_ent is not None and getattr(mod, "_enabled_negative_hp", False):
             has_other_neg = any(
                 not m._destroyed
@@ -1030,7 +1074,7 @@ class ModifierEngine:
             callback_status_type=mod_status_type,
             callback_modifier_instance=mod,
         )
-        if mod.owner_id != "__LEVEL__":
+        if mod.owner_id not in ("__LEVEL__", "__LIGHT_TEAM__"):
             self.check_property_changes(mod.owner_id)
 
     def destroy_all_for_entity(self, owner_id: str) -> None:
@@ -1097,7 +1141,7 @@ class ModifierEngine:
         old_max_hp: Optional[float] = None,
     ) -> None:
         """同步非纯属性累加类副作用：SpeedOverride / BaseSpeed / DirtyHPRatio / 元素抗性 / MaxHP 缩放。"""
-        if mod.owner_id == "__LEVEL__":
+        if mod.owner_id in ("__LEVEL__", "__LIGHT_TEAM__"):
             return
         ent = self.rt.sim.get_entity(mod.owner_id)
         if ent is None:
@@ -1247,6 +1291,9 @@ class ModifierEngine:
         if prop_name == "HPRatio":
             m = float(ent.max_hp) if used_override else float(port.max_hp(entity_id))
             return float(ent.current_hp / m) if m > 0 else 1.0
+        if prop_name == "SPRatio":
+            m_sp = float(getattr(ent, "max_energy", 0.0) or 0.0)
+            return float(getattr(ent, "energy", 0.0) or 0.0) / m_sp if m_sp > 0.0 else 0.0
         if prop_name in ("CriticalChanceBase", "CriticalChance"):
             return float(ent.crit_rate)
         if prop_name in ("CriticalDamageBase", "CriticalDamage"):
@@ -1288,9 +1335,13 @@ class ModifierEngine:
             return float(port.stat(entity_id, StatType.OUTGOING_HEALING))
         if prop_name == "HealRatioConvert":
             return sum(m.convert_properties.get("HealRatioBase", 0.0) for m in self.get_modifiers(entity_id))
+        if prop_name == "StatusProbabilityConvert":
+            return sum(m.convert_properties.get("StatusProbabilityBase", 0.0) for m in self.get_modifiers(entity_id))
         if prop_name == "BaseSpeed":
             return float(ent.base_speed)
         if prop_name == "Shield":
+            if entity_id == "__LIGHT_TEAM__":
+                return max((m.shield_value for m in self.get_modifiers("__LIGHT_TEAM__") if not m._destroyed and m.shield_value > 0.0), default=0.0)
             return float(getattr(ent, "shield", 0.0))
         if prop_name == "CurrentStance":
             return float(getattr(ent, "current_toughness", 0.0))
@@ -1549,58 +1600,113 @@ class ModifierEngine:
         callback_modifier_instance: Optional[VMModifierInstance] = None,
         exclude_modifier_uid: Optional[int] = None,
         change_value: float = 0.0,
+        change_value2: float = 0.0,
         current_skill_type: str = "",
         current_attack_type: str = "",
         param_flags: Tuple[str, ...] = (),
         param_strings: Tuple[str, ...] = (),
     ) -> None:
         """收集所有订阅该事件的 Modifier 回调，严格按 Priority 升序 (-92 -> -80 -> 0 -> +N) 执行。"""
-        entries: List[Tuple[int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
+        entries: List[Tuple[int, int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
         is_owner_scoped = owner_id is not None and not event_name.startswith("OnListen")
         owner_set = set(owner_ids) if (owner_ids is not None and not event_name.startswith("OnListen")) else None
 
-        for mod in list(self.by_uid.values()):
-            if mod._destroyed or mod.uid == exclude_modifier_uid:
-                continue
-            if is_owner_scoped and mod.owner_id != owner_id:
-                continue
-            if owner_set is not None and mod.owner_id not in owner_set:
-                continue
-            for cb in mod.config.get("_CallbackList", []):
-                if cb.get("Event") == event_name:
-                    prio = int(cb.get("Priority", 0))
-                    entries.append((prio, mod._spawn_order, mod, cb.get("CallbackConfig", [])))
+        def _collect_entries(already_done: Optional[Set[Tuple[int, int]]] = None) -> List[Tuple[int, int, int, VMModifierInstance, List[Dict[str, Any]]]]:
+            collected: List[Tuple[int, int, int, VMModifierInstance, List[Dict[str, Any]]]] = []
+            for mod in list(self.by_uid.values()):
+                if mod._destroyed or mod.uid == exclude_modifier_uid:
+                    continue
+                if is_owner_scoped and mod.owner_id != owner_id:
+                    continue
+                if owner_set is not None and mod.owner_id not in owner_set:
+                    continue
+                for cb_idx, cb in enumerate(mod.config.get("_CallbackList", [])):
+                    if cb.get("Event") == event_name:
+                        if already_done is not None and (mod.uid, cb_idx) in already_done:
+                            continue
+                        prio = int(cb.get("Priority", 0))
+                        collected.append((prio, mod._spawn_order, cb_idx, mod, cb.get("CallbackConfig", [])))
+            collected.sort(key=lambda item: (item[0], item[1], item[2]))
+            return collected
 
-        entries.sort(key=lambda item: (item[0], item[1]))
-        for _, _, mod, tasks in entries:
-            if mod._destroyed:
-                continue
-            ctx = ExecutionContext(
-                runtime=self.rt,
-                caster_id=mod.caster_id,
-                ability_name=mod.ability_name,
-                modifier_owner_id=mod.owner_id,
-                modifier_instance=mod,
-                ability_target_ids=ability_target_ids,
-                skill_target_ids=skill_target_ids,
-                param_skill_targets=param_skill_targets or skill_target_ids,
-                attack_target_ids=attack_target_ids,
-                param_entity_id=param_entity_id,
-                param_entity2_id=param_entity2_id,
-                damage_data=damage_data,
-                heal_data=heal_data,
-                callback_modifier_name=callback_modifier_name,
-                callback_behavior_flags=callback_behavior_flags,
-                callback_status_type=callback_status_type,
-                callback_modifier_instance=callback_modifier_instance,
-                change_value=change_value,
-                current_skill_type=current_skill_type,
-                current_attack_type=current_attack_type,
-                param_flags=param_flags,
-                param_strings=param_strings,
-                custom_strings=dict(mod.custom_strings),
-            )
-            self.rt.execute_tasks(tasks, ctx)
+        entries = _collect_entries()
+        is_mod_lifecycle_listen = event_name in (
+            "OnListenModifierAdd",
+            "OnListenModifierOnStack",
+            "OnListenModifierRemove",
+            "OnModifierAdd",
+            "OnModifierOnStack",
+            "OnModifierRemove",
+        )
+        propagate_newly_added = event_name in (
+            "OnBeforeHitAll",
+            "OnBeforeBeingHitAll",
+            "OnBeforeHit",
+            "OnBeforeBeingHit",
+        )
+        initial_next_uid = self._next_uid
+        dispatched_cbs: Set[Tuple[int, int]] = set()
+
+        def _run_entry_list(batch: List[Tuple[int, int, int, VMModifierInstance, List[Dict[str, Any]]]]) -> None:
+            for _, _, cb_idx, mod, tasks in batch:
+                dispatched_cbs.add((mod.uid, cb_idx))
+                if mod._destroyed:
+                    continue
+                guard_key = (mod.uid, event_name)
+                if is_mod_lifecycle_listen and guard_key in self._active_listener_events:
+                    continue
+                ctx = ExecutionContext(
+                    runtime=self.rt,
+                    caster_id=mod.caster_id,
+                    ability_name=mod.ability_name,
+                    modifier_owner_id=mod.owner_id,
+                    modifier_instance=mod,
+                    ability_target_ids=ability_target_ids,
+                    skill_target_ids=skill_target_ids,
+                    param_skill_targets=param_skill_targets or skill_target_ids,
+                    attack_target_ids=attack_target_ids,
+                    param_entity_id=param_entity_id,
+                    param_entity2_id=param_entity2_id,
+                    damage_data=damage_data,
+                    heal_data=heal_data,
+                    callback_modifier_name=callback_modifier_name,
+                    callback_behavior_flags=callback_behavior_flags,
+                    callback_status_type=callback_status_type,
+                    callback_modifier_instance=callback_modifier_instance,
+                    change_value=change_value,
+                    change_value2=change_value2,
+                    current_skill_type=current_skill_type,
+                    current_attack_type=current_attack_type,
+                    param_flags=param_flags,
+                    param_strings=param_strings,
+                    custom_strings=dict(mod.custom_strings),
+                )
+                if is_mod_lifecycle_listen:
+                    self._active_listener_events.add(guard_key)
+                    try:
+                        self.rt.execute_tasks(tasks, ctx)
+                    finally:
+                        self._active_listener_events.discard(guard_key)
+                else:
+                    self.rt.execute_tasks(tasks, ctx)
+
+        prev_phase_limbo = getattr(self.rt, "_include_phase_limbo", False)
+        if event_name == "OnLimboWaitHeal":
+            self.rt._include_phase_limbo = True
+        try:
+            _run_entry_list(entries)
+            if propagate_newly_added:
+                for _ in range(4):
+                    if self._next_uid == initial_next_uid:
+                        break
+                    initial_next_uid = self._next_uid
+                    extra = _collect_entries(already_done=dispatched_cbs)
+                    if not extra:
+                        break
+                    _run_entry_list(extra)
+        finally:
+            if event_name == "OnLimboWaitHeal":
+                self.rt._include_phase_limbo = prev_phase_limbo
 
     def intercept_team_block_damage(self, target_id: str, raw_dmg: float) -> float:
         """拦截 TeamBlock 类型 Modifier 对我方受击伤害的抵消（消耗 MDF_TeamBlockValue 并触发回调）。"""

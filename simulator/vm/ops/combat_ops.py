@@ -85,12 +85,14 @@ def _extract_damage_modifiers(
     extra_vuln = float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
     extra_crit_dmg = float(dmg_data.get("Attacker_CriticalDamageBase", 0.0))
     base_mult_ratio = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 0.0))
+    added_pct = float(dmg_data.get("AttackData_DamagePercentage", 0.0) or 0.0)
+    added_flat = float(dmg_data.get("AttackData_DamageValue", 0.0) or 0.0)
     if spec.final_formula == "ByBaseDamage" and spec.pct == 0.0:
         eff_pct = 0.0
-        eff_flat = spec.flat * hit_split
+        eff_flat = (spec.flat + added_flat) * hit_split
     else:
-        eff_pct = (spec.pct * base_mult_ratio if base_mult_ratio > 0 else spec.pct) * hit_split
-        eff_flat = (spec.flat * base_mult_ratio if base_mult_ratio > 0 else spec.flat) * hit_split
+        eff_pct = ((spec.pct + added_pct) * base_mult_ratio if base_mult_ratio > 0 else (spec.pct + added_pct)) * hit_split
+        eff_flat = ((spec.flat + added_flat) * base_mult_ratio if base_mult_ratio > 0 else (spec.flat + added_flat)) * hit_split
     return (
         extra_dmg_boost,
         extra_def_ignore,
@@ -610,27 +612,16 @@ class CombatOpsMixin:
                     current_attack_type=spec.atk_type,
                 )
 
-        dmg_data: Dict[str, Any] = {"Element": spec.element, "CustomName": spec.custom_name}
-        if not spec.is_true_dmg:
-            me.dispatch_event(
-                "OnBeforeHitAll",
-                owner_id=spec.eff_attacker_id,
-                attack_target_ids=tuple(spec.targets),
-                damage_data=dmg_data,
-                current_attack_type=spec.atk_type,
-            )
-            base_before_hit_all = dict(dmg_data)
-            me.dispatch_event(
-                "OnListenBeforeHitAll",
-                param_entity_id=spec.eff_attacker_id,
-                attack_target_ids=tuple(spec.targets),
-                damage_data=dmg_data,
-                current_attack_type=spec.atk_type,
-            )
-        else:
-            base_before_hit_all = dict(dmg_data)
+        dmg_data: Dict[str, Any] = {
+            "Element": spec.element,
+            "CustomName": spec.custom_name,
+            "AttackData_RawDamagePercentage": spec.pct,
+            "AttackData_RawDamageValue": spec.flat,
+            "IsConvertDamage": bool(spec.is_true_dmg),
+        }
+        base_before_hit_all = dict(dmg_data)
 
-        # 必须在 OnBeforeAttack / OnBeforeHitAll 之后再求值 HitSplitRatio，以免读到旧动态值
+        # 必须在 OnBeforeAttack 之后再求值 HitSplitRatio，以免读到旧动态值
         hit_split = self._eval_num(spec.atk_prop.get("HitSplitRatio"), ctx, 1.0)
         if spec.equal_split and len(spec.real_targets) > 1:
             hit_split /= float(len(spec.real_targets))
@@ -1007,26 +998,47 @@ class CombatOpsMixin:
             pending_dying: List[str] = []
             prop_src_id = spec.prop_source_id or spec.eff_attacker_id
             for idx, tid in enumerate(real_targets):
+                live_attack_targets = (
+                    tuple(real_targets[idx:])
+                    if (idx > 0 and any_died_mid_aoe and not spec.is_true_dmg and spec.atk_type in ("Servant", "Pursued", "Ultra"))
+                    else tuple(spec.targets)
+                )
                 if idx > 0 and any_died_mid_aoe and not spec.is_true_dmg and spec.atk_type in ("Servant", "Pursued", "Ultra"):
                     any_died_mid_aoe = False
-                    dmg_data = dict(prep.base_before_hit_all)
+                hit_dmg_data = dict(prep.base_before_hit_all)
+                if (
+                    caster_ent_pre is not None
+                    and not getattr(caster_ent_pre, "is_enemy", False)
+                    and not spec.is_nested_sub
+                    and not spec.is_additional_dmg
+                    and not spec.is_true_dmg
+                    and not spec.is_dot_dmg
+                ):
+                    me.dispatch_event(
+                        "OnBeforeBeingAttacked",
+                        owner_id=tid,
+                        param_entity_id=spec.eff_attacker_id,
+                        attack_target_ids=tuple(spec.targets),
+                        damage_data=hit_dmg_data,
+                        current_attack_type=spec.atk_type,
+                    )
+                if not spec.is_true_dmg:
+                    me.dispatch_event(
+                        "OnBeforeHitAll",
+                        owner_id=spec.eff_attacker_id,
+                        param_entity_id=tid,
+                        attack_target_ids=live_attack_targets,
+                        damage_data=hit_dmg_data,
+                        current_attack_type=spec.atk_type,
+                    )
                     me.dispatch_event(
                         "OnListenBeforeHitAll",
                         param_entity_id=spec.eff_attacker_id,
-                        attack_target_ids=tuple(real_targets[idx:]),
-                        damage_data=dmg_data,
+                        param_entity2_id=tid,
+                        attack_target_ids=live_attack_targets,
+                        damage_data=hit_dmg_data,
                         current_attack_type=spec.atk_type,
                     )
-                    (
-                        extra_dmg_boost,
-                        extra_def_ignore,
-                        extra_res_pen,
-                        extra_vuln,
-                        extra_crit_dmg,
-                        base_mult_ratio,
-                        eff_pct,
-                        eff_flat,
-                    ) = _extract_damage_modifiers(spec, dmg_data, prep.hit_split)
                 tgt_ent = sim.get_entity(tid)
                 was_alive = bool(
                     tgt_ent is not None
@@ -1081,7 +1093,6 @@ class CombatOpsMixin:
                     setattr(tgt_ent, "_vm_last_tgt_vuln", tgt_extra_vuln)
                     setattr(tgt_ent, "_vm_last_tgt_def_ignore", tgt_extra_def_ignore)
                     setattr(tgt_ent, "_vm_last_tgt_res_pen", tgt_extra_res_pen)
-                hit_dmg_data = dict(dmg_data)
                 if not spec.is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
@@ -1100,6 +1111,14 @@ class CombatOpsMixin:
                         damage_data=hit_dmg_data,
                         current_attack_type=spec.atk_type,
                     )
+                    me.dispatch_event(
+                        "OnListenBeforeBeingHit",
+                        param_entity_id=tid,
+                        param_entity2_id=spec.eff_attacker_id,
+                        attack_target_ids=tuple(spec.targets),
+                        damage_data=hit_dmg_data,
+                        current_attack_type=spec.atk_type,
+                    )
                     me.notify_entangle_being_attacked(tid, spec.eff_attacker_id, attack_type=spec.atk_type)
                 if not spec.is_true_dmg:
                     (
@@ -1112,9 +1131,6 @@ class CombatOpsMixin:
                         hit_eff_pct,
                         hit_eff_flat,
                     ) = _extract_damage_modifiers(spec, hit_dmg_data, prep.hit_split)
-                    if abs(hit_base_mult_ratio - base_mult_ratio) <= 1e-12:
-                        hit_eff_pct = eff_pct
-                        hit_eff_flat = eff_flat
                     hit_res_delta = float(hit_dmg_data.get("Defender_AllDamageTypeResistance", 0.0)) - float(
                         dmg_data.get("Defender_AllDamageTypeResistance", 0.0)
                     )
@@ -1237,6 +1253,40 @@ class CombatOpsMixin:
                         setattr(tgt_ent, "_vm_last_tgt_vuln", 0.0)
                         setattr(tgt_ent, "_vm_last_tgt_def_ignore", 0.0)
                         setattr(tgt_ent, "_vm_last_tgt_res_pen", 0.0)
+                if not spec.is_true_dmg and not spec.is_nested_sub:
+                    me.dispatch_event(
+                        "OnAfterHit",
+                        owner_id=spec.eff_attacker_id,
+                        param_entity_id=tid,
+                        attack_target_ids=tuple(spec.targets),
+                        damage_data=hit_dmg_data,
+                        current_attack_type=spec.atk_type,
+                    )
+                    me.dispatch_event(
+                        "OnListenAfterHit",
+                        param_entity_id=spec.eff_attacker_id,
+                        param_entity2_id=tid,
+                        attack_target_ids=tuple(spec.targets),
+                        damage_data=hit_dmg_data,
+                        current_attack_type=spec.atk_type,
+                    )
+                    if not spec.is_additional_dmg:
+                        me.dispatch_event(
+                            "OnAfterBeingHit",
+                            owner_id=tid,
+                            param_entity_id=spec.eff_attacker_id,
+                            attack_target_ids=tuple(spec.targets),
+                            damage_data=hit_dmg_data,
+                            current_attack_type=spec.atk_type,
+                        )
+                        me.dispatch_event(
+                            "OnListenAfterBeingHit",
+                            param_entity_id=tid,
+                            param_entity2_id=spec.eff_attacker_id,
+                            attack_target_ids=tuple(spec.targets),
+                            damage_data=hit_dmg_data,
+                            current_attack_type=spec.atk_type,
+                        )
                 if len(real_targets) > 1 or applied_def_red:
                     if was_strictly_alive and tgt_ent is not None and getattr(tgt_ent, "current_hp", 0.0) <= 0.0:
                         any_died_mid_aoe = True

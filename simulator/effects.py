@@ -585,16 +585,46 @@ class EffectResolver:
                 if vm_rt is not None and not is_true_dmg and raw_dmg > 0.0:
                     raw_dmg = vm_rt.modifier_engine.intercept_team_block_damage(target.name, raw_dmg)
 
-                # 3. 护盾优先吸收 (砂金、杰帕德等)
+                # 3. 护盾优先吸收 (个人护盾 -> 队伍共享护盾)
                 if hasattr(target, "shield") and target.shield > 0:
                     absorbed = min(target.shield, raw_dmg)
                     shield_absorbed = absorbed
                     target.shield -= absorbed
                     raw_dmg -= absorbed
                     if absorbed > 0 and vm_rt is not None:
+                        rem_abs = absorbed
                         for m_shd in vm_rt.modifier_engine.get_modifiers(target.name):
-                            if m_shd.shield_value > 0.0:
-                                m_shd.shield_value = max(0.0, m_shd.shield_value - absorbed)
+                            if m_shd.shield_value > 0.0 and rem_abs > 0.0:
+                                used = min(m_shd.shield_value, rem_abs)
+                                m_shd.shield_value = max(0.0, m_shd.shield_value - used)
+                                rem_abs -= used
+                if (
+                    vm_rt is not None
+                    and raw_dmg > 0.0
+                    and not is_true_dmg
+                    and not getattr(target, "is_enemy", False)
+                    and not getattr(target, "is_countdown", False)
+                ):
+                    me_shd = vm_rt.modifier_engine
+                    for m_team in list(me_shd.get_modifiers("__LIGHT_TEAM__")):
+                        if raw_dmg <= 0.0:
+                            break
+                        if m_team._destroyed or m_team.shield_value <= 0.0:
+                            continue
+                        t_abs = min(m_team.shield_value, raw_dmg)
+                        if t_abs <= 0.0:
+                            continue
+                        m_team.shield_value = max(0.0, m_team.shield_value - t_abs)
+                        shield_absorbed += t_abs
+                        raw_dmg -= t_abs
+                        me_shd.dispatch_event(
+                            "OnListenShieldChange",
+                            param_entity_id="__LIGHT_TEAM__",
+                            change_value=-t_abs,
+                        )
+                        if m_team.shield_value <= 1e-9:
+                            m_team.shield_value = 0.0
+                            me_shd.destroy_modifier(m_team)
 
             vm_atk_type = "DOT" if resolved_damage_type == DamageType.DOT else ""
             was_alive = getattr(target, "current_hp", 0.0) > 0 or getattr(target, "_in_deathrattle_limbo", False)

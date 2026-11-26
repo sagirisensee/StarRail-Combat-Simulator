@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import heapq
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set
 
 from ..events import DamageAppliedEvent, WeaknessBreakEvent
@@ -32,7 +33,6 @@ from .target_alias import ExecutionContext, resolve_target_type
 # 未实现 / 暂忽略的机械层运行时占位符：仅在 TaskExecutor 执行阶段按需跳过，
 # 绝不可合入 loader.PRUNABLE_PRESENTATION_TYPES 以免加载期静默丢弃 AST 语义。
 IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
-    "RPG.GameCore.AttachEntityUnselectable",
     "RPG.GameCore.AttachEntityDeparted",
     "RPG.GameCore.SetMonsterEnergyBarState",
     "RPG.GameCore.TriggerCustomString",
@@ -42,9 +42,7 @@ IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
     "RPG.GameCore.CharacterChangePhase",
     "RPG.GameCore.LockActionDelayChange",
     "RPG.GameCore.LockTargetActionDelay",
-    "RPG.GameCore.AttachSkillTypeDisable",
     "RPG.GameCore.SummonPartner",
-    "RPG.GameCore.TriggerModifierCustomEvent",
     "RPG.GameCore.SetStanceCount",
     "RPG.GameCore.PerformDelayExecute",
     "RPG.GameCore.RemoveEntityFromRelationGroup",
@@ -54,7 +52,6 @@ IGNORED_MECHANICAL_TASK_STUBS: Set[str] = {
     "RPG.GameCore.TargetFilterAliveState",
     "RPG.GameCore.TriggerBreak",
     "RPG.GameCore.SwitchByCommandType",
-    "RPG.GameCore.AutoUseUltraSkill",
     "RPG.GameCore.ToggleSpecialSkillMark",
     "RPG.GameCore.StackCrazyAIBehavior",
 }
@@ -287,6 +284,24 @@ class TaskExecutor(
                         idx_spec = step.get("IndexValue") if step.get("IndexValue") is not None else step.get("Index")
                         idx = int(round(self._eval_num(idx_spec, ctx, 0.0)))
                         cur = [cur[idx]] if 0 <= idx < len(cur) else []
+                    elif st == "RPG.GameCore.TargetFetchActualOwner":
+                        nxt: List[str] = []
+                        seen_ao: set[str] = set()
+                        for tid in cur:
+                            e_ao = sim.get_entity(tid)
+                            if (
+                                e_ao is not None
+                                and not getattr(e_ao, "is_memosprite", False)
+                                and getattr(e_ao, "master_name", None)
+                                and sim.get_entity(e_ao.master_name) is not None
+                            ):
+                                resolved_id = e_ao.master_name
+                            else:
+                                resolved_id = tid
+                            if resolved_id and resolved_id not in seen_ao:
+                                seen_ao.add(resolved_id)
+                                nxt.append(resolved_id)
+                        cur = nxt
                     else:
                         cur = self._resolve_targets(step, ctx)
                 return cur
@@ -542,12 +557,29 @@ class TaskExecutor(
                 current_attack_type=ctx.current_attack_type,
             )
 
+    def _task_has_wait_timestamp(self, task: Any) -> bool:
+        if isinstance(task, list):
+            return any(self._task_has_wait_timestamp(x) for x in task)
+        if not isinstance(task, Mapping):
+            return False
+        if task.get("$type") == "RPG.GameCore.WaitParallelTimeStamp":
+            return True
+        for k in ("TaskList", "SuccessTaskList", "FailedTaskList"):
+            sub = task.get(k)
+            if isinstance(sub, list) and any(self._task_has_wait_timestamp(x) for x in sub):
+                return True
+        return False
+
     def _op_trigger_parallel_ability(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
         entries = list(task.get("ParallelAbilityList") or [])
         if not entries and task.get("AbilityName"):
-            entries = [{"TargetType": task.get("TargetType"), "AbilityName": task.get("AbilityName")}]
-        resolved_calls: List[tuple[str, List[str]]] = []
+            entries = [{
+                "TargetType": task.get("TargetType"),
+                "AbilityInherentTargetType": task.get("AbilityInherentTargetType"),
+                "AbilityName": task.get("AbilityName"),
+            }]
+        resolved_calls: List[tuple[str, str, tuple[str, ...], float]] = []
         for item in entries:
             if not isinstance(item, Mapping):
                 continue
@@ -555,18 +587,116 @@ class TaskExecutor(
             if not ab_name or ab_name.endswith("_Camera") or "_Camera_" in ab_name:
                 continue
             targets = self._resolve_targets(item.get("TargetType"), ctx)
-            if targets:
-                resolved_calls.append((ab_name, list(targets)))
-        for ab_name, targets in resolved_calls:
+            if not targets:
+                continue
+            inherent = (
+                tuple(self._resolve_targets(item.get("AbilityInherentTargetType"), ctx))
+                if item.get("AbilityInherentTargetType") is not None
+                else ()
+            )
+            delay = self._eval_num(item.get("Delay"), ctx, 0.0) if "Delay" in item else 0.0
             for tid in targets:
+                child_targets = inherent if inherent else (tid,)
+                resolved_calls.append((ab_name, tid, child_targets, float(delay)))
+
+        if not resolved_calls:
+            return
+
+        need_timeline = any(delay > 0.0 for _, _, _, delay in resolved_calls)
+        if not need_timeline:
+            for ab_name, _, _, _ in resolved_calls:
+                ab = rt.loader.get_ability(ab_name)
+                if ab is not None and self._task_has_wait_timestamp(ab.get("OnStart", [])):
+                    need_timeline = True
+                    break
+
+        if not need_timeline:
+            for ab_name, tid, child_targets, _ in resolved_calls:
                 rt.trigger_ability(
                     caster_id=tid,
                     ability_name=ab_name,
-                    target_ids=(tid,),
+                    target_ids=child_targets,
                     skill_target_ids=ctx.skill_target_ids,
                     current_skill_type=ctx.current_skill_type,
                     current_attack_type=ctx.current_attack_type,
                 )
+            return
+
+        class _ParallelBranch:
+            __slots__ = ("order", "base_time", "cur_time", "frames", "ab_name", "tid", "ab", "branch_ctx", "started")
+
+            def __init__(self, order: int, base_time: float, ab_name: str, tid: str, ab: Mapping[str, Any], branch_ctx: ExecutionContext) -> None:
+                self.order = order
+                self.base_time = base_time
+                self.cur_time = base_time
+                self.frames: List[List[Any]] = []
+                self.ab_name = ab_name
+                self.tid = tid
+                self.ab = ab
+                self.branch_ctx = branch_ctx
+                self.started = False
+
+        heap: List[tuple[float, int, _ParallelBranch]] = []
+        for idx_call, (ab_name, tid, child_targets, delay) in enumerate(resolved_calls):
+            ab = rt.loader.get_ability(ab_name)
+            if ab is None:
+                continue
+            tgt_info = (ab.get("TargetInfo") or {}).get("TargetType", "")
+            eff_targets = ctx.skill_target_ids if (tgt_info == "SkillTargetEntityList" and ctx.skill_target_ids) else child_targets
+            b_ctx = ExecutionContext(
+                runtime=rt,
+                caster_id=tid,
+                ability_name=ab_name,
+                ability_target_ids=eff_targets,
+                skill_target_ids=ctx.skill_target_ids or eff_targets,
+                current_skill_type=ctx.current_skill_type,
+                current_attack_type=ctx.current_attack_type,
+            )
+            br = _ParallelBranch(idx_call, delay, ab_name, tid, ab, b_ctx)
+            heapq.heappush(heap, (delay, idx_call, br))
+
+        while heap:
+            wake_t, _, br = heapq.heappop(heap)
+            br.cur_time = wake_t
+            if not br.started:
+                br.started = True
+                if br.ab.get("OnAdd"):
+                    add_key = (br.tid, br.ab_name)
+                    if add_key not in rt._added_abilities:
+                        rt._added_abilities.add(add_key)
+                        self.execute_tasks(br.ab.get("OnAdd", []), br.branch_ctx)
+                if "OnStart" in br.ab:
+                    br.frames.append([list(br.ab.get("OnStart") or []), 0, br.branch_ctx])
+            while br.frames:
+                frame = br.frames[-1]
+                tasks_seq, pos, f_ctx = frame
+                if pos >= len(tasks_seq):
+                    br.frames.pop()
+                    continue
+                t_item = tasks_seq[pos]
+                frame[1] = pos + 1
+                if not isinstance(t_item, Mapping):
+                    continue
+                tt = t_item.get("$type", "")
+                if tt == "RPG.GameCore.WaitParallelTimeStamp":
+                    target_t = br.base_time + self._eval_num(t_item.get("WaitTime"), f_ctx, 0.0)
+                    if target_t > br.cur_time + 1e-9:
+                        br.cur_time = target_t
+                        heapq.heappush(heap, (target_t, br.order, br))
+                        break
+                    continue
+                if tt == "RPG.GameCore.PredicateTaskList" and self._task_has_wait_timestamp(t_item):
+                    sub = t_item.get("SuccessTaskList", []) if self.eval_predicate(t_item.get("Predicate"), f_ctx) else t_item.get("FailedTaskList", [])
+                    if isinstance(sub, list) and sub:
+                        br.frames.append([sub, 0, f_ctx])
+                    continue
+                if tt == "RPG.GameCore.IncludeTaskListTemplate":
+                    tpl_name = _str_val(t_item.get("Name") or t_item.get("TemplateName"))
+                    tpl_tasks = rt.find_template(tpl_name, f_ctx.ability_name) if tpl_name else None
+                    if isinstance(tpl_tasks, list) and self._task_has_wait_timestamp(tpl_tasks):
+                        br.frames.append([tpl_tasks, 0, self._build_template_sub_ctx(t_item, f_ctx)])
+                        continue
+                self.execute_task(t_item, f_ctx)
 
     def _op_retarget(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -658,11 +788,21 @@ class TaskExecutor(
                 elif entity_name not in deferred_ready:
                     deferred_ready.append(entity_name)
 
+            batch_ids = getattr(ctx, "_set_delay_zero_batch", None)
+            if batch_ids is None:
+                batch_ids = []
+                setattr(ctx, "_set_delay_zero_batch", batch_ids)
+            batch_prev_av = getattr(ctx, "_set_delay_zero_prev_av", None)
+            if batch_prev_av is None:
+                batch_prev_av = {}
+                setattr(ctx, "_set_delay_zero_prev_av", batch_prev_av)
             sim._in_retarget_ready_batch = True
             sim.notify_entity_ready = _batch_notify
             try:
                 for tid in matched:
                     t_ctx = ctx.clone(param_entity_id=tid, ability_target_ids=(tid,))
+                    setattr(t_ctx, "_set_delay_zero_batch", batch_ids)
+                    setattr(t_ctx, "_set_delay_zero_prev_av", batch_prev_av)
                     self.execute_tasks(task.get("TaskList", []), t_ctx)
             finally:
                 sim.notify_entity_ready = orig_notify
@@ -674,8 +814,21 @@ class TaskExecutor(
                     ready_q.remove(ename)
                 orig_notify(ename, allow_jump_natural=False)
         else:
+            batch_ids = getattr(ctx, "_set_delay_zero_batch", None)
+            batch_prev_av = getattr(ctx, "_set_delay_zero_prev_av", None)
+            if len(matched) > 1:
+                if batch_ids is None:
+                    batch_ids = []
+                    setattr(ctx, "_set_delay_zero_batch", batch_ids)
+                if batch_prev_av is None:
+                    batch_prev_av = {}
+                    setattr(ctx, "_set_delay_zero_prev_av", batch_prev_av)
             for tid in matched:
                 t_ctx = ctx.clone(param_entity_id=tid, ability_target_ids=(tid,))
+                if batch_ids is not None:
+                    setattr(t_ctx, "_set_delay_zero_batch", batch_ids)
+                if batch_prev_av is not None:
+                    setattr(t_ctx, "_set_delay_zero_prev_av", batch_prev_av)
                 self.execute_tasks(task.get("TaskList", []), t_ctx)
 
     def _op_retarget_list(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -765,11 +918,15 @@ class TaskExecutor(
     def _op_noop(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         return
 
+    def _op_sequence_config(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        self.execute_tasks(task.get("TaskList") or (), ctx)
+
     # ------------------------------------------------------------------
     # Task 静态分发表（105 个官方 Task $type）与执行入口
     # ------------------------------------------------------------------
     _TASK_DISPATCH: Dict[str, Callable[..., None]] = {
         # 1. 控制流
+        "RPG.GameCore.SequenceConfig": _op_sequence_config,
         "RPG.GameCore.PredicateTaskList": _op_predicate_task_list,
         "RPG.GameCore.SwitchCase": _op_switch_case,
         "RPG.GameCore.SwitchCaseByDynamicValue": _op_switch_case_by_dynamic_value,
@@ -783,6 +940,8 @@ class TaskExecutor(
         "RPG.GameCore.TaskTemplateFetchParamSequence": _op_task_template_fetch_param_sequence,
         "RPG.GameCore.TriggerAbility": _op_trigger_ability,
         "RPG.GameCore.TriggerParallelAbility": _op_trigger_parallel_ability,
+        "RPG.GameCore.WaitParallelTimeStamp": _op_noop,
+        "RPG.GameCore.TriggerModifierCustomEvent": ModifierOpsMixin._op_trigger_modifier_custom_event,
         "RPG.GameCore.Retarget": _op_retarget,
         "GLOABNLLLEL": _op_retarget,
         "RPG.GameCore.RetargetList": _op_retarget_list,
@@ -809,6 +968,7 @@ class TaskExecutor(
         "RPG.GameCore.SetDynamicValueByMazeBuffConfig": DynamicOpsMixin._op_set_dynamic_value_by_maze_buff_config,
         "RPG.GameCore.SetDynamicValueByHardLevelProperty": DynamicOpsMixin._op_set_dynamic_value_by_hard_level_property,
         "RPG.GameCore.SetDynamicValueByStatusCount": DynamicOpsMixin._op_set_dynamic_value_by_status_count,
+        "RPG.GameCore.SetDynamicValueByBehaviorFlagCount": DynamicOpsMixin._op_set_dynamic_value_by_behavior_flag_count,
         "RPG.GameCore.SetDynamicValueByCountOfBaseType": DynamicOpsMixin._op_set_dynamic_value_by_count_of_base_type,
         "RPG.GameCore.SetDynamicEntityParam": DynamicOpsMixin._op_set_dynamic_entity_param,
         "IJJGPIPMNAE": DynamicOpsMixin._op_read_invasion_param,
@@ -823,6 +983,8 @@ class TaskExecutor(
         "RPG.GameCore.RemoveModifier": ModifierOpsMixin._op_remove_modifier,
         "RPG.GameCore.RemoveSelfModifier": ModifierOpsMixin._op_remove_self_modifier,
         "RPG.GameCore.RemoveModifierByBehaviorFlag": ModifierOpsMixin._op_remove_modifier_by_behavior_flag,
+        "RPG.GameCore.AddBehaviorFlagForModifier": ModifierOpsMixin._op_add_behavior_flag_for_modifier,
+        "RPG.GameCore.RemoveBehaviorFlagForModifier": ModifierOpsMixin._op_remove_behavior_flag_for_modifier,
         "RPG.GameCore.StackProperty": ModifierOpsMixin._op_stack_property,
         "RPG.GameCore.DispelStatus": ModifierOpsMixin._op_dispel_status,
         "RPG.GameCore.InitShield": ModifierOpsMixin._op_init_shield,
@@ -838,6 +1000,8 @@ class TaskExecutor(
         "RPG.GameCore.ModifySpecialSP": ModifierOpsMixin._op_modify_special_sp,
         "RPG.GameCore.ModifyProperty": ModifierOpsMixin._op_modify_property,
         "RPG.GameCore.ModifySkillPropertyByName": ModifierOpsMixin._op_modify_skill_property_by_name,
+        "RPG.GameCore.AttachSkillTypeDisable": ModifierOpsMixin._op_attach_skill_type_disable,
+        "RPG.GameCore.AttachEntityUnselectable": ModifierOpsMixin._op_attach_entity_unselectable,
         "BDDPLIAEAIN": ModifierOpsMixin._op_modify_current_modifier_dynamic_value,
         "EGAIKBNEPOG": ModifierOpsMixin._op_set_skill_tag,
         "BCOAEFIKBAO": ModifierOpsMixin._op_init_team_block,
@@ -853,6 +1017,11 @@ class TaskExecutor(
         "RPG.GameCore.ReleaseTargetUniqueName": ModifierOpsMixin._op_release_target_unique_name,
         "RPG.GameCore.SetEntityActionState": ModifierOpsMixin._op_set_entity_action_state,
         "RPG.GameCore.SetControlSkillMapping": ModifierOpsMixin._op_set_control_skill_mapping,
+        "EOCFKGFAPHJ": ModifierOpsMixin._op_add_common_skill_pool,
+        "MOPOKJECALI": ModifierOpsMixin._op_remap_control_skill_mapping,
+        "DGAOCHGKJKJ": ModifierOpsMixin._op_reset_control_skill_mapping,
+        "GIFBHKAGPEG": _op_noop,
+        "MHJOIIOMENF": _op_noop,
         "RPG.GameCore.AttackData": ModifierOpsMixin._op_attack_data,
         "DANFCLODJNK": ModifierOpsMixin._op_remove_skill_tag,
         # 4. 战斗结算与回合插队/召唤（CombatOpsMixin / TurnOpsMixin）
@@ -871,6 +1040,7 @@ class TaskExecutor(
         "RPG.GameCore.CreateBattleEvent": TurnOpsMixin._execute_create_battle_event,
         "RPG.GameCore.AttachAvatarChange": TurnOpsMixin._execute_attach_avatar_change,
         "RPG.GameCore.DetachAvatarChange": TurnOpsMixin._execute_detach_avatar_change,
+        "RPG.GameCore.AutoUseUltraSkill": TurnOpsMixin._execute_auto_use_ultra_skill,
         # 5. 关卡与怪物机制（StageOpsMixin）
         "RPG.GameCore.RemoveEntityFromTeamFormation": StageOpsMixin._op_toggle_team_formation,
         "RPG.GameCore.AddEntityToTeamFormation": StageOpsMixin._op_toggle_team_formation,
@@ -902,6 +1072,7 @@ class TaskExecutor(
         "RPG.GameCore.LevelChallengeTurnAcc": StageOpsMixin._op_level_challenge_turn_acc,
         "RPG.GameCore.EnableNegativeHP": StageOpsMixin._op_enable_negative_hp,
         "RPG.GameCore.AbortInsertAbility": StageOpsMixin._op_abort_insert_ability,
+        "RPG.GameCore.ShowBattleCardBuffSelection": StageOpsMixin._op_show_battle_card_buff_selection,
         "RPG.GameCore.SetDynamicValueByBPChange": DynamicOpsMixin._op_set_dynamic_value_by_bp_change,
         "RPG.GameCore.SetDynamicValueByCurrentBP": DynamicOpsMixin._op_set_dynamic_value_by_current_bp,
         "RPG.GameCore.SetDynamicValueByMaxBP": DynamicOpsMixin._op_set_dynamic_value_by_max_bp,

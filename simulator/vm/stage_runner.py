@@ -501,27 +501,31 @@ class StageRunner:
         else:
             new_phase = old_phase + 1
 
-        new_phase = max(1, min(mrs.max_phase, new_phase))
+        if mode == "Set":
+            new_phase = max(1, new_phase)
+        else:
+            new_phase = max(1, min(mrs.max_phase, new_phase))
         if new_phase == old_phase:
             return new_phase
         mrs.phase = new_phase
         mrs.lock_hp_ratio = None
         setattr(mrs.entity, "_vm_limbo_pending", False)
 
-        new_hp = mrs.blueprint.phase_max_hps[new_phase - 1]
-        mrs.entity.max_hp = new_hp
-        mrs.entity.current_hp = new_hp
-        phase_toughnesses = getattr(mrs.blueprint, "phase_max_toughnesses", ())
-        if phase_toughnesses and (new_phase - 1) < len(phase_toughnesses):
-            new_toughness = float(phase_toughnesses[new_phase - 1])
-            if new_toughness > 0.0:
-                mrs.entity.max_toughness = new_toughness
-        was_broken = bool(mrs.entity.is_broken or mrs.entity.current_toughness <= 0.0)
-        self.execute_reset_stance(monster_name, forbid_when_empty=False)
-        if new_phase >= 2 and was_broken:
-            if not hasattr(mrs.entity, "_phase_saved_toughness_dmg_reduction"):
-                setattr(mrs.entity, "_phase_saved_toughness_dmg_reduction", getattr(mrs.entity, "toughness_dmg_reduction", 0.10))
-            mrs.entity.toughness_dmg_reduction = 0.0
+        if 1 <= new_phase <= len(mrs.blueprint.phase_max_hps):
+            new_hp = mrs.blueprint.phase_max_hps[new_phase - 1]
+            mrs.entity.max_hp = new_hp
+            mrs.entity.current_hp = new_hp
+            phase_toughnesses = getattr(mrs.blueprint, "phase_max_toughnesses", ())
+            if phase_toughnesses and (new_phase - 1) < len(phase_toughnesses):
+                new_toughness = float(phase_toughnesses[new_phase - 1])
+                if new_toughness > 0.0:
+                    mrs.entity.max_toughness = new_toughness
+            was_broken = bool(mrs.entity.is_broken or mrs.entity.current_toughness <= 0.0)
+            self.execute_reset_stance(monster_name, forbid_when_empty=False)
+            if new_phase >= 2 and was_broken:
+                if not hasattr(mrs.entity, "_phase_saved_toughness_dmg_reduction"):
+                    setattr(mrs.entity, "_phase_saved_toughness_dmg_reduction", getattr(mrs.entity, "toughness_dmg_reduction", 0.10))
+                mrs.entity.toughness_dmg_reduction = 0.0
         return new_phase
 
     # ------------------------------------------------------------------
@@ -588,7 +592,10 @@ class StageRunner:
 
         spawned: List[Entity] = []
         for entry in data_list:
-            if len(self.living_enemies()) >= max_slots:
+            in_formation_count = sum(
+                1 for e in self.living_enemies() if not getattr(e, "_not_in_formation", False)
+            )
+            if in_formation_count >= max_slots:
                 break
             mid = int(
                 round(
@@ -610,6 +617,7 @@ class StageRunner:
                         dyn_val = float(dynamic_resolver(h_cv) or 0.0)
                         if dyn_val > 0:
                             mid = int(round(dyn_val))
+            explicit_mid = mid > 0
             if mid <= 0 and caster_mrs.blueprint.summon_ids:
                 mid = caster_mrs.blueprint.summon_ids[0]
             if mid <= 0:
@@ -618,9 +626,10 @@ class StageRunner:
             if summon_id_provider is not None:
                 wave_summons = list(self.built_stage.source_spec.waves[self.state.wave_index].summon_monsters.keys())
                 cand_ids = list(caster_mrs.blueprint.summon_ids) or wave_summons
-                picked_mid = summon_id_provider(current_av, mid, cand_ids)
-                if picked_mid is not None and int(picked_mid) > 0:
-                    mid = int(picked_mid)
+                if (not explicit_mid) or (mid in cand_ids and len(cand_ids) > 1):
+                    picked_mid = summon_id_provider(current_av, mid, cand_ids)
+                    if picked_mid is not None and int(picked_mid) > 0:
+                        mid = int(picked_mid)
 
             bp = self.built_stage.get_summon_blueprint(mid, wave_index=self.state.wave_index)
             caster_mrs.summon_seq += 1

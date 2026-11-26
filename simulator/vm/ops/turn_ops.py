@@ -58,9 +58,8 @@ class TurnOpsMixin:
                     sp_base = float(sp_obj.get("Value", 0.0)) if isinstance(sp_obj, dict) else 0.0
                     return int(row.get("SkillID") or 0), sp_base
             return 0, 0.0
-        self.rt.loader._ensure_avatars()
         self.rt.loader._ensure_avatar_skills()
-        av = self.rt.loader._avatars.get(spec.unit_id, {})
+        av = self.rt.loader.get_avatar_config(spec.unit_id, enhanced=getattr(spec, "enhanced", False))
         for sid in av.get("SkillList", []):
             row = self.rt.loader._avatar_skills.get((int(sid), 1))
             if row and row.get("SkillTriggerKey") == sk_key:
@@ -147,6 +146,8 @@ class TurnOpsMixin:
                 )
                 if _is_limbo_insert:
                     increment_deathrattle_actions(ent)
+                if prio == "MonsterDeathRattleTogether":
+                    rt.lifecycle.pending_deathrattle_together += 1
 
                 def _run_insert(
                     a_id: str = tid,
@@ -260,13 +261,15 @@ class TurnOpsMixin:
                             a_id,
                             force_limbo_prio=_prio in ("MonsterDeathRattle", "MonsterForceKill"),
                         )
+                        if _prio == "MonsterDeathRattleTogether":
+                            rt.lifecycle.complete_deathrattle_together()
 
                 imm_prio = (
                     2 if prio.startswith("MonsterBuffOthers")
                     else (
                         3 if prio == "MonsterDeathRattle"
                         else (
-                            4 if prio == "MonsterForceKill"
+                            4 if prio in ("MonsterForceKill", "MonsterDeathRattleTogether")
                             else (
                                 5 if prio == "MonsterSummon"
                                 else (
@@ -590,6 +593,148 @@ class TurnOpsMixin:
             if not has_pending:
                 lc.finish_merged_attack_scope(keep_atk_seq_until_settle=True)
 
+    def _execute_auto_use_ultra_skill(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行 RPG.GameCore.AutoUseUltraSkill：支持绑定共通终结技或无绑定名实体的自动终结技触发。"""
+        rt = self.rt
+        sim = rt.sim
+        bind_names = [str(n) for n in (task.get("BindUltraSkillNames") or ()) if n]
+        tgt_spec = task.get("Target") or task.get("TargetType")
+        enable = bool(task.get("Enable", True))
+        if not bind_names:
+            owner_id = ctx.modifier_owner_id or ctx.caster_id
+            if owner_id and owner_id != "__LEVEL__":
+                if enable:
+                    rt.auto_use_entity_ultra_skills[owner_id] = tgt_spec
+                else:
+                    rt.auto_use_entity_ultra_skills.pop(owner_id, None)
+            return
+        targets = self._resolve_targets(tgt_spec, ctx) if tgt_spec is not None else [ctx.modifier_owner_id or ctx.caster_id]
+
+        def _is_bound_skill_usable(tid: str, sk_name: str, info: Mapping[str, Any]) -> bool:
+            conds = info.get("usable_conditions") or ()
+            if not conds:
+                return True
+            u_ctx = ExecutionContext(
+                runtime=rt,
+                caster_id=tid,
+                ability_name=str(info.get("entry_ability") or ""),
+                modifier_owner_id=tid,
+            )
+            for c in conds:
+                pred = c.get("UsableCondition") if isinstance(c, Mapping) else c
+                if pred and not self.eval_predicate(pred, u_ctx):
+                    return False
+            return True
+
+        def _schedule_bound_skill(tid: str, sk_name: str) -> None:
+            info = rt.common_skills.get((tid, sk_name))
+            if not info:
+                return
+            entry_ab = str(info.get("entry_ability") or "")
+            if not entry_ab:
+                return
+            sk_id = int(info.get("skill_id") or 0)
+
+            def _run_bound_ultra() -> None:
+                a_ent = sim.get_entity(tid)
+                if a_ent is None or (float(getattr(a_ent, "current_hp", 0.0)) <= 0.0 and not getattr(a_ent, "is_infinite_hp", False)):
+                    return
+                if sk_name not in rt.auto_use_bound_ultra_skills.get(tid, ()):
+                    return
+                if not _is_bound_skill_usable(tid, sk_name, info):
+                    return
+                t_info = info.get("target_info") or {}
+                t_type = str(t_info.get("TargetType") or "AllTeamMember")
+                if t_type == "AllTeamMember":
+                    eff_tgts = tuple(
+                        e.name for e in sim.entities
+                        if not getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_battle_event", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    )
+                elif t_type == "AllEnemy":
+                    eff_tgts = tuple(
+                        e.name for e in sim.entities
+                        if getattr(e, "is_enemy", False)
+                        and not getattr(e, "is_countdown", False)
+                        and not getattr(e, "is_unselectable", False)
+                        and float(getattr(e, "current_hp", 0.0)) > 0.0
+                    )
+                else:
+                    eff_tgts = (tid,)
+                sim._action_seq += 1
+                sim._av_batch_seq += 1
+                emit_sim_event(
+                    sim,
+                    ActionExecuteEvent(
+                        av=round(sim.current_av, 2),
+                        cycle=sim.current_cycle,
+                        actor_id=tid,
+                        actor_name=tid,
+                        action_type=sk_name,
+                        description=f"自动施放绑定超必杀【{sk_name}】",
+                        action_kind=ActionKind.TALENT,
+                        skill_config_id=sk_id,
+                        action_id=sim._action_seq,
+                    ),
+                )
+                rt.lifecycle.run_ability_frame(
+                    AbilityFrameSpec(
+                        caster_id=tid,
+                        ability_name=entry_ab,
+                        target_ids=eff_tgts,
+                        skill_target_ids=eff_tgts,
+                        skill_type="Unknown",
+                        attack_type="Unknown",
+                        skill_name=sk_name,
+                        sp_base=0.0,
+                        energy_cause="",
+                        emit_before_skill=True,
+                        emit_listen_before_skill=True,
+                        pass_skill_targets_to_before_hooks=True,
+                        emit_after_skill=True,
+                        emit_action_end_hooks=True,
+                        emit_settle_callback=True,
+                    )
+                )
+                if (
+                    sk_name in rt.auto_use_bound_ultra_skills.get(tid, ())
+                    and float(getattr(a_ent, "current_hp", 0.0)) > 0.0
+                    and _is_bound_skill_usable(tid, sk_name, info)
+                ):
+                    _schedule_bound_skill(tid, sk_name)
+
+            sim.scheduler.enqueue(
+                tid,
+                _run_bound_ultra,
+                name=sk_name,
+                category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
+                action_kind=ActionKind.TALENT,
+                skill_id=sk_id,
+                publish_execute_event=False,
+                immediate_priority=5,
+            )
+
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            if not enable:
+                cur_set = rt.auto_use_bound_ultra_skills.get(tid)
+                if cur_set:
+                    for n in bind_names:
+                        cur_set.discard(n)
+                    if not cur_set:
+                        rt.auto_use_bound_ultra_skills.pop(tid, None)
+            else:
+                cur_set = rt.auto_use_bound_ultra_skills.setdefault(tid, set())
+                for n in bind_names:
+                    was_new = n not in cur_set
+                    cur_set.add(n)
+                    if was_new:
+                        _schedule_bound_skill(tid, n)
+
     def _execute_start_elation_time(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         """执行官方 ELLFLJKDCAE（开启阿哈时刻 ElationTime 并按 ElationSkill.PriorityValue 依次施放欢愉技）。"""
         rt = self.rt
@@ -862,11 +1007,16 @@ class TurnOpsMixin:
         elif isinstance(raw_spd, (int, float)):
             bec_fixed_spd = float(raw_spd)
         bec_override_spd = 0.0
+        bec_override_max_sp = 0.0
         for ov in bec_row.get("OverrideProperty") or ():
-            if isinstance(ov, Mapping) and ov.get("PropertyType") == "BaseSpeed":
+            if isinstance(ov, Mapping):
                 ov_v = ov.get("Value", 0.0)
-                bec_override_spd = float(ov_v.get("Value", 0.0) if isinstance(ov_v, Mapping) else (ov_v or 0.0))
-                break
+                ov_f = float(ov_v.get("Value", 0.0) if isinstance(ov_v, Mapping) else (ov_v or 0.0))
+                if ov.get("PropertyType") == "BaseSpeed":
+                    bec_override_spd = ov_f
+                elif ov.get("PropertyType") == "MaxSP":
+                    bec_override_max_sp = ov_f
+        curve = getattr(src_spec, "hard_level_curve", None) if src_spec is not None else None
         if robin_spd > 0.0:
             spd = robin_spd
         elif dv_be_spd > 0.0:
@@ -876,7 +1026,11 @@ class TurnOpsMixin:
         elif bec_fixed_spd > 0.0:
             spd = bec_fixed_spd
         elif bec_override_spd > 0.0:
-            spd = bec_override_spd
+            spd = (
+                bec_override_spd * float(curve.speed_ratio)
+                if (bool(bec_row.get("HardLevel", False)) and curve is not None)
+                else bec_override_spd
+            )
         else:
             spd = 140.0
 
@@ -895,6 +1049,57 @@ class TurnOpsMixin:
             )
             return
 
+        bed_row: Dict[str, Any] = {}
+        try:
+            for row in rt.loader._read_excel("BattleEventData.json"):
+                if int(row.get("BattleEventID", 0) or 0) == event_id:
+                    bed_row = row
+                    break
+        except Exception:
+            bed_row = {}
+        char_cfg: Dict[str, Any] = {}
+        cfg_path = str(bed_row.get("Config", ""))
+        if cfg_path:
+            try:
+                char_cfg = rt.loader._read_json(cfg_path)
+            except Exception:
+                char_cfg = {}
+
+        if char_cfg:
+            skill_id_list = [int(s) for s in bed_row.get("SkillIDList", []) if isinstance(s, int)]
+            skill_params: Dict[str, List[float]] = {}
+            try:
+                for row in rt.loader._read_excel("BattleEventSkillConfig.json"):
+                    sid = int(row.get("SkillID", 0) or 0)
+                    if (skill_id_list and sid in skill_id_list) or (not skill_id_list and sid // 100 == event_id):
+                        tkey = str(row.get("SkillTriggerKey", ""))
+                        if not tkey:
+                            continue
+                        plist = [
+                            float(p.get("Value", 0.0) if isinstance(p, Mapping) else (p or 0.0))
+                            for p in row.get("ParamList", [])
+                        ]
+                        skill_params.setdefault(tkey, plist)
+            except Exception:
+                pass
+            for h_str, entry in (char_cfg.get("DynamicValues") or {}).get("Floats", {}).items():
+                if not isinstance(entry, Mapping):
+                    continue
+                ri = entry.get("ReadInfo") or {}
+                rtype = ri.get("Type")
+                idx = int(ri.get("Index", 0) or 0)
+                if rtype == "SkillParam":
+                    tkey = str(ri.get("TriggerKey", ""))
+                    plist = skill_params.get(tkey, [])
+                    if 0 <= idx < len(plist):
+                        init_dyn[int(h_str)] = float(plist[idx])
+                elif rtype == "BattleEvent":
+                    if 0 <= idx < len(param_list):
+                        init_dyn[int(h_str)] = float(param_list[idx])
+
+        have_action_delay = bool(char_cfg.get("HaveActionDelay", True)) if char_cfg else True
+        max_sp_val = float(char_cfg.get("MaxSP", 0.0) or bec_override_max_sp or 0.0) if char_cfg else bec_override_max_sp
+
         be_ent = sim.get_entity(be_name)
         if be_ent is None:
             be_ent = Entity(
@@ -903,21 +1108,59 @@ class TurnOpsMixin:
                 base_atk=100.0,
                 max_hp=1000.0,
                 current_hp=1000.0,
+                max_energy=max_sp_val,
                 is_enemy=False,
                 is_memosprite=False,
                 is_countdown=True,
                 master_name=ctx.caster_id,
                 avatar_id=event_id,
             )
+            be_ent.have_action_delay = have_action_delay  # type: ignore[attr-defined]
+            be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            if not have_action_delay:
+                be_ent.distance_remaining = 1e12
             sim.add_entity(be_ent, trigger_battle_start=False)
         else:
             be_ent.base_speed = max(1.0, spd)
             be_ent.current_hp = 1000.0
-            be_ent.distance_remaining = 10000.0
+            be_ent.max_energy = max_sp_val
+            be_ent.have_action_delay = have_action_delay  # type: ignore[attr-defined]
+            be_ent.is_battle_event = True  # type: ignore[attr-defined]
+            be_ent.distance_remaining = 10000.0 if have_action_delay else 1e12
             be_ent.master_name = ctx.caster_id
 
+        passive_entries: List[str] = []
+        collect_ab_names: List[str] = list(ab_names)
+        if char_cfg:
+            for a in char_cfg.get("AbilityList", []):
+                if isinstance(a, str) and a:
+                    collect_ab_names.append(a)
+            for sa in char_cfg.get("SkillAbilityList", []):
+                if isinstance(sa, Mapping):
+                    for a in sa.get("AbilityList", []):
+                        if isinstance(a, str) and a:
+                            collect_ab_names.append(a)
+            for sk_entry in char_cfg.get("SkillList", []):
+                if not isinstance(sk_entry, Mapping):
+                    continue
+                sk_name = str(sk_entry.get("Name", ""))
+                entry_ab = str(sk_entry.get("EntryAbility", ""))
+                sk_type = str(sk_entry.get("SkillType", ""))
+                if entry_ab:
+                    collect_ab_names.append(entry_ab)
+                    if entry_ab.endswith("_Phase01"):
+                        collect_ab_names.append(entry_ab.replace("_Phase01", "_Phase02"))
+                    if (sk_type == "Passive" or sk_name.startswith(("SkillP", "Passive"))) and entry_ab not in passive_entries:
+                        passive_entries.append(entry_ab)
+
         be_abilities: Dict[str, Dict[str, Any]] = {}
-        for ab_name in ab_names:
+        seen_ab: set[str] = set()
+        queue_ab = list(collect_ab_names)
+        while queue_ab:
+            ab_name = queue_ab.pop(0)
+            if not ab_name or ab_name in seen_ab or ab_name.endswith("_Camera"):
+                continue
+            seen_ab.add(ab_name)
             ab_doc = rt.loader.get_ability(ab_name)
             if ab_doc is not None:
                 be_abilities[ab_name] = ab_doc
@@ -931,11 +1174,16 @@ class TurnOpsMixin:
                             idx = int(ri.get("Index", 0) or 0)
                             if 0 <= idx < len(param_list):
                                 init_dyn[int(h_str)] = float(param_list[idx])
+                for t_item in ab_doc.get("OnStart", []) + ab_doc.get("OnAdd", []):
+                    if isinstance(t_item, Mapping):
+                        sub_ab = _str_val(t_item.get("AbilityName"))
+                        if sub_ab and sub_ab not in seen_ab:
+                            queue_ab.append(sub_ab)
 
         be_spec = CompiledCharacterSpec(
             unit_id=event_id,
             is_servant=False,
-            config={},
+            config=char_cfg,
             abilities=be_abilities,
             global_modifiers=rt.loader._global_mod_by_name,
             global_templates=rt.loader._global_tpl_by_name,
@@ -948,8 +1196,9 @@ class TurnOpsMixin:
         if be_name not in be_list:
             be_list.append(be_name)
 
-        for ab_name in ab_names:
-            rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
+        for ab_name in passive_entries + ab_names:
+            if ab_name in be_abilities:
+                rt.trigger_ability(caster_id=be_name, ability_name=ab_name, target_ids=(be_name,))
         on_create = task.get("OnBattleEventCreate")
         if isinstance(on_create, list) and on_create:
             self.execute_tasks(on_create, ctx.clone(param_entity_id=be_name))

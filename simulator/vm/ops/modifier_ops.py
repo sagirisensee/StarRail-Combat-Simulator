@@ -99,7 +99,7 @@ class ModifierOpsMixin:
         inherit = str(task.get("InheritCaster", ""))
         alive_only = bool(task.get("AliveOnly", True))
         for tid in targets:
-            if alive_only and tid != "__LEVEL__":
+            if alive_only and tid not in ("__LEVEL__", "__LIGHT_TEAM__"):
                 t_chk = sim.get_entity(tid)
                 if (
                     t_chk is None
@@ -126,10 +126,10 @@ class ModifierOpsMixin:
                     and not getattr(tgt_ent, "is_enemy", False)
                 ):
                     hit_provider = getattr(sim, "enemy_debuff_hit_provider", None)
-                    if callable(hit_provider):
-                        if not hit_provider(caster_ent, tgt_ent, mname, chance_val):
-                            continue
-                    else:
+                    hit_res = hit_provider(caster_ent, tgt_ent, mname, chance_val) if callable(hit_provider) else None
+                    if hit_res is False:
+                        continue
+                    if hit_res is None:
                         sm = getattr(sim, "status_mgr", None)
                         eff_res = (
                             sm.calculate_stat(tid, getattr(tgt_ent, "base_effect_res", 0.0), StatType.EFFECT_RES)
@@ -203,6 +203,33 @@ class ModifierOpsMixin:
                             if not self.eval_predicate(pred, p_ctx):
                                 continue
                         me.destroy_modifier(m)
+
+    def _update_modifier_behavior_flags(self, task: Mapping[str, Any], ctx: ExecutionContext, *, add: bool) -> None:
+        """为目标身上指定 Modifier 动态增删 BehaviorFlags（可选按 CasterFilter 过滤）。"""
+        me = self.rt.modifier_engine
+        targets = self._resolve_targets(task.get("TargetType"), ctx)
+        mname = _str_val(task.get("ModifierName"))
+        raw_key = "AddBehaviorFlags" if add else "RemoveBehaviorFlags"
+        flags = [str(f) for f in (task.get(raw_key) or ()) if f]
+        if not flags:
+            return
+        caster_filter_ids: Optional[Set[str]] = None
+        if "CasterFilter" in task:
+            caster_filter_ids = set(self._resolve_targets(task.get("CasterFilter"), ctx))
+        for tid in targets:
+            for m in me.get_modifiers(tid, mname):
+                if caster_filter_ids is not None and m.caster_id not in caster_filter_ids:
+                    continue
+                if add:
+                    m.behavior_flags.update(flags)
+                else:
+                    m.behavior_flags.difference_update(flags)
+
+    def _op_add_behavior_flag_for_modifier(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        self._update_modifier_behavior_flags(task, ctx, add=True)
+
+    def _op_remove_behavior_flag_for_modifier(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        self._update_modifier_behavior_flags(task, ctx, add=False)
 
     def _op_stack_property(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         prop_name = str(task.get("Property", ""))
@@ -281,6 +308,7 @@ class ModifierOpsMixin:
         t = task.get("$type", "")
         targets = self._resolve_targets(task.get("TargetType"), ctx) or [ctx.modifier_owner_id or ctx.caster_id]
         mod_names = [str(m) for m in (task.get("ShieldModifiers") or []) if m]
+        modify_op = str(task.get("ModifyOp") or "Add")
         delta = self._eval_num(task.get("FormulaValue"), ctx, 0.0)
         for tid in targets:
             if mod_names:
@@ -289,16 +317,31 @@ class ModifierOpsMixin:
                 matched_mods = [ctx.modifier_instance]
             else:
                 matched_mods = []
+            changed_delta = 0.0
             for m in matched_mods:
                 if t == "RPG.GameCore.ModifyShieldMax":
-                    m.shield_max = max(0.0, m.shield_max + delta)
+                    if modify_op == "Set":
+                        m.shield_max = max(0.0, delta)
+                    else:
+                        m.shield_max = max(0.0, m.shield_max + delta)
                 else:
-                    new_v = max(0.0, m.shield_value + delta)
+                    old_v = m.shield_value
+                    if modify_op == "Set":
+                        new_v = max(0.0, delta)
+                    else:
+                        new_v = max(0.0, m.shield_value + delta)
                     if m.shield_max > 0.0:
                         new_v = min(m.shield_max, new_v)
                     m.shield_value = new_v
+                    changed_delta += new_v - old_v
             if t == "RPG.GameCore.ModifyShield":
                 me.sync_entity_shield(tid)
+                if abs(changed_delta) > 1e-12:
+                    me.dispatch_event(
+                        "OnListenShieldChange",
+                        param_entity_id=tid,
+                        change_value=changed_delta,
+                    )
 
     def _op_define_hp_shared_group(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         mains = self._resolve_targets(task.get("MainTarget"), ctx)
@@ -422,6 +465,21 @@ class ModifierOpsMixin:
         sim = self.rt.sim
         targets = self._resolve_targets(task.get("TargetType"), ctx)
         cur_turn = getattr(sim, "_current_turn_entity", None)
+        def _requeue_ready_if_zero(tid: str) -> None:
+            ent = sim.get_entity(tid)
+            rq = getattr(sim, "_ready_queue", None)
+            nat = getattr(sim, "_natural_due_names", None)
+            if (
+                ent is not None
+                and float(getattr(ent, "distance_remaining", 0.0) or 0.0) <= 1e-6
+                and isinstance(rq, list)
+                and tid in rq
+                and (not isinstance(nat, set) or tid not in nat)
+                and not getattr(sim, "_in_retarget_ready_batch", False)
+            ):
+                rq.remove(tid)
+                sim.notify_entity_ready(tid, allow_jump_natural=False)
+
         if task.get("AddNormalizedValue") is not None:
             val = self._eval_num(task.get("AddNormalizedValue"), ctx, 0.0)
             for tid in targets:
@@ -429,6 +487,8 @@ class ModifierOpsMixin:
                     if cur_turn is not None and cur_turn.name == tid:
                         setattr(cur_turn, "_vm_immediate_jump", True)
                     sim.port.set_distance(tid, 0.0)
+                elif abs(val) <= 1e-9:
+                    _requeue_ready_if_zero(tid)
                 elif val < 0:
                     sim.port.advance(ctx.caster_id, tid, abs(val))
                 elif val > 0:
@@ -460,6 +520,8 @@ class ModifierOpsMixin:
                     if cur_turn is not None and cur_turn.name == tid:
                         setattr(cur_turn, "_vm_immediate_jump", True)
                     sim.port.set_distance(tid, 0.0)
+                elif abs(val) <= 1e-9:
+                    _requeue_ready_if_zero(tid)
                 elif val < 0:
                     sim.port.advance(ctx.caster_id, tid, abs(val))
                 elif val > 0:
@@ -468,8 +530,13 @@ class ModifierOpsMixin:
     def _op_reset_action_delay(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
         targets = self._resolve_targets(task.get("TargetType"), ctx)
+        skip_turn = bool(task.get("SkipTargetTurn", False))
+        cur_turn = getattr(sim, "_current_turn_entity", None)
         for tid in targets:
             sim.port.set_distance(tid, 10000.0)
+            if skip_turn and cur_turn is not None and cur_turn.name == tid:
+                setattr(cur_turn, "_vm_skip_current_turn", True)
+                setattr(cur_turn, "_vm_skip_reset_dist_on_turn_end", True)
 
     def _op_set_action_delay(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim
@@ -487,6 +554,9 @@ class ModifierOpsMixin:
                 ent = sim.get_entity(tid)
                 rq = getattr(sim, "_ready_queue", None)
                 if ent is not None and isinstance(rq, list):
+                    prev_dist = float(getattr(ent, "distance_remaining", 0.0) or 0.0)
+                    prev_spd = float(getattr(ent, "speed", 0.0) or 0.0)
+                    prev_av = (prev_dist / prev_spd) if prev_spd > 0.0 else float("inf")
                     ent.distance_remaining = 0.0
                     if tid not in rq and (ent.current_hp > 0 or getattr(ent, "is_infinite_hp", False)):
                         nat = getattr(sim, "_natural_due_names", None)
@@ -496,12 +566,18 @@ class ModifierOpsMixin:
                         if batch_ids is None:
                             batch_ids = []
                             setattr(ctx, "_set_delay_zero_batch", batch_ids)
+                        batch_prev_av = getattr(ctx, "_set_delay_zero_prev_av", None)
+                        if batch_prev_av is None:
+                            batch_prev_av = {}
+                            setattr(ctx, "_set_delay_zero_prev_av", batch_prev_av)
+                        batch_prev_av.setdefault(tid, prev_av)
                         batch_ids.append(tid)
                         batch_set = set(batch_ids)
                         rest = [name for name in rq if name not in batch_set]
                         batch_in_rq = [name for name in rq if name in batch_set] + [tid]
                         batch_in_rq.sort(
                             key=lambda name: (
+                                round(float(batch_prev_av.get(name, 0.0)), 4),
                                 -float(getattr(sim.get_entity(name), "speed", 0.0) or 0.0),
                                 int(getattr(sim.get_entity(name), "_spawn_seq", 0) or 0),
                             )
@@ -591,6 +667,84 @@ class ModifierOpsMixin:
                     self.rt.control_skill_mapping[(tid, ctrl_type)] = sk_key
                 else:
                     self.rt.control_skill_mapping.pop((tid, ctrl_type), None)
+
+    def _op_add_common_skill_pool(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行官方 EOCFKGFAPHJ：从 ConfigCommonSkillPool 注册通用技能槽（SkillID / EntryAbility / UsableConditions）。"""
+        pool_name = str(task.get("MBDAKKKPKCG") or "")
+        if not pool_name:
+            return
+        pool = self.rt.loader.get_common_skill_pool(pool_name)
+        if not pool:
+            return
+        tgt_spec = task.get("TargetType") or task.get("HILNFHCPEAD")
+        targets = self._resolve_targets(tgt_spec, ctx) if tgt_spec is not None else [ctx.modifier_owner_id or ctx.caster_id]
+        sim = self.rt.sim
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            ent = sim.get_entity(tid)
+            kit = getattr(ent, "kit", None) if ent is not None else None
+            for sk_entry in pool.get("SkillList") or ():
+                if not isinstance(sk_entry, Mapping):
+                    continue
+                cfg = sk_entry.get("Config") or {}
+                sk_ab = sk_entry.get("SkillAbility") or {}
+                sk_name = str(cfg.get("Name") or sk_ab.get("Skill") or "")
+                if not sk_name:
+                    continue
+                entry_ab = str(cfg.get("EntryAbility") or "")
+                ab_list = list(sk_ab.get("AbilityList") or ())
+                if not entry_ab and ab_list:
+                    entry_ab = str(ab_list[0])
+                t_info = dict(cfg.get("TargetInfo") or {})
+                sk_id = int(sk_entry.get("SkillID") or 0)
+                usable_conds = list(cfg.get("UsableConditions") or ())
+                self.rt.common_skills[(tid, sk_name)] = {
+                    "pool_name": pool_name,
+                    "skill_id": sk_id,
+                    "skill_name": sk_name,
+                    "skill_type": str(cfg.get("SkillType") or "Ultra"),
+                    "entry_ability": entry_ab,
+                    "ability_list": ab_list,
+                    "target_info": t_info,
+                    "usable_conditions": usable_conds,
+                }
+                if kit is not None and hasattr(kit, "_skill_abilities"):
+                    kit._skill_abilities[sk_name] = ab_list or ([entry_ab] if entry_ab else [])
+                    if entry_ab and hasattr(kit, "_skill_entries"):
+                        kit._skill_entries[sk_name] = entry_ab
+                    if hasattr(kit, "_skill_target_infos"):
+                        kit._skill_target_infos[sk_name] = t_info
+
+    def _op_remap_control_skill_mapping(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行官方 MOPOKJECALI：将控制技能槽位映射为指定技能或通用技能键。"""
+        ctrl_type = str(task.get("GFNJJEFJKPD") or "ControlSkill03")
+        sk_key = str(task.get("IPOJMHGKIEH") or "")
+        tgt_spec = task.get("TargetType") or task.get("HILNFHCPEAD")
+        targets = self._resolve_targets(tgt_spec, ctx) if tgt_spec is not None else [ctx.modifier_owner_id or ctx.caster_id]
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            if sk_key:
+                self.rt.control_skill_mapping[(tid, ctrl_type)] = sk_key
+            else:
+                self.rt.control_skill_mapping.pop((tid, ctrl_type), None)
+
+    def _op_reset_control_skill_mapping(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行官方 DGAOCHGKJKJ：重置控制技能槽位重映射。"""
+        if not task.get("JHLNDMMBMJP", False):
+            return
+        tgt_spec = task.get("TargetType") or task.get("HILNFHCPEAD")
+        targets = self._resolve_targets(tgt_spec, ctx) if tgt_spec is not None else [ctx.modifier_owner_id or ctx.caster_id]
+        for tid in targets:
+            if not tid or tid == "__LEVEL__":
+                continue
+            to_del = [
+                k for k, v in self.rt.control_skill_mapping.items()
+                if k[0] == tid and (tid, v) in self.rt.common_skills
+            ]
+            for k in to_del:
+                self.rt.control_skill_mapping.pop(k, None)
 
     def _op_attack_data(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         tgt_spec = task.get("TargetType") or {"Alias": "AbilityTargetEntity"}
@@ -870,3 +1024,108 @@ class ModifierOpsMixin:
             if callable(diag_cb):
                 diag_cb("SP", f"EBP {tid} {mfunc} {val:g} -> {new_val:g}")
             self.rt.modifier_engine.check_property_changes(tid)
+
+    _DOT_CUSTOM_EVENT_FLAGS = {
+        1: None,
+        2: "STAT_DOT_Burn",
+        3: "STAT_DOT_Electric",
+        4: "STAT_DOT_Poison",
+        5: "STAT_DOT_Bleed",
+    }
+
+    def _op_trigger_modifier_custom_event(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        me = self.rt.modifier_engine
+        targets = self._resolve_targets(task.get("TargetType"), ctx)
+        if not targets:
+            return
+        ev_spec = task.get("EventType") or {}
+        enum_idx = int(ev_spec.get("EnumIndex", 4) or 4) if isinstance(ev_spec, Mapping) else 4
+        ev_val = int(ev_spec.get("Value", 1) or 1) if isinstance(ev_spec, Mapping) else 1
+        dyn_key = str(task.get("DynamicKey") or "")
+        key_hash = dotnet_hash(dyn_key) if dyn_key else 0
+        dyn_val = self._eval_num(task.get("Value"), ctx, 1.0) if "Value" in task else None
+        req_flag = self._DOT_CUSTOM_EVENT_FLAGS.get(ev_val) if enum_idx == 4 else None
+
+        for tid in targets:
+            mods = list(me.get_modifiers(tid))
+            if enum_idx == 4:
+                mods.sort(
+                    key=lambda m: 1
+                    if ((m.config.get("UIConfig") or {}).get("ModifierUIPriority") == "DealDamageBlackSwan")
+                    else 0
+                )
+            for mod in mods:
+                if mod._destroyed:
+                    continue
+                if enum_idx == 4:
+                    if ev_val == 1:
+                        if not any(f == "STAT_DOT" or f.startswith("STAT_DOT_") for f in mod.behavior_flags):
+                            continue
+                    elif req_flag and req_flag not in mod.behavior_flags:
+                        continue
+                has_cb = any(
+                    isinstance(cb, Mapping) and cb.get("Event") == "OnCustomEvent"
+                    for cb in mod.config.get("_CallbackList", ())
+                )
+                if not has_cb:
+                    continue
+                prev_had = False
+                prev_val = 0.0
+                if key_hash and dyn_val is not None:
+                    prev_had = key_hash in mod.dynamic_values
+                    prev_val = mod.dynamic_values.get(key_hash, 0.0)
+                    mod.dynamic_values[key_hash] = dyn_val
+                cb_ctx = ExecutionContext(
+                    runtime=self.rt,
+                    caster_id=mod.caster_id,
+                    ability_name=mod.ability_name,
+                    modifier_owner_id=mod.owner_id,
+                    modifier_instance=mod,
+                    param_entity_id=tid,
+                    param_entity2_id=ctx.caster_id,
+                    custom_strings=dict(mod.custom_strings),
+                )
+                try:
+                    me.dispatch_modifier_callbacks(mod, "OnCustomEvent", cb_ctx)
+                finally:
+                    if key_hash and dyn_val is not None and not mod._destroyed:
+                        if prev_had:
+                            mod.dynamic_values[key_hash] = prev_val
+                        else:
+                            mod.dynamic_values.pop(key_hash, None)
+
+    def _op_attach_skill_type_disable(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        types = [str(x) for x in (task.get("Types") or ()) if x]
+        if not types:
+            return
+        if ctx.modifier_instance is not None:
+            ctx.modifier_instance._disabled_skill_types.update(types)
+        else:
+            targets = (
+                self._resolve_targets(task.get("TargetType"), ctx)
+                if task.get("TargetType") is not None
+                else [ctx.modifier_owner_id or ctx.caster_id]
+            )
+            disabled_map = getattr(self.rt, "_direct_skill_type_disables", None)
+            if disabled_map is None:
+                disabled_map = {}
+                setattr(self.rt, "_direct_skill_type_disables", disabled_map)
+            for tid in targets:
+                if tid:
+                    disabled_map.setdefault(tid, set()).update(types)
+
+    def _op_attach_entity_unselectable(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        sim = self.rt.sim
+        if ctx.modifier_instance is not None:
+            ctx.modifier_instance._attached_unselectable = True
+        targets = (
+            self._resolve_targets(task.get("TargetType"), ctx)
+            if task.get("TargetType") is not None
+            else [ctx.modifier_owner_id or ctx.caster_id]
+        )
+        for tid in targets:
+            ent = sim.get_entity(tid) if tid and tid != "__LEVEL__" else None
+            if ent is not None:
+                ent.is_unselectable = True
+                if ctx.modifier_instance is None:
+                    setattr(ent, "_static_unselectable", True)

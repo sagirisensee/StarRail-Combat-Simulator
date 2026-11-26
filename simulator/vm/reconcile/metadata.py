@@ -53,6 +53,16 @@ def extract_log_metadata(
     enemy_tracker = EnemyTurnTracker()
     aha_tracker = AhaTurnTracker()
     player_tracker = PlayerTargetTracker()
+    active_bomb_uid: int = 0
+    bomb_ad_streak: list = []
+    enemy_debuff_hits_list: list = []
+
+    def _flush_bomb_ad_streak() -> None:
+        if len(bomb_ad_streak) == 1 and bomb_ad_streak[0][0] == "Player":
+            _, b_uid, b_av = bomb_ad_streak[0]
+            if active_bomb_uid and b_uid == active_bomb_uid:
+                enemy_debuff_hits_list.append((b_av, b_uid, "MMonster_W5_AsatPramad_00_Shake"))
+        bomb_ad_streak.clear()
 
     def _flush_turn() -> None:
         if not enemy_tracker.flush_turn(sctx.cur_av):
@@ -74,6 +84,8 @@ def extract_log_metadata(
             ev = obj.get("event")
             data = obj.get("data") or {}
             aha_tracker.on_event_header(ev, data)
+            if ev != "OnStatChange" or ((data.get("property") or {}).get("type") != "ActionDelay"):
+                _flush_bomb_ad_streak()
 
             if ev == "OnBattleBegin":
                 roster_tracker.on_battle_begin(data)
@@ -83,6 +95,7 @@ def extract_log_metadata(
                 roster_tracker.on_initialize_enemy(data, sctx)
             elif ev == "OnTurnBegin":
                 roster_tracker.on_turn_begin_before_flush()
+                active_bomb_uid = 0
                 enemy_tracker.clear_paused()
                 player_tracker.flush_pending_player_atk()
                 _flush_turn()
@@ -106,6 +119,7 @@ def extract_log_metadata(
                     skill = data.get("skill") or {}
                     sk_type = str(skill.get("type") or "")
                     sk_id = int(skill.get("skill_config_id") or 0)
+                    active_bomb_uid = uid if sk_id == 700005 else 0
                     roster_tracker.on_player_use_skill(uid, sk_id)
                     cname = (
                         f"BattleEvent_{sk_id // 100}"
@@ -125,6 +139,8 @@ def extract_log_metadata(
                 val = float(prop.get("value", 0.0))
 
                 player_tracker.on_action_delay_zero(ptype, val)
+                if ptype == "ActionDelay":
+                    bomb_ad_streak.append((team_tag, uid, sctx.cur_av))
 
                 if team_tag == "Enemy" and uid:
                     player_tracker.on_enemy_stance_and_delay(uid, ptype, val)
@@ -218,6 +234,14 @@ def extract_log_metadata(
         roster_tracker.robin_s_init_ad,
         team_override,
     )
+    from simulator.vm.loader import GameDataLoader
+
+    enh_skill_map = GameDataLoader().get_enhanced_skill_ids()
+    enhanced_avatars = {
+        int(uid)
+        for uid, sks in roster_tracker.observed_skill_ids.items()
+        if sks & enh_skill_map.get(int(uid), set())
+    }
     entry_element, entry_toughness = infer_entry_technique_stance(
         stage_spec,
         enemy_uid_map,
@@ -229,6 +253,7 @@ def extract_log_metadata(
         team_uids=team_uids,
         init_enemy_first_hp=roster_tracker.init_enemy_first_hp,
         init_enemy_first_dmg=roster_tracker.init_enemy_first_dmg,
+        enhanced_avatars=enhanced_avatars,
     )
 
     enemy_hp_at_turn_end: Dict[Tuple[float, str], float] = {
@@ -270,4 +295,6 @@ def extract_log_metadata(
         entry_toughness=entry_toughness,
         player_obs_speeds=roster_tracker.player_obs_speeds,
         random_chance_triggers=player_tracker.random_chance_triggers,
+        enhanced_avatars=enhanced_avatars,
+        enemy_debuff_hits=tuple(enemy_debuff_hits_list),
     )

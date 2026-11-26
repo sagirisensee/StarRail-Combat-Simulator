@@ -40,6 +40,7 @@ class ExecutionContext:
     callback_behavior_flags: Tuple[str, ...] = ()
     callback_status_type: str = ""
     change_value: float = 0.0
+    change_value2: float = 0.0
     param_flags: Tuple[str, ...] = ()
     current_skill_type: str = ""
     current_attack_type: str = ""
@@ -70,6 +71,7 @@ class ExecutionContext:
             "callback_behavior_flags": self.callback_behavior_flags,
             "callback_status_type": self.callback_status_type,
             "change_value": self.change_value,
+            "change_value2": self.change_value2,
             "param_flags": self.param_flags,
             "current_skill_type": self.current_skill_type,
             "current_attack_type": self.current_attack_type,
@@ -341,9 +343,18 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = list(ctx.skill_target_ids or ctx.ability_target_ids)
     elif base == "ParamEntitySkillTargetEntityList":
         cur = list(ctx.param_skill_targets or ctx.skill_target_ids)
-    elif base in ("TemplateParamEntityList", "ParamEntityList"):
+    elif base == "TemplateParamEntityList":
         if ctx.template_param_targets:
             cur = list(ctx.template_param_targets)
+        else:
+            cur = [ctx.param_entity_id] if ctx.param_entity_id else []
+    elif base == "ParamEntityList":
+        if ctx.template_param_targets:
+            cur = list(ctx.template_param_targets)
+        elif ctx.param_skill_targets or ctx.skill_target_ids:
+            cur = list(ctx.param_skill_targets or ctx.skill_target_ids)
+        elif ctx.attack_target_ids:
+            cur = list(ctx.attack_target_ids)
         else:
             cur = [ctx.param_entity_id] if ctx.param_entity_id else []
     elif base in ("AttackTargetList", "ParamEntityAttackTargetList"):
@@ -369,8 +380,12 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = [t.name] if t is not None else []
     elif base == "DamageAttackerEntity":
         cur = [ctx.caster_id] if ctx.caster_id else []
+    elif base == "DamageDefenderEntity":
+        cur = [ctx.param_entity_id] if ctx.param_entity_id else list(ctx.attack_target_ids[:1] or ctx.ability_target_ids[:1])
     elif base == "DarkTeamEntity":
         cur = _alive_enemies(include_unselectable=False, include_countdown=False)[:1]
+    elif base == "LightTeamEntity":
+        cur = ["__LIGHT_TEAM__"]
     elif base == "BattleAllEntity":
         cur = _dedup_preserve(
             _alive_allies(include_unselectable=True, include_countdown=True)
@@ -414,12 +429,28 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             cur = _alive_enemies(include_unselectable=False, include_countdown=False)
         else:
             cur = _alive_allies(include_unselectable=False, include_countdown=False)
-    elif base == "AllTeammate":
+    elif base in ("AllTeammate", "AllTeammateOnlyAddSPOnceForServant"):
         if _caster_is_enemy():
             team_list = _alive_enemies(include_unselectable=False, include_countdown=False)
         else:
             team_list = _alive_allies(include_unselectable=False, include_countdown=False)
-        cur = [eid for eid in team_list if eid != ctx.caster_id]
+        filtered = [eid for eid in team_list if eid != ctx.caster_id]
+        if base == "AllTeammateOnlyAddSPOnceForServant":
+            seen_masters: Set[str] = set()
+            deduped: List[str] = []
+            for eid in filtered:
+                ent = sim.get_entity(eid)
+                master = getattr(ent, "master_name", None) if ent is not None else None
+                if getattr(ent, "is_memosprite", False) and master:
+                    if master == ctx.caster_id or master in seen_masters or master in filtered:
+                        continue
+                    seen_masters.add(master)
+                else:
+                    seen_masters.add(eid)
+                deduped.append(eid)
+            cur = deduped
+        else:
+            cur = filtered
     elif base in ("LeftToRightLightTeamTarget", "RightToLeftLightTeamTarget"):
         allies = _alive_allies(include_unselectable=False, include_countdown=False)
         avatars = [n for n in allies if not getattr(sim.get_entity(n), "is_memosprite", False)]
@@ -493,7 +524,21 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                 cur = rt.executor._resolve_targets(global_alias, ctx)
             else:
                 ent = sim.get_entity(base)
-                cur = [ent.name] if ent is not None else []
+                if ent is not None:
+                    cur = [ent.name]
+                else:
+                    cur_turn = getattr(sim, "_current_turn_entity", None) or getattr(sim, "current_turn_entity", None)
+                    cur = [
+                        e.name
+                        for e in sim.entities
+                        if (base in getattr(e, "custom_value_tags", ()) or getattr(e, "unique_name", "") == base)
+                        and (
+                            _is_alive_entity(sim, e)
+                            or getattr(e, "_in_deathrattle_limbo", False)
+                            or getattr(e, "_vm_limbo_pending", False)
+                            or e is cur_turn
+                        )
+                    ]
 
     # 2. 链式后缀变换
     for mod in parts[1:]:
@@ -540,8 +585,13 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
             cur = _dedup_preserve(nxt)
         elif mod in ("GetAliveOnly", "GetAliveOrLimbo"):
             cur = [eid for eid in cur if (e := sim.get_entity(eid)) is not None and e.current_hp > 0.0]
-        elif mod == "RemoveServant":
-            cur = [eid for eid in cur if not getattr(sim.get_entity(eid), "is_memosprite", False)]
+        elif mod in ("RemoveServant", "RemoveBackupServant"):
+            cur = [
+                eid
+                for eid in cur
+                if not getattr(sim.get_entity(eid), "is_memosprite", False)
+                and not getattr(sim.get_entity(eid), "is_backup", False)
+            ]
         elif mod == "WithBattleEvent":
             # 保留既有并允许倒计时/场地事件实体
             cur = list(cur)
@@ -664,6 +714,27 @@ def resolve_target_type(target_spec: Any, ctx: ExecutionContext) -> List[str]:
             if r:
                 return r
         return []
+    if t == "RPG.GameCore.TargetFetchUniqueNameEntity":
+        un_obj = target_spec.get("UniqueName")
+        if isinstance(un_obj, Mapping):
+            uname = str(un_obj.get("RawString") or un_obj.get("Value") or "")
+        else:
+            uname = str(un_obj or "")
+        if not uname:
+            return []
+        rt = getattr(ctx, "runtime", None)
+        sim = getattr(rt, "sim", None) if rt is not None else None
+        out: List[str] = []
+        if rt is not None:
+            for tid in rt.named_targets.get(uname, ()):
+                if sim is None or sim.get_entity(tid) is not None:
+                    out.append(tid)
+        if not out and sim is not None:
+            director = getattr(sim, "_stage_director", None)
+            runner = getattr(director, "runner", None) if director is not None else None
+            if runner is not None and hasattr(runner, "resolve_unique_name_entities"):
+                out = [e.name for e in runner.resolve_unique_name_entities(uname)]
+        return _dedup_preserve(out)
     if t == "RPG.GameCore.TargetFetchElationTimeAllTargets":
         return list(getattr(ctx.runtime, "elation_time_units", ()))
     if t == "RPG.GameCore.TargetFetchCurrentInsertTurnSource":
@@ -679,7 +750,7 @@ def resolve_target_type(target_spec: Any, ctx: ExecutionContext) -> List[str]:
                 continue
             if want_enemy is not None and bool(getattr(e, "is_enemy", False)) != want_enemy:
                 continue
-            if "Bit_Dying" in alive_mask or alive_mask == "Dead":
+            if "Bit_Dying" in alive_mask or "Bit_Deathrattle" in alive_mask or alive_mask == "Dead":
                 if getattr(e, "current_hp", 0.0) <= 0.0 and (
                     getattr(e, "_in_deathrattle_limbo", False) or getattr(e, "_vm_limbo_pending", False)
                 ):

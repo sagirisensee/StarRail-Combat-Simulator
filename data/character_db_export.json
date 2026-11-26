@@ -1,7 +1,7 @@
 {
   "account_uid": "801961942",
-  "total_avatars": 62,
-  "fully_geared_count": 31,
+  "total_avatars": 63,
+  "fully_geared_count": 32,
   "characters": [
     {
       "avatar_id": 1511,
@@ -17429,6 +17429,117 @@
         "overall_quality_pct": 0.0
       },
       "relic_details": []
+    },
+    {
+      "avatar_id": 1410,
+      "name": "海瑟音",
+      "element": "Physical",
+      "path": 5,
+      "level": 80,
+      "eidolon": "E2",
+      "light_cone": {
+        "item_id": 23047,
+        "name": "海洋为何而歌",
+        "superimposition": "S1",
+        "level": 80
+      },
+      "relic_count": 6,
+      "relic_sets": [
+        "幽锁深牢的系囚 (ID 116)",
+        "沉欢醉饮的海隅 (ID 322)"
+      ],
+      "stats_summary": {
+        "生命值 (HP)": 2979,
+        "攻击力 (ATK)": 3988,
+        "防御力 (DEF)": 1129,
+        "速度 (SPD)": 142,
+        "速度面板显示": "142 (白字 102 + 绿字 +40)",
+        "速度实战精算": 142.5,
+        "暴击率 (CR)": "7.5%",
+        "暴击伤害 (CD)": "62.96%",
+        "击破特攻 (BE)": "5.8%",
+        "能量恢复效率 (ERR)": "100.0%",
+        "效果命中 (EHR)": "120.4%",
+        "效果抵抗 (RES)": "0.0%",
+        "属性伤害加成 (DMG%)": "38.8%"
+      },
+      "breakdowns": {
+        "hp": {
+          "base_white": 2155.608,
+          "flat_bonus": 824.1451370446086,
+          "percent_bonus": "0.00%",
+          "final_value": 2979.7531370446086
+        },
+        "atk": {
+          "base_white": 1236.564,
+          "flat_bonus": 426.890707,
+          "percent_bonus": "188.016%",
+          "final_value": 3988.39287724
+        },
+        "def": {
+          "base_white": 948.15,
+          "flat_bonus": 181.0,
+          "percent_bonus": "0.00%",
+          "final_value": 1129.15
+        },
+        "spd": {
+          "base_white": 102.0,
+          "flat_bonus": 40.5,
+          "percent_bonus": "0.00%",
+          "final_value": 142.5
+        }
+      },
+      "substat_roll_stats": {
+        "total_rolls": 0,
+        "low_rolls": 0,
+        "mid_rolls": 0,
+        "high_rolls": 0,
+        "overall_quality_pct": 0.0
+      },
+      "relic_details": [
+        {
+          "slot": 1,
+          "slot_name": "部件 1",
+          "set_name": "幽锁深牢的系囚",
+          "main_affix": "生命值 +705",
+          "sub_affixes": []
+        },
+        {
+          "slot": 2,
+          "slot_name": "部件 2",
+          "set_name": "幽锁深牢的系囚",
+          "main_affix": "攻击力 +352",
+          "sub_affixes": []
+        },
+        {
+          "slot": 3,
+          "slot_name": "部件 3",
+          "set_name": "幽锁深牢的系囚",
+          "main_affix": "效果命中 +43.2%",
+          "sub_affixes": []
+        },
+        {
+          "slot": 4,
+          "slot_name": "部件 4",
+          "set_name": "幽锁深牢的系囚",
+          "main_affix": "攻击力 +43.2%",
+          "sub_affixes": []
+        },
+        {
+          "slot": 5,
+          "slot_name": "部件 5",
+          "set_name": "沉欢醉饮的海隅",
+          "main_affix": "物理属性伤害提高 +38.8%",
+          "sub_affixes": []
+        },
+        {
+          "slot": 6,
+          "slot_name": "部件 6",
+          "set_name": "沉欢醉饮的海隅",
+          "main_affix": "攻击力 +43.2%",
+          "sub_affixes": []
+        }
+      ]
     }
   ]
 }

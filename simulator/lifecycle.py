@@ -262,6 +262,7 @@ class ExecutionLifecycle:
         self.pending_dead_enemies: List[str] = []
         self.pending_listen_die: List[str] = []
         self.active_deathrattle_entities: Set[str] = set()
+        self.pending_deathrattle_together: int = 0
         self._damage_hit_recorders: List[Tuple[str, List[DamageHitSnapshot]]] = []
 
     @property
@@ -318,6 +319,8 @@ class ExecutionLifecycle:
             reasons.append(f"pending_listen_die={self.pending_listen_die}")
         if self.active_deathrattle_entities:
             reasons.append(f"active_deathrattle_entities={sorted(self.active_deathrattle_entities)}")
+        if self.pending_deathrattle_together != 0:
+            reasons.append(f"pending_deathrattle_together={self.pending_deathrattle_together}")
         if self._damage_hit_recorders:
             reasons.append(f"damage_hit_recorders={len(self._damage_hit_recorders)}")
         return reasons
@@ -659,6 +662,19 @@ class ExecutionLifecycle:
                     self.finalize_dead_enemy(dead_tid)
             self.pending_dead_enemies[:] = remaining_dead
 
+    def _finalize_limbo_entity(self, ent: Any) -> None:
+        """退出亡语悬停态并收口实体/Modifier 销毁与延迟死亡监听。"""
+        sim = self.rt.sim
+        entity_id = str(getattr(ent, "name", "") or "")
+        _, was_deferred_die = clear_deathrattle_limbo(ent)
+        ent.current_hp = 0.0
+        if getattr(ent, "is_memosprite", False) and hasattr(sim, "port"):
+            sim.port.despawn_spirit(entity_id, reason="death")
+        self.rt.modifier_engine.destroy_all_for_entity(entity_id)
+        self.discard_pending_dead(entity_id)
+        if was_deferred_die:
+            self.rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=entity_id)
+
     def finalize_inline_deathrattle(self, entity_id: str) -> None:
         """若实体无异步亡语插入动作且 HP<=0，则立即结束亡语悬停态并销毁 Modifier。"""
         sim = self.rt.sim
@@ -666,19 +682,14 @@ class ExecutionLifecycle:
         if (
             ent is not None
             and getattr(ent, "_in_deathrattle_limbo", False)
+            and self.pending_deathrattle_together == 0
             and int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) == 0
             and float(getattr(ent, "current_hp", 0.0)) <= 0.0
         ):
-            _, was_deferred_die = clear_deathrattle_limbo(ent)
-            ent.current_hp = 0.0
-            if getattr(ent, "is_memosprite", False) and hasattr(sim, "port"):
-                sim.port.despawn_spirit(entity_id, reason="death")
-            self.rt.modifier_engine.destroy_all_for_entity(entity_id)
-            if was_deferred_die:
-                self.rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=entity_id)
+            self._finalize_limbo_entity(ent)
 
     def complete_deathrattle_action(self, entity_id: str, *, force_limbo_prio: bool = False) -> None:
-        """在异步亡语插队动作完成时递减计数，并在归零且标记即死时正式完成退场清理。"""
+        """在异步亡语插队动作完成时递减计数，并在归零且无可继续存活依据时完成退场清理。"""
         sim = self.rt.sim
         dr_ent = sim.get_entity(entity_id)
         if dr_ent is None:
@@ -692,15 +703,27 @@ class ExecutionLifecycle:
         ):
             return
         rem_dr = decrement_deathrattle_actions(dr_ent)
-        if rem_dr == 0 and getattr(dr_ent, "_die_immediately_after_deathrattle", False):
+        if rem_dr == 0 and self.pending_deathrattle_together == 0 and (
+            getattr(dr_ent, "_die_immediately_after_deathrattle", False)
+            or float(getattr(dr_ent, "current_hp", 0.0)) <= 0.0
+        ):
             setattr(dr_ent, "_die_immediately_after_deathrattle", False)
             if getattr(dr_ent, "_in_deathrattle_limbo", False):
-                _, was_deferred_die = clear_deathrattle_limbo(dr_ent)
-                dr_ent.current_hp = 0.0
-                self.rt.modifier_engine.destroy_all_for_entity(entity_id)
-                self.discard_pending_dead(entity_id)
-                if was_deferred_die:
-                    self.rt.modifier_engine.dispatch_event("OnListenCharacterDie", param_entity_id=entity_id)
+                self._finalize_limbo_entity(dr_ent)
+
+    def complete_deathrattle_together(self) -> None:
+        """在全局协同亡语 (`MonsterDeathRattleTogether`) 完成后清理所有已完成单体亡语的归零悬停实体。"""
+        self.pending_deathrattle_together = max(0, self.pending_deathrattle_together - 1)
+        if self.pending_deathrattle_together > 0:
+            return
+        for ent in list(self.rt.sim.entities):
+            if (
+                getattr(ent, "_in_deathrattle_limbo", False)
+                and int(getattr(ent, "_pending_deathrattle_actions", 0) or 0) == 0
+                and float(getattr(ent, "current_hp", 0.0)) <= 0.0
+            ):
+                setattr(ent, "_die_immediately_after_deathrattle", False)
+                self._finalize_limbo_entity(ent)
 
     def finalize_dead_enemy(self, dead_tid: str) -> None:
         """完成阵亡敌方收尾并级联清理共享血量（HPSharedGroup）子目标。"""
@@ -802,6 +825,10 @@ class ExecutionLifecycle:
         if spec.sp_base is not None:
             rt._active_skill_sp_base = float(spec.sp_base)
             rt._skill_sp_ratio_granted = False
+        if not spec.emit_after_skill and (spec.skill_target_ids or spec.target_ids):
+            act_id = int(getattr(sim, "_action_seq", 0) or 0)
+            if act_id > 0 and hasattr(rt, "_skill_targets_by_action_id"):
+                rt._skill_targets_by_action_id[act_id] = tuple(spec.skill_target_ids or spec.target_ids)
 
         sp_granted = False
         try:
@@ -896,18 +923,23 @@ class ExecutionLifecycle:
                     attack_target_ids=spec.target_ids,
                 )
             else:
-                me.dispatch_event(
-                    "OnAfterSkillUse",
-                    owner_id=spec.caster_id,
-                    current_skill_type=spec.skill_type,
-                )
+                after_kwargs: Dict[str, Any] = {
+                    "owner_id": spec.caster_id,
+                    "current_skill_type": spec.skill_type,
+                }
+                listen_after_kwargs: Dict[str, Any] = {
+                    "param_entity_id": spec.caster_id,
+                    "current_skill_type": spec.skill_type,
+                }
+                if spec.pass_skill_targets_to_before_hooks:
+                    after_kwargs["skill_target_ids"] = spec.skill_target_ids
+                    after_kwargs["param_skill_targets"] = spec.skill_target_ids
+                    listen_after_kwargs["skill_target_ids"] = spec.skill_target_ids
+                    listen_after_kwargs["param_skill_targets"] = spec.skill_target_ids
+                me.dispatch_event("OnAfterSkillUse", **after_kwargs)
                 if spec.emit_action_end_hooks:
                     me.dispatch_event("OnActionEnd", owner_id=spec.caster_id)
-                me.dispatch_event(
-                    "OnListenAfterSkillUse",
-                    param_entity_id=spec.caster_id,
-                    current_skill_type=spec.skill_type,
-                )
+                me.dispatch_event("OnListenAfterSkillUse", **listen_after_kwargs)
                 if spec.emit_action_end_hooks:
                     me.dispatch_event("OnListenActionEnd", param_entity_id=spec.caster_id)
                     me.dispatch_event("OnAfterAction", owner_id=spec.caster_id)

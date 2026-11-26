@@ -362,6 +362,7 @@ class TurnSimulator:
         due = [
             e for e in alive
             if e.name != current_name
+            and e.speed > 0.0
             and round(e.remaining_av, 4) <= 0.0
             and e.name not in self._ready_queue
         ]
@@ -379,6 +380,11 @@ class TurnSimulator:
             self._ready_queue.append(e.name)
             self._natural_due_names.add(e.name)
 
+    def _notify_global_action_delay_changed(self, delta_av: float) -> None:
+        vm_rt = getattr(self, "vm_runtime", None)
+        if vm_rt is not None and delta_av > 0.0:
+            vm_rt.on_global_action_delay_changed(delta_av, delta_av / 10.0)
+
     def advance_clock(self, delta_av: float) -> None:
         """仅推进时钟与全体跑道距离, 不服务任何行动。
 
@@ -391,6 +397,7 @@ class TurnSimulator:
         for entity in self.entities:
             entity.distance_remaining = max(0.0, entity.distance_remaining - entity.speed * delta_av)
         self.current_av += delta_av
+        self._notify_global_action_delay_changed(delta_av)
 
     def peek_landing_av(self) -> float:
         """预览下一次行动服务将落点的 AV: 当前回合进行中或就绪队列非空时
@@ -454,12 +461,17 @@ class TurnSimulator:
 
         # 若队列仍为空，推进时钟直至下一个实体自然到达终点
         if not self._ready_queue:
-            delta_av = min(e.remaining_av for e in alive)
-            if delta_av > 0:
+            turn_candidates = [
+                e for e in alive
+                if e.speed > 0.0 and not getattr(e, "_not_in_formation", False)
+            ]
+            delta_av = min((e.remaining_av for e in turn_candidates), default=0.0)
+            if delta_av > 0 and delta_av != float("inf"):
                 for entity in self.entities:
                     travel_distance = entity.speed * delta_av
                     entity.distance_remaining = max(0.0, entity.distance_remaining - travel_distance)
                 self.current_av += delta_av
+                self._notify_global_action_delay_changed(delta_av)
             self._scan_due_turns(alive)
 
         if not self._ready_queue:
@@ -1045,7 +1057,12 @@ class TurnSimulator:
             turn_id=self._turn_id
         ))
         _vm_rt_end = getattr(self, "vm_runtime", None)
-        if not (
+        if getattr(active_entity, "_vm_skip_reset_dist_on_turn_end", False):
+            active_entity._vm_skip_reset_dist_on_turn_end = False
+            self._pending_turn_reset_distance = None
+            if active_entity.distance_remaining <= 0.0:
+                self.notify_entity_ready(active_entity.name)
+        elif not (
             _vm_rt_end is not None
             and _vm_rt_end.modifier_engine.has_behavior_flag(active_entity.name, "MuteResetActionDelay")
         ):
@@ -1095,12 +1112,15 @@ class TurnSimulator:
                 if active_entity is None:
                     raise RuntimeError("场上无可用实体执行行动")
 
-        self._execute_action(
-            active_entity,
-            action_override=action_override,
-            target_ids=target_ids,
-            is_natural_turn_action=True,
-        )
+        if getattr(active_entity, "_vm_skip_current_turn", False):
+            active_entity._vm_skip_current_turn = False
+        else:
+            self._execute_action(
+                active_entity,
+                action_override=action_override,
+                target_ids=target_ids,
+                is_natural_turn_action=True,
+            )
         self._turn_primary_action_done = True
 
         if self.auto_ult:
@@ -1125,6 +1145,10 @@ class TurnSimulator:
                 self.scheduler.drain()
                 if self.auto_ult and not self.scheduler.continuous_action_hold:
                     self.check_and_cast_ultimates()
+            _vm_rt_auto = getattr(self, "vm_runtime", None)
+            if _vm_rt_auto is not None and not self.scheduler.continuous_action_hold:
+                _vm_rt_auto.trigger_auto_use_ultra_skills()
+                self.scheduler.drain()
         else:
             if self._has_turn_action_completed_hook():
                 self._invoke_turn_action_completed(active_entity)

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from simulator.core import Entity, TurnSimulator
 from simulator.events import (
@@ -611,6 +611,9 @@ class DataDrivenStageDirector:
                         if new_max > ent.current_hp:
                             ent.current_hp = new_max
                             ent.max_hp = new_max
+                    kit = getattr(ent, "kit", None)
+                    if kit is not None and hasattr(kit, "_ensure_monster_dynamic_values"):
+                        kit._ensure_monster_dynamic_values(rt)
                     self._trigger_monster_passive_abilities(ent, rt)
             self._sync_enemy_order()
         return new_entities
@@ -1023,14 +1026,24 @@ def build_data_driven_stage(
     entry_element: Optional[str] = None,
     entry_toughness: float = 10.0,
     defer_opening_drain: bool = False,
+    initial_energies: Optional[Mapping[Union[int, str], float]] = None,
 ) -> Tuple[TurnSimulator, DataDrivenStageDirector]:
     """Build a ``(TurnSimulator, DataDrivenStageDirector)`` purely from official stage tables."""
     for member in team:
-        if (
-            not getattr(member, "is_enemy", False)
-            and getattr(member, "max_energy", 0.0) > 0
-            and getattr(member, "energy", 0.0) == 0.0
-        ):
+        if getattr(member, "is_enemy", False) or getattr(member, "max_energy", 0.0) <= 0:
+            continue
+        aid = getattr(member, "avatar_id", None)
+        explicit_ep: Optional[float] = None
+        if initial_energies is not None:
+            if aid is not None and int(aid) in initial_energies:
+                explicit_ep = float(initial_energies[int(aid)])
+            elif aid is not None and str(aid) in initial_energies:
+                explicit_ep = float(initial_energies[str(aid)])
+            elif member.name in initial_energies:
+                explicit_ep = float(initial_energies[member.name])
+        if explicit_ep is not None:
+            member.energy = max(0.0, min(float(member.max_energy), explicit_ep))
+        elif getattr(member, "energy", 0.0) == 0.0:
             member.energy = member.max_energy * 0.5
 
     runner = StageRunner(stage_id)

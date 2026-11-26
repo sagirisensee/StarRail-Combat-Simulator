@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import importlib
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from simulator.db.character_db import CharacterDB
 from simulator.golden import (
@@ -56,6 +56,7 @@ def build_stage_for_id(
     extra_maze_buff_ids: Sequence[int] = (),
     entry_element: Optional[str] = None,
     entry_toughness: float = 10.0,
+    initial_energies: Optional[Mapping[Union[int, str], float]] = None,
 ) -> Tuple[Any, Any, str]:
     """统一走纯数据驱动 DataDrivenStageDirector 底座（零手写关卡硬编码）。"""
     sim, director = build_data_driven_stage(
@@ -66,6 +67,7 @@ def build_stage_for_id(
         entry_element=entry_element,
         entry_toughness=entry_toughness,
         defer_opening_drain=True,
+        initial_energies=initial_energies,
     )
     return sim, director, f"data_driven({stage_id})"
 
@@ -267,8 +269,16 @@ def _run_single_pass(
     record_crits: bool = False,
     extra_maze_buff_ids: Sequence[int] = (),
     on_sim_ready: Optional[Callable[[Any], None]] = None,
+    initial_energies: Optional[Mapping[Union[int, str], float]] = None,
+    technique_users: Optional[Sequence[str]] = None,
 ) -> Tuple[ReconcileReport, List[AmbiguousMemospriteSlot], List[Tuple[float, int, int, str, float, float, float]]]:
-    team = build_vm_team(meta.team_names, db=char_db, loader=vm_loader, loadouts=loadouts)
+    team = build_vm_team(
+        meta.team_names,
+        db=char_db,
+        loader=vm_loader,
+        loadouts=loadouts,
+        enhanced_avatars=meta.enhanced_avatars,
+    )
     if meta.player_obs_speeds:
         for ent in team:
             uid_i = int(getattr(ent, "avatar_id", 0) or 0)
@@ -282,11 +292,12 @@ def _run_single_pass(
     sim, director, stage_mode = build_stage_for_id(
         meta.stage_id,
         team,
-        technique_users=[e.name for e in team],
+        technique_users=list(technique_users) if technique_users is not None else [e.name for e in team],
         force_data_driven=force_data_driven,
         extra_maze_buff_ids=extra_maze_buff_ids,
         entry_element=meta.entry_element,
         entry_toughness=meta.entry_toughness,
+        initial_energies=initial_energies,
     )
 
     ambiguous_slots: List[AmbiguousMemospriteSlot] = []
@@ -534,7 +545,7 @@ def _run_single_pass(
         inferred_memosprite_hits=inferred_hits,
         unresolved_ambiguous_slots=len(ambiguous_slots),
         enemy_hit_mismatches=enemy_hit_mismatches,
-        ult_energy_granted=float(getattr(traj.replay, "ult_energy_granted", 0.0) or 0.0),
+        ult_energy_granted=float(getattr(traj, "ult_energy_granted", 0.0) or 0.0),
     )
     return report, ambiguous_slots, crit_records
 
@@ -557,6 +568,8 @@ def reconcile_log(
     golden: Optional[Any] = None,
     timeline: Optional[List[Any]] = None,
     on_sim_ready: Optional[Callable[[Any], None]] = None,
+    initial_energies: Optional[Mapping[Union[int, str], float]] = None,
+    technique_users: Optional[Sequence[str]] = None,
 ) -> ReconcileReport:
     """对任意官方战斗日志执行端到端 VM 对账并返回逐动诊断报告。"""
     char_db = db if db is not None else CharacterDB().load(DEFAULT_CHAR_DB_PATH)
@@ -596,6 +609,8 @@ def reconcile_log(
         record_crits=True,
         extra_maze_buff_ids=extra_maze_buff_ids,
         on_sim_ready=on_sim_ready,
+        initial_energies=initial_energies,
+        technique_users=technique_users,
     )
 
     non_crit_details: List[str] = []
@@ -636,6 +651,8 @@ def reconcile_log(
             record_crits=True,
             extra_maze_buff_ids=extra_maze_buff_ids,
             on_sim_ready=on_sim_ready,
+            initial_energies=initial_energies,
+            technique_users=technique_users,
         )
 
     # 被特殊护盾吸收的阿哈回合伤害：由首个破盾回合的 HP+盾 守恒反推精确吸收量
@@ -684,6 +701,8 @@ def reconcile_log(
                         record_crits=True,
                         extra_maze_buff_ids=extra_maze_buff_ids,
                         on_sim_ready=on_sim_ready,
+                        initial_energies=initial_energies,
+                        technique_users=technique_users,
                     )
 
     if plugin_fn is None and resolve_memosprites and ambiguous_slots:
@@ -755,6 +774,8 @@ def reconcile_log(
                         aha_dmg_overrides=aha_dmg_overrides,
                         record_crits=False,
                         extra_maze_buff_ids=extra_maze_buff_ids,
+                        initial_energies=initial_energies,
+                        technique_users=technique_users,
                     )
                     new_err = _eval_trial(trial_rep, best_report, best_err, first_bad.av)
                     if new_err is not None:
@@ -789,6 +810,8 @@ def reconcile_log(
                 record_crits=True,
                 extra_maze_buff_ids=extra_maze_buff_ids,
                 on_sim_ready=on_sim_ready,
+                initial_energies=initial_energies,
+                technique_users=technique_users,
             )
             for _nc_round in range(2):
                 newly_detected = _detect_non_crits_from_trace(g, crit_records) - non_crits
@@ -812,6 +835,8 @@ def reconcile_log(
                     record_crits=True,
                     extra_maze_buff_ids=extra_maze_buff_ids,
                     on_sim_ready=on_sim_ready,
+                    initial_energies=initial_energies,
+                    technique_users=technique_users,
                 )
 
     report.non_crits = set(non_crits)

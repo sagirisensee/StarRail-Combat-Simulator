@@ -540,6 +540,9 @@ def run_trajectory_replay(
                 if deficit > 1e-4:
                     ent.energy = float(ent.max_energy)
                     result.ult_energy_granted += deficit
+                    diag_cb = getattr(sim, "timeline_diag_cb", None)
+                    if callable(diag_cb):
+                        diag_cb("ULT_EN", f"{item.actor} +{deficit:.2f} (post, need={item.av:.2f}, now={now_av:.2f})")
                 ok = sim.cast_ultimate(item.actor, target_ids=getattr(item, "target_ids", None))
                 if director is not None:
                     director.after_step()
@@ -584,18 +587,7 @@ def run_trajectory_replay(
                 f"ow={getattr(u_item, 'turn_owner', '')} E={e_cur:.2f}/{e_max:.2f}",
             )
         if not getattr(u_item, "between_enemy_sub_actions", False):
-            u_ow = _resolve_turn_owner(getattr(u_item, "turn_owner", ""))
-            if not (
-                cur_t is not None
-                and getattr(cur_t, "is_enemy", False)
-                and u_ow
-                and (
-                    getattr(cur_t, "name", "").replace("_", "") == u_ow.replace("_", "")
-                    if u_ow[-1:].isdigit()
-                    else getattr(cur_t, "name", "").startswith(u_ow)
-                )
-            ):
-                return
+            return
         if u_item.av > now_sub_av + 1e-4:
             return
         if u_ent_d is not None and float(u_ent_d.energy) >= float(u_ent_d.max_energy) - 1e-6:

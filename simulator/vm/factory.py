@@ -70,6 +70,7 @@ def build_vm_entity(
     loader: Optional[GameDataLoader] = None,
     loadout: Optional[Tuple[int, int, Optional[int], int, List[Tuple[int, int]]]] = None,
     db_path: str = DEFAULT_CHAR_DB_PATH,
+    enhanced: bool = False,
 ) -> Entity:
     """构建单个挂载官方 VM 适配器 (`Kit`/`LightCone`/`Relic`) 的战斗实体。"""
     char_db = db if db is not None else CharacterDB().load(db_path)
@@ -94,7 +95,7 @@ def build_vm_entity(
     else:
         aid, eid, lc_id, lc_s, relics = _infer_loadout_from_profile(rp)
 
-    ent.kit = ConfigAbilityKitAdapter(name, aid, eidolon=eid, loader=vm_loader)
+    ent.kit = ConfigAbilityKitAdapter(name, aid, eidolon=eid, loader=vm_loader, enhanced=enhanced)
     if lc_id is not None:
         ent.light_cone = ConfigAbilityLightConeAdapter(name, lc_id, superimposition=lc_s)
     ent.relic_handlers = [ConfigAbilityRelicAdapter(name, sid, pieces=pc) for sid, pc in relics]
@@ -108,13 +109,24 @@ def build_vm_team(
     loader: Optional[GameDataLoader] = None,
     loadouts: Optional[Mapping[int, Tuple[int, int, Optional[int], int, List[Tuple[int, int]]]]] = None,
     db_path: str = DEFAULT_CHAR_DB_PATH,
+    enhanced_avatars: Optional[Sequence[int] | set[int]] = None,
 ) -> List[Entity]:
     """按传入顺序构建整支 VM 队伍，严格保留站位顺序。"""
     char_db = db if db is not None else CharacterDB().load(db_path)
     vm_loader = loader if loader is not None else GameDataLoader()
+    enh_set = {int(u) for u in enhanced_avatars} if enhanced_avatars else set()
     team: List[Entity] = []
     for item in uids_or_names:
         uid = resolve_vm_uid(item, db=char_db)
         ov = loadouts.get(uid) if loadouts is not None else None
-        team.append(build_vm_entity(item, db=char_db, loader=vm_loader, loadout=ov, db_path=db_path))
+        team.append(
+            build_vm_entity(
+                item,
+                db=char_db,
+                loader=vm_loader,
+                loadout=ov,
+                db_path=db_path,
+                enhanced=(uid in enh_set),
+            )
+        )
     return team

@@ -149,8 +149,31 @@ def _attach_sim_timeline_recorder(
     window: float,
     lines_out: List[str],
     tot_dmg_out: List[float],
+    *,
+    dump_mods: bool = False,
 ) -> None:
     seen_enemies = {e.name for e in sim.entities if getattr(e, "is_enemy", False)}
+    dumped_mods = [False]
+
+    def _dump_active_mods(av_val: float) -> None:
+        if dumped_mods[0]:
+            return
+        dumped_mods[0] = True
+        rt = getattr(sim, "vm_runtime", None)
+        me = getattr(rt, "modifier_engine", None) if rt is not None else None
+        if me is None:
+            return
+        for e in sim.entities:
+            if getattr(e, "is_countdown", False):
+                continue
+            mods = me.get_modifiers(e.name)
+            m_strs = []
+            for m in mods:
+                if m._destroyed:
+                    continue
+                props_s = ", ".join(f"{k}={v:.4g}" for k, v in sorted(m.properties.items()) if abs(float(v)) > 1e-9)
+                m_strs.append(f"{m.name}(c={m.caster_id},L={m.layer},{props_s})")
+            lines_out.append(f"  [MODS  ] av={av_val:6.2f} {e.name}: " + (" | ".join(m_strs) if m_strs else "(none)"))
 
     def _check_spawns(av_val: float) -> None:
         if abs(av_val - target_av) > window:
@@ -168,6 +191,8 @@ def _attach_sim_timeline_recorder(
         _check_spawns(av_val)
         if abs(av_val - target_av) > window:
             return
+        if dump_mods:
+            _dump_active_mods(av_val)
         if isinstance(ev, TurnBeginEvent):
             lines_out.append(f"  [TURN ] av={av_val:6.2f} actor={ev.actor_name}")
         elif isinstance(ev, ActionExecuteEvent):
@@ -229,6 +254,35 @@ def _print_sim_timeline_block(log_path: str, target_av: float, window: float, li
     print(f"  => SIM window player non-DoT total = {tot_dmg:,.2f}")
 
 
+def _parse_init_ep(raw: Optional[str]) -> Optional[Dict[str, float]]:
+    if not raw:
+        return None
+    out: Dict[str, float] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        k, v = item.split(":", 1)
+        out[k.strip()] = float(v.strip())
+    return out or None
+
+
+def _parse_tech_users(raw: Optional[str], meta: LogMetadata) -> Optional[Tuple[str, ...]]:
+    if raw is None:
+        return None
+    uid_to_name = dict(zip(meta.team_uids, meta.team_names))
+    out: List[str] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if item.isdigit() and int(item) in uid_to_name:
+            out.append(uid_to_name[int(item)])
+        else:
+            out.append(item)
+    return tuple(out)
+
+
 def _parse_loadouts(raw: Optional[str]) -> Optional[Dict[int, Tuple[Any, ...]]]:
     if not raw:
         return None
@@ -261,11 +315,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="",
         help="覆盖配装（格式 uid:eid:lc_id:lc_s:set1xN1+set2xN2，多角色分号分隔）",
     )
+    parser.add_argument(
+        "--init-ep",
+        default="",
+        help="覆盖进场初始能量（格式 uid_or_name:ep，逗号分隔，如 1217:108.69,1410:0）",
+    )
+    parser.add_argument(
+        "--tech-users",
+        default=None,
+        help="逗号分隔的开局施放秘技角色（如 1217,1307 或 藿藿,黑天鹅）；不传默认全队",
+    )
     parser.add_argument("--av", type=float, default=None, help="聚焦检查指定 AV 窗口")
     parser.add_argument("--av-window", type=float, default=0.20, help="AV 窗口半径（默认 0.20）")
     parser.add_argument("--av-budget", type=float, default=None, help="截断模拟最大 AV")
     parser.add_argument("--full", action="store_true", help="即使传了 --av 也跑完整场而不早停")
     parser.add_argument("--timeline", action="store_true", help="输出 GT 与 SIM 并排事件时间线（需配合 --av）")
+    parser.add_argument("--dump-mods", action="store_true", help="在 --av 窗口首次动作时输出所有实体的激活 Modifier 与属性增量")
     parser.add_argument("--summary", action="store_true", help="同时打印 reconcile_log 摘要")
     parser.add_argument("--threshold", type=float, default=1e-6, help="判定误差阈值（默认 1e-6 = 0.0001%%）")
     args = parser.parse_args(argv)
@@ -273,6 +338,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     extra_buffs = _parse_extra_buffs(args.extra_maze_buffs)
     team_override = [x.strip() for x in args.team.split(",") if x.strip()] or None
     loadouts_override = _parse_loadouts(args.loadouts)
+    init_ep_override = _parse_init_ep(args.init_ep)
     eff_budget = args.av_budget
     if eff_budget is None and args.av is not None and not args.full:
         eff_budget = args.av + max(args.av_window, 0.2) + 0.3
@@ -310,11 +376,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             def _on_sim_ready(sim: Any) -> None:
                 sim_lines.clear()
                 tot_dmg[0] = 0.0
-                _attach_sim_timeline_recorder(sim, args.av, args.av_window, sim_lines, tot_dmg)
+                _attach_sim_timeline_recorder(
+                    sim, args.av, args.av_window, sim_lines, tot_dmg, dump_mods=bool(args.dump_mods)
+                )
 
             on_sim_ready = _on_sim_ready
 
         # 统一经 reconcile_log 运行，确保自动推断 non_crits 与 RNG overrides 始终生效
+        tech_users_override = _parse_tech_users(args.tech_users, meta)
         r = reconcile_log(
             lp,
             db=char_db,
@@ -326,6 +395,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             av_budget=eff_budget,
             threshold=args.threshold,
             on_sim_ready=on_sim_ready,
+            initial_energies=init_ep_override,
+            technique_users=tech_users_override,
         )
         if show_timeline:
             _print_sim_timeline_block(lp, args.av, args.av_window, sim_lines, tot_dmg[0])

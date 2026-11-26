@@ -338,10 +338,9 @@ def resolve_team_roster(
     return team_uids, team_names
 
 
-def _has_prebattle_non_stance_damage_maze(ldr: Any, uid: int) -> bool:
+def _has_prebattle_non_stance_damage_maze(ldr: Any, uid: int, *, enhanced: bool = False) -> bool:
     """检查指定角色的 SkillMaze 是否含 ByIsMazeSkillAffectCurrentWave 且无削韧直接造成 DamageByAttackProperty。"""
-    ldr._ensure_avatars()
-    av = ldr._avatars.get(int(uid))
+    av = ldr.get_avatar_config(int(uid), enhanced=enhanced)
     if not av or not av.get("JsonPath"):
         return False
     cfg = ldr._read_json(av["JsonPath"])
@@ -395,6 +394,7 @@ def infer_entry_technique_stance(
     team_uids: Sequence[int] = (),
     init_enemy_first_hp: Mapping[int, float] = (),
     init_enemy_first_dmg: Mapping[int, float] = (),
+    enhanced_avatars: Optional[Set[int]] = None,
 ) -> Tuple[Optional[str], float]:
     """根据开局首轮削韧差值自动反推入战秘技属性与削韧量。"""
     entry_element: Optional[str] = None
@@ -486,7 +486,11 @@ def infer_entry_technique_stance(
 
             ldr = GameDataLoader()
             for uid in team_uids:
-                if _has_prebattle_non_stance_damage_maze(ldr, int(uid)):
+                if _has_prebattle_non_stance_damage_maze(
+                    ldr,
+                    int(uid),
+                    enhanced=bool(enhanced_avatars and int(uid) in enhanced_avatars),
+                ):
                     elem = av_elems.get(int(uid))
                     if elem:
                         entry_element = elem

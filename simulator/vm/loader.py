@@ -30,7 +30,7 @@ DEFAULT_TBGD_ROOT = (
     else "/tmp/tbgd"
 )
 
-_ABILITY_INDEX_CACHE_VERSION = 2
+_ABILITY_INDEX_CACHE_VERSION = 3
 _ABILITY_INDEX_MEM_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
 # 关卡/怪物纯表现、镜头、音效与元评分节点（供 stage_prunable_types 与 PRUNABLE_PRESENTATION_TYPES 复用唯一真源）
@@ -64,6 +64,8 @@ STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES: Set[str] = {
     "RPG.GameCore.ReleaseCharacterHUDVisibleControl",
     "RPG.GameCore.AddTargetStancePreshowConfig",
     "RPG.GameCore.SwitchChallengeBossInfoPanelState",
+    "RPG.GameCore.HideMonsterSkillInViewMode",
+    "OPBLGCPAKKI",  # 怪物根节点/Origin位置视觉绑定（纯表现）
 }
 
 STAGE_PRUNABLE_META_SCORING_TYPES: Set[str] = {
@@ -86,6 +88,8 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.TriggerEffect",
     "RPG.GameCore.TriggerEffectList",
     "RPG.GameCore.RemoveEffect",
+    "RPG.GameCore.HideModifierEffect",
+    "RPG.GameCore.FindClosestAttachPoint",
     "RPG.GameCore.SetEntityVisible",
     "RPG.GameCore.RadialBlurEffect",
     "RPG.GameCore.ShowUIPage",
@@ -117,11 +121,12 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SkipPopupUIOffset",
     "RPG.GameCore.SetHeadButtonEff",
     "RPG.GameCore.ShowBattleSkillEnhanced",
+    "RPG.GameCore.StackSkillDesc",
     "RPG.GameCore.ToggleSkillPreShow",
     "RPG.GameCore.PlayVideo",
     "RPG.GameCore.WaitSecond",
+    "FFMONJGCKDI",  # 客户端等待时间片（与 WaitSecond 成对出现的纯表现延时）
     "RPG.GameCore.WaitFor",
-    "RPG.GameCore.WaitParallelTimeStamp",
     "RPG.GameCore.WaitSkillPerformAbilityFinish",
     "RPG.GameCore.MoveTeam",
     "RPG.GameCore.MoveToTargetPosition",
@@ -139,6 +144,8 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SetCharacterCustomTeamFormation",
     "RPG.GameCore.ResetCharacterCustomTeamFormation",
     "RPG.GameCore.SetEntityForbidCameraDither",
+    "RPG.GameCore.BlockCameraDitherUpdate",
+    "RPG.GameCore.SwitchBattleArea",
     "RPG.GameCore.SetCharacterPartsVisibility",
     "RPG.GameCore.CharacterReplaceAnimatorController",
     "RPG.GameCore.GlobalMainIntensityEffect",
@@ -198,6 +205,7 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.SetTargetAssetPreloadState",
     "RPG.GameCore.SetComponentAssetLoadState",
     "RPG.GameCore.SetTargetCustomAssetPreloadState",
+    "RPG.GameCore.AddGlobalDynamicOffset",
     "RPG.GameCore.AddGlobalDynamicOffsetIgnoreEntity",
     "RPG.GameCore.CharacterDisableLookAt",
     "RPG.GameCore.ClearEntityDamageText",
@@ -208,6 +216,12 @@ _CORE_PRUNABLE_PRESENTATION_TYPES: Set[str] = {
     "RPG.GameCore.HideFieldEffect",
     "RPG.GameCore.ReleaseEnvProfile",
     "RPG.GameCore.RemoveGlobalTimeSlow",
+    "RPG.GameCore.SetMonsterHUDVisibleType",
+    "RPG.GameCore.MappingAttachPoint",
+    "RPG.GameCore.SetColliderCenterFollowAttachPoint",
+    "RPG.GameCore.SetFaceDirectionLocked",
+    "RPG.GameCore.AbortModifierPhasePerform",
+    "ACNFHAKPMIK",  # 纯镜头/白名单特效表现节点 (W5_AsatPramad_00_Skill08)
     "RPG.GameCore.SetBattleUIPanelState",
     "RPG.GameCore.SetEffectAnimatorState",
     "RPG.GameCore.SetEffectProgress",
@@ -375,6 +389,7 @@ class CompiledCharacterSpec:
     servant_id: Optional[int] = None
     extra_passive_abilities: Tuple[str, ...] = ()
     uses_special_sp: bool = False
+    enhanced: bool = False
 
 
 def _node_uses_special_sp(node: Any) -> bool:
@@ -420,9 +435,10 @@ class GameDataLoader:
 
         # Excel 索引（按需惰性构建）
         self._avatars: Optional[Dict[int, Dict[str, Any]]] = None
+        self._enhanced_avatars: Optional[Dict[int, Dict[str, Any]]] = None
         self._avatar_skills: Optional[Dict[Tuple[int, int], Dict[str, Any]]] = None
         self._avatar_skill_max_lv: Optional[Dict[int, int]] = None
-        self._avatar_trees: Optional[Dict[int, Dict[str, List[Dict[str, Any]]]]] = None
+        self._avatar_trees: Optional[Dict[Tuple[int, int], Dict[str, List[Dict[str, Any]]]]] = None
         self._ranks: Optional[Dict[int, Dict[str, Any]]] = None
         self._servants: Optional[Dict[int, Dict[str, Any]]] = None
         self._servant_skills: Optional[Dict[Tuple[int, int], Dict[str, Any]]] = None
@@ -436,6 +452,36 @@ class GameDataLoader:
         self._can_dispel_by_mod: Optional[Dict[str, bool]] = None
         self._elation_level_dmg: Optional[Dict[int, float]] = None
         self._elation_skill_priority: Optional[Dict[int, int]] = None
+        self._common_skill_pools: Optional[Dict[str, Dict[str, Any]]] = None
+
+    def get_common_skill_pool(self, pool_name: str) -> Optional[Dict[str, Any]]:
+        """按 UniqueName 查询官方 ConfigCommonSkillPool/*.json 中的通用技能池。"""
+        if self._common_skill_pools is None:
+            pools: Dict[str, Dict[str, Any]] = {}
+            pool_dir = os.path.join(self.data_root, "Config", "ConfigCommonSkillPool")
+            if os.path.isdir(pool_dir):
+                stack = [pool_dir]
+                while stack:
+                    cur = stack.pop()
+                    try:
+                        with os.scandir(cur) as it:
+                            for entry in it:
+                                if entry.is_dir(follow_symlinks=True):
+                                    stack.append(entry.path)
+                                elif entry.is_file(follow_symlinks=True) and entry.name.endswith(".json") and not entry.name.endswith(".layout.json"):
+                                    try:
+                                        data = self._read_json(entry.path)
+                                    except Exception:
+                                        continue
+                                    for item in (data.get("PoolList") or () if isinstance(data, Mapping) else ()):
+                                        if isinstance(item, Mapping):
+                                            uname = str(item.get("UniqueName") or "")
+                                            if uname and uname not in pools:
+                                                pools[uname] = dict(item)
+                    except OSError:
+                        continue
+            self._common_skill_pools = pools
+        return self._common_skill_pools.get(str(pool_name or ""))
 
     def _read_json(self, rel_or_abs: str) -> Any:
         path = rel_or_abs if os.path.isabs(rel_or_abs) else os.path.join(self.data_root, rel_or_abs)
@@ -458,6 +504,46 @@ class GameDataLoader:
         if self._avatars is None:
             self._avatars = {int(r["AvatarID"]): r for r in self._read_excel("AvatarConfig.json")}
 
+    def _ensure_enhanced_avatars(self) -> None:
+        if self._enhanced_avatars is None:
+            try:
+                rows = self._read_excel("AvatarConfigEnhanced.json")
+            except OSError:
+                rows = []
+            self._enhanced_avatars = {
+                int(r["AvatarID"]): r
+                for r in (rows if isinstance(rows, list) else [])
+                if r.get("AvatarID") is not None
+            }
+
+    def get_avatar_config(self, avatar_id: int, *, enhanced: bool = False) -> Dict[str, Any]:
+        """读取角色配置行；若 enhanced=True 且存在加强版配置，则合并覆盖 JsonPath/SkillList/RankIDList 等字段。"""
+        self._ensure_avatars()
+        aid = int(avatar_id)
+        base = dict(self._avatars.get(aid) or {})
+        if enhanced:
+            self._ensure_enhanced_avatars()
+            assert self._enhanced_avatars is not None
+            enh = self._enhanced_avatars.get(aid)
+            if enh:
+                base.update(enh)
+        return base
+
+    def get_enhanced_skill_ids(self) -> Dict[int, Set[int]]:
+        """返回 {avatar_id: set(加强版独有 SkillID)} 映射，用于从实机日志机械识别加强版角色。"""
+        self._ensure_avatars()
+        self._ensure_enhanced_avatars()
+        assert self._avatars is not None and self._enhanced_avatars is not None
+        out: Dict[int, Set[int]] = {}
+        for aid, enh in self._enhanced_avatars.items():
+            base = self._avatars.get(aid) or {}
+            base_sids = {int(s) for s in (base.get("SkillList") or ())}
+            enh_sids = {int(s) for s in (enh.get("SkillList") or ())}
+            diff = enh_sids - base_sids
+            if diff:
+                out[aid] = diff
+        return out
+
     def _ensure_avatar_skills(self) -> None:
         if self._avatar_skills is None:
             self._avatar_skills = {}
@@ -473,14 +559,34 @@ class GameDataLoader:
             self._avatar_trees = {}
             for r in self._read_excel("AvatarSkillTreeConfig.json"):
                 aid = int(r["AvatarID"])
+                enh_id = int(r.get("EnhancedID") or 0)
                 tk = r.get("PointTriggerKey", "")
                 if not tk:
                     continue
-                by_key = self._avatar_trees.setdefault(aid, {})
+                by_key = self._avatar_trees.setdefault((aid, enh_id), {})
                 by_key.setdefault(tk, []).append(r)
             for by_key in self._avatar_trees.values():
                 for lst in by_key.values():
                     lst.sort(key=lambda x: int(x.get("Level", 1)))
+
+    def _get_avatar_tree_map(self, avatar_id: int, *, enhanced: bool = False) -> Dict[str, List[Dict[str, Any]]]:
+        """按角色是否开启加强态返回对应 PointTriggerKey -> 行列表映射（加强版覆盖基础版同名 Key）。"""
+        self._ensure_avatar_trees()
+        assert self._avatar_trees is not None
+        aid = int(avatar_id)
+        base_map = self._avatar_trees.get((aid, 0), {})
+        if not enhanced:
+            return dict(base_map)
+        av = self.get_avatar_config(aid, enhanced=True)
+        enh_id = int(av.get("EnhancedID") or 0)
+        if enh_id <= 0:
+            return dict(base_map)
+        enh_map = self._avatar_trees.get((aid, enh_id), {})
+        if not enh_map:
+            return dict(base_map)
+        merged = dict(base_map)
+        merged.update(enh_map)
+        return merged
 
     def _ensure_ranks(self) -> None:
         if self._ranks is None:
@@ -802,14 +908,16 @@ class GameDataLoader:
         avatar_id: int,
         eidolon: int = 0,
         trained_levels: Optional[Mapping[str, int]] = None,
+        *,
+        enhanced: bool = False,
     ) -> Dict[int, int]:
-        """基于 AvatarConfig + AvatarRankConfig.SkillAddLevelList 计算全技能最终生效等级（含伴生忆灵技）。"""
+        """基于 AvatarConfig(+Enhanced) + AvatarRankConfig.SkillAddLevelList 计算全技能最终生效等级（含伴生忆灵技）。"""
         self._ensure_avatars()
         self._ensure_avatar_skills()
         self._ensure_servant_skills()
         self._ensure_ranks()
 
-        av = self._avatars[int(avatar_id)]
+        av = self.get_avatar_config(int(avatar_id), enhanced=enhanced)
         trained = dict(trained_levels or {})
         levels: Dict[int, int] = {}
 
@@ -857,6 +965,8 @@ class GameDataLoader:
         config_dict: Mapping[str, Any],
         eidolon: int = 0,
         skill_levels: Optional[Mapping[int, int]] = None,
+        *,
+        enhanced: bool = False,
     ) -> Dict[int, float]:
         """解析角色 ConfigCharacter.DynamicValues.Floats 中的所有 ReadInfo 为 {hash: float}。"""
         self._ensure_avatars()
@@ -864,8 +974,12 @@ class GameDataLoader:
         self._ensure_avatar_trees()
         self._ensure_ranks()
 
-        av = self._avatars[int(avatar_id)]
-        eff_levels = dict(skill_levels) if skill_levels is not None else self.compute_effective_skill_levels(avatar_id, eidolon)
+        av = self.get_avatar_config(int(avatar_id), enhanced=enhanced)
+        eff_levels = (
+            dict(skill_levels)
+            if skill_levels is not None
+            else self.compute_effective_skill_levels(avatar_id, eidolon, enhanced=enhanced)
+        )
 
         # 建立 SkillTriggerKey -> SkillRow 映射
         trigger_to_skill: Dict[str, Dict[str, Any]] = {}
@@ -883,8 +997,8 @@ class GameDataLoader:
             if r:
                 rank_map[f"Rank0{int(r['Rank'])}"] = r
 
-        # PointB1.. -> TreeRow (取最高等级)
-        tree_map = self._avatar_trees.get(int(avatar_id), {})
+        # PointB1.. -> TreeRow (取最高等级，严格区分基础/加强形态)
+        tree_map = self._get_avatar_tree_map(int(avatar_id), enhanced=enhanced)
 
         out: Dict[int, float] = {}
         floats = config_dict.get("DynamicValues", {}).get("Floats", {})
@@ -1013,16 +1127,19 @@ class GameDataLoader:
         *,
         eidolon: int = 0,
         trained_levels: Optional[Mapping[str, int]] = None,
+        enhanced: bool = False,
     ) -> CompiledCharacterSpec:
         """编译指定角色的配置、技能 AST、Modifier 与全参数上下文。"""
         self._ensure_avatars()
         self._ensure_servants()
         self.ensure_ability_index()
 
-        av = self._avatars[int(avatar_id)]
+        av = self.get_avatar_config(int(avatar_id), enhanced=enhanced)
         cfg = self._read_json(av["JsonPath"])
-        eff_levels = self.compute_effective_skill_levels(avatar_id, eidolon, trained_levels)
-        dyn_floats = self.resolve_avatar_dynamic_floats(avatar_id, cfg, eidolon=eidolon, skill_levels=eff_levels)
+        eff_levels = self.compute_effective_skill_levels(avatar_id, eidolon, trained_levels, enhanced=enhanced)
+        dyn_floats = self.resolve_avatar_dynamic_floats(
+            avatar_id, cfg, eidolon=eidolon, skill_levels=eff_levels, enhanced=enhanced
+        )
 
         # 收集该角色关联的所有 Ability（包含 SkillAbilityList 与 AbilityList）
         ability_names: List[str] = list(cfg.get("AbilityList", []))
@@ -1037,7 +1154,7 @@ class GameDataLoader:
         self._ensure_ranks()
         extra_passives: List[str] = []
         extra_seen: Set[str] = set()
-        tree_map = self._avatar_trees.get(int(avatar_id), {})
+        tree_map = self._get_avatar_tree_map(int(avatar_id), enhanced=enhanced)
         for rows in tree_map.values():
             for row in rows:
                 ab_n = str(row.get("AbilityName") or "").strip()
@@ -1082,6 +1199,7 @@ class GameDataLoader:
             servant_id=servant_id if servant_id in self._servants else None,
             extra_passive_abilities=tuple(extra_passives),
             uses_special_sp=uses_special_sp,
+            enhanced=bool(enhanced),
         )
 
     def load_servant(

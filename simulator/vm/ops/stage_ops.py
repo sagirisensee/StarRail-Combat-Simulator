@@ -23,11 +23,27 @@ class StageOpsMixin:
             "Alias": ("ModifierOwnerEntity" if ctx.modifier_owner_id else "Caster")
         }
         targets = self._resolve_targets(tgt_spec, ctx)
-        unselectable = t == "RPG.GameCore.RemoveEntityFromTeamFormation"
+        remove_from_formation = t == "RPG.GameCore.RemoveEntityFromTeamFormation"
         for tid in targets:
             ent = sim.get_entity(tid)
             if ent is not None:
-                ent.is_unselectable = unselectable
+                if remove_from_formation:
+                    if not getattr(ent, "_not_in_formation", False):
+                        setattr(ent, "_saved_formation_distance", float(getattr(ent, "distance_remaining", 10000.0)))
+                    ent._not_in_formation = True
+                    ent.distance_remaining = 999999999990.0
+                    ready_q = getattr(sim, "_ready_queue", None)
+                    if isinstance(ready_q, list) and tid in ready_q:
+                        ready_q.remove(tid)
+                    nat_due = getattr(sim, "_natural_due_names", None)
+                    if isinstance(nat_due, set):
+                        nat_due.discard(tid)
+                else:
+                    ent._not_in_formation = False
+                    saved_dist = getattr(ent, "_saved_formation_distance", None)
+                    if saved_dist is not None:
+                        ent.distance_remaining = float(saved_dist)
+                        delattr(ent, "_saved_formation_distance")
 
     def _op_force_kill(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         rt = self.rt
@@ -158,7 +174,12 @@ class StageOpsMixin:
         director = getattr(sim, "_stage_director", None)
         if director is not None and hasattr(director, "trigger_monster_phase_transition"):
             mode = str(task.get("SetMode") or task.get("Mode") or "Set")
-            val_spec = task.get("PhaseValue") if "PhaseValue" in task else task.get("Value")
+            if "PhaseValue" in task:
+                val_spec = task.get("PhaseValue")
+            elif "PhaseNum" in task:
+                val_spec = task.get("PhaseNum")
+            else:
+                val_spec = task.get("Value")
             val = (
                 int(round(self._eval_num(val_spec, ctx, 1.0)))
                 if val_spec is not None
@@ -740,3 +761,113 @@ class StageOpsMixin:
         sched = getattr(sim, "scheduler", None)
         if ab_name and sched is not None and hasattr(sched, "abort_pending_actions"):
             sched.abort_pending_actions(targets, ab_name)
+
+    def _op_show_battle_card_buff_selection(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
+        """执行 RPG.GameCore.ShowBattleCardBuffSelection（解析候选组并按抉择应用光暗 MazeBuff 与 OnSelect）。"""
+        groups = task.get("SelectItemGroups") or ()
+        if not groups:
+            return
+        rt = self.rt
+        sim = rt.sim
+
+        candidates: List[Dict[str, Any]] = []
+        for idx, grp in enumerate(groups):
+            if not isinstance(grp, Mapping):
+                continue
+            l_sel = grp.get("LightSelection") or {}
+            d_sel = grp.get("DarkSelection") or {}
+            l_id = int(round(self._eval_num(l_sel.get("MazeBuffID"), ctx, 0.0)))
+            d_id = int(round(self._eval_num(d_sel.get("MazeBuffID"), ctx, 0.0)))
+            wt = self._eval_num(grp.get("AutoSelectWeight"), ctx, 0.0)
+            candidates.append({
+                "index": idx,
+                "light_buff_id": l_id,
+                "dark_buff_id": d_id,
+                "weight": wt,
+                "group": grp,
+            })
+        if not candidates:
+            return
+
+        chosen_idx = 0
+        src = "default"
+        prov = getattr(sim, "card_buff_selection_provider", None)
+        picked = prov(ctx.caster_id, candidates, ctx) if callable(prov) else None
+        if picked is not None and 0 <= int(picked) < len(groups):
+            chosen_idx = int(picked)
+            src = "oracle"
+        else:
+            best_c = max(candidates, key=lambda c: c["weight"])
+            chosen_idx = best_c["index"]
+            src = "weight"
+
+        diag_cb = getattr(sim, "timeline_diag_cb", None)
+        if callable(diag_cb):
+            opts_desc = ", ".join(f"[{c['index']}]:L={c['light_buff_id']}/D={c['dark_buff_id']}(w={c['weight']})" for c in candidates)
+            diag_cb("CARD_BUFF", f"{ctx.caster_id} pick={chosen_idx} src={src} opts=[{opts_desc}]")
+
+        chosen_group = groups[chosen_idx]
+        if not isinstance(chosen_group, Mapping):
+            return
+
+        director = getattr(sim, "_stage_director", None)
+        runner = getattr(director, "runner", None) if director is not None else None
+        stage_loader = getattr(getattr(runner, "factory", None), "stage_loader", None)
+        if stage_loader is None:
+            stage_loader = getattr(rt, "_cached_stage_loader", None)
+            if stage_loader is None:
+                from ..stage_data_loader import StageDataLoader
+                stage_loader = StageDataLoader(load_textmap=False)
+                setattr(rt, "_cached_stage_loader", stage_loader)
+
+        maze_buff_param_hashes = (462955996, 59671469, 1625755410, 866240523, -1862642832)
+
+        def _apply_selection(sel: Any) -> None:
+            if not isinstance(sel, Mapping):
+                return
+            mb_id = int(round(self._eval_num(sel.get("MazeBuffID"), ctx, 0.0)))
+            if mb_id <= 0:
+                return
+            affixes = stage_loader.resolve_maze_buff_abilities((mb_id,))
+            if not affixes:
+                return
+            targets = self._resolve_targets(sel.get("UseTarget"), ctx) if sel.get("UseTarget") else []
+            if not targets:
+                targets = [ctx.caster_id or "__LEVEL__"]
+            rt.loader.ensure_ability_index()
+            for tid in targets:
+                for ab_name, params in affixes:
+                    ab = rt.loader.get_ability(ab_name)
+                    if not ab:
+                        continue
+                    init_dyn: Dict[int, float] = {}
+                    for pidx, val in enumerate(params):
+                        if pidx < len(maze_buff_param_hashes):
+                            h = maze_buff_param_hashes[pidx]
+                            init_dyn[h] = float(val)
+                            rt.set_dynamic_value(tid, h, float(val), ability_name=ab_name)
+                    before_uids = {m.uid for m in rt.modifier_engine.get_modifiers(tid)}
+                    on_add = ab.get("OnAdd") or ()
+                    if on_add:
+                        from ..target_alias import ExecutionContext
+                        a_ctx = ExecutionContext(
+                            runtime=rt,
+                            caster_id=tid,
+                            ability_name=ab_name,
+                            ability_target_ids=(tid,),
+                            modifier_owner_id=tid,
+                            local_dynamics=dict(init_dyn),
+                        )
+                        self.execute_tasks(on_add, a_ctx)
+                    for mod in rt.modifier_engine.get_modifiers(tid):
+                        if mod.ability_name == ab_name and mod.uid not in before_uids:
+                            for pidx, val in enumerate(params):
+                                if pidx < len(maze_buff_param_hashes):
+                                    mod.dynamic_values[maze_buff_param_hashes[pidx]] = float(val)
+
+        _apply_selection(chosen_group.get("LightSelection"))
+        _apply_selection(chosen_group.get("DarkSelection"))
+        on_select = chosen_group.get("OnSelect") or ()
+        if on_select:
+            self.execute_tasks(on_select, ctx)
+

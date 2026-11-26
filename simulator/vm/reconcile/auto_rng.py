@@ -93,6 +93,19 @@ def attach_auto_rng_plugin(
 
     sim.debuff_hit_provider = _debuff_hit_provider
 
+    def _enemy_debuff_hit_provider(caster: Any, target: Any, mod_name: str, chance: float) -> Optional[bool]:
+        if mod_name == "MMonster_W5_AsatPramad_00_Shake":
+            av = float(getattr(sim, "current_av", 0.0) or 0.0)
+            t_uid = int(getattr(target, "avatar_id", 0) or 0)
+            if t_uid:
+                return any(
+                    abs(av - h_av) < 0.25 and h_uid == t_uid and h_mod == mod_name
+                    for h_av, h_uid, h_mod in getattr(meta, "enemy_debuff_hits", ())
+                )
+        return None
+
+    sim.enemy_debuff_hit_provider = _enemy_debuff_hit_provider
+
     # 4. 自动阿哈回合处理器（直接回放日志中的敌方弹射扣血与我方伴生微伤）
     if meta.aha_turns:
         triggered_aha: Set[int] = set()

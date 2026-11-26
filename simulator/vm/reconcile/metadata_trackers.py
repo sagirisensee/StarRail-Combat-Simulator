@@ -59,6 +59,7 @@ class RosterAndSpawnTracker:
         self.init_enemy_first_dmg: Dict[int, float] = {}
         self._pending_first_hp_euid: Optional[int] = None
         self.player_obs_speeds: Dict[int, List[float]] = {}
+        self.observed_skill_ids: Dict[int, Set[int]] = {}
         self._seen_first_turn: bool = False
         self._cur_turn_owner_team: Optional[str] = None
         self._cur_turn_owner_uid: int = 0
@@ -105,6 +106,8 @@ class RosterAndSpawnTracker:
 
     def on_player_use_skill(self, uid: int, sk_id: int) -> None:
         self._record_seen_uid(uid)
+        if uid and sk_id > 0:
+            self.observed_skill_ids.setdefault(uid, set()).add(int(sk_id))
         if not self.first_skill_done:
             if self.first_skill_info is None and sk_id > 0:
                 self.first_skill_info = (sk_id, uid)

@@ -139,6 +139,12 @@ class PredicateOpsMixin:
             rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
             return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
 
+        if t == "RPG.GameCore.ByCompareSPRatio":
+            targets = self._resolve_targets(pred.get("TargetType"), ctx)
+            lhs = me.get_entity_property(targets[0], "SPRatio") if targets else 0.0
+            rhs = self._eval_num(pred.get("CompareValue"), ctx, 0.0)
+            return _compare_values(lhs, rhs, str(pred.get("CompareType", "Equal")))
+
         if t == "RPG.GameCore.ByCompareStanceCount":
             targets = self._resolve_targets(pred.get("TargetType"), ctx)
             ent = sim.get_entity(targets[0]) if targets else None
@@ -322,8 +328,7 @@ class PredicateOpsMixin:
             for tid in targets:
                 spec = rt.entity_specs.get(tid)
                 if spec is not None and not spec.is_servant:
-                    rt.loader._ensure_avatars()
-                    av = rt.loader._avatars.get(spec.unit_id)
+                    av = rt.loader.get_avatar_config(spec.unit_id, enhanced=getattr(spec, "enhanced", False))
                     if av and av.get("AvatarBaseType") in wants:
                         return True
             return False
@@ -459,12 +464,19 @@ class PredicateOpsMixin:
         if t == "RPG.GameCore.ByIsMazeSkillAffectCurrentWave":
             if int(getattr(sim, "current_wave", 1) or 1) != 1:
                 return False
-            entry_elem = getattr(sim, "_entry_element", None)
-            if not entry_elem:
-                return True
             caster_ent = sim.get_entity(ctx.caster_id)
             if caster_ent is None:
                 return False
+            # 只有真正发起进战攻击（SkillEffect == 'MazeAttack'）的秘技受开战角色属性约束；
+            # 状态/结界/强化类秘技只要本场已施放，第 1 波均全员生效。
+            kit = getattr(caster_ent, "kit", None)
+            if kit is not None and hasattr(kit, "_resolve_skill_row"):
+                sk_row = kit._resolve_skill_row("SkillMaze")
+                if sk_row is not None and str(sk_row.get("SkillEffect", "") or "") != "MazeAttack":
+                    return True
+            entry_elem = getattr(sim, "_entry_element", None)
+            if not entry_elem:
+                return True
             c_elem = normalize_element(str(getattr(caster_ent, "element", "")))
             if c_elem != normalize_element(str(entry_elem)):
                 return False
@@ -612,6 +624,10 @@ class PredicateOpsMixin:
         ):
             return False
 
+        if t == "RPG.GameCore.ByIsConvertDamage":
+            dd = ctx.damage_data or {}
+            return bool(dd.get("IsConvertDamage", False))
+
         if t == "RPG.GameCore.ByCheckModifierCallBackStatusType":
             want = str(pred.get("TargetStatusType") or "")
             return bool(want and ctx.callback_status_type == want)
@@ -679,6 +695,11 @@ class PredicateOpsMixin:
 
         if t == "RPG.GameCore.ByInTurnBasedGameModeState":
             return True
+
+        if t == "RPG.GameCore.ByIsGenderType":
+            gender = str(pred.get("Gender") or "GENDER_MAN")
+            sim_gender = str(getattr(sim, "player_gender", "GENDER_MAN"))
+            return gender == sim_gender
 
         if t == "RPG.GameCore.ByIsTriggeredBlockDamage":
             targets = self._resolve_targets(
@@ -915,7 +936,7 @@ class PredicateOpsMixin:
                 spec = rt.entity_specs.get(tid)
                 if spec is None or spec.is_servant:
                     continue
-                av = rt.loader._avatars.get(int(spec.unit_id))
+                av = rt.loader.get_avatar_config(int(spec.unit_id), enhanced=getattr(spec, "enhanced", False))
                 if not av:
                     continue
                 for sid in av.get("SkillList") or ():

@@ -578,7 +578,15 @@ class StageDataLoader:
             full_path = self.tbgd_root / rel_path
             if full_path.exists():
                 with full_path.open("r", encoding="utf-8") as f:
-                    self._char_config_cache[rel_path] = json.load(f)
+                    raw = json.load(f)
+                parent_path = str(raw.get("ParentConfigPath") or "") if isinstance(raw, Mapping) else ""
+                if parent_path and parent_path != rel_path:
+                    parent_cfg = self._load_char_config(parent_path)
+                    merged = dict(parent_cfg)
+                    merged.update(raw)
+                    self._char_config_cache[rel_path] = merged
+                else:
+                    self._char_config_cache[rel_path] = raw
             else:
                 self._char_config_cache[rel_path] = {}
         return self._char_config_cache[rel_path]
@@ -1480,7 +1488,11 @@ class StageDataLoader:
         prefer_infinite_elite: bool,
         registry: dict[int, CompiledMonsterSpec],
     ) -> None:
-        for sid in monster.summon_ids:
+        cand_sids: list[int] = list(monster.summon_ids)
+        for v in monster.custom_values.values():
+            if isinstance(v, int) and not isinstance(v, bool) and v in self.monsters and v not in cand_sids:
+                cand_sids.append(v)
+        for sid in cand_sids:
             if sid not in registry and sid in self.monsters:
                 sm = self.compile_monster(
                     sid,

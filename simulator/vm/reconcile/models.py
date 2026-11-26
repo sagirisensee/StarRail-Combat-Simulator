@@ -265,6 +265,8 @@ class LogMetadata:
     entry_toughness: float = 10.0
     player_obs_speeds: Dict[int, List[float]] = field(default_factory=dict)
     random_chance_triggers: List[Tuple[float, int]] = field(default_factory=list)
+    enhanced_avatars: Set[int] = field(default_factory=set)
+    enemy_debuff_hits: Tuple[Tuple[float, int, str], ...] = ()
 
 
 @dataclass
