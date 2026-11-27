@@ -266,9 +266,13 @@ class TaskExecutor(
                         )
                     elif st == "RPG.GameCore.TargetReverse":
                         cur = list(reversed(cur))
-                    elif st == "RPG.GameCore.TargetSortByProperty":
-                        prop = str(step.get("PropertyType", "CurrentHP"))
-                        highest = bool(step.get("HighestFirst", True))
+                    elif st in ("RPG.GameCore.TargetSortByProperty", "RPG.GameCore.TargetSortByPropertyRatio"):
+                        if st == "RPG.GameCore.TargetSortByPropertyRatio":
+                            prop = str(step.get("PropertyRatioType", "HPRatio"))
+                            highest = bool(step.get("HighestFirst", False))
+                        else:
+                            prop = str(step.get("PropertyType", "CurrentHP"))
+                            highest = bool(step.get("HighestFirst", True))
                         if step.get("AliveOnly", True):
                             cur = [
                                 tid for tid in cur

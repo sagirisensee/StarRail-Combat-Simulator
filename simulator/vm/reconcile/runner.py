@@ -722,7 +722,7 @@ def reconcile_log(
         return any_changed
 
     # 自动检测未暴击 (act_idx, hit_idx) 并收敛（允许级联收敛，并自动剔除因早期偏差导致的过期误判）
-    _converge_non_crits(0, 8, track_hp=True)
+    _converge_non_crits(0, 16, track_hp=True)
 
     # 被特殊护盾吸收的阿哈回合伤害：由首个破盾回合的 HP+盾 守恒反推精确吸收量
     if plugin_fn is None and has_shielded_aha and report.max_turn_err >= threshold:

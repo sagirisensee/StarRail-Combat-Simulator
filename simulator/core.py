@@ -87,6 +87,7 @@ class TurnSimulator:
         self._av_batch_seq: int = 0
         self._turn_owner_sp_consumed: int = 0
         self._turn_primary_action_done: bool = False
+        self._turn_began_broken: bool = False
         # 行动就绪队列 (Ready Queue): 存放当前 AV 到达终点 (距离为 0) 的待行动实体
         # 1. 自然跑条到达终点者按自然速度序追加至队尾 (append);
         # 2. 拉条至 0 (包含 100% 拉条) 者插队至队首 (insert(0));
@@ -515,6 +516,7 @@ class TurnSimulator:
                         "OnListenEndBreak",
                         param_entity_id=active_entity.name,
                     )
+            self._turn_began_broken = bool(active_entity.is_broken)
             self.emit_event(TurnBeginEvent(
                 av=round(self.current_av, 2),
                 cycle=self.current_cycle,
@@ -1043,7 +1045,7 @@ class TurnSimulator:
             if vm_rt is not None:
                 vm_rt.modifier_engine.check_property_changes(active_entity.name)
 
-        if active_entity.is_broken:
+        if active_entity.is_broken and self._turn_began_broken:
             active_entity.is_broken = False
             active_entity.current_toughness = active_entity.max_toughness
             self.emit_event(ToughnessRecoverEvent(
@@ -1081,6 +1083,7 @@ class TurnSimulator:
         self._current_turn_entity = None
         self._turn_primary_action_done = False
         self._turn_owner_sp_consumed = 0
+        self._turn_began_broken = False
 
     def finish_continuous_turn(self) -> Optional[Entity]:
         """解除连续行动锁定 (如 Archer 结束连续战技状态)，排空被锁定的预约动作队列并正式结束当前自然回合。"""
@@ -1109,6 +1112,7 @@ class TurnSimulator:
                 self._turn_id += 1
                 self._turn_owner_sp_consumed = 0
                 self._turn_primary_action_done = False
+                self._turn_began_broken = bool(active_entity.is_broken)
         else:
             active_entity = self._current_turn_entity
             if active_entity is None:

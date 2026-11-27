@@ -455,7 +455,7 @@ def run_trajectory_replay(
             and (cur_turn is None or getattr(cur_turn, "name", "") != u_owner)
         ):
             if any(
-                t_idx < u_idx
+                (t_idx < u_idx or getattr(timeline[t_idx], "actor", None) == u_owner)
                 and t_idx not in fired_master
                 and getattr(timeline[t_idx], "turn_seq", -1) == u_turn_seq
                 for t_idx in turn_indices
@@ -527,7 +527,6 @@ def run_trajectory_replay(
                 (
                     pre_turn_end
                     and not getattr(actor_ent, "is_enemy", False)
-                    and ult_queue[0][1].actor != act_name
                     and getattr(ult_queue[0][1], "turn_owner", "") == act_name
                 )
                 or (
@@ -566,7 +565,12 @@ def run_trajectory_replay(
                 result.ult_records.append(MasterRecord(item.actor, item.skill_id, item.name, item.av, None))
 
     def _pre_turn_end_hook(actor_ent: Any) -> None:
-        if getattr(actor_ent, "is_enemy", False) and float(getattr(actor_ent, "current_hp", 0.0)) > 0.0:
+        _vm_rt_pre = getattr(sim, "vm_runtime", None)
+        _skip_reset = bool(getattr(actor_ent, "_vm_skip_reset_dist_on_turn_end", False)) or (
+            _vm_rt_pre is not None
+            and _vm_rt_pre.modifier_engine.has_behavior_flag(actor_ent.name, "MuteResetActionDelay")
+        )
+        if float(getattr(actor_ent, "current_hp", 0.0)) > 0.0 and not _skip_reset:
             _pending_d = getattr(sim, "_pending_turn_reset_distance", None)
             _base_d = 10000.0 if _pending_d is None else float(_pending_d)
             actor_ent.distance_remaining = _base_d

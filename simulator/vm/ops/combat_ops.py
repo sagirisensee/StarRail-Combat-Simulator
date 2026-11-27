@@ -1081,21 +1081,23 @@ class CombatOpsMixin:
                 tgt_extra_def_ignore = 0.0
                 tgt_extra_res_pen = 0.0
                 tgt_hit_data: Dict[str, Any] = {"Element": spec.element, "CustomName": spec.custom_name}
-                if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False) and not spec.is_true_dmg:
-                    me.dispatch_event(
-                        "OnBeforeBeingHitAll",
-                        owner_id=tid,
-                        param_entity_id=spec.eff_attacker_id,
-                        damage_data=tgt_hit_data,
-                        current_attack_type=spec.atk_type,
-                    )
-                    tgt_extra_vuln = float(tgt_hit_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
-                    tgt_extra_def_ignore = -float(tgt_hit_data.get("Defender_DefenceAddedRatio", 0.0))
-                    tgt_res_mod = float(tgt_hit_data.get("Defender_AllDamageTypeResistance", 0.0))
-                    def_red = float(tgt_hit_data.get("Defender_AllDamageReduce", 0.0))
+                if tgt_ent is not None and not spec.is_true_dmg:
+                    tgt_res_mod = 0.0
                     red_mult = 1.0 - prev_dmg_red
-                    if def_red > 0.0:
-                        red_mult *= max(0.0, 1.0 - def_red)
+                    if getattr(tgt_ent, "is_enemy", False):
+                        me.dispatch_event(
+                            "OnBeforeBeingHitAll",
+                            owner_id=tid,
+                            param_entity_id=spec.eff_attacker_id,
+                            damage_data=tgt_hit_data,
+                            current_attack_type=spec.atk_type,
+                        )
+                        tgt_extra_vuln = float(tgt_hit_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                        tgt_extra_def_ignore = -float(tgt_hit_data.get("Defender_DefenceAddedRatio", 0.0))
+                        tgt_res_mod = float(tgt_hit_data.get("Defender_AllDamageTypeResistance", 0.0))
+                        def_red = float(tgt_hit_data.get("Defender_AllDamageReduce", 0.0))
+                        if def_red > 0.0:
+                            red_mult *= max(0.0, 1.0 - def_red)
                     for m_def in me.get_modifiers(tid):
                         m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
                         if m_red > 0.0:

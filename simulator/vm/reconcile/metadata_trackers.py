@@ -670,7 +670,7 @@ class PlayerTargetTracker:
                 pri = self.pending_player_primary_euids or self.pending_player_sp_euids
                 hits = self.pending_player_elation_hits
 
-                def _matches_aoe_wave(idx: int) -> int:
+                def _matches_aoe_wave_strict(idx: int, max_gap_ms: float = 4.0) -> int:
                     alive_s = hits[idx][3]
                     k = len(alive_s)
                     if k < 2 or idx + k > len(hits):
@@ -682,9 +682,31 @@ class PlayerTargetTracker:
                         return 0
                     for j in range(k - 1):
                         t0, t1 = seg[j][2], seg[j + 1][2]
-                        if t0 is None or t1 is None or not (0.0 <= t1 - t0 <= 4.0):
+                        if t0 is None or t1 is None or not (0.0 <= t1 - t0 <= max_gap_ms):
                             return 0
                     return k
+
+                def _matches_aoe_wave(idx: int) -> int:
+                    k = _matches_aoe_wave_strict(idx, 4.0)
+                    if k >= 2:
+                        return k
+                    # Frame hitches (~10-40ms) can split one simultaneous multi-target wave;
+                    # accept <= 50ms only when corroborated by an adjacent strict AoE wave
+                    # with identical target order and matching per-target damage scale.
+                    k_ext = _matches_aoe_wave_strict(idx, 50.0)
+                    if k_ext < 2:
+                        return 0
+                    seg = hits[idx:idx + k_ext]
+                    seg_tgts = [h[1] for h in seg]
+                    for adj_idx in (idx - k_ext, idx + k_ext):
+                        if 0 <= adj_idx and adj_idx + k_ext <= len(hits) and _matches_aoe_wave_strict(adj_idx, 4.0) == k_ext:
+                            adj = hits[adj_idx:adj_idx + k_ext]
+                            if [h[1] for h in adj] == seg_tgts and all(
+                                adj[j][4] > 0.0 and 0.70 * adj[j][4] <= seg[j][4] <= 1.35 * adj[j][4]
+                                for j in range(k_ext)
+                            ):
+                                return k_ext
+                    return 0
 
                 def _contiguous_run_bounds(idx: int) -> Tuple[int, int]:
                     a_u = hits[idx][0]

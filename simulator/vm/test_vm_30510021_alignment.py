@@ -35,6 +35,8 @@ class TestVMStage30510021Alignment(unittest.TestCase):
         *,
         av_budget: Optional[float] = None,
         turn_limit: float = 1e-6,
+        extra_maze_buff_ids: Sequence[int] = (),
+        use_oct_loadouts: bool = True,
     ) -> None:
         log_path = os.path.join(ROOT_DIR, "battle_logs", filename)
         rep = reconcile_log(
@@ -42,11 +44,12 @@ class TestVMStage30510021Alignment(unittest.TestCase):
             db=self.db,
             loader=self.loader,
             team_override=names,
-            loadouts=_OCT_30510021_LOADOUTS,
+            loadouts=_OCT_30510021_LOADOUTS if use_oct_loadouts else None,
             force_data_driven=True,
             use_existing_plugin=False,
             av_budget=av_budget,
             threshold=turn_limit,
+            extra_maze_buff_ids=extra_maze_buff_ids,
         )
 
         self.assertEqual(rep.turn_matched, rep.turn_total)
@@ -55,6 +58,8 @@ class TestVMStage30510021Alignment(unittest.TestCase):
         self.assertEqual(rep.memoria_granted, 0.0)
         self.assertEqual(rep.presence_grants, 0)
         self.assertEqual(rep.forced_or_failed, 0)
+        self.assertLess(rep.total_err, turn_limit)
+        self.assertLess(rep.max_turn_err, turn_limit)
         self.assertEqual(
             rep.enemy_hit_mismatches,
             [],
@@ -90,6 +95,16 @@ class TestVMStage30510021Alignment(unittest.TestCase):
             "20261101_171232",
             "battle_20261101_171232.jsonl",
             ["风堇", "长夜月", "知更鸟•晴歌", "缇宝_旧"],
+        )
+
+    @pytest.mark.slow
+    def test_vm_log_20261027_012050_elation_alignment(self) -> None:
+        self._run_vm_case(
+            "20261027_012050",
+            "battle_20261027_012050.jsonl",
+            ["银狼LV.999", "火花", "爻光", "真珠"],
+            extra_maze_buff_ids=(3033082,),
+            use_oct_loadouts=False,
         )
 
 

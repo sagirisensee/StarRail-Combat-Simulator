@@ -326,7 +326,9 @@ class PredicateOpsMixin:
             else:
                 wants = {str(pred.get("AvatarBaseType", ""))}
             for tid in targets:
-                spec = rt.entity_specs.get(tid)
+                ent = sim.get_entity(tid)
+                eff_tid = getattr(ent, "_avatar_change_source_id", None) or tid if ent is not None else tid
+                spec = rt.entity_specs.get(eff_tid)
                 if spec is not None and not spec.is_servant:
                     av = rt.loader.get_avatar_config(spec.unit_id, enhanced=getattr(spec, "enhanced", False))
                     if av and av.get("AvatarBaseType") in wants:

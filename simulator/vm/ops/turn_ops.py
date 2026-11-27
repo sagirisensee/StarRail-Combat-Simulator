@@ -780,6 +780,8 @@ class TurnOpsMixin:
             ent = sim.get_entity(tid)
             if ent is None or (float(getattr(ent, "current_hp", 0.0)) <= 0.0 and not getattr(ent, "is_infinite_hp", False)):
                 continue
+            if getattr(ent, "_avatar_change_target_id", None) is not None and not getattr(ent, "is_enemy", False):
+                continue
             if excl_flags and any(me.has_behavior_flag(tid, flg) for flg in excl_flags):
                 continue
             spec = rt.entity_specs.get(tid)
@@ -1600,6 +1602,7 @@ class TurnOpsMixin:
             name=new_name,
             avatar_id=new_avatar_id,
             level=source.level,
+            path=getattr(source, "path", ""),
             base_max_hp=source.base_max_hp,
             base_white_hp=source.base_white_hp,
             base_atk=source.base_atk,
@@ -1639,6 +1642,8 @@ class TurnOpsMixin:
             pass
 
         ac_skill_params: Dict[str, List[float]] = {}
+        ac_skill_sp_cost: Dict[str, int] = {}
+        ac_skill_id_map: Dict[str, int] = {}
         try:
             for row in rt.loader._read_excel("ActivityAvatarSkillConfig.json"):
                 sid = int(row.get("SkillID", 0) or 0)
@@ -1649,6 +1654,13 @@ class TurnOpsMixin:
                             float(p.get("Value", 0.0) if isinstance(p, Mapping) else (p or 0.0))
                             for p in row.get("ParamList", [])
                         ]
+                        ac_skill_id_map[tkey] = sid
+                        bp_need = row.get("BPNeed")
+                        bp_add = row.get("BPAdd")
+                        if isinstance(bp_need, Mapping) and float(bp_need.get("Value", 0.0)) > 0:
+                            ac_skill_sp_cost[tkey] = int(round(float(bp_need["Value"])))
+                        elif isinstance(bp_add, Mapping) and float(bp_add.get("Value", 0.0)) > 0:
+                            ac_skill_sp_cost[tkey] = -int(round(float(bp_add["Value"])))
         except Exception:
             pass
 
@@ -1686,19 +1698,25 @@ class TurnOpsMixin:
             if extra_ab and extra_ab not in ac_ab_names:
                 ac_ab_names.append(extra_ab)
 
+        skill01_sp_cost = ac_skill_sp_cost.get("Skill01", 0)
+        skill01_id = ac_skill_id_map.get("Skill01", new_avatar_id * 100 + 1)
+
         class _AvatarChangeKit:
-            def __init__(self, owner_id: str, ab_skill: str) -> None:
+            def __init__(self, owner_id: str, ab_skill: str, sp_cost: int, skill_id: int) -> None:
                 self.owner_id = owner_id
                 self.ab_skill = ab_skill
+                self.sp_cost = sp_cost
+                self.skill_id = skill_id
                 self.port = sim.port
 
             def definition(self, kind: Any) -> Any:
-                from ...actions import AbilityDefinition, TargetMode
+                from ...actions import AbilityDefinition, ResourceCost, TargetMode
                 return AbilityDefinition(
                     kind=ActionKind.BASIC,
                     target_mode=TargetMode.SINGLE_ENEMY,
                     name=f"AvatarChange_{new_avatar_id}_Basic",
-                    skill_id=new_avatar_id * 100 + 1,
+                    cost=ResourceCost(sp=self.sp_cost),
+                    skill_id=self.skill_id,
                 )
 
             def decide_action(self, act_ctx: Any) -> Any:
@@ -1741,7 +1759,8 @@ class TurnOpsMixin:
                         current_attack_type="Normal",
                     )
 
-        new_ent.kit = _AvatarChangeKit(new_name, skill01_ab)
+        new_ent.action_policy = ["A"]
+        new_ent.kit = _AvatarChangeKit(new_name, skill01_ab, skill01_sp_cost, skill01_id)
 
         sim.add_entity(new_ent, trigger_battle_start=False)
         if hasattr(sim, "_rebuild_entity_cache"):
@@ -1789,6 +1808,7 @@ class TurnOpsMixin:
         )
         rt.register_character(new_name, ac_spec)
         me.on_entity_created(new_name)
+        me.dispatch_event("OnListenAvatarBaseTypeChange", param_entity_id=new_name)
         new_ent.current_hp = float(sim.port.max_hp(new_name))
         if callable(diag_cb := getattr(sim, "timeline_diag_cb", None)):
             diag_cb("AVCHG", f"attach {source.name} -> {new_name} hp={new_ent.current_hp:.2f} spd={new_ent.speed:.2f}")
