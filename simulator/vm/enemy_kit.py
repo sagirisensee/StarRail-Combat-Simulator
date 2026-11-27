@@ -536,21 +536,22 @@ class DataDrivenEnemyKit(EnemyKit):
             if (not has_dmg) and ai_picked_alive:
                 target_ids = (ai_picked_alive[0],)
             elif has_dmg and living_allies:
-                picked = self._select_targets(sim, getattr(sk, "target_selector", "single"))
+                cand_allies = [e for e in living_allies if e.name in ai_picked_alive] if ai_picked_alive else []
+                picked = (
+                    [cand_allies[0]]
+                    if cand_allies
+                    else self._select_targets(sim, getattr(sk, "target_selector", "single"))
+                )
                 target_provider = getattr(sim, "target_provider", None)
                 if callable(target_provider):
                     prev_is_blast = getattr(sim, "_current_enemy_skill_is_blast", False)
                     sim._current_enemy_skill_is_blast = bool(getattr(sk, "is_blast", False))
                     try:
-                        chosen = target_provider(attacker, living_allies, 0)
+                        chosen = target_provider(attacker, cand_allies or living_allies, 0)
                     finally:
                         sim._current_enemy_skill_is_blast = prev_is_blast
-                    if chosen is not None:
+                    if chosen is not None and (not cand_allies or chosen in cand_allies):
                         picked = [chosen]
-                elif ai_picked_alive:
-                    chosen_ai = next((e for e in living_allies if e.name == ai_picked_alive[0]), None)
-                    if chosen_ai is not None:
-                        picked = [chosen_ai]
                 diag_cb_t = getattr(sim, "timeline_diag_cb", None)
                 if callable(diag_cb_t):
                     diag_cb_t(
@@ -780,7 +781,7 @@ class DataDrivenEnemyKit(EnemyKit):
         selector = task.get("Selector")
         filtered = [cid for cid in candidates if _match_selector(cid, selector)]
         if filtered:
-            self._ai_selected_targets[sk_name] = (filtered[0],)
+            self._ai_selected_targets[sk_name] = tuple(filtered)
 
     def execute_next_sub_action(
         self,
@@ -889,6 +890,9 @@ class DataDrivenEnemyKit(EnemyKit):
                             ]
                             if ai_tasks:
                                 rt.executor.execute_tasks(ai_tasks, ai_ctx)
+                            for t in root_tasks:
+                                if isinstance(t, Mapping) and t.get("$type") == "RPG.GameCore.SelectAISkillTarget":
+                                    self._resolve_select_ai_skill_target(t, ai_ctx, rt)
                         # 动态求值 ConfigAI RootTask 中的条件/目标重选与 AIFlag 自增，精确还原官方分支技能选择
                         if has_dynamic_root:
                             self.ai_executor.ai_flag = prev_ai_flag

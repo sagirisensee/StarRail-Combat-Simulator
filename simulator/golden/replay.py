@@ -455,7 +455,8 @@ def run_trajectory_replay(
             and (cur_turn is None or getattr(cur_turn, "name", "") != u_owner)
         ):
             if any(
-                t_idx not in fired_master
+                t_idx < u_idx
+                and t_idx not in fired_master
                 and getattr(timeline[t_idx], "turn_seq", -1) == u_turn_seq
                 for t_idx in turn_indices
             ):
@@ -526,6 +527,7 @@ def run_trajectory_replay(
                 (
                     pre_turn_end
                     and not getattr(actor_ent, "is_enemy", False)
+                    and ult_queue[0][1].actor != act_name
                     and getattr(ult_queue[0][1], "turn_owner", "") == act_name
                 )
                 or (

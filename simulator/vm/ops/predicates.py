@@ -1007,13 +1007,13 @@ class PredicateOpsMixin:
             chance = self._eval_num(pred.get("Chance"), ctx, 0.0)
             if chance <= 1e-9:
                 return False
-            if chance >= 1.0 - 1e-9:
-                return True
-            target_id = ctx.param_entity_id or ctx.modifier_owner_id or ""
             res: Any = None
             prov = getattr(sim, "random_chance_provider", None)
             if callable(prov):
                 res = prov(ctx.caster_id, ctx.ability_name, chance)
+            if chance >= 1.0 - 1e-9:
+                return True
+            target_id = ctx.param_entity_id or ctx.modifier_owner_id or ""
             outcome: Optional[bool] = True if res else None
             if outcome is None:
                 t_prov = getattr(sim, "random_chance_target_provider", None)

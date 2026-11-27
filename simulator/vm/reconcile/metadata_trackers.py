@@ -703,6 +703,25 @@ class PlayerTargetTracker:
                         re += 1
                     return rs, re
 
+                def _is_multi_wave_aoe_run(rs: int, re: int) -> bool:
+                    waves = 0
+                    pos = rs
+                    while pos <= re:
+                        a_set = hits[pos][3]
+                        p_cur = [e for e in pri if e in a_set] if a_set else list(pri)
+                        n_c = len(p_cur)
+                        if (
+                            n_c >= 2
+                            and pos + n_c <= re + 1
+                            and [h[1] for h in hits[pos:pos + n_c]] == p_cur
+                            and len({h[0] for h in hits[pos:pos + n_c]}) == 1
+                        ):
+                            waves += 1
+                            pos += n_c
+                        else:
+                            break
+                    return waves >= 2 and pos >= re - 1
+
                 cur_sk_eff = _get_avatar_skill_effects().get(self.pending_player_skill_id, "")
                 i = 0
                 while i < len(hits):
@@ -740,6 +759,10 @@ class PlayerTargetTracker:
                                     )
                                     if not is_tail_aoe:
                                         skip_pri = False
+                            else:
+                                rs, re = _contiguous_run_bounds(i)
+                                if re - rs + 1 >= n_pri + 2 and (i != rs or i != 0) and not _is_multi_wave_aoe_run(rs, re):
+                                    skip_pri = False
                             if skip_pri:
                                 i += n_pri
                                 continue
@@ -872,7 +895,7 @@ class PlayerTargetTracker:
                     self._bp_draw_av = round(cur_av, 2)
         elif ptype == "CurExtraSpecialSP":
             extra = round(val)
-            if extra >= 3 and uid != self._bp_draw_caster_uid:
+            if extra == 3 and uid != self._bp_draw_caster_uid:
                 self._pending_insert_extra_ssp = (uid, t_ms)
             if self._bp_draw_caster_uid and extra > 0:
                 tot = self._bp_draw_cap_carry + extra
@@ -1028,7 +1051,7 @@ class PlayerTargetTracker:
                     init_branch = 1
                     if self._pending_insert_extra_ssp is not None:
                         sp_uid, sp_t = self._pending_insert_extra_ssp
-                        if sp_uid == a_uid_ins and (sp_t is None or t_ms is None or 0.0 <= t_ms - sp_t <= 2500.0):
+                        if sp_uid == a_uid_ins and (sp_t is None or t_ms is None or 0.0 <= t_ms - sp_t <= 150.0):
                             init_branch = 2
                             self._pending_insert_extra_ssp = None
                     self._active_elation_insert = [av_ins, a_uid_ins, t_ms, init_branch]

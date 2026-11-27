@@ -96,6 +96,7 @@ class ModifierOpsMixin:
                 return
         life = self._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
         cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
+        has_layer_add = "LayerAddWhenStack" in task
         cnt = int(round(self._eval_num(cnt_spec, ctx, 1.0))) if cnt_spec is not None else None
         max_l = int(round(self._eval_num(task["MaxLayer"], ctx, 1.0))) if "MaxLayer" in task else None
         inherit = str(task.get("InheritCaster", ""))
@@ -184,6 +185,7 @@ class ModifierOpsMixin:
                     ctx=ctx,
                     reference_mod_name=ref_mname,
                     dynamic_strings=task.get("DynamicStrings"),
+                    is_layer_add=has_layer_add,
                 )
                 succeeded = mod_res is not None
             if succeeded and success_tasks:
@@ -750,7 +752,10 @@ class ModifierOpsMixin:
         pool_name = str(task.get("MBDAKKKPKCG") or "")
         if not pool_name:
             return
-        pool = self.rt.loader.get_common_skill_pool(pool_name)
+        pool = self.rt.loader.get_common_skill_pool(
+            pool_name,
+            strict=bool(getattr(self, "strict", True)),
+        )
         if not pool:
             return
         tgt_spec = task.get("TargetType") or task.get("HILNFHCPEAD")

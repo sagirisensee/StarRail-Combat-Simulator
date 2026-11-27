@@ -543,6 +543,7 @@ class ModifierEngine:
         resolved_dynamics: Optional[Dict[int, float]] = None,
         reference_mod_name: str = "",
         dynamic_strings: Optional[Mapping[str, Any]] = None,
+        is_layer_add: bool = False,
     ) -> Optional[VMModifierInstance]:
         """按官方 Stacking 语义挂载/刷新/叠加 Modifier，并触发 OnCreate / OnStack / SubModifierList / OnModifierAdd。"""
         if owner_id not in ("__LEVEL__", "__LIGHT_TEAM__") and self.rt.sim.get_entity(owner_id) is None:
@@ -697,9 +698,19 @@ class ModifierEngine:
                 eff_count = cfg_count
             else:
                 eff_count = 1
+            is_replace_count = (
+                stacking in ("Replace", "ReplaceByCaster", "Refresh")
+                and not is_layer_add
+                and cfg.get("LayerAddWhenStack") is None
+                and max_layer is None
+                and cfg_max_layer is None
+            )
             if eff_count < 0:
                 mod.layer = max(0, mod.layer + eff_count)
-            elif cfg_count is not None and count is None and stacking in ("Replace", "ReplaceByCaster", "Refresh"):
+            elif (
+                (cfg_count is not None and count is None and stacking in ("Replace", "ReplaceByCaster", "Refresh"))
+                or (count is not None and is_replace_count)
+            ):
                 mod.layer = min(eff_max_layer, max(1, eff_count))
             elif eff_max_layer > 1:
                 mod.layer = min(eff_max_layer, mod.layer + max(1, eff_count))

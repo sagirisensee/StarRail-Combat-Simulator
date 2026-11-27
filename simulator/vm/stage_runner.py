@@ -663,7 +663,8 @@ class StageRunner:
                     (i for i, m in enumerate(self.state.enemies) if m.entity.name == caster_mrs.entity.name),
                     len(self.state.enemies),
                 )
-                insert_left = (caster_mrs.summon_seq % 2 == 1)
+                # HSR KeepOnEdge places odd summons on the right and even summons on the left: [s2, caster, s1]
+                insert_left = (caster_mrs.summon_seq % 2 == 0)
                 mrs = self._register_enemy(ent, bp)
                 self.state.enemies.pop()
                 insert_idx = max(0, caster_idx) if insert_left else min(len(self.state.enemies), caster_idx + 1)

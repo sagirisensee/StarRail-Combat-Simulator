@@ -33,6 +33,13 @@ from .modifier_engine import ModifierEngine, VMModifierInstance
 from .target_alias import ExecutionContext
 
 
+_BUILTIN_SKILL_STANCE_HASH_INDEX: Dict[int, int] = {
+    1659254037: 0,
+    1182064154: 1,
+    -1315627076: 2,
+}
+
+
 class VMRuntime:
     """挂载在 TurnSimulator 上的官方 ConfigAbility 统一运行时。"""
 
@@ -309,6 +316,17 @@ class VMRuntime:
                     return bound
                 if hash_val in local_ctx.modifier_instance.dynamic_values:
                     return local_ctx.modifier_instance.dynamic_values[hash_val]
+        if ability_name and hash_val in _BUILTIN_SKILL_STANCE_HASH_INDEX:
+            st_idx = _BUILTIN_SKILL_STANCE_HASH_INDEX[hash_val]
+            spec = self.entity_specs.get(caster_id)
+            ssl = spec.ability_stance_lists.get(ability_name) if spec is not None else None
+            if ssl is None:
+                ent = self.sim.get_entity(caster_id)
+                if ent is not None and getattr(ent, "master_name", None):
+                    m_spec = self.entity_specs.get(ent.master_name)
+                    ssl = m_spec.ability_stance_lists.get(ability_name) if m_spec is not None else None
+            if ssl is not None and st_idx < len(ssl) and ssl[st_idx] > 0.0:
+                return float(ssl[st_idx])
         if ability_name:
             if (caster_id, ability_name) in self.equip_dynamics:
                 eq_map = self.equip_dynamics[(caster_id, ability_name)]
@@ -432,6 +450,9 @@ class VMRuntime:
             return
         tgt_info = (ab.get("TargetInfo") or {}).get("TargetType", "")
         eff_targets = skill_target_ids if (tgt_info == "SkillTargetEntityList" and skill_target_ids) else target_ids
+        init_local_dyn = self.loader.resolve_ability_local_dynamic_floats(ab)
+        if local_dynamics:
+            init_local_dyn.update(local_dynamics)
         ctx = ExecutionContext(
             runtime=self,
             caster_id=caster_id,
@@ -440,7 +461,7 @@ class VMRuntime:
             skill_target_ids=skill_target_ids or eff_targets,
             current_skill_type=current_skill_type,
             current_attack_type=current_attack_type,
-            local_dynamics=dict(local_dynamics) if local_dynamics else {},
+            local_dynamics=init_local_dyn,
             custom_strings=dict(custom_strings) if custom_strings else {},
         )
         has_add = bool(ab.get("OnAdd"))
@@ -477,6 +498,25 @@ class VMRuntime:
             current_attack_type=attack_type,
         )
         return dmg_data
+
+    def collect_target_being_hit_modifiers(
+        self,
+        attacker_id: str,
+        target_id: str,
+        *,
+        attack_type: str = "Break",
+        element: str = "",
+    ) -> Dict[str, Any]:
+        """收集非 TaskExecutor._execute_damage 发起的命中（如弱点击破）在目标侧的 OnBeforeBeingHitAll 修饰。"""
+        tgt_hit_data: Dict[str, Any] = {"Element": element, "CustomName": ""}
+        self.modifier_engine.dispatch_event(
+            "OnBeforeBeingHitAll",
+            owner_id=target_id,
+            param_entity_id=attacker_id,
+            damage_data=tgt_hit_data,
+            current_attack_type=attack_type,
+        )
+        return tgt_hit_data
 
     def enter_battle(self) -> None:
         """统一执行所有 VM 实体的进场被动、装备/遗器初始化，并按官方 Priority 升序触发 OnEnterBattle。"""
@@ -723,6 +763,9 @@ class VMRuntime:
 
     def on_action_end(self, evt: ActionEndEvent) -> None:
         self.end_being_attacked()
+        act_id = int(getattr(evt, "action_id", 0) or 0)
+        if act_id > 0 and self.lifecycle.consume_action_end_handled(act_id):
+            return
         sk_type = self._normalize_skill_type(evt)
         sk_tgts = self._skill_targets_by_action_id.pop(int(getattr(evt, "action_id", 0) or 0), ())
         if not sk_tgts:
@@ -845,6 +888,14 @@ class VMRuntime:
         for tid, tgt_spec in list(self.auto_use_entity_ultra_skills.items()):
             ent = sim.get_entity(tid)
             if ent is None or getattr(ent, "_in_auto_ultra", False):
+                continue
+            if (
+                not getattr(ent, "is_enemy", False)
+                and not getattr(ent, "is_battle_event", False)
+                and not getattr(ent, "is_countdown", False)
+                and not getattr(ent, "is_dummy", False)
+                and not getattr(ent, "is_memosprite", False)
+            ):
                 continue
             if not getattr(ent, "is_countdown", False) and float(getattr(ent, "current_hp", 0.0)) <= 0.0:
                 continue
@@ -993,7 +1044,7 @@ class ConfigAbilityKitAdapter(KitHandler):
             for item in self.spec.config.get("SkillList", [])
             if isinstance(item, dict)
             and item.get("Name")
-            and (item.get("AutoStandbyOnSkillFinish") is False or "FakeSkillConfig" in item)
+            and "FakeSkillConfig" in item
         }
         self._registered = False
         self._passives_triggered = False

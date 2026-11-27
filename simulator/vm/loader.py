@@ -33,6 +33,12 @@ DEFAULT_TBGD_ROOT = (
 _ABILITY_INDEX_CACHE_VERSION = 3
 _ABILITY_INDEX_MEM_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
+# 上游 TurnBasedGameData JSON 导出器未包含 DynamicValues.Floats 中 ClientOnly 常量初始值；
+# 仅对参与伤害/削韧分段（MaxLoopCount / HitSplitRatio）的缺失条目补齐实机精确段数。
+_CLIENT_ONLY_ABILITY_DYNAMIC_FLOAT_DEFAULTS: Dict[int, float] = {
+    1681150302: 5.0,
+}
+
 # 关卡/怪物纯表现、镜头、音效与元评分节点（供 stage_prunable_types 与 PRUNABLE_PRESENTATION_TYPES 复用唯一真源）
 STAGE_PRUNABLE_ANIM_CAMERA_AUDIO_TYPES: Set[str] = {
     "RPG.GameCore.AnimSetParameter",
@@ -389,6 +395,41 @@ class CompiledCharacterSpec:
     extra_passive_abilities: Tuple[str, ...] = ()
     uses_special_sp: bool = False
     enhanced: bool = False
+    ability_stance_lists: Dict[str, Tuple[float, ...]] = field(default_factory=dict)
+
+
+def _build_ability_stance_lists(
+    skill_ids: Sequence[Any],
+    eff_levels: Mapping[int, int],
+    skill_rows: Optional[Mapping[Tuple[int, int], Dict[str, Any]]],
+    skill_ability_list: Sequence[Mapping[str, Any]],
+) -> Dict[str, Tuple[float, ...]]:
+    """Build ``ability_name -> ShowStanceList`` tuple mapping from Excel skill rows and ConfigCharacter SkillAbilityList."""
+    rows = skill_rows or {}
+    trigger_to_stance: Dict[str, Tuple[float, ...]] = {}
+    for raw_sid in skill_ids:
+        sid = int(raw_sid)
+        row = rows.get((sid, eff_levels.get(sid, 1))) or rows.get((sid, 1))
+        if not isinstance(row, Mapping):
+            continue
+        tkey = str(row.get("SkillTriggerKey") or "")
+        ssl = row.get("ShowStanceList") or []
+        if not tkey or not ssl:
+            continue
+        trigger_to_stance[tkey] = tuple(
+            float(v.get("Value", 0.0) if isinstance(v, Mapping) else (v or 0.0))
+            for v in ssl
+        )
+    out: Dict[str, Tuple[float, ...]] = {}
+    for item in skill_ability_list:
+        sk_key = str(item.get("Skill") or "")
+        stance_tuple = trigger_to_stance.get(sk_key)
+        if stance_tuple is None:
+            continue
+        for ab_name in item.get("AbilityList", ()):
+            if ab_name:
+                out[str(ab_name)] = stance_tuple
+    return out
 
 
 def _node_uses_special_sp(node: Any) -> bool:
@@ -454,38 +495,52 @@ class GameDataLoader:
         self._common_skill_pools: Optional[Dict[str, Dict[str, Any]]] = None
         self._compiled_char_cache: Dict[Tuple[int, int, Tuple[Tuple[str, int], ...], bool], CompiledCharacterSpec] = {}
 
-    def get_common_skill_pool(self, pool_name: str) -> Optional[Dict[str, Any]]:
+    def get_common_skill_pool(self, pool_name: str, *, strict: bool = False) -> Optional[Dict[str, Any]]:
         """按 UniqueName 查询官方 ConfigCommonSkillPool/*.json 中的通用技能池。"""
+        pool_dir = os.path.join(self.data_root, "Config", "ConfigCommonSkillPool")
         if self._common_skill_pools is None:
+            if not os.path.isdir(pool_dir):
+                if strict:
+                    raise FileNotFoundError(
+                        f"Missing ConfigCommonSkillPool directory: {pool_dir} "
+                        f"(requested pool '{pool_name}'). Ensure full TurnBasedGameData checkout."
+                    )
+                return None
             pools: Dict[str, Dict[str, Any]] = {}
-            pool_dir = os.path.join(self.data_root, "Config", "ConfigCommonSkillPool")
-            if os.path.isdir(pool_dir):
-                pool_paths: List[str] = []
-                stack = [pool_dir]
-                while stack:
-                    cur = stack.pop()
-                    try:
-                        with os.scandir(cur) as it:
-                            for entry in it:
-                                if entry.is_dir(follow_symlinks=True):
-                                    stack.append(entry.path)
-                                elif entry.is_file(follow_symlinks=True) and entry.name.endswith(".json") and not entry.name.endswith(".layout.json"):
-                                    pool_paths.append(entry.path)
-                    except OSError:
-                        continue
-                pool_paths.sort(key=lambda p: os.path.relpath(p, self.data_root).replace("\\", "/"))
-                for p in pool_paths:
-                    try:
-                        data = self._read_json(p)
-                    except Exception:
-                        continue
-                    for item in (data.get("PoolList") or () if isinstance(data, Mapping) else ()):
-                        if isinstance(item, Mapping):
-                            uname = str(item.get("UniqueName") or "")
-                            if uname and uname not in pools:
-                                pools[uname] = dict(item)
+            pool_paths: List[str] = []
+            stack = [pool_dir]
+            while stack:
+                cur = stack.pop()
+                try:
+                    with os.scandir(cur) as it:
+                        for entry in it:
+                            if entry.is_dir(follow_symlinks=True):
+                                stack.append(entry.path)
+                            elif (
+                                entry.is_file(follow_symlinks=True)
+                                and entry.name.endswith(".json")
+                                and not entry.name.endswith(".layout.json")
+                            ):
+                                pool_paths.append(entry.path)
+                except OSError:
+                    continue
+            pool_paths.sort(key=lambda p: os.path.relpath(p, self.data_root).replace("\\", "/"))
+            for p in pool_paths:
+                try:
+                    data = self._read_json(p)
+                except Exception:
+                    continue
+                for item in (data.get("PoolList") or () if isinstance(data, Mapping) else ()):
+                    if isinstance(item, Mapping):
+                        uname = str(item.get("UniqueName") or "")
+                        if uname and uname not in pools:
+                            pools[uname] = dict(item)
             self._common_skill_pools = pools
-        return self._common_skill_pools.get(str(pool_name or ""))
+        key = str(pool_name or "")
+        pool = self._common_skill_pools.get(key)
+        if pool is None and strict:
+            raise KeyError(f"CommonSkillPool '{key}' not found under {pool_dir}")
+        return pool
 
     def _read_json(self, rel_or_abs: str) -> Any:
         path = rel_or_abs if os.path.isabs(rel_or_abs) else os.path.join(self.data_root, rel_or_abs)
@@ -1127,6 +1182,38 @@ class GameDataLoader:
                 out[h] = 0.0
         return out
 
+    @staticmethod
+    def resolve_ability_local_dynamic_floats(ability: Mapping[str, Any]) -> Dict[int, float]:
+        """解析 Ability 自身 DynamicValues.Floats 中的显式常量或上游导表缺失的 ClientOnly 数值段数默认值。"""
+        out: Dict[int, float] = {}
+        floats = (ability.get("DynamicValues") or {}).get("Floats") or {}
+        for hash_str, entry in floats.items():
+            if not isinstance(entry, Mapping):
+                continue
+            h = int(hash_str)
+            if "Value" in entry:
+                raw_v = entry.get("Value")
+                if isinstance(raw_v, Mapping):
+                    out[h] = float(raw_v.get("Value", 0.0))
+                elif raw_v is not None:
+                    out[h] = float(raw_v)
+                continue
+            if "FixedValue" in entry:
+                fv = entry.get("FixedValue")
+                if isinstance(fv, Mapping):
+                    out[h] = float(fv.get("Value", 0.0))
+                elif fv is not None:
+                    out[h] = float(fv)
+                continue
+            ri = entry.get("ReadInfo")
+            if (
+                isinstance(ri, Mapping)
+                and ri.get("Type") == "ClientOnly"
+                and h in _CLIENT_ONLY_ABILITY_DYNAMIC_FLOAT_DEFAULTS
+            ):
+                out[h] = _CLIENT_ONLY_ABILITY_DYNAMIC_FLOAT_DEFAULTS[h]
+        return out
+
     def load_character(
         self,
         avatar_id: int,
@@ -1152,6 +1239,7 @@ class GameDataLoader:
                 extra_passive_abilities=spec.extra_passive_abilities,
                 uses_special_sp=spec.uses_special_sp,
                 enhanced=spec.enhanced,
+                ability_stance_lists=spec.ability_stance_lists,
             )
 
         cache_key = (
@@ -1217,6 +1305,13 @@ class GameDataLoader:
             if ab is not None:
                 abilities[ab_name] = ab
 
+        self._ensure_avatar_skills()
+        ability_stance_lists = _build_ability_stance_lists(
+            av.get("SkillList", []),
+            eff_levels,
+            self._avatar_skills,
+            cfg.get("SkillAbilityList", []),
+        )
         servant_id = 10000 + int(avatar_id)
         uses_special_sp = _node_uses_special_sp(abilities)
         spec = CompiledCharacterSpec(
@@ -1234,6 +1329,7 @@ class GameDataLoader:
             extra_passive_abilities=tuple(extra_passives),
             uses_special_sp=uses_special_sp,
             enhanced=bool(enhanced),
+            ability_stance_lists=ability_stance_lists,
         )
         self._compiled_char_cache[cache_key] = spec
         return _clone_spec(spec)
@@ -1268,6 +1364,13 @@ class GameDataLoader:
             if ab is not None:
                 abilities[ab_name] = ab
 
+        self._ensure_servant_skills()
+        ability_stance_lists = _build_ability_stance_lists(
+            sv.get("SkillIDList", []),
+            eff_levels,
+            self._servant_skills,
+            cfg.get("SkillAbilityList", []),
+        )
         return CompiledCharacterSpec(
             unit_id=int(servant_id),
             is_servant=True,
@@ -1280,6 +1383,7 @@ class GameDataLoader:
             eidolon=eidolon,
             unlocked_ranks=set(range(1, eidolon + 1)),
             servant_id=None,
+            ability_stance_lists=ability_stance_lists,
         )
 
     def get_servant_base_inheritance(self, servant_id: int, eidolon: int = 0) -> Dict[str, Any]:

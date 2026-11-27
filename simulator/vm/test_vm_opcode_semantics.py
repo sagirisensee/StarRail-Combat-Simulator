@@ -2,6 +2,9 @@
 """VM 引擎通用原语与语义单测（合成 ConfigAbility JSON，零角色耦合，不随新增角色膨胀）。"""
 
 import base64
+import json
+import os
+import tempfile
 import unittest
 
 from simulator.core import TurnSimulator
@@ -14,7 +17,7 @@ from simulator.vm.executor import (
     TaskExecutor,
 )
 from simulator.vm.expr import dotnet_hash
-from simulator.vm.loader import CompiledCharacterSpec, prune_task_list
+from simulator.vm.loader import CompiledCharacterSpec, GameDataLoader, prune_task_list
 from simulator.vm.runtime import ConfigAbilityKitAdapter, VMRuntime
 from simulator.vm.stage_prunable_types import ALL_SAFE_PRUNABLE_TYPES
 
@@ -426,6 +429,167 @@ class TestVMOpcodeSemantics(unittest.TestCase):
         finally:
             rt.loader._global_mod_by_name.pop("MSynth_LoopDot", None)
             rt.loader._global_mod_by_name.pop("MSynth_StopFlag", None)
+
+    def test_common_skill_pool_strict_fail_fast(self) -> None:
+        """验证 ConfigCommonSkillPool 缺失目录或缺失技能池在 strict 模式下快速失败。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            loader = GameDataLoader(data_root=tmpdir)
+            self.assertIsNone(loader.get_common_skill_pool("MissingPool", strict=False))
+            with self.assertRaises(FileNotFoundError):
+                loader.get_common_skill_pool("MissingPool", strict=True)
+
+            pool_dir = os.path.join(tmpdir, "Config", "ConfigCommonSkillPool")
+            os.makedirs(pool_dir, exist_ok=True)
+            with open(os.path.join(pool_dir, "SynthPool.json"), "w", encoding="utf-8") as f:
+                json.dump({"PoolList": [{"UniqueName": "ExistingPool", "SkillList": []}]}, f)
+
+            loader2 = GameDataLoader(data_root=tmpdir)
+            self.assertIsNotNone(loader2.get_common_skill_pool("ExistingPool", strict=True))
+            self.assertIsNone(loader2.get_common_skill_pool("MissingPool", strict=False))
+            with self.assertRaises(KeyError):
+                loader2.get_common_skill_pool("MissingPool", strict=True)
+
+            sim, rt, _, _ = _make_sim_with_vm()
+            rt.loader = loader2
+            ctx = ExecutionContext(runtime=rt, caster_id="测试角色", ability_name="TestSynth")
+            with self.assertRaises(KeyError):
+                rt.execute_tasks(
+                    [{"$type": "EOCFKGFAPHJ", "MBDAKKKPKCG": "MissingPool"}],
+                    ctx,
+                )
+
+    def test_auto_use_ultra_skill_skips_player_avatar_keeps_battle_event(self) -> None:
+        """验证无 BindUltraSkillNames 的 AutoUseUltraSkill 不触发可控角色，但保留 BattleEvent 自动施放。"""
+        sim, rt, ally, _ = _make_sim_with_vm()
+        ally.energy = ally.max_energy
+
+        be_ent = Entity(
+            name="BattleEvent_99999",
+            base_speed=100.0,
+            base_atk=1000.0,
+            max_hp=1000.0,
+            current_hp=1000.0,
+            max_energy=100.0,
+            energy=100.0,
+        )
+        be_ent.is_battle_event = True  # type: ignore[attr-defined]
+        sim.add_entity(be_ent, trigger_battle_start=False)
+
+        rt.loader._ability_by_name["Synth_BE_Ultra"] = {
+            "Name": "Synth_BE_Ultra",
+            "OnStart": [
+                {
+                    "$type": "RPG.GameCore.SetDynamicValue",
+                    "DynamicKey": "_synth_be_fired",
+                    "Value": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+                }
+            ],
+        }
+        try:
+            rt.register_character(
+                "BattleEvent_99999",
+                CompiledCharacterSpec(
+                    unit_id=99999,
+                    is_servant=False,
+                    config={
+                        "SkillList": [
+                            {
+                                "Name": "Skill03",
+                                "SkillType": "Ultra",
+                                "EntryAbility": "Synth_BE_Ultra",
+                            }
+                        ]
+                    },
+                    abilities={
+                        "Synth_BE_Ultra": rt.loader._ability_by_name["Synth_BE_Ultra"],
+                    },
+                    global_modifiers={},
+                    global_templates={},
+                    dynamic_floats={},
+                    skill_levels={},
+                ),
+            )
+
+            rt.execute_tasks(
+                [
+                    {
+                        "$type": "RPG.GameCore.AutoUseUltraSkill",
+                        "Target": {"$type": "RPG.GameCore.TargetAlias", "Alias": "Caster"},
+                    }
+                ],
+                ExecutionContext(runtime=rt, caster_id=ally.name, modifier_owner_id=ally.name, ability_name="TestAvatarPassive"),
+            )
+            self.assertNotIn(ally.name, rt.auto_use_entity_ultra_skills)
+
+            rt.execute_tasks(
+                [
+                    {
+                        "$type": "RPG.GameCore.AutoUseUltraSkill",
+                        "Target": {"$type": "RPG.GameCore.TargetAlias", "Alias": "AllDarkTeam"},
+                    }
+                ],
+                ExecutionContext(runtime=rt, caster_id=be_ent.name, modifier_owner_id=be_ent.name, ability_name="TestBEPassive"),
+            )
+            self.assertIn(be_ent.name, rt.auto_use_entity_ultra_skills)
+
+            rt.trigger_auto_use_ultra_skills()
+            self.assertEqual(ally.energy, ally.max_energy)
+            self.assertEqual(be_ent.energy, 0.0)
+            self.assertAlmostEqual(rt.get_dynamic_value(be_ent.name, dotnet_hash("_synth_be_fired")), 1.0)
+        finally:
+            rt.loader._ability_by_name.pop("Synth_BE_Ultra", None)
+
+    def test_by_random_chance_consumes_provider_budget_when_certain(self) -> None:
+        """验证 ByRandomChance 在 Chance>=1.0 时仍消耗 random_chance_provider 计数，而不触发 target provider 或 rng_trace。"""
+        sim, rt, ally, enemy = _make_sim_with_vm()
+        prov_calls: list[tuple[str, str, float]] = []
+        target_prov_calls: list[tuple[str, str, str, float]] = []
+        trace_calls: list[tuple[Any, ...]] = []
+        budget = [2]
+
+        def _prov(caster_id: str, ability_name: str, chance: float) -> bool:
+            prov_calls.append((caster_id, ability_name, chance))
+            if budget[0] > 0:
+                budget[0] -= 1
+                return True
+            return False
+
+        sim.random_chance_provider = _prov
+        sim.random_chance_target_provider = lambda c, t, a, ch: target_prov_calls.append((c, t, a, ch)) or None  # type: ignore[func-returns-value]
+        sim.rng_trace_recorder = lambda *args: trace_calls.append(args)
+
+        ctx = ExecutionContext(
+            runtime=rt,
+            caster_id=ally.name,
+            param_entity_id=enemy.name,
+            ability_name="TestChanceAbility",
+        )
+        ex = rt.executor
+        self.assertTrue(
+            ex.eval_predicate(
+                {"$type": "RPG.GameCore.ByRandomChance", "Chance": {"IsDynamic": False, "FixedValue": {"Value": 1.0}}},
+                ctx,
+            )
+        )
+        self.assertEqual(len(prov_calls), 1)
+        self.assertEqual(budget[0], 1)
+        self.assertEqual(target_prov_calls, [])
+        self.assertEqual(trace_calls, [])
+
+        self.assertTrue(
+            ex.eval_predicate(
+                {"$type": "RPG.GameCore.ByRandomChance", "Chance": {"IsDynamic": False, "FixedValue": {"Value": 0.5}}},
+                ctx,
+            )
+        )
+        self.assertEqual(budget[0], 0)
+        self.assertFalse(
+            ex.eval_predicate(
+                {"$type": "RPG.GameCore.ByRandomChance", "Chance": {"IsDynamic": False, "FixedValue": {"Value": 0.25}}},
+                ctx,
+            )
+        )
+        self.assertEqual(len(trace_calls), 2)
 
 
 if __name__ == "__main__":

@@ -250,7 +250,7 @@ class TurnOpsMixin:
                                 emit_insert_start=True,
                                 emit_before_skill=(sk_t == "Insert"),
                                 emit_listen_before_skill=(sk_t == "Insert"),
-                                emit_after_skill=True,
+                                emit_after_skill=False,
                                 emit_action_end_hooks=True,
                                 emit_insert_finish=True,
                                 emit_settle_callback=True,
@@ -268,6 +268,9 @@ class TurnOpsMixin:
                         )
                         if _prio == "MonsterDeathRattleTogether":
                             rt.lifecycle.complete_deathrattle_together()
+                        active_it = getattr(getattr(sim, "scheduler", None), "active_intent", None)
+                        if active_it is not None and getattr(active_it, "publish_execute_event", False):
+                            rt.lifecycle.mark_action_end_handled(int(getattr(sim, "_action_seq", 0) or 0))
 
                 imm_prio = (
                     2 if prio.startswith("MonsterBuffOthers")
@@ -569,8 +572,8 @@ class TurnOpsMixin:
                         rt._in_insert_action = prev_ins
                     me.dispatch_event("OnInsertActionFinish", owner_id=a_id, param_entity_id=a_id, param_strings=_tags)
                     me.dispatch_event("OnListenInsertActionFinish", param_entity_id=a_id, param_strings=_tags)
-                    me.dispatch_event("OnListenAllowAction", param_entity_id=a_id)
 
+                raw_action_prio = str(task.get("InsertActionPriority") or "")
                 sim.scheduler.enqueue(
                     tid,
                     _run_avatar_tag_insert_action,
@@ -578,6 +581,7 @@ class TurnOpsMixin:
                     category=ActionScheduleCategory.IMMEDIATE_EXTRA_TURN,
                     action_kind=ActionKind.BASIC,
                     skill_id=ins_skill_id,
+                    immediate_priority=(9 if raw_action_prio == "Character_ChainSkill" else 10),
                 )
 
     def _execute_use_skill_one_more(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
@@ -591,6 +595,9 @@ class TurnOpsMixin:
             if not tid or tid == "__LEVEL__":
                 continue
             self.rt._pending_use_skill_one_more.setdefault(tid, []).append(ctrl_type)
+            sched = getattr(self.rt.sim, "scheduler", None)
+            if sched is not None:
+                sched.continuous_action_hold = True
 
     def _op_merged_attack_scope(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         """执行官方 KJNHIELIFEK：开启/关闭跨 UseSkillOneMore 子技能的合并攻击窗口。"""
@@ -615,6 +622,17 @@ class TurnOpsMixin:
         if not bind_names:
             owner_id = ctx.modifier_owner_id or ctx.caster_id
             if owner_id and owner_id != "__LEVEL__":
+                owner_ent = sim.get_entity(owner_id)
+                is_player_avatar = (
+                    owner_ent is not None
+                    and not getattr(owner_ent, "is_enemy", False)
+                    and not getattr(owner_ent, "is_battle_event", False)
+                    and not getattr(owner_ent, "is_countdown", False)
+                    and not getattr(owner_ent, "is_dummy", False)
+                    and not getattr(owner_ent, "is_memosprite", False)
+                )
+                if is_player_avatar:
+                    return
                 if enable:
                     rt.auto_use_entity_ultra_skills[owner_id] = tgt_spec
                 else:
@@ -1770,6 +1788,10 @@ class TurnOpsMixin:
             skill_levels={},
         )
         rt.register_character(new_name, ac_spec)
+        me.on_entity_created(new_name)
+        new_ent.current_hp = float(sim.port.max_hp(new_name))
+        if callable(diag_cb := getattr(sim, "timeline_diag_cb", None)):
+            diag_cb("AVCHG", f"attach {source.name} -> {new_name} hp={new_ent.current_hp:.2f} spd={new_ent.speed:.2f}")
 
         on_create = task.get("OnNewAvatarCreate", [])
         if on_create:
@@ -1806,5 +1828,7 @@ class TurnOpsMixin:
                 sim.entities.remove(new_ent)
             if hasattr(sim, "_rebuild_entity_cache"):
                 sim._rebuild_entity_cache()
+            if callable(diag_cb := getattr(sim, "timeline_diag_cb", None)):
+                diag_cb("AVCHG", f"detach {new_ent.name} -> {src_id}")
             me.destroy_all_for_entity(new_ent.name)
             me.dispatch_event("OnListenCharacterDie", param_entity_id=new_ent.name)

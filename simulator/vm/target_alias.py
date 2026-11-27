@@ -278,8 +278,8 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = _servants_of(ctx.caster_id) if ctx.caster_id else []
     elif base in ("CasterSummonedMinions", "CasterSummonMonster"):
         include_limbo = bool(getattr(rt, "_include_limbo", False))
-        cur = [
-            e.name
+        minions = [
+            e
             for e in sim.entities
             if getattr(e, "is_enemy", False)
             and getattr(e, "summoner_name", None) == ctx.caster_id
@@ -288,6 +288,8 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                 or (include_limbo and any(m.owner_id == e.name for m in rt.modifier_engine.all_modifiers()))
             )
         ]
+        minions.sort(key=lambda e: int(getattr(e, "_runner_spawn_order", 0)))
+        cur = [e.name for e in minions]
     elif base == "ParamEntity":
         cur = [ctx.param_entity_id] if ctx.param_entity_id else []
     elif base == "ProjectileHitEntity":
@@ -412,13 +414,15 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
         cur = _alive_enemies(include_unselectable=False, include_countdown=False, spatial_order=True)[-1:]
     elif base == "ModifierOwnerSummonedMinions":
         own_id = ctx.modifier_owner_id or ctx.caster_id
-        cur = [
-            e.name
+        minions = [
+            e
             for e in sim.entities
             if getattr(e, "is_enemy", False)
             and getattr(e, "summoner_name", None) == own_id
             and _is_alive_entity(sim, e)
         ]
+        minions.sort(key=lambda e: int(getattr(e, "_runner_spawn_order", 0)))
+        cur = [e.name for e in minions]
     elif base == "ParamEntityActualOwner":
         pid = ctx.param_entity_id
         cur = [_actual_owner_of(pid)] if pid else []
@@ -596,8 +600,27 @@ def _resolve_single_token(token: str, ctx: ExecutionContext) -> List[str]:
                     if getattr(e, "is_countdown", False) and getattr(e, "master_name", None) == eid and _is_alive_entity(sim, e):
                         nxt.append(e.name)
             cur = _dedup_preserve(nxt)
-        elif mod in ("GetAliveOnly", "GetAliveOrLimbo"):
-            cur = [eid for eid in cur if (e := sim.get_entity(eid)) is not None and e.current_hp > 0.0]
+        elif mod == "GetAliveOnly":
+            cur = [
+                eid
+                for eid in cur
+                if (e := sim.get_entity(eid)) is not None
+                and not getattr(e, "_vm_limbo_pending", False)
+                and not getattr(e, "_in_deathrattle_limbo", False)
+                and (getattr(e, "current_hp", 0.0) > 0.0 or getattr(e, "is_infinite_hp", False))
+            ]
+        elif mod == "GetAliveOrLimbo":
+            cur = [
+                eid
+                for eid in cur
+                if (e := sim.get_entity(eid)) is not None
+                and (
+                    getattr(e, "current_hp", 0.0) > 0.0
+                    or getattr(e, "is_infinite_hp", False)
+                    or getattr(e, "_vm_limbo_pending", False)
+                    or getattr(e, "_in_deathrattle_limbo", False)
+                )
+            ]
         elif mod in ("RemoveServant", "RemoveBackupServant"):
             cur = [
                 eid

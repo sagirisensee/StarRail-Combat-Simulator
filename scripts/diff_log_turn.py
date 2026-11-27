@@ -30,6 +30,7 @@ from simulator.events import (
     EnemyDefeatedEvent,
     HealAppliedEvent,
     TurnBeginEvent,
+    WeaknessBreakEvent,
 )
 from simulator.vm.loader import GameDataLoader
 from simulator.vm.reconcile.metadata import extract_log_metadata
@@ -234,6 +235,10 @@ def _attach_sim_timeline_recorder(
             lines_out.append(f"  [DEAD ] av={av_val:6.2f} {ev.target_name} (by {ev.attacker_name})")
         elif isinstance(ev, HealAppliedEvent):
             lines_out.append(f"  [HEAL ] av={av_val:6.2f} {ev.source_name} -> {ev.target_name} amt={ev.amount:.2f}")
+        elif isinstance(ev, WeaknessBreakEvent):
+            lines_out.append(
+                f"  [BREAK] av={av_val:6.2f} {ev.breaker_name} -> {ev.target_name} elem={ev.element} dmg={ev.break_damage:.2f}"
+            )
         elif isinstance(ev, DamageAppliedEvent):
             dtype = getattr(ev.damage_type, "value", str(ev.damage_type))
             atk_ent = sim.get_entity(ev.attacker_name)
@@ -265,9 +270,17 @@ def _attach_sim_timeline_recorder(
                     bd_str += f" bar={bar:.4f}"
                 if abs(fat - 1.0) > 1e-6:
                     bd_str += f" fat={fat:.4f}"
+            tgt_ent = sim.get_entity(ev.target_name)
+            st_str = ""
+            if tgt_ent is not None and getattr(tgt_ent, "is_enemy", False):
+                max_st = float(getattr(tgt_ent, "max_toughness", 0.0) or 0.0)
+                if max_st > 0.0:
+                    cur_st = float(getattr(tgt_ent, "current_toughness", 0.0) or 0.0)
+                    brk_s = " BRK" if getattr(tgt_ent, "is_broken", False) else ""
+                    st_str = f" st={cur_st:.2f}/{max_st:.0f}{brk_s}"
             lines_out.append(
                 f"  [DMG  ] av={av_val:6.2f} {ev.attacker_name} -> {ev.target_name} "
-                f"{dtype:<10s} dmg={ev.damage:12.2f} hp={float(getattr(ev, 'target_hp_left', 0.0)):.1f} crit={ev.is_crit}{bd_str}"
+                f"{dtype:<10s} dmg={ev.damage:12.2f} hp={float(getattr(ev, 'target_hp_left', 0.0)):.1f} crit={ev.is_crit}{bd_str}{st_str}"
             )
 
     def _on_diag(tag: str, msg: str) -> None:

@@ -265,6 +265,7 @@ class ExecutionLifecycle:
         self.pending_deathrattle_together: int = 0
         self._damage_hit_recorders: List[Tuple[str, List[DamageHitSnapshot]]] = []
         self.active_listen_die_entity: Optional[str] = None
+        self._handled_action_end_ids: Set[int] = set()
 
     @property
     def in_attack_scope(self) -> bool:
@@ -337,6 +338,19 @@ class ExecutionLifecycle:
         dirty = self._dirty_reasons()
         if dirty:
             raise AssertionError(f"ExecutionLifecycle 状态未清理干净: {', '.join(dirty)}")
+
+    def mark_action_end_handled(self, action_id: int) -> None:
+        """标记指定 action_id 的收尾钩子已由统一 AbilityFrame 处理，避免 ActionEndEvent 重复触发。"""
+        if action_id > 0:
+            self._handled_action_end_ids.add(int(action_id))
+
+    def consume_action_end_handled(self, action_id: int) -> bool:
+        """消费并返回指定 action_id 是否已由统一 AbilityFrame 完成收尾。"""
+        aid = int(action_id)
+        if aid in self._handled_action_end_ids:
+            self._handled_action_end_ids.discard(aid)
+            return True
+        return False
 
     def begin_attack_scope(self) -> None:
         self.attack_scope_depth += 1
@@ -857,7 +871,7 @@ class ExecutionLifecycle:
         if spec.sp_base is not None:
             rt._active_skill_sp_base = float(spec.sp_base)
             rt._skill_sp_ratio_granted = False
-        if not spec.emit_after_skill and (spec.skill_target_ids or spec.target_ids):
+        if not spec.emit_after_skill and not spec.emit_action_end_hooks and (spec.skill_target_ids or spec.target_ids):
             act_id = int(getattr(sim, "_action_seq", 0) or 0)
             if act_id > 0 and hasattr(rt, "_skill_targets_by_action_id"):
                 rt._skill_targets_by_action_id[act_id] = tuple(spec.skill_target_ids or spec.target_ids)
@@ -947,41 +961,42 @@ class ExecutionLifecycle:
                         cause=spec.energy_cause or f"技能回能 {spec.skill_name or spec.ability_name}",
                     )
 
-        if spec.emit_after_skill:
-            if spec.before_skill_targets_as_attack:
-                me.dispatch_event(
-                    "OnAfterSkillUse",
-                    owner_id=spec.caster_id,
-                    param_entity_id=spec.caster_id,
-                    attack_target_ids=spec.target_ids,
-                )
-                me.dispatch_event(
-                    "OnListenAfterSkillUse",
-                    param_entity_id=spec.caster_id,
-                    attack_target_ids=spec.target_ids,
-                )
-            else:
-                after_kwargs: Dict[str, Any] = {
-                    "owner_id": spec.caster_id,
-                    "current_skill_type": spec.skill_type,
-                }
-                listen_after_kwargs: Dict[str, Any] = {
-                    "param_entity_id": spec.caster_id,
-                    "current_skill_type": spec.skill_type,
-                }
-                if spec.pass_skill_targets_to_before_hooks:
-                    after_kwargs["skill_target_ids"] = spec.skill_target_ids
-                    after_kwargs["param_skill_targets"] = spec.skill_target_ids
-                    listen_after_kwargs["skill_target_ids"] = spec.skill_target_ids
-                    listen_after_kwargs["param_skill_targets"] = spec.skill_target_ids
+        if spec.emit_after_skill and spec.before_skill_targets_as_attack:
+            me.dispatch_event(
+                "OnAfterSkillUse",
+                owner_id=spec.caster_id,
+                param_entity_id=spec.caster_id,
+                attack_target_ids=spec.target_ids,
+            )
+            me.dispatch_event(
+                "OnListenAfterSkillUse",
+                param_entity_id=spec.caster_id,
+                attack_target_ids=spec.target_ids,
+            )
+        elif spec.emit_after_skill or spec.emit_action_end_hooks:
+            after_kwargs: Dict[str, Any] = {
+                "owner_id": spec.caster_id,
+                "current_skill_type": spec.skill_type,
+            }
+            listen_after_kwargs: Dict[str, Any] = {
+                "param_entity_id": spec.caster_id,
+                "current_skill_type": spec.skill_type,
+            }
+            if spec.pass_skill_targets_to_before_hooks:
+                after_kwargs["skill_target_ids"] = spec.skill_target_ids
+                after_kwargs["param_skill_targets"] = spec.skill_target_ids
+                listen_after_kwargs["skill_target_ids"] = spec.skill_target_ids
+                listen_after_kwargs["param_skill_targets"] = spec.skill_target_ids
+            if spec.emit_after_skill:
                 me.dispatch_event("OnAfterSkillUse", **after_kwargs)
-                if spec.emit_action_end_hooks:
-                    me.dispatch_event("OnActionEnd", owner_id=spec.caster_id)
+            if spec.emit_action_end_hooks:
+                me.dispatch_event("OnActionEnd", owner_id=spec.caster_id)
+            if spec.emit_after_skill:
                 me.dispatch_event("OnListenAfterSkillUse", **listen_after_kwargs)
-                if spec.emit_action_end_hooks:
-                    me.dispatch_event("OnListenActionEnd", param_entity_id=spec.caster_id)
-                    me.dispatch_event("OnAfterAction", owner_id=spec.caster_id)
-                    me.dispatch_event("OnListenAfterAction", param_entity_id=spec.caster_id)
+            if spec.emit_action_end_hooks:
+                me.dispatch_event("OnListenActionEnd", param_entity_id=spec.caster_id)
+                me.dispatch_event("OnAfterAction", owner_id=spec.caster_id)
+                me.dispatch_event("OnListenAfterAction", param_entity_id=spec.caster_id)
 
         if spec.emit_insert_finish:
             me.dispatch_event("OnListenInsertAbilityFinish", param_entity_id=spec.caster_id)

@@ -1107,10 +1107,7 @@ class CombatOpsMixin:
                         tgt_ent.damage_reduction = combined_red
                         applied_def_red = True
                     setattr(tgt_ent, "_vm_damage_reduction_active", True)
-                    setattr(tgt_ent, "_vm_last_def_red", def_red)
-                    setattr(tgt_ent, "_vm_last_tgt_vuln", tgt_extra_vuln)
-                    setattr(tgt_ent, "_vm_last_tgt_def_ignore", tgt_extra_def_ignore)
-                    setattr(tgt_ent, "_vm_last_tgt_res_pen", tgt_extra_res_pen)
+                    setattr(tgt_ent, "_vm_base_damage_reduction", prev_dmg_red)
                 if not spec.is_nested_sub:
                     me.dispatch_event(
                         "OnBeforeHit",
@@ -1154,8 +1151,6 @@ class CombatOpsMixin:
                     )
                     if abs(hit_res_delta) > 1e-12:
                         tgt_extra_res_pen -= hit_res_delta
-                        if tgt_ent is not None:
-                            setattr(tgt_ent, "_vm_last_tgt_res_pen", tgt_extra_res_pen)
                     hit_def_red_delta = float(hit_dmg_data.get("Defender_AllDamageReduce", 0.0)) - float(
                         dmg_data.get("Defender_AllDamageReduce", 0.0)
                     )
@@ -1166,8 +1161,6 @@ class CombatOpsMixin:
                         if abs(new_combined_red - prev_dmg_red) > 1e-9:
                             tgt_ent.damage_reduction = new_combined_red
                             applied_def_red = True
-                        cur_last_def_red = float(getattr(tgt_ent, "_vm_last_def_red", 0.0) or 0.0)
-                        setattr(tgt_ent, "_vm_last_def_red", cur_last_def_red + hit_def_red_delta)
                     const_final_dmg: Optional[float] = None
                     if "AttackData_ConstFinalDamage" in hit_dmg_data:
                         const_final_dmg = float(hit_dmg_data["AttackData_ConstFinalDamage"])
@@ -1271,10 +1264,7 @@ class CombatOpsMixin:
                         if applied_def_red:
                             tgt_ent.damage_reduction = prev_dmg_red
                         setattr(tgt_ent, "_vm_damage_reduction_active", False)
-                        setattr(tgt_ent, "_vm_last_def_red", 0.0)
-                        setattr(tgt_ent, "_vm_last_tgt_vuln", 0.0)
-                        setattr(tgt_ent, "_vm_last_tgt_def_ignore", 0.0)
-                        setattr(tgt_ent, "_vm_last_tgt_res_pen", 0.0)
+                        setattr(tgt_ent, "_vm_base_damage_reduction", 0.0)
                 if not spec.is_true_dmg and not spec.is_nested_sub:
                     me.dispatch_event(
                         "OnAfterHit",

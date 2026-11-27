@@ -429,7 +429,13 @@ class EffectResolver:
                         base_res = getattr(target, "damage_res", {}).get(effect.element, 0.0) if isinstance(getattr(target, "damage_res", None), dict) else 0.0
                         res_pen = sm.calculate_stat(effect.attacker.name, 0.0, StatType.RES_PEN) if sm else 0.0
                         vuln = sm.calculate_stat(target.name, 0.0, StatType.VULNERABILITY) if sm else 0.0
-                        dr = max(0.0, min(1.0, float(getattr(target, "damage_reduction", 0.0))))
+                        base_dr = (
+                            float(getattr(target, "_vm_base_damage_reduction", 0.0))
+                            if getattr(target, "_vm_damage_reduction_active", False)
+                            else float(getattr(target, "damage_reduction", 0.0))
+                        )
+                        dr = max(0.0, min(1.0, base_dr))
+                        red_mult = 1.0 - dr
                         vm_rt = getattr(self.simulator, "vm_runtime", None)
                         vm_base_multi = 1.0
                         if vm_rt is not None:
@@ -437,26 +443,36 @@ class EffectResolver:
                                 dmg_data = vm_rt.collect_hit_modifiers(effect.attacker.name, (target.name,), attack_type="Break")
                                 def_ignore += -float(dmg_data.get("Defender_DefenceAddedRatio", 0.0))
                                 res_pen += float(dmg_data.get("Attacker_AllDamageTypePenetrate", 0.0))
+                                res_pen -= float(dmg_data.get("Defender_AllDamageTypeResistance", 0.0))
                                 vuln += float(dmg_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
                                 vm_base_multi = float(dmg_data.get("Attacker_BaseDamageMultiRatio", 1.0))
+                                atk_def_red = float(dmg_data.get("Defender_AllDamageReduce", 0.0))
+                                if atk_def_red > 0.0:
+                                    red_mult *= max(0.0, 1.0 - atk_def_red)
                             if getattr(target, "is_enemy", False):
                                 me = vm_rt.modifier_engine
-                                dr_already_active = getattr(target, "_vm_damage_reduction_active", False)
-                                vuln += float(getattr(target, "_vm_last_tgt_vuln", 0.0))
-                                def_ignore += float(getattr(target, "_vm_last_tgt_def_ignore", 0.0))
-                                res_pen += float(getattr(target, "_vm_last_tgt_res_pen", 0.0))
-                                red_mult = 1.0 - dr
-                                if not dr_already_active:
-                                    def_red = float(getattr(target, "_vm_last_def_red", 0.0))
-                                    if def_red > 0.0:
-                                        red_mult *= max(0.0, 1.0 - def_red)
-                                tgt_res_mod = 0.0
+                                tgt_hit_data = vm_rt.collect_target_being_hit_modifiers(
+                                    effect.attacker.name,
+                                    target.name,
+                                    attack_type="Break",
+                                    element=effect.element,
+                                )
+                                vuln += float(tgt_hit_data.get("Defender_AllDamageTypeTakenRatio", 0.0))
+                                def_ignore += -float(tgt_hit_data.get("Defender_DefenceAddedRatio", 0.0))
+                                tgt_res_mod = float(tgt_hit_data.get("Defender_AllDamageTypeResistance", 0.0))
+                                def_red = float(tgt_hit_data.get("Defender_AllDamageReduce", 0.0))
+                                if def_red > 0.0:
+                                    red_mult *= max(0.0, 1.0 - def_red)
                                 for m_def in me.get_modifiers(target.name):
-                                    if not dr_already_active:
-                                        m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
-                                        if m_red > 0.0:
-                                            red_mult *= max(0.0, 1.0 - m_red)
-                                        tgt_res_mod += float(m_def.properties.get("AllDamageTypeResistance", 0.0))
+                                    m_red = float(m_def.properties.get("AllDamageReduce", 0.0))
+                                    if m_red > 0.0:
+                                        red_mult *= max(0.0, 1.0 - m_red)
+                                    tgt_res_mod += float(m_def.properties.get("AllDamageTypeResistance", 0.0))
+                                if (
+                                    "AttackData_ConstFinalDamage" in tgt_hit_data
+                                    and float(tgt_hit_data["AttackData_ConstFinalDamage"]) <= 0.0
+                                ):
+                                    red_mult = 0.0
                                 res_pen += -tgt_res_mod
                                 dr = max(0.0, min(1.0, 1.0 - red_mult))
                         def_mult = (atk_lvl + 20.0) / ((tgt_lvl + 20.0) * max(0.0, 1.0 - def_shred - def_ignore) + (atk_lvl + 20.0))
