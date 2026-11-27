@@ -245,7 +245,7 @@ def build_global_symbol_registry(
         sub_dir = char_root / sub
         if not sub_dir.exists():
             continue
-        for p in sub_dir.glob("*.json"):
+        for p in sorted(sub_dir.glob("*.json"), key=lambda p: p.as_posix()):
             if p.name.endswith(".layout.json"):
                 continue
             doc = json.loads(p.read_text(encoding="utf-8"))
@@ -270,7 +270,7 @@ def build_global_symbol_registry(
     # ConfigAbility
     ab_root = root / "Config" / "ConfigAbility"
     if ab_root.exists():
-        for p in ab_root.rglob("*.json"):
+        for p in sorted(ab_root.rglob("*.json"), key=lambda p: p.as_posix()):
             if p.name.endswith(".layout.json"):
                 continue
             rel_parts = p.relative_to(ab_root).parts
@@ -291,7 +291,7 @@ def build_global_symbol_registry(
     # ConfigAI
     ai_root = root / "Config" / "ConfigAI"
     if ai_root.exists():
-        for p in ai_root.rglob("*.json"):
+        for p in sorted(ai_root.rglob("*.json"), key=lambda p: p.as_posix()):
             if p.name.endswith(".layout.json"):
                 continue
             doc = json.loads(p.read_text(encoding="utf-8"))

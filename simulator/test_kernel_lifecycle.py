@@ -856,6 +856,36 @@ class TestKernelLifecycle(unittest.TestCase):
         self.assertFalse(rt.modifier_engine.has_modifier(enemy.name, "MCommon_FastAction"))
         rt.lifecycle.assert_clean()
 
+    def test_dirty_apc_flush_follows_entity_order_deterministically(self) -> None:
+        """_flush_dirty_apc() 必须按 sim.entities 固定顺位刷新，不受 set 哈希顺序影响。"""
+        e1 = Entity(name="顺序角色甲", base_speed=100.0, max_hp=3000.0, current_hp=3000.0, is_enemy=False)
+        e2 = Entity(name="顺序角色乙", base_speed=100.0, max_hp=3000.0, current_hp=3000.0, is_enemy=False)
+        e3 = Entity(name="顺序角色丙", base_speed=100.0, max_hp=3000.0, current_hp=3000.0, is_enemy=False)
+        sim = TurnSimulator(entities=[e1, e2, e3], use_techniques=False, auto_ult=False)
+        rt = VMRuntime(sim)
+        sim.vm_runtime = rt
+        me = rt.modifier_engine
+
+        seen: List[str] = []
+        orig_check = me.check_property_changes
+
+        def _spy_check(entity_id: str) -> None:
+            seen.append(entity_id)
+            orig_check(entity_id)
+
+        me.check_property_changes = _spy_check  # type: ignore[method-assign]
+        try:
+            me._dirty_apc_entities.update([e3.name, e1.name, "__UNLISTED__", e2.name])
+            me._flush_dirty_apc()
+            self.assertEqual(seen, [e1.name, e2.name, e3.name, "__UNLISTED__"])
+
+            seen.clear()
+            me._dirty_apc_entities.update([e2.name, e3.name, e1.name])
+            me._flush_dirty_apc()
+            self.assertEqual(seen, [e1.name, e2.name, e3.name])
+        finally:
+            me.check_property_changes = orig_check  # type: ignore[method-assign]
+
 
 if __name__ == "__main__":
     unittest.main()

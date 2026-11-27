@@ -336,8 +336,6 @@ def resolve_team_roster(
         ordered = [u for u in eff_slot_uids if u in valid_uids]
         ordered.extend(u for u in valid_uids if u not in ordered)
         valid_uids = ordered
-    elif 1409 in valid_uids:
-        valid_uids = [1409] + [u for u in valid_uids if u != 1409]
 
     team_uids = valid_uids
     team_names = []

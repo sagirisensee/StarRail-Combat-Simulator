@@ -460,6 +460,7 @@ class GameDataLoader:
             pools: Dict[str, Dict[str, Any]] = {}
             pool_dir = os.path.join(self.data_root, "Config", "ConfigCommonSkillPool")
             if os.path.isdir(pool_dir):
+                pool_paths: List[str] = []
                 stack = [pool_dir]
                 while stack:
                     cur = stack.pop()
@@ -469,17 +470,20 @@ class GameDataLoader:
                                 if entry.is_dir(follow_symlinks=True):
                                     stack.append(entry.path)
                                 elif entry.is_file(follow_symlinks=True) and entry.name.endswith(".json") and not entry.name.endswith(".layout.json"):
-                                    try:
-                                        data = self._read_json(entry.path)
-                                    except Exception:
-                                        continue
-                                    for item in (data.get("PoolList") or () if isinstance(data, Mapping) else ()):
-                                        if isinstance(item, Mapping):
-                                            uname = str(item.get("UniqueName") or "")
-                                            if uname and uname not in pools:
-                                                pools[uname] = dict(item)
+                                    pool_paths.append(entry.path)
                     except OSError:
                         continue
+                pool_paths.sort(key=lambda p: os.path.relpath(p, self.data_root).replace("\\", "/"))
+                for p in pool_paths:
+                    try:
+                        data = self._read_json(p)
+                    except Exception:
+                        continue
+                    for item in (data.get("PoolList") or () if isinstance(data, Mapping) else ()):
+                        if isinstance(item, Mapping):
+                            uname = str(item.get("UniqueName") or "")
+                            if uname and uname not in pools:
+                                pools[uname] = dict(item)
             self._common_skill_pools = pools
         return self._common_skill_pools.get(str(pool_name or ""))
 
@@ -747,7 +751,7 @@ class GameDataLoader:
                             continue
             except OSError:
                 continue
-        paths.sort()
+        paths.sort(key=lambda p: os.path.relpath(p, self.data_root).replace("\\", "/"))
         return paths, len(paths), max_mtime_ns
 
     def _ability_index_fingerprint(self, file_count: int, max_mtime_ns: int) -> Tuple[Any, ...]:

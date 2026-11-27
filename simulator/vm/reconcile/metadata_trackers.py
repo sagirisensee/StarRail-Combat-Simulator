@@ -13,6 +13,7 @@ from simulator.vm.reconcile.models import (
     EnemyHitRecord,
     _get_avatar_damage_types,
     _get_avatar_skill_effects,
+    _get_avatar_skill_target_info,
     _get_avatar_skill_trigger_keys,
     _resolve_uid_name,
 )
@@ -113,7 +114,13 @@ class RosterAndSpawnTracker:
                 self.first_skill_info = (sk_id, uid)
             elif self.first_skill_info is not None:
                 self.first_skill_done = True
-        if not self.inferred_slot_uids and sk_id in (140902, 140903):
+        sk_tgt_type, _ = _get_avatar_skill_target_info(sk_id)
+        sk_eff = _get_avatar_skill_effects().get(sk_id, "")
+        if (
+            not self.inferred_slot_uids
+            and sk_tgt_type in ("AllTeamMember", "AllTeamMemberWithUnselectable", "AllTeamMemberWithDead")
+            and sk_eff in ("Restore", "Support", "Defence")
+        ):
             self.in_aoe_heal_window = True
             self.aoe_heal_slot_uids = []
         else:
@@ -817,7 +824,7 @@ class PlayerTargetTracker:
         if not self._wave_entry_inserts:
             return
         drop_indices: Set[int] = set()
-        for uid in self._wave_entry_insert_uids:
+        for uid in sorted(self._wave_entry_insert_uids):
             cand = [idx for idx, (_, a_u, _) in enumerate(self._wave_entry_inserts) if a_u == uid]
             if not cand:
                 continue
@@ -1081,13 +1088,14 @@ class PlayerTargetTracker:
             if self.av_elems_map.get(atk_uid) == "Quantum" and self.last_stance_zero_euid is not None:
                 self.pending_q_break = (round(cur_av, 2), self.last_stance_zero_euid, 0)
                 self.last_stance_zero_euid = None
+        atk_uid_add = int(atk_ent.get("uid") or 0)
         if (
             atk_ent.get("team") == "Player"
-            and int(atk_ent.get("uid") or 0) == 1403
+            and atk_uid_add > 0
             and dtype == "Additional"
             and self.pending_tie_highest_hp_euid is not None
         ):
-            pick_item = (round(cur_av, 2), 1403, self.pending_tie_highest_hp_euid)
+            pick_item = (round(cur_av, 2), atk_uid_add, self.pending_tie_highest_hp_euid)
             if pick_item not in self.enemy_retarget_picks:
                 self.enemy_retarget_picks.append(pick_item)
             self.pending_tie_highest_hp_euid = None
@@ -1159,8 +1167,9 @@ class PlayerTargetTracker:
                 self.ally_ult_targets.setdefault(self.pending_ally_ult_caster, []).append(tgt_name)
                 self._clear_pending_ally_ult()
             elif (
-                self.pending_ally_ult_sid == 151203
-                and self.pending_ally_ult_sp_fallback is None
+                self.pending_ally_ult_sp_fallback is None
+                and _get_avatar_skill_target_info(self.pending_ally_ult_sid)[0] == "FriendSelect"
+                and _get_avatar_skill_effects().get(self.pending_ally_ult_sid, "") in ("Support", "Restore", "Defence")
                 and ptype == "CurrentSP"
                 and uid != self.pending_ally_ult_uid
                 and val > 0.0

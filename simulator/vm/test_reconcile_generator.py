@@ -13,7 +13,12 @@ from simulator.vm.reconcile.metadata_post import (
     resolve_player_and_servant_targets,
     resolve_team_roster,
 )
-from simulator.vm.reconcile.models import AhaTurnRecord, DEFAULT_CHAR_DB_PATH
+from simulator.vm.reconcile.metadata_trackers import PlayerTargetTracker, RosterAndSpawnTracker
+from simulator.vm.reconcile.models import (
+    AhaTurnRecord,
+    DEFAULT_CHAR_DB_PATH,
+    _get_avatar_skill_target_info,
+)
 from simulator.vm.reconcile_generator import (
     emit_alignment_test,
     extract_log_metadata,
@@ -183,6 +188,48 @@ class TestMetadataPostProcessors(unittest.TestCase):
         )
         self.assertEqual(names_ov, ["长夜月", "风堇"])
         self.assertEqual(len(uids_ov), 2)
+
+        uids_plain, _names_plain = resolve_team_roster(
+            db,
+            seen_uids=[1407, 1409],
+            inferred_slot_uids=[],
+            aoe_heal_slot_uids=[],
+            robin_s_init_ad=0.0,
+            team_override=None,
+        )
+        self.assertEqual(uids_plain, [1407, 1409])
+
+    def test_de_id_skill_target_info_and_generic_trackers(self) -> None:
+        db = CharacterDB().load(DEFAULT_CHAR_DB_PATH)
+        self.assertEqual(_get_avatar_skill_target_info(0), ("", ""))
+        self.assertEqual(_get_avatar_skill_target_info(140902), ("AllTeamMember", ""))
+        self.assertEqual(_get_avatar_skill_target_info(140903), ("AllTeamMember", ""))
+        self.assertEqual(_get_avatar_skill_target_info(121702), ("FriendSelect", "TargetAdjoinEntity"))
+        self.assertEqual(_get_avatar_skill_target_info(121703), ("AllTeamMember", ""))
+        self.assertEqual(_get_avatar_skill_target_info(151203), ("FriendSelect", ""))
+
+        roster_tracker = RosterAndSpawnTracker()
+        roster_tracker.on_player_use_skill(1409, 140902)
+        self.assertTrue(roster_tracker.in_aoe_heal_window)
+        roster_tracker.on_player_use_skill(1217, 121702)
+        self.assertFalse(roster_tracker.in_aoe_heal_window)
+
+        tracker = PlayerTargetTracker()
+        tracker.pending_tie_highest_hp_euid = 2002
+        tracker.on_damage(
+            {"attacker": {"team": "Player", "uid": 1307}, "type": "Additional", "damage": 100.0},
+            cur_av=50.0,
+        )
+        self.assertIn((50.0, 1307, 2002), tracker.enemy_retarget_picks)
+        self.assertIsNone(tracker.pending_tie_highest_hp_euid)
+
+        tracker.on_player_use_skill(60.0, 1512, "知更鸟•晴歌", "Ultra", 151203)
+        tracker.on_player_stat_change_ult(1307, "CurrentSP", 10.0, db)
+        self.assertEqual(tracker.pending_ally_ult_sp_fallback, "黑天鹅")
+
+        tracker.on_player_use_skill(70.0, 1217, "藿藿", "Ultra", 121703)
+        tracker.on_player_stat_change_ult(1307, "CurrentSP", 24.0, db)
+        self.assertIsNone(tracker.pending_ally_ult_sp_fallback)
 
 
 if __name__ == "__main__":

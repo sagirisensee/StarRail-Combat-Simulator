@@ -1327,7 +1327,7 @@ class StageDataLoader:
         ca_dir = self.tbgd_root / "Config" / "ConfigAbility"
         if not ca_dir.exists():
             return False
-        for fp in ca_dir.glob("BattleEventAbility*.json"):
+        for fp in sorted(ca_dir.glob("BattleEventAbility*.json"), key=lambda p: p.as_posix()):
             if fp.name.endswith(".layout.json"):
                 continue
             try:

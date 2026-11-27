@@ -883,7 +883,16 @@ class ModifierEngine:
 
     def _flush_dirty_apc(self) -> None:
         while self._dirty_apc_entities:
-            batch = list(self._dirty_apc_entities)
+            sim = getattr(self.rt, "sim", None)
+            ent_order = (
+                {e.name: idx for idx, e in enumerate(getattr(sim, "entities", ()))}
+                if sim is not None
+                else {}
+            )
+            batch = sorted(
+                self._dirty_apc_entities,
+                key=lambda eid: (ent_order.get(eid, 10**9), str(eid)),
+            )
             self._dirty_apc_entities.clear()
             for eid in batch:
                 self.check_property_changes(eid)

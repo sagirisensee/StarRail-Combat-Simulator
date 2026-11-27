@@ -21,6 +21,8 @@ _AVATAR_SKILL_TRIGGER_KEY_CACHE: Optional[Dict[int, str]] = None
 _AVATAR_SKILL_STANCE_CACHE: Optional[Dict[int, float]] = None
 _AVATAR_SKILL_STANCE_PAIR_CACHE: Optional[Dict[int, Tuple[float, float]]] = None
 _AVATAR_DAMAGE_TYPE_CACHE: Optional[Dict[int, str]] = None
+_AVATAR_SKILL_JSON_PATH_CACHE: Optional[Dict[int, str]] = None
+_CHAR_SKILL_TARGET_INFO_CACHE: Dict[str, Dict[str, Tuple[str, str]]] = {}
 
 
 def _get_servant_skill_effects() -> Dict[int, str]:
@@ -96,6 +98,72 @@ def _get_avatar_skill_trigger_keys() -> Dict[int, str]:
             pass
     _AVATAR_SKILL_TRIGGER_KEY_CACHE = out
     return out
+
+
+def _get_avatar_skill_target_info(skill_id: int) -> Tuple[str, str]:
+    """从官方 AvatarConfig / AvatarConfigEnhanced 与角色 Config JSON 读取技能的 (TargetType, SubTargetType)。"""
+    if not skill_id:
+        return ("", "")
+    global _AVATAR_SKILL_JSON_PATH_CACHE
+    if _AVATAR_SKILL_JSON_PATH_CACHE is None:
+        out: Dict[int, str] = {}
+        excel_dir = os.path.join(ROOT_DIR, "data", "TurnBasedGameData", "ExcelOutput")
+        for fname, override in (
+            ("AvatarConfig.json", True),
+            ("AvatarConfigEnhanced.json", True),
+            ("AvatarConfigLD.json", False),
+        ):
+            path = os.path.join(excel_dir, fname)
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    rows = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                jp = str(row.get("JsonPath") or "")
+                if not jp:
+                    continue
+                for raw_sid in row.get("SkillList") or ():
+                    sid = int(raw_sid or 0)
+                    if sid and (override or sid not in out):
+                        out[sid] = jp
+        _AVATAR_SKILL_JSON_PATH_CACHE = out
+
+    json_path = _AVATAR_SKILL_JSON_PATH_CACHE.get(int(skill_id), "")
+    tkey = _get_avatar_skill_trigger_keys().get(int(skill_id), "")
+    if not json_path or not tkey:
+        return ("", "")
+
+    if json_path not in _CHAR_SKILL_TARGET_INFO_CACHE:
+        sk_map: Dict[str, Tuple[str, str]] = {}
+        cfg_path = os.path.join(ROOT_DIR, "data", "TurnBasedGameData", json_path)
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            if isinstance(cfg, dict):
+                for sk in cfg.get("SkillList") or ():
+                    if not isinstance(sk, dict):
+                        continue
+                    sk_name = str(sk.get("Name") or "")
+                    if not sk_name:
+                        continue
+                    ti = sk.get("TargetInfo") or {}
+                    if isinstance(ti, dict):
+                        sk_map[sk_name] = (
+                            str(ti.get("TargetType") or ""),
+                            str(ti.get("SubTargetType") or ""),
+                        )
+        except (OSError, json.JSONDecodeError):
+            pass
+        _CHAR_SKILL_TARGET_INFO_CACHE[json_path] = sk_map
+
+    return _CHAR_SKILL_TARGET_INFO_CACHE[json_path].get(tkey, ("", ""))
 
 
 def _get_avatar_skill_stance_pairs() -> Dict[int, Tuple[float, float]]:

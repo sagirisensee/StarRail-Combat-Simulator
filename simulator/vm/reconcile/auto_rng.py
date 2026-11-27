@@ -440,7 +440,7 @@ def attach_auto_rng_plugin(
                         return cov
 
                     if _blast_cover(cand_name) != hit_av_set:
-                        valid = [nm for nm in hit_av_set if _blast_cover(nm) == hit_av_set]
+                        valid = [nm for nm in sorted(hit_av_set) if _blast_cover(nm) == hit_av_set]
                         if len(valid) == 1:
                             cand_name = valid[0]
             return _find_ally(living, cand_name)
