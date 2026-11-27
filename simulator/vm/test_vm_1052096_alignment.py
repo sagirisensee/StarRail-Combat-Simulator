@@ -38,7 +38,7 @@ class TestVM1052096Alignment(unittest.TestCase):
                 1410: 0.0,
                 1307: 84.19999999762513,
             },
-            technique_users=["黑天鹅"],
+            technique_users=[],
         )
 
         self.assertEqual(rep.turn_matched, rep.turn_total)

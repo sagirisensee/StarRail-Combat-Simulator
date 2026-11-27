@@ -267,7 +267,7 @@ def prune_task_list(tasks: Any) -> List[Dict[str, Any]]:
         if t in PRUNABLE_PRESENTATION_TYPES or t.endswith("ClientOnly"):
             continue
         cloned = dict(item)
-        for key in ("TaskList", "SuccessTaskList", "FailedTaskList", "CallbackConfig", "OnProjectileHit", "OnHit", "DefaultTaskList"):
+        for key in ("TaskList", "SuccessTaskList", "FailedTaskList", "FailTaskList", "CallbackConfig", "OnProjectileHit", "OnHit", "DefaultTaskList"):
             if key in cloned and isinstance(cloned[key], list):
                 cloned[key] = prune_task_list(cloned[key])
         for ckey in ("CaseList", "CaseTaskList"):

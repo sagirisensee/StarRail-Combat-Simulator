@@ -119,6 +119,7 @@ def prune_stage_task_list(tasks: Any) -> List[Dict[str, Any]]:
             "TaskList",
             "SuccessTaskList",
             "FailedTaskList",
+            "FailTaskList",
             "CallbackConfig",
             "OnProjectileHit",
             "OnHit",

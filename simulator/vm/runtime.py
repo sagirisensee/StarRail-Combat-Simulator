@@ -1189,8 +1189,11 @@ class ConfigAbilityKitAdapter(KitHandler):
 
     def use_technique(self) -> None:
         rt = self._ensure_registered(trigger_passives=False)
-        for ab_name in self._skill_abilities.get("SkillMaze", []):
-            rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,), current_skill_type="Maze")
+        entry_ab = self._skill_entries.get("SkillMaze", "")
+        ab_list = [entry_ab] if entry_ab else list(self._skill_abilities.get("SkillMaze", []))
+        for ab_name in ab_list:
+            if ab_name:
+                rt.trigger_ability(caster_id=self.owner_id, ability_name=ab_name, target_ids=(self.owner_id,), current_skill_type="Maze")
 
     def on_battle_start(self) -> None:
         self._ensure_registered()

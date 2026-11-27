@@ -86,11 +86,13 @@ class ModifierOpsMixin:
             mname = ctx.custom_strings.get(custom_key) or ref_mname
         else:
             mname = _str_val(mname_spec) or ref_mname
+        success_tasks = task.get("SuccessTaskList") or ()
+        fail_tasks = task.get("FailTaskList") or task.get("FailedTaskList") or ()
         chance_spec = task.get("Chance")
         chance_val: Optional[float] = None
         if chance_spec is not None:
             chance_val = self._eval_num(chance_spec, ctx, 1.0)
-            if chance_val <= 0.0:
+            if chance_val <= 0.0 and not fail_tasks:
                 return
         life = self._eval_num(task["LifeTime"], ctx) if "LifeTime" in task else None
         cnt_spec = task.get("LayerAddWhenStack") if "LayerAddWhenStack" in task else task.get("Count")
@@ -116,42 +118,78 @@ class ModifierOpsMixin:
                 eff_caster = ctx.modifier_owner_id or ctx.caster_id
             else:
                 eff_caster = ctx.caster_id
+            hit_ok = True
             if chance_val is not None:
-                caster_ent = sim.get_entity(eff_caster)
-                tgt_ent = sim.get_entity(tid)
-                if (
-                    caster_ent is not None
-                    and tgt_ent is not None
-                    and getattr(caster_ent, "is_enemy", False)
-                    and not getattr(tgt_ent, "is_enemy", False)
-                ):
-                    hit_provider = getattr(sim, "enemy_debuff_hit_provider", None)
-                    hit_res = hit_provider(caster_ent, tgt_ent, mname, chance_val) if callable(hit_provider) else None
-                    if hit_res is False:
-                        continue
-                    if hit_res is None:
+                if chance_val <= 0.0:
+                    hit_ok = False
+                else:
+                    caster_ent = sim.get_entity(eff_caster)
+                    tgt_ent = sim.get_entity(tid)
+                    if (
+                        caster_ent is not None
+                        and tgt_ent is not None
+                        and getattr(caster_ent, "is_enemy", False)
+                        and not getattr(tgt_ent, "is_enemy", False)
+                    ):
+                        hit_provider = getattr(sim, "enemy_debuff_hit_provider", None)
+                        hit_res = hit_provider(caster_ent, tgt_ent, mname, chance_val) if callable(hit_provider) else None
+                        if hit_res is False:
+                            hit_ok = False
+                        elif hit_res is None:
+                            sm = getattr(sim, "status_mgr", None)
+                            eff_res = (
+                                sm.calculate_stat(tid, getattr(tgt_ent, "base_effect_res", 0.0), StatType.EFFECT_RES)
+                                if sm is not None
+                                else float(getattr(tgt_ent, "base_effect_res", 0.0))
+                            )
+                            atk_ehr = float(getattr(caster_ent, "base_effect_hit_rate", 0.0))
+                            if chance_val * (1.0 + atk_ehr) * max(0.0, 1.0 - eff_res) < 0.5:
+                                hit_ok = False
+                    elif (
+                        (success_tasks or fail_tasks)
+                        and caster_ent is not None
+                        and tgt_ent is not None
+                        and not getattr(caster_ent, "is_enemy", False)
+                        and getattr(tgt_ent, "is_enemy", False)
+                    ):
                         sm = getattr(sim, "status_mgr", None)
+                        atk_ehr = (
+                            sm.calculate_stat(eff_caster, getattr(caster_ent, "base_effect_hit_rate", 0.0), StatType.EHR)
+                            if sm is not None
+                            else float(getattr(caster_ent, "base_effect_hit_rate", 0.0))
+                        )
                         eff_res = (
                             sm.calculate_stat(tid, getattr(tgt_ent, "base_effect_res", 0.0), StatType.EFFECT_RES)
                             if sm is not None
                             else float(getattr(tgt_ent, "base_effect_res", 0.0))
                         )
-                        atk_ehr = float(getattr(caster_ent, "base_effect_hit_rate", 0.0))
-                        if chance_val * (1.0 + atk_ehr) * max(0.0, 1.0 - eff_res) < 0.5:
-                            continue
-            me.add_modifier(
-                owner_id=tid,
-                caster_id=eff_caster,
-                mod_name=mname,
-                ability_name=ctx.ability_name,
-                dynamic_values=task.get("DynamicValues"),
-                life_time=life,
-                count=cnt,
-                max_layer=max_l,
-                ctx=ctx,
-                reference_mod_name=ref_mname,
-                dynamic_strings=task.get("DynamicStrings"),
-            )
+                        eff_prob = chance_val * (1.0 + atk_ehr) * max(0.0, 1.0 - eff_res)
+                        if eff_prob <= 1e-9:
+                            hit_ok = False
+                        elif eff_prob < 1.0 - 1e-9:
+                            t_prov = getattr(sim, "random_chance_target_provider", None)
+                            t_res = t_prov(eff_caster, tid, ctx.ability_name, eff_prob) if callable(t_prov) else None
+                            hit_ok = bool(t_res) if t_res is not None else bool(eff_prob >= 0.5)
+            succeeded = False
+            if hit_ok:
+                mod_res = me.add_modifier(
+                    owner_id=tid,
+                    caster_id=eff_caster,
+                    mod_name=mname,
+                    ability_name=ctx.ability_name,
+                    dynamic_values=task.get("DynamicValues"),
+                    life_time=life,
+                    count=cnt,
+                    max_layer=max_l,
+                    ctx=ctx,
+                    reference_mod_name=ref_mname,
+                    dynamic_strings=task.get("DynamicStrings"),
+                )
+                succeeded = mod_res is not None
+            if succeeded and success_tasks:
+                self.execute_tasks(success_tasks, ctx.clone(param_entity_id=tid))
+            elif not succeeded and fail_tasks:
+                self.execute_tasks(fail_tasks, ctx.clone(param_entity_id=tid))
 
     def _op_remove_modifier(self, task: Mapping[str, Any], ctx: ExecutionContext) -> None:
         sim = self.rt.sim

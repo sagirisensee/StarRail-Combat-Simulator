@@ -1,6 +1,7 @@
 # coding: utf-8
 """VM 引擎通用原语与语义单测（合成 ConfigAbility JSON，零角色耦合，不随新增角色膨胀）。"""
 
+import base64
 import unittest
 
 from simulator.core import TurnSimulator
@@ -13,7 +14,8 @@ from simulator.vm.executor import (
     TaskExecutor,
 )
 from simulator.vm.expr import dotnet_hash
-from simulator.vm.runtime import VMRuntime
+from simulator.vm.loader import CompiledCharacterSpec, prune_task_list
+from simulator.vm.runtime import ConfigAbilityKitAdapter, VMRuntime
 from simulator.vm.stage_prunable_types import ALL_SAFE_PRUNABLE_TYPES
 
 
@@ -209,6 +211,221 @@ class TestVMOpcodeSemantics(unittest.TestCase):
         ctx = ExecutionContext(runtime=rt, caster_id="测试角色", ability_name="TestSynth")
         with self.assertRaises(NotImplementedError):
             rt.execute_tasks([{"$type": "RPG.GameCore.NonExistentTestTask"}], ctx)
+
+    def test_use_technique_triggers_only_entry_ability(self) -> None:
+        """验证 ConfigAbilityKitAdapter.use_technique 仅触发 SkillMaze 的 EntryAbility，不抢跑派生 Insert。"""
+        sim, rt, _, _ = _make_sim_with_vm()
+        rt.loader.ensure_ability_index()
+        spec = CompiledCharacterSpec(
+            unit_id=999999,
+            is_servant=False,
+            config={
+                "SkillList": [
+                    {
+                        "Name": "SkillMaze",
+                        "SkillType": "Maze",
+                        "EntryAbility": "Synth_Maze_Entry",
+                    }
+                ],
+                "SkillAbilityList": [
+                    {
+                        "Skill": "SkillMaze",
+                        "AbilityList": ["Synth_Maze_Entry", "Synth_Maze_Insert"],
+                    }
+                ],
+            },
+            abilities={},
+            global_modifiers={},
+            global_templates={},
+            dynamic_floats={},
+            skill_levels={},
+        )
+
+        class _SynthCharLoader:
+            def load_character(self, *_args, **_kwargs) -> CompiledCharacterSpec:
+                return spec
+
+        rt.loader._ability_by_name["Synth_Maze_Entry"] = {
+            "Name": "Synth_Maze_Entry",
+            "OnStart": [
+                {
+                    "$type": "RPG.GameCore.SetDynamicValue",
+                    "DynamicKey": "SynthEntryRan",
+                    "Value": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+                }
+            ],
+        }
+        rt.loader._ability_by_name["Synth_Maze_Insert"] = {
+            "Name": "Synth_Maze_Insert",
+            "OnStart": [
+                {
+                    "$type": "RPG.GameCore.SetDynamicValue",
+                    "DynamicKey": "SynthInsertRan",
+                    "Value": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+                }
+            ],
+        }
+        try:
+            adapter = ConfigAbilityKitAdapter(
+                owner_id="测试角色",
+                avatar_or_servant_id=999999,
+                port=sim.port,
+                runtime=rt,
+                loader=_SynthCharLoader(),  # type: ignore[arg-type]
+            )
+            adapter.use_technique()
+            self.assertAlmostEqual(rt.get_dynamic_value("测试角色", dotnet_hash("SynthEntryRan")), 1.0)
+            self.assertAlmostEqual(rt.get_dynamic_value("测试角色", dotnet_hash("SynthInsertRan")), 0.0)
+        finally:
+            rt.loader._ability_by_name.pop("Synth_Maze_Entry", None)
+            rt.loader._ability_by_name.pop("Synth_Maze_Insert", None)
+
+    def test_add_modifier_success_and_fail_task_lists_with_chance(self) -> None:
+        """验证 AddModifier 支持 SuccessTaskList / FailTaskList 与含效果命中抵抗的 Chance 循环终止。"""
+        ally = Entity(
+            name="测试角色",
+            base_speed=100.0,
+            base_atk=1200.0,
+            max_hp=5000.0,
+            current_hp=5000.0,
+            base_effect_hit_rate=1.2,
+        )
+        enemy = Entity(
+            name="测试木桩",
+            base_speed=90.0,
+            base_atk=800.0,
+            max_hp=100_000.0,
+            current_hp=100_000.0,
+            is_enemy=True,
+            base_effect_res=0.4,
+        )
+        sim = TurnSimulator(entities=[ally, enemy], use_techniques=False, auto_ult=False)
+        rt = VMRuntime(sim)
+        sim.vm_runtime = rt
+        rt.loader._global_mod_by_name["MSynth_LoopDot"] = {
+            "MaxLayer": 10,
+            "LayerAddWhenStack": 1,
+            "Stacking": "ReplaceByCaster",
+        }
+        rt.loader._global_mod_by_name["MSynth_StopFlag"] = {}
+
+        def _b64(ops: list[int]) -> str:
+            return base64.b64encode(bytes(ops)).decode("ascii")
+
+        chance_hash = dotnet_hash("_current_chance")
+        loop_cnt_hash = dotnet_hash("_loop_count")
+        raw_tasks = [
+            {
+                "$type": "RPG.GameCore.SetDynamicValue",
+                "DynamicKey": "_can_continue",
+                "Value": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+            },
+            {
+                "$type": "RPG.GameCore.SetDynamicValue",
+                "DynamicKey": "_loop_count",
+                "Value": {"IsDynamic": False, "FixedValue": {"Value": 0}},
+            },
+            {
+                "$type": "RPG.GameCore.SetDynamicValue",
+                "DynamicKey": "_current_chance",
+                "Value": {"IsDynamic": False, "FixedValue": {"Value": 1.5}},
+            },
+            {
+                "$type": "RPG.GameCore.ConditionLoopExecuteTaskListWithInterval",
+                "Predicate": {
+                    "$type": "RPG.GameCore.ByCompareDynamicValue",
+                    "DynamicKey": "_can_continue",
+                    "CompareType": "GreaterEqual",
+                    "CompareValue": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+                },
+                "TaskList": [
+                    {
+                        "$type": "RPG.GameCore.SetDynamicValue",
+                        "DynamicKey": "_loop_count",
+                        "Value": {
+                            "IsDynamic": True,
+                            "PostfixExpr": {
+                                "OpCodes": _b64([1, 0, 0, 0, 2, 17]),
+                                "FixedValues": [{"Value": 1}],
+                                "DynamicHashes": [loop_cnt_hash],
+                            },
+                        },
+                    },
+                    {
+                        "$type": "RPG.GameCore.SetDynamicValue",
+                        "DynamicKey": "_can_continue",
+                        "Value": {"IsDynamic": False, "FixedValue": {"Value": 0}},
+                    },
+                    {
+                        "$type": "RPG.GameCore.AddModifier",
+                        "TargetType": {"Alias": "AbilityTargetEntity"},
+                        "ModifierName": "MSynth_LoopDot",
+                        "MaxLayer": {"IsDynamic": False, "FixedValue": {"Value": 10}},
+                        "LayerAddWhenStack": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+                        "Chance": {
+                            "IsDynamic": True,
+                            "PostfixExpr": {
+                                "OpCodes": _b64([1, 0, 17]),
+                                "FixedValues": [],
+                                "DynamicHashes": [chance_hash],
+                            },
+                        },
+                        "SuccessTaskList": [
+                            {
+                                "$type": "RPG.GameCore.SetDynamicValue",
+                                "DynamicKey": "_can_continue",
+                                "Value": {"IsDynamic": False, "FixedValue": {"Value": 1}},
+                            }
+                        ],
+                        "FailTaskList": [
+                            {
+                                "$type": "RPG.GameCore.TriggerAnimState",
+                                "TargetType": {"Alias": "ParamEntity"},
+                                "AnimStateName": "Hit",
+                            },
+                            {
+                                "$type": "RPG.GameCore.AddModifier",
+                                "TargetType": {"Alias": "ParamEntity"},
+                                "ModifierName": "MSynth_StopFlag",
+                            },
+                        ],
+                    },
+                    {
+                        "$type": "RPG.GameCore.SetDynamicValue",
+                        "DynamicKey": "_current_chance",
+                        "Value": {
+                            "IsDynamic": True,
+                            "PostfixExpr": {
+                                "OpCodes": _b64([1, 0, 0, 0, 4, 17]),
+                                "FixedValues": [{"Value": 0.5}],
+                                "DynamicHashes": [chance_hash],
+                            },
+                        },
+                    },
+                ],
+            },
+        ]
+        pruned_tasks = prune_task_list(raw_tasks)
+        loop_add_mod = pruned_tasks[3]["TaskList"][2]
+        self.assertEqual([t["$type"] for t in loop_add_mod["FailTaskList"]], ["RPG.GameCore.AddModifier"])
+
+        try:
+            ctx = ExecutionContext(
+                runtime=rt,
+                caster_id="测试角色",
+                ability_name="TestSynth",
+                ability_target_ids=("测试木桩",),
+            )
+            rt.execute_tasks(pruned_tasks, ctx)
+
+            dot_mods = rt.modifier_engine.get_modifiers("测试木桩", "MSynth_LoopDot")
+            self.assertEqual(len(dot_mods), 1)
+            self.assertEqual(dot_mods[0].layer, 2)
+            self.assertTrue(rt.modifier_engine.has_modifier("测试木桩", "MSynth_StopFlag"))
+            self.assertAlmostEqual(rt.get_dynamic_value("测试角色", loop_cnt_hash), 3.0)
+        finally:
+            rt.loader._global_mod_by_name.pop("MSynth_LoopDot", None)
+            rt.loader._global_mod_by_name.pop("MSynth_StopFlag", None)
 
 
 if __name__ == "__main__":

@@ -460,7 +460,7 @@ class AbilityIRCompiler:
                         resolved_keys[path or f"hash:{h}"] = sym
                         referenced_syms.add(sym)
                 for k, sub in v.items():
-                    if k in ("TaskList", "SuccessTaskList", "FailedTaskList", "CallbackConfig", "OnSuccess", "OnFail"):
+                    if k in ("TaskList", "SuccessTaskList", "FailedTaskList", "FailTaskList", "CallbackConfig", "OnSuccess", "OnFail"):
                         continue
                     _walk(sub, f"{path}.{k}" if path else k)
             elif isinstance(v, list):
@@ -506,6 +506,7 @@ class AbilityIRCompiler:
                         "TaskList",
                         "SuccessTaskList",
                         "FailedTaskList",
+                        "FailTaskList",
                         "CallbackConfig",
                         "OnSuccess",
                         "OnFail",
@@ -528,6 +529,7 @@ class AbilityIRCompiler:
                     "TaskList",
                     "SuccessTaskList",
                     "FailedTaskList",
+                    "FailTaskList",
                     "CallbackConfig",
                     "OnSuccess",
                     "OnFail",

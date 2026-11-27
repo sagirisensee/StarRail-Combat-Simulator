@@ -563,7 +563,7 @@ class TaskExecutor(
             return False
         if task.get("$type") == "RPG.GameCore.WaitParallelTimeStamp":
             return True
-        for k in ("TaskList", "SuccessTaskList", "FailedTaskList"):
+        for k in ("TaskList", "SuccessTaskList", "FailedTaskList", "FailTaskList"):
             sub = task.get(k)
             if isinstance(sub, list) and any(self._task_has_wait_timestamp(x) for x in sub):
                 return True
